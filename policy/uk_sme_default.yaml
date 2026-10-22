@@ -1,0 +1,57 @@
+# Default lending policy for a UK SME working-capital facility.
+# Each rule compares one metric to a threshold. Outcomes: pass, refer, fail.
+# "refer" means a human must look; "fail" means decline unless overridden with a reason.
+# These thresholds are illustrative, not any lender's real policy.
+
+name: uk_sme_default
+rules:
+  - id: R1
+    description: At least twelve months of statements
+    metric: M1
+    op: ">="
+    threshold: 12
+    on_fail: refer
+
+  - id: R2
+    description: Debt service cover of at least 1.25x
+    metric: M10
+    op: ">="
+    threshold: 1.25
+    on_fail: fail
+    refer_below: 1.5
+
+  - id: R3
+    description: No more than two returned direct debits in the period
+    metric: M7
+    op: "<="
+    threshold: 2
+    on_fail: fail
+    refer_above: 0
+
+  - id: R4
+    description: Fewer than fifteen days overdrawn
+    metric: M6
+    op: "<"
+    threshold: 15
+    on_fail: refer
+
+  - id: R5
+    description: No late VAT payments
+    metric: M13
+    op: "=="
+    threshold: 0
+    on_fail: refer
+
+  - id: R6
+    description: Revenue not declining by more than fifteen percent
+    metric: M4
+    op: ">="
+    threshold: -15
+    on_fail: refer
+
+  - id: R7
+    description: Top counterparty below sixty percent of inflows
+    metric: M15
+    op: "<"
+    threshold: 60
+    on_fail: refer
