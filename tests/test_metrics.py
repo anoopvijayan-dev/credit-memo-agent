@@ -60,3 +60,29 @@ def test_policy_separates_profiles(statement_for):
     assert outcomes["good"] == RuleOutcome.PASS
     assert outcomes["poor"] == RuleOutcome.FAIL
     assert outcomes["stretched"] in (RuleOutcome.REFER, RuleOutcome.PASS)
+
+
+# --- C4: evidence is complete enough to recompute the figure (panel run 01, 6/6 seats)
+
+@pytest.mark.parametrize("archetype,profile", CASES)
+def test_evidence_reproduces_each_figure(statement_for, archetype, profile):
+    s, _ = statement_for(archetype, profile)
+    by_id = s.by_id()
+    m = {x.id: x for x in metrics.compute(s)}
+
+    def total(mid):
+        return round(sum(by_id[t].amount for t in m[mid].evidence), 2)
+
+    assert len({by_id[t].date.strftime("%Y-%m") for t in m["M1"].evidence}) == m["M1"].value
+    assert total("M2") == pytest.approx(m["M2"].value, abs=0.01)
+    assert by_id[m["M5"].evidence[0]].balance == pytest.approx(m["M5"].value, abs=0.01)
+    assert len({by_id[t].date for t in m["M6"].evidence}) == m["M6"].value
+    assert len(m["M7"].evidence) == m["M7"].value
+    assert -total("M8") == pytest.approx(m["M8"].value, abs=0.01)
+    assert total("M9") == pytest.approx(m["M9"].value, abs=0.01)
+    assert -total("M11") == pytest.approx(m["M11"].value, abs=0.01)
+    assert -total("M12") == pytest.approx(m["M12"].value, abs=0.01)
+    assert -total("M14") == pytest.approx(m["M14"].value, abs=0.01)
+    # M10 cites both its numerator and its denominator.
+    assert set(m["M8"].evidence) <= set(m["M10"].evidence)
+    assert set(m["M9"].evidence) <= set(m["M10"].evidence)

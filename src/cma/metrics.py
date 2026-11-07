@@ -72,7 +72,7 @@ def compute(statement: Statement) -> list[Metric]:
     return [
         Metric(id="M1", name="Months of statements", value=len(months), unit="months",
                method="Distinct calendar months with at least one transaction.",
-               evidence=[]),
+               evidence=[t.id for t in txns]),
         Metric(id="M2", name="Total revenue", value=round(total_revenue, 2), unit="GBP",
                method="Sum of credits categorised as card settlements or customer transfers.",
                evidence=[t.id for t in rev]),
@@ -86,7 +86,7 @@ def compute(statement: Statement) -> list[Metric]:
                method="Minimum running balance across the period.", evidence=[lowest.id]),
         Metric(id="M6", name="Days overdrawn", value=len(overdrawn_days), unit="days",
                method="Distinct days on which the closing balance was below zero.",
-               evidence=[t.id for t in txns if t.balance < 0][:50]),
+               evidence=[t.id for t in txns if t.balance < 0]),
         Metric(id="M7", name="Returned direct debits", value=len(returned), unit="count",
                method="Count of lines marked as unpaid direct debits.",
                evidence=[t.id for t in returned]),
@@ -94,10 +94,10 @@ def compute(statement: Statement) -> list[Metric]:
                method="Sum of loan and finance repayments.", evidence=[t.id for t in loan]),
         Metric(id="M9", name="Net operating cash flow", value=round(net_operating, 2), unit="GBP",
                method="All inflows minus all outflows, excluding loan repayments, loan drawdowns and owner drawings.",
-               evidence=[t.id for t in operating][:200]),
+               evidence=[t.id for t in operating]),
         Metric(id="M10", name="Debt service cover", value=round(dscr, 2) if dscr != float("inf") else 99.0,
                unit="ratio", method="Net operating cash flow divided by debt service.",
-               evidence=[t.id for t in loan]),
+               evidence=[t.id for t in operating] + [t.id for t in loan]),
         Metric(id="M11", name="Owner drawings", value=round(-sum(t.amount for t in drawings), 2),
                unit="GBP", method="Sum of transfers to the owner.", evidence=[t.id for t in drawings]),
         Metric(id="M12", name="VAT paid", value=round(-sum(t.amount for t in vat), 2), unit="GBP",
@@ -109,7 +109,7 @@ def compute(statement: Statement) -> list[Metric]:
                method="Sum of payments to HMRC PAYE/NI.", evidence=[t.id for t in paye]),
         Metric(id="M15", name="Top customer share of transfer revenue", value=round(top_share, 1), unit="pct",
                method="Largest named payer's share of customer transfers; 0 when revenue is card-settled.",
-               evidence=[t.id for t in transfers][:200]),
+               evidence=[t.id for t in transfers]),
     ]
 
 
