@@ -1,0 +1,56 @@
+{
+  "seat": "evidence",
+  "summary_md": "No evidence exists yet, so confidence stays at opinion. Task 1 is a data pull on 20 named targets with a stop rule. Task 2 is a document check against the contract, done before the first post on 9 Nov. I have not seen the target list or the contract, so I need both from the owner. I added an optional interview guide for D1 and D6 that uses past-behaviour questions only.",
+  "questions": [
+    {
+      "context": "Evidence task 1 needs the 20 outreach targets as a named list (D4 says 'target segment' has none). Which source should the list come from? It must be fixed before anyone checks LinkedIn, so the sample can't be picked after looking at who posts.",
+      "options": [
+        "NACFB member list: first 20 heads of credit, lending-ops leads or CTOs matching the 'who'",
+        "Anoop's own LinkedIn connections export (also answers D3)",
+        "A list built from playbook week-3 outreach targets, frozen and dated before the count"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Evidence task 2 needs the actual documents. I was not given the employment contract or staff handbook. Who reads them, and are they in scope for this run?",
+      "options": [
+        "Anoop reads the contract and handbook and pastes the quoted clauses into the run",
+        "Anoop shares the files for a clause-by-clause check by this seat",
+        "Skip the self-read and get an employment solicitor to confirm (needs a budget outside the $20 appetite)"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "The interview guide for D1 and D6 needs 5 interviewees. Who should be approached? Interviewing people from the outreach list before any post mixes interviews with outreach, which D4 already flags.",
+      "options": [
+        "5 from the NACFB list who are NOT among the 20 outreach targets",
+        "5 from Anoop's existing network in lending",
+        "Defer interviews; run tasks 1 and 2 first"
+      ],
+      "allow_free_text": true
+    }
+  ],
+  "proposals": [
+    {
+      "kind": "confidence",
+      "text": "Keep the bet at 'opinion'. Reason: no source has been counted, measured or tested. The 'problem in their words' is an ASSUMPTION, the baseline is unmeasured, and the only support is third-party platform statistics that don't say whether lenders are on LinkedIn. Task 1 would lift only the claim 'the segment is active on LinkedIn' to 'data (measured)', and only for n=20. Task 2 is a document check that gates the bet but proves no demand. Moving the bet to 'anecdote' needs at least 1 interview in which someone describes distrusting untraceable AI figures from their own past behaviour. Moving to 'test' needs the 6-week post run read against the kill criteria."
+    },
+    {
+      "kind": "task",
+      "text": "Run evidence task 2 (contract check) before task 1 and before any post. If it shows a blocking clause, the kill criterion on employer constraints is already met and the activity count is moot."
+    },
+    {
+      "kind": "task",
+      "text": "Add an evidence task for D1/D6: 5 interviews using the guide in the artifact, with the stop rule given there."
+    },
+    {
+      "kind": "gotcha",
+      "text": "2026-11-07: Do not pick the sample of LinkedIn targets after viewing profiles. Freeze the list first, then count. Otherwise 'active' is inflated by choosing visible people."
+    },
+    {
+      "kind": "design",
+      "text": "To separate post-driven leads from outreach-driven ones (D4), log each inbound with a one-line 'how did you find me' field when it arrives. Count outreach replies in a separate column. The 3-call success threshold should count only calls where the person cites a post or says they saw one."
+    }
+  ],
+  "artifact_md": "# Evidence guides: linkedin-to-calls\n\nStatus: designed, not run. Confidence: **opinion**. Tiers used: opinion, anecdote (1-5 sources), data (measured), test (an experiment ran).\n\n---\n\n## Task 2 (do first): Employment contract and IP/social-media clause check\n\n**Method:** document check. **Sample:** every document that governs outside work: employment contract, staff handbook, social-media policy, IP/invention policy, confidentiality or NDA, any code-of-conduct addendum. **Stop rule:** stop reading when every document is covered, or immediately on the first clause that requires prior written consent. Report that clause and do not post.\n\nFor each clause found, record: document, clause number, verbatim quote, and a verdict. Verdicts are BLOCKS, NEEDS-CONSENT, CLEAR.\n\n| # | Look for | BLOCKS or NEEDS-CONSENT if |\n|---|----------|-----------------------------|\n| 1 | Outside work / other business activities | prior consent is required, or any paid or unpaid work is barred |\n| 2 | Conflict of interest / competing | 'competing' is defined by sector (lending, credit, fintech) rather than by employer's actual product |\n| 3 | IP assignment | it covers work 'relating to the employer's business', or applies outside working hours or equipment |\n| 4 | Social media / public statements | posting about work or sector needs approval, or professional-network posting is covered |\n| 5 | Confidentiality | it could cover the problem domain, even with no employer named |\n| 6 | Notice or disclosure duty | you must tell the employer about side projects |\n\nDirect check against the bet's kill criterion: can credit-memo-agent be built and posted about without naming the employer or using employer data? Answer yes or no, with the clause quotes that support it.\n\n**Confidence this earns:** document check. It gates the bet but adds nothing to demand. It is not legal advice. If any clause is ambiguous, the honest result is 'ambiguous', and it goes to a solicitor or the employer before post 1.\n\n---\n\n## Task 1: Are the 20 outreach targets active on LinkedIn?\n\n**Method:** data pull. **Sample:** the 20 targets on the frozen list (see question 1), all 20, no substitutions. **Stop rule:** stop when all 20 are classified. Do not replace a quiet person with a more active one.\n\n**Definition:** a target is ACTIVE if their LinkedIn activity page shows at least 1 post, repost with comment, or comment dated within the 30 days before the pull. Likes and reactions alone do NOT count. Record the date of the pull and the date of the latest qualifying activity, with the link.\n\n**Record per target:** name/role, org type (lender or broker), active Y/N, latest activity date and link, activity kind (post, comment). Note any whose activity page is hidden. Count those as NOT ACTIVE but list them separately.\n\n**Reading the count (n=20). These are the thresholds set in the bet, quoted rather than averaged:**\n- 3 or fewer active: channel is wrong. The bet's own D2 states the channel fails whatever the algorithm does. Stop and re-plan the channel.\n- 4 to 9 active: ambiguous. Report the count and proceed only if task 2 is clear, with the cadence decision held to the 3-week check.\n- 10 or more active: channel plausible. This justifies posting, not expecting calls.\n\n**Limits to state in the synthesis:** n=20 from one list. It measures presence, not interest in agents, not trust, not willingness to buy.\n\n**Confidence this earns:** data (measured), only for 'segment is on LinkedIn'.\n\n---\n\n## Optional task: 5 interviews for D1 (distrust of AI underwriting) and D6 (buying path)\n\n**Method:** interview. **Sample:** 5 heads of credit, lending-ops leads or lender CTOs (see question 3). **Stop rule:** stop at 5 completed, or earlier if 3 consecutive say they have no such experience, which is itself a finding. Do not recruit more to find a 'yes'.\n\n**Rules:** ask only about the last time something happened. Do not describe the product or the bet. Do not ask 'would you'. Each question must allow an honest 'it hasn't happened' answer.\n\nQuestions:\n1. When did you last evaluate or use any AI or automated tool in underwriting or credit-memo work? What happened? (If never: say so, and stop this block.)\n2. In that evaluation, when did you last not be able to explain a figure it produced to a colleague, auditor or customer? What did you do next?\n3. Tell me about the last time you rejected or delayed a tool because of how its output was produced. If there wasn't one, say so.\n4. How did you find your last outside tech supplier or contractor? Who introduced them?\n5. What did onboarding that supplier require: due diligence, insurance, outsourcing review, procurement sign-off? Which step took the longest?\n6. Have you ever engaged an individual freelancer (not a firm) for work touching customer or credit data? If yes, what was different. If no, why not?\n7. When did you last follow, message or hire someone because of what they posted on LinkedIn? What was it?\n\n**Synthesis format:** quote each interviewee verbatim by question, with a count such as 'Q2: 2 of 5 described a specific untraceable figure; 3 of 5 said it had not happened'. Do not average. Sources are labelled anecdote until there are more than 5.\n\n**Confidence this earns:** anecdote (1-5 sources)."
+}
