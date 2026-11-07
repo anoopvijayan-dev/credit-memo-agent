@@ -129,7 +129,7 @@
       "line": 174,
       "criterion": null,
       "claim": "The approved memo that is written out (final_memo = memo + stamp; cli.py:100 writes only this) contains [Mn] tags but neither the metrics table nor the evidence ids, nor the model or policy name. The MemorySaver state is gone when the process exits, so a reader of memo.md cannot trace any figure to statement lines. That is the compliance problem the bet sets out to solve (outcome b).",
-      "repro": "cma run examples/cafe_stretched.csv --yes --reviewer A --out m.md; m.md (cf. examples/cafe_stretched.memo.md lines 1-19) has '[M2]' and no table, method or transaction ids, and nothing else is persisted.",
+      "repro": "Read graph.py:159-174 and cli.py:99-101; committed output examples/cafe_stretched.memo.md (lines 1-19) has '[M2]' and no table, method or transaction ids, and nothing else is persisted.",
       "disposition": null
     },
     {
@@ -156,7 +156,7 @@
       "line": 98,
       "criterion": null,
       "claim": "When debt service is 0, M10 is reported as 99.0, a made-up figure that the memo will quote as 'debt service cover of 99.00 [M10]'. It does this even when net operating cash flow is negative, and policy R2 passes.",
-      "repro": "Statement with no LOAN/FINANCE debits and net outflows: compute() gives M10.value == 99.0; policy R2 outcome = pass.",
+      "repro": "12 months of +£3,000 card settlement and -£4,000 supplier DD, no loan: M9 = -12000.0, M10 = 99.0, policy R2 = pass (probe run).",
       "disposition": null
     },
     {
@@ -183,7 +183,7 @@
       "line": 14,
       "criterion": "R7",
       "claim": "DEFAULT_POLICY resolves to <repo>/policy via parents[2], but the wheel ships only src/cma (pyproject [tool.hatch.build.targets.wheel]). A non-editable install fails with FileNotFoundError on the first run without --policy. CI uses pip install -e, so it never sees this.",
-      "repro": "pip install . (non-editable) into a fresh venv; cma run <csv> -> FileNotFoundError .../lib/policy/uk_sme_default.yaml.",
+      "repro": "Not executed (read-only seat): from site-packages/cma/policy.py, parents[2] is .../lib, so load_policy() opens .../lib/policy/uk_sme_default.yaml, which the wheel (packages = [\"src/cma\"]) does not contain. Repro: pip install . into a fresh venv, then cma run <csv>.",
       "disposition": null
     },
     {
