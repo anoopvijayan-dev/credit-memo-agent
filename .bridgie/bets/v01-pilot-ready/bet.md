@@ -7,8 +7,8 @@ owner: Anoop Vijayan
 status: draft
 confidence: opinion
 appetite: { time: 2w, tokens_usd: 20 }
-kill_criteria: []
-non_goals: []
+kill_criteria: ["a blocker finding in the money path that cannot be fixed in a week", "no lender or broker agrees to run a statement through it by week 6"]
+non_goals: ["full underwriting decision", "real customer data", "CAMT/MT940 adapters in v0.1"]
 created: 2026-11-07
 ---
 
@@ -16,32 +16,33 @@ created: 2026-11-07
 
 ## Who
 
-Who has this problem, in one or two sentences. Segment, role, situation.
+Credit analysts and heads of credit at UK non-bank SME lenders and commercial-finance brokers who spread twelve months of business current-account statements by hand before writing a memo.
 
 ## Problem in their words
 
-Quote or paraphrase real people. Link evidence (tickets, interview notes, data).
+"Spreading a statement takes an afternoon, the memo still gets a number wrong, and when compliance asks where a figure came from nobody can say." (Paraphrase of the BridgeTrade broker conversations, 2026.)
 
 ## Why now
 
-What changed: a trigger, a market shift, a regulation, a number that moved.
+Lenders are trialling LLM tools and getting burned by invented figures. A memo whose every number is deterministic, cited and human-approved is the differentiator, and the public repo is the proof.
 
 ## What they do today
 
-The workaround or competitor they use instead. If nothing, say so and why.
+Excel spreading plus a Word memo; or an extraction vendor (Ocrolus/Codat-style) that stops at the data and leaves the memo to the analyst.
 
 ## Expected outcome
 
-The measurable change if this works, and how it will be read.
+A broker or lender runs one anonymised statement through v0.1 and the memo (a) contains no figure that is not in the metrics table, (b) cites every figure to statement lines, (c) stops for their analyst to approve. Read as: zero ungrounded numbers across their statement; analyst says the policy outcomes match their own view or explains why not.
 
 ## Open questions
 
-Questions raised by the grill. Answer them on the decision surface (`bridgie open`).
+Raised by the review panel; see `.bridgie/runs/v01-pilot-ready/`.
 
 ## Evidence tasks
 
-Things that need real-world evidence before signing.
+- Run the eval suite against a real model and publish grounding rate and redrafts.
+- One external statement (anonymised) through the pipeline with a lender's analyst reviewing.
 
 ## Decision log
 
-Every answer and decision, dated.
+- 2026-11-07: bet created; six-seat verify panel run against v0.1 (see runs).
