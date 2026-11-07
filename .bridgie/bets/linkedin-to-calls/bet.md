@@ -1,14 +1,14 @@
 ---
 id: linkedin-to-calls
 title: Building credit-memo-agent in public on LinkedIn turns into discovery calls with lenders
-lane: engineering
+lane: marketing
 risk: none
-owner: Claude
+owner: Anoop Vijayan
 status: draft
 confidence: opinion
 appetite: { time: 2w, tokens_usd: 20 }
-kill_criteria: []
-non_goals: []
+kill_criteria: ["fewer than 3 inbound DMs or discovery calls from the target segment after 6 weeks of 3 posts/week", "any post requires naming the employer or uses employer data"]
+non_goals: ["paid LinkedIn ads", "a company page", "vanity metrics (likes, impressions) as the success measure"]
 created: 2026-11-07
 ---
 
@@ -16,32 +16,33 @@ created: 2026-11-07
 
 ## Who
 
-Who has this problem, in one or two sentences. Segment, role, situation.
+Heads of credit, lending-ops leads and fintech CTOs at UK SME lenders and brokers who scroll LinkedIn and would hire or buy from a senior engineer they have watched build something relevant to them.
 
 ## Problem in their words
 
-Quote or paraphrase real people. Link evidence (tickets, interview notes, data).
+ASSUMPTION: they don't trust "AI underwriting" vendors because they can't see how figures are produced, and they don't know any engineer who builds agents for regulated lending.
 
 ## Why now
 
-What changed: a trigger, a market shift, a regulation, a number that moved.
+LinkedIn distribution now favours topic relevance over network size (van der Blom 2026, 1.3M posts); document carousels get roughly three times the engagement of text; reach for active creators fell ~60% over two years, so consistency on one topic matters more than audience size. Anoop plans to start freelancing in about six months and has no public body of work yet.
 
 ## What they do today
 
-The workaround or competitor they use instead. If nothing, say so and why.
+Hire from agencies or vendors they already know; follow large AI influencers who don't work in lending.
 
 ## Expected outcome
 
-The measurable change if this works, and how it will be read.
+Over 6 weeks (3 posts/week + 1 newsletter, from 2026-11-09): at least 5 DMs or comments from people in the target segment, at least 3 discovery calls booked, at least 1 statement run through the agent by an outside analyst. Read from a weekly tally of DMs, profile views from the segment, and calls. Baseline today: zero.
 
 ## Open questions
 
-Questions raised by the grill. Answer them on the decision surface (`bridgie open`).
+Raised by the grill.
 
 ## Evidence tasks
 
-Things that need real-world evidence before signing.
+- Count how many of the 20 outreach targets are active on LinkedIn (posted or commented in the last 30 days).
+- Check the employment contract's social-media and IP clauses before the first post.
 
 ## Decision log
 
-Every answer and decision, dated.
+- 2026-11-07: bet created; channel choice and post cadence from the go-to-market playbook (29 Oct 2026).
