@@ -23,6 +23,7 @@ class Category(str, Enum):
     RENT = "rent"
     SUPPLIER = "supplier"
     LOAN_REPAYMENT = "loan_repayment"
+    LOAN_DRAWDOWN = "loan_drawdown"
     BANK_FEES = "bank_fees"
     OWNER_DRAWINGS = "owner_drawings"
     RETURNED_DD = "returned_dd"

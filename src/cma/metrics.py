@@ -42,8 +42,8 @@ def compute(statement: Statement) -> list[Metric]:
     vat = [t for t in txns if t.category == Category.HMRC_VAT]
     paye = [t for t in txns if t.category == Category.HMRC_PAYE]
 
-    # Operating cash flow before debt service and drawings.
-    excluded = {Category.LOAN_REPAYMENT, Category.OWNER_DRAWINGS}
+    # Operating cash flow before financing: loan repayments, loan drawdowns, drawings.
+    excluded = {Category.LOAN_REPAYMENT, Category.LOAN_DRAWDOWN, Category.OWNER_DRAWINGS}
     operating = [t for t in txns if t.category not in excluded]
     net_operating = sum(t.amount for t in operating)
     debt_service = -sum(t.amount for t in loan)
@@ -93,7 +93,7 @@ def compute(statement: Statement) -> list[Metric]:
         Metric(id="M8", name="Debt service", value=round(debt_service, 2), unit="GBP",
                method="Sum of loan and finance repayments.", evidence=[t.id for t in loan]),
         Metric(id="M9", name="Net operating cash flow", value=round(net_operating, 2), unit="GBP",
-               method="All inflows minus all outflows, excluding loan repayments and owner drawings.",
+               method="All inflows minus all outflows, excluding loan repayments, loan drawdowns and owner drawings.",
                evidence=[t.id for t in operating][:200]),
         Metric(id="M10", name="Debt service cover", value=round(dscr, 2) if dscr != float("inf") else 99.0,
                unit="ratio", method="Net operating cash flow divided by debt service.",
