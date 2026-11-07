@@ -1,0 +1,214 @@
+{
+  "task": "v01-pilot-ready",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "specified",
+      "check": "Read metrics.py compute() and graph.py draft node: all figures come from metrics.compute; the model only receives the rendered table and writes prose.",
+      "result": "pass",
+      "artifact": "src/cma/metrics.py:19"
+    },
+    {
+      "id": "R2",
+      "tier": "specified",
+      "check": "Read every Metric(...) evidence list; ran tests/test_metrics.py::test_evidence_reproduces_each_figure (passes for 9 cases). By the letter the ids are attached in memory; see the major finding on the written memo losing them.",
+      "result": "pass",
+      "artifact": "src/cma/metrics.py:72"
+    },
+    {
+      "id": "R3",
+      "tier": "specified",
+      "check": "Spy LLM probe (scratch probe_r3.py) on trades/poor: prompt contains 0 transaction ids and no raw descriptions (only 'HMRC VAT' via M12 method text). No test in tests/ asserts this.",
+      "result": "pass",
+      "artifact": "src/cma/graph.py:105"
+    },
+    {
+      "id": "R4",
+      "tier": "specified",
+      "check": "Flow is right (graph.py:129-132, 2 redrafts then human with guard_grounded=False; test_hallucinating_model_is_caught_and_redrafted). But the guard misses invented figures written as 'GBP1.2m' / 'GBP48250', so such a memo is marked grounded and finalisable without a flag.",
+      "result": "fail",
+      "artifact": "src/cma/guard.py:25"
+    },
+    {
+      "id": "R5",
+      "tier": "specified",
+      "check": "review node interrupts and re-asks until ReviewDecision validates (graph.py:137-157; test_graph C6 tests). Counterexample: reviewer='   ' is accepted (_review_problem returns None) and the CLI --yes --reviewer ' ' passes the guard at cli.py:50.",
+      "result": "fail",
+      "artifact": "src/cma/models.py:132"
+    },
+    {
+      "id": "R6",
+      "tier": "specified",
+      "check": "Read categorise.py ordered RULES; fall-through credit returns OTHER at categorise.py:47; test_direction_decides_category covers 'HMRC VAT REPAYMENT' -> OTHER.",
+      "result": "pass",
+      "artifact": "src/cma/categorise.py:47"
+    },
+    {
+      "id": "R7",
+      "tier": "specified",
+      "check": "Thresholds, operators, on_fail and refer bands live in policy/uk_sme_default.yaml; policy.py only interprets them. No unit test of refer_below/refer_above/on_fail exists.",
+      "result": "pass",
+      "artifact": "policy/uk_sme_default.yaml:7"
+    },
+    {
+      "id": "R8",
+      "tier": "specified",
+      "check": "Outside this seat's lens; synth names are fictional and committed CSVs look generator-made, but I did not diff every committed CSV against synth output.",
+      "result": "not_proven",
+      "artifact": null
+    },
+    {
+      "id": "R9",
+      "tier": "specified",
+      "check": "Read ingest.load_csv; tests/test_ingest.py covers duplicate id, broken running balance, empty id, nan/inf, bad date, non-numeric, missing column, empty file; all pass.",
+      "result": "pass",
+      "artifact": "src/cma/ingest.py:43"
+    },
+    {
+      "id": "R10",
+      "tier": "specified",
+      "check": "Ran pytest -q (94 passed) and evals/run_evals.py --llm fake with API keys unset (9/9 grounded, exit 0); ci.yml runs both with no secrets.",
+      "result": "pass",
+      "artifact": ".github/workflows/ci.yml:21"
+    },
+    {
+      "id": "P1",
+      "tier": "specified",
+      "check": "Swept synth.generate over 40 seeds x 3 end dates x 3 lengths x 9 cases (3240 statements, scratch probe_p1.py): 16 mismatches, all M5, where truth.lowest_balance is the opening balance and M5 ignores it. Repo tests only check seed 7.",
+      "result": "fail",
+      "artifact": "src/cma/metrics.py:36"
+    },
+    {
+      "id": "P2",
+      "tier": "specified",
+      "check": "Probe (scratch probe_repro.py): 'GBP1.2m' and 'GBP48250' produce grounded=True with zero unmatched; only example-based tests exist.",
+      "result": "fail",
+      "artifact": "src/cma/guard.py:25"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 37,
+      "criterion": "R1",
+      "claim": "M6 'Days overdrawn' counts only days that have a transaction with balance < 0, not calendar days on which the account closed overdrawn as its method text (line 88) claims. Days with no transactions while overdrawn are dropped, so M6 is understated and policy R4 (< 15 days) can pass a case that should refer. synth.py:219-220 copies the same definition, so test_metrics_match_truth agrees with the generator by construction rather than with the definition.",
+      "repro": "Statement: monthly £5,000 card credits, a £20,000 debit on 2026-03-01, next credit on 2026-03-30. Account is overdrawn 1-29 March; metrics.compute gives M6 = 1 and policy R4 = pass. On synth trades/poor (seed 7, end 2026-09-30) M6 = 151 vs 342 calendar days carried forward. See scratch probe_repro.py / probe_metrics.py.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 57,
+      "criterion": "R7",
+      "claim": "M15 counterparty key is description words [2:5]. For two-word payer names that slice includes the invoice number ('OAKFIELD PROPERTIES INV1071'), so every invoice becomes its own counterparty. Concentration comes out understated and policy R7 (top payer < 60%) passes. No test checks M15 against an independent value; truth has no concentration field.",
+      "repro": "12 months x (7 x 'FPS CREDIT OAKFIELD PROPERTIES INV<n>' £1,000 + 3 x 'FPS CREDIT MRS P ADEYEMI INV<n>' £1,000): true top share 70%, M15 = 30.0, R7 = pass. On synth trades statements the 8 customers become 34-37 keys.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 36,
+      "criterion": "P1",
+      "claim": "M5 'Lowest balance' takes the minimum over post-transaction balances only and ignores the opening balance (first.balance - first.amount). When the account opens at its low point, M5 is overstated. This falsifies P1: synth.py:214 seeds truth.lowest_balance with the opening balance. The repo test passes only because seed 7 avoids the case.",
+      "repro": "PYTHONPATH=src: rows,t = synth.generate('trades','good',seed=1,end=date(2026,9,30)) -> t.lowest_balance = 14000.0; categorise+compute gives M5 = 17327.55 (first row is +4227.55 to 18227.55). Sweep over 3240 generated statements: 16 M5 mismatches (scratch probe_p1.py).",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/guard.py",
+      "line": 25,
+      "criterion": "P2",
+      "claim": "The NUMBER lookbehind (?<![A-Za-z\\d.]) plus a currency group limited to £$€ means a figure glued to a currency code (the usual financial-press style 'GBP1.2m', 'USD48250') is never scanned. An invented facility size or stock value then passes as grounded, which breaks R4 and the bet's outcome (a).",
+      "repro": "guard.check('Revenue £264,313 [M2]. The facility requested is GBP1.2m.', metrics) -> grounded=True, unmatched=[]. The same holds for 'Stock worth GBP48250.' 'EUR48,250' is only partly caught (flags '250'). Numbers written in words ('forty-eight thousand pounds') also pass.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 174,
+      "criterion": null,
+      "claim": "The approved memo that is written out (final_memo = memo + stamp; cli.py:100 writes only this) contains [Mn] tags but neither the metrics table nor the evidence ids, nor the model or policy name. The MemorySaver state is gone when the process exits, so a reader of memo.md cannot trace any figure to statement lines. That is the compliance problem the bet sets out to solve (outcome b).",
+      "repro": "cma run examples/cafe_stretched.csv --yes --reviewer A --out m.md; m.md (cf. examples/cafe_stretched.memo.md lines 1-19) has '[M2]' and no table, method or transaction ids, and nothing else is persisted.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/guard.py",
+      "line": 46,
+      "criterion": "R4",
+      "claim": "The guard matches a written number against both +value and -value and ignores the metric unit (line 79). A sign-contradicting or unit-swapped figure is therefore 'grounded'.",
+      "repro": "With M4=-7.3 pct, M5=-3200 GBP, M6=25 days: 'Revenue grew +7.3% [M4].', 'The lowest balance was a healthy £3,200 [M5] in credit.' and 'Overdraft limit is £25 [M6].' all return grounded=True.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 108,
+      "criterion": "R4",
+      "claim": "The draft prompt passes each rule's detail, which includes the threshold ('rule requires >= 1.25', built at policy.py:43), and SYSTEM_PROMPT rule 4 asks the model to discuss the rules. Thresholds are not metrics, so a faithful real-model memo that quotes them is flagged. That depresses the grounding rate the bet plans to publish and trains reviewers to override. It fails safe.",
+      "repro": "guard.check('Revenue £264,313 [M2]. Cover of 1.42x [M10] is above the 1.25x minimum.', metrics) -> unmatched=['1.25x'].",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 98,
+      "criterion": null,
+      "claim": "When debt service is 0, M10 is reported as 99.0, a made-up figure that the memo will quote as 'debt service cover of 99.00 [M10]'. It does this even when net operating cash flow is negative, and policy R2 passes.",
+      "repro": "Statement with no LOAN/FINANCE debits and net outflows: compute() gives M10.value == 99.0; policy R2 outcome = pass.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/models.py",
+      "line": 132,
+      "criterion": "R5",
+      "claim": "reviewer uses min_length=1 with no strip, so whitespace counts as an identity. cli.py:50 only checks truthiness.",
+      "repro": "PYTHONPATH=src python3 -c \"from cma.graph import _review_problem; print(_review_problem({'approved':True,'reviewer':'   '}, True))\" -> None (accepted); the final memo reads 'APPROVED by     at ...'.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 59,
+      "criterion": "R7",
+      "claim": "For card- or gateway-settled businesses M15 is 0 by definition, so policy R7 'Top counterparty below sixty percent of inflows' (policy/uk_sme_default.yaml:53) passes vacuously instead of being marked not assessable. The rule description also says 'inflows', but the metric covers transfer revenue only.",
+      "repro": "synth cafe/* and ecommerce/*: M15 = 0.0 and R7 = pass (scratch probe_metrics.py). The FakeLLM memo then states 'largest single payer accounted for 0.0% [M15] of inflows' (examples/cafe_stretched.memo.md:5).",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/policy.py",
+      "line": 14,
+      "criterion": "R7",
+      "claim": "DEFAULT_POLICY resolves to <repo>/policy via parents[2], but the wheel ships only src/cma (pyproject [tool.hatch.build.targets.wheel]). A non-editable install fails with FileNotFoundError on the first run without --policy. CI uses pip install -e, so it never sees this.",
+      "repro": "pip install . (non-editable) into a fresh venv; cma run <csv> -> FileNotFoundError .../lib/policy/uk_sme_default.yaml.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/mcp_server.py",
+      "line": 35,
+      "criterion": null,
+      "claim": "Duplication: the load -> categorise -> compute pipeline is re-implemented in mcp_server.py:35 and :42-44 as well as in graph.py:92-99, with no shared function. Any new validation step added to the graph silently skips the MCP path. mcp_server.py has no test at all.",
+      "repro": "grep -n 'categorise.categorise(ingest.load_csv' src/cma/mcp_server.py -> lines 35 and 42; grep -rn mcp_server tests/ -> no matches.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 105,
+      "criterion": null,
+      "claim": "Untested behaviours: no test asserts R3 (the draft prompt excludes transactions); policy.py has no unit test of refer_below/refer_above/on_fail or of a missing metric id; M3, M4, M13, M14 and M15 are never compared with independent truth; P1 and P2 are checked only by fixed examples (seed 7, end 2026-09-30) and never as properties.",
+      "repro": "grep -rn 'refer_below\\|refer_above\\|on_fail' tests/ -> no matches; grep -rn 'M15\\|M13\\|M4\\b' tests/test_metrics.py -> no truth assertion; test_metrics CASES use only the default seed.",
+      "disposition": null
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "build/shaper:clean-code",
+    "adapter": "claude-session",
+    "model": "claude-fable-5-1"
+  }
+}
