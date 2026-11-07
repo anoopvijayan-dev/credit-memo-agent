@@ -15,5 +15,5 @@ Policy outcome: refer. The case needs an analyst decision on the referred rules 
 
 
 ---
-Reviewed by cli --yes: APPROVED.
-Grounding check: passed (21 numbers checked, 0 unmatched).
+APPROVED by Example run (synthetic data) at 2026-11-07 23:05 UTC.
+Grounding check: passed (15 numbers checked, 0 unmatched, 0 missing citations).

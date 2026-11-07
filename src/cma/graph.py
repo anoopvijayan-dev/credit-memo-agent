@@ -19,6 +19,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
+from pydantic import ValidationError
 
 from . import categorise as cat
 from . import guard as grd
@@ -66,6 +67,23 @@ class MemoState(TypedDict, total=False):
     redrafts: int
     review: ReviewDecision
     final_memo: str
+
+
+def _review_problem(decision, grounded: bool) -> str | None:
+    """Why this decision cannot be accepted, or None if it can."""
+    if not isinstance(decision, dict):
+        return "answer with {'approved': bool, 'reviewer': '<name>', 'notes': '...'}"
+    try:
+        review = ReviewDecision(**decision)
+    except ValidationError as e:
+        fields = ", ".join(str(err["loc"][0]) for err in e.errors())
+        return f"missing or invalid: {fields}; an approval must name the reviewer"
+    if review.approved and not grounded and not (review.override_grounding and review.notes.strip()):
+        return (
+            "this memo failed the grounding check; approving it needs override_grounding=True "
+            "and notes explaining why"
+        )
+    return None
 
 
 def build(llm: LLM | None = None, checkpointer=None):
@@ -117,26 +135,41 @@ def build(llm: LLM | None = None, checkpointer=None):
         return {"redrafts": s.get("redrafts", 0) + 1}
 
     def review(s: MemoState) -> MemoState:
-        decision = interrupt(
-            {
-                "memo": s["memo"],
-                "policy_outcome": s["policy"].overall.value,
-                "guard_grounded": s["guard"].grounded,
-                "guard_unmatched": [f.number_text for f in s["guard"].unmatched],
-                "question": "Approve this memo for the credit file?",
-            }
-        )
-        if isinstance(decision, bool):
-            decision = {"approved": decision}
-        return {"review": ReviewDecision(**decision)}
+        """Stop for a named human. An invalid decision is not an error: ask again, saying why.
+
+        Each refusal is a fresh interrupt, so LangGraph replays earlier answers in order
+        and the reviewer can always correct theirs.
+        """
+        payload = {
+            "memo": s["memo"],
+            "policy_outcome": s["policy"].overall.value,
+            "guard_grounded": s["guard"].grounded,
+            "guard_unmatched": [f.number_text or f.reason for f in s["guard"].unmatched],
+            "guard_missing_citations": s["guard"].missing_citations,
+            "question": "Approve this memo for the credit file?",
+            "error": None,
+        }
+        while True:
+            decision = interrupt(payload)
+            problem = _review_problem(decision, s["guard"].grounded)
+            if problem is None:
+                return {"review": ReviewDecision(**decision)}
+            payload = {**payload, "error": problem}
 
     def finalise(s: MemoState) -> MemoState:
-        r = s["review"]
+        r, g = s["review"], s["guard"]
+        if g.grounded:
+            grounding = "passed"
+        elif r.approved:
+            grounding = "overridden by reviewer"
+        else:
+            grounding = "failed"
         stamp = (
-            f"\n\n---\nReviewed by {r.reviewer}: {'APPROVED' if r.approved else 'NOT APPROVED'}."
+            f"\n\n---\n{'APPROVED' if r.approved else 'NOT APPROVED'} by {r.reviewer}"
+            f" at {r.decided_at.strftime('%Y-%m-%d %H:%M UTC')}."
             + (f" Notes: {r.notes}" if r.notes else "")
-            + f"\nGrounding check: {'passed' if s['guard'].grounded else 'overridden'}"
-            f" ({s['guard'].numbers_checked} numbers checked, {len(s['guard'].unmatched)} unmatched)."
+            + f"\nGrounding check: {grounding} ({g.numbers_checked} numbers checked,"
+            f" {len(g.unmatched)} unmatched, {len(g.missing_citations)} missing citations)."
         )
         return {"final_memo": s["memo"] + stamp}
 

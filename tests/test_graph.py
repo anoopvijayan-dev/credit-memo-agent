@@ -26,8 +26,8 @@ def test_graph_stops_for_review_then_finalises(tmp_path):
     assert "## Recommendation" in payload["memo"]
     assert "final_memo" not in state
 
-    final = graph.invoke(Command(resume={"approved": True, "notes": "ok"}), cfg)
-    assert "APPROVED" in final["final_memo"]
+    final = graph.invoke(Command(resume={"approved": True, "reviewer": "A. Analyst", "notes": "ok"}), cfg)
+    assert "APPROVED by A. Analyst at " in final["final_memo"]
     assert "Grounding check: passed" in final["final_memo"]
 
 
@@ -35,7 +35,7 @@ def test_rejection_is_recorded(tmp_path):
     graph = build(FakeLLM())
     cfg = {"configurable": {"thread_id": "t-reject"}}
     graph.invoke({"statement_path": str(_statement(tmp_path))}, cfg)
-    final = graph.invoke(Command(resume={"approved": False, "notes": "want 24 months"}), cfg)
+    final = graph.invoke(Command(resume={"approved": False, "reviewer": "A. Analyst", "notes": "want 24 months"}), cfg)
     assert "NOT APPROVED" in final["final_memo"]
     assert "want 24 months" in final["final_memo"]
 
@@ -51,5 +51,69 @@ def test_hallucinating_model_is_caught_and_redrafted(tmp_path):
     assert payload["guard_grounded"] is False
     assert "£48,250" in payload["guard_unmatched"]
     assert state["redrafts"] == 2
-    final = graph.invoke(Command(resume={"approved": False}), cfg)
-    assert "Grounding check: overridden" in final["final_memo"]
+    final = graph.invoke(Command(resume={"approved": False, "reviewer": "A. Analyst"}), cfg)
+    assert "Grounding check: failed" in final["final_memo"]
+
+
+# --- C6: a named human approves (panel run 01, 6/6 seats; requirement R5) ---------
+
+import pytest  # noqa: E402
+
+
+def _stopped(tmp_path, llm=None, tid="t"):
+    graph = build(llm or FakeLLM())
+    cfg = {"configurable": {"thread_id": tid}}
+    state = graph.invoke({"statement_path": str(_statement(tmp_path))}, cfg)
+    return graph, cfg, state
+
+
+def _asked_again(state, match):
+    payload = state["__interrupt__"][0].value
+    assert "final_memo" not in state
+    assert match in payload["error"]
+
+
+def test_bare_boolean_resume_is_asked_again(tmp_path):
+    graph, cfg, _ = _stopped(tmp_path, tid="t-bool")
+    _asked_again(graph.invoke(Command(resume=True), cfg), "answer with")
+
+
+@pytest.mark.parametrize("decision", [{"approved": True}, {"approved": True, "reviewer": ""}])
+def test_approval_without_a_name_is_asked_again(tmp_path, decision):
+    graph, cfg, _ = _stopped(tmp_path, tid=f"t-noname-{len(decision)}")
+    _asked_again(graph.invoke(Command(resume=decision), cfg), "reviewer")
+
+
+def test_ungrounded_memo_needs_explicit_override_with_reason(tmp_path):
+    graph, cfg, _ = _stopped(tmp_path, FakeLLM(hallucinate=True), tid="t-override")
+    _asked_again(graph.invoke(Command(resume={"approved": True, "reviewer": "A. Analyst"}), cfg), "grounding")
+    _asked_again(
+        graph.invoke(Command(resume={"approved": True, "reviewer": "A. Analyst", "override_grounding": True}), cfg),
+        "grounding",
+    )
+    final = graph.invoke(
+        Command(resume={"approved": True, "reviewer": "A. Analyst", "override_grounding": True,
+                        "notes": "stock figure confirmed from management accounts"}),
+        cfg,
+    )
+    assert "Grounding check: overridden by reviewer" in final["final_memo"]
+    assert "stock figure confirmed" in final["final_memo"]
+    assert final["review"].reviewer == "A. Analyst"
+
+
+def test_reviewer_can_correct_after_a_refusal(tmp_path):
+    graph, cfg, _ = _stopped(tmp_path, tid="t-correct")
+    graph.invoke(Command(resume={"approved": True}), cfg)
+    final = graph.invoke(Command(resume={"approved": True, "reviewer": "A. Analyst"}), cfg)
+    assert "APPROVED by A. Analyst" in final["final_memo"]
+
+
+def test_reviewer_sees_missing_citations(tmp_path):
+    class Untagged(FakeLLM):
+        def complete(self, system, user):
+            return super().complete(system, user).replace(" [M2]", "", 1)
+
+    _, _, state = _stopped(tmp_path, Untagged(), tid="t-untagged")
+    payload = state["__interrupt__"][0].value
+    assert payload["guard_grounded"] is False
+    assert "M2" in payload["guard_missing_citations"]

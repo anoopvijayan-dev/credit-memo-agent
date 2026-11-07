@@ -29,8 +29,12 @@ pip install -e ".[dev]"
 # with a ground-truth file alongside it).
 cma generate --archetype cafe --profile stretched --out examples
 
-# Run the memo graph. It stops and asks you to approve.
+# Run the memo graph. It stops, asks your name, and asks you to approve.
 cma run examples/cafe_stretched.csv
+
+# Scripts can approve with --yes, but only with a named reviewer and only if
+# every figure passed the grounding check.
+cma run examples/cafe_stretched.csv --yes --reviewer "A. Analyst" --out memo.md
 
 # Use a real model instead of the offline one.
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
@@ -72,6 +76,16 @@ trades/good            refer   True      1.0    0        True
 
 Run `python evals/run_evals.py --llm anthropic` to measure a real model. The
 interesting numbers are grounding rate and redrafts, which is where models differ.
+
+## Independent review
+
+v0.1 was reviewed by a six-seat agent panel (reviewer, security, clean-code,
+platform, staff, data-intensive) run with [Bridgie](https://github.com/anoopvijayan-dev/bridge),
+each seat in a fresh context against written requirements. Verdict: **fail**, with
+17 consolidated issues; the report is in
+[`.bridgie/runs/v01-pilot-ready/panel.md`](.bridgie/runs/v01-pilot-ready/panel.md).
+The blocker and the five majors that broke the core promises (C1–C6) are fixed, each
+with regression tests taken from the seats' repros.
 
 ## Known limits (v0.1)
 

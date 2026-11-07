@@ -7,7 +7,7 @@ to the statement lines behind it.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from enum import Enum
 from typing import Literal
 
@@ -121,11 +121,18 @@ class GuardResult(BaseModel):
     @property
     def grounding_rate(self) -> float:
         if self.numbers_checked == 0:
-            return 1.0
-        return 1 - len(self.unmatched) / self.numbers_checked
+            return 0.0 if self.unmatched else 1.0
+        return max(0.0, 1 - len(self.unmatched) / self.numbers_checked)
 
 
 class ReviewDecision(BaseModel):
+    """A human decision on a memo. There is no default reviewer: someone must be named."""
+
     approved: bool
-    reviewer: str = "analyst"
+    reviewer: str = Field(min_length=1, description="Name of the person who decided.")
     notes: str = ""
+    decided_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    override_grounding: bool = Field(
+        default=False,
+        description="True when approving a memo the guard did not ground; requires notes.",
+    )

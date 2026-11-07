@@ -45,7 +45,7 @@ def main() -> int:
             cfg = {"configurable": {"thread_id": f"{archetype}-{profile}"}}
             t0 = time.perf_counter()
             state = graph.invoke({"statement_path": str(csv_path)}, cfg)
-            graph.invoke(Command(resume={"approved": True, "reviewer": "eval"}), cfg)
+            graph.invoke(Command(resume={"approved": state["guard"].grounded, "reviewer": "eval"}), cfg)
             m = {x.id: x for x in state["metrics"]}
             results.append(
                 {
