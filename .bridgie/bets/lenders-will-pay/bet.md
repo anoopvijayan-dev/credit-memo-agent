@@ -4,11 +4,16 @@ title: UK SME lenders and brokers will pay for a credit memo whose every figure 
 lane: product
 risk: none
 owner: Anoop Vijayan
-status: draft
+status: evidence
 confidence: opinion
 appetite: { time: 2w, tokens_usd: 20 }
-kill_criteria: ["fewer than 3 of 20 contacted brokers/lenders agree to a 30-minute look by 2026-12-19", "no one names a price or a budget owner after seeing the demo"]
-non_goals: ["selling to banks", "replacing the lender's credit decision", "building a SaaS UI before a paid pilot"]
+kill_criteria:
+  - fewer than 3 of 20 contacted brokers/lenders agree to a 30-minute look by 2026-12-19
+  - no one names a price or a budget owner after seeing the demo
+non_goals:
+  - selling to banks
+  - "replacing the lender's credit decision"
+  - building a SaaS UI before a paid pilot
 created: 2026-11-07
 ---
 
@@ -37,6 +42,13 @@ By 2026-12-19: 20 named brokers/lenders contacted; at least 5 take a 30-minute l
 ## Open questions
 
 Raised by the grill.
+- D1: Problem in their words: no buyer has said it yet. Run the 'last memo you wrote' interview with 5 analysts or brokers (time spent, errors caught, what compliance or the credit committee asked) before showing any demo, so the answers aren't led. Which pain do they actually name first, unprompted?
+- D2: Which buyer? The bet says brokers often forward raw statements to lenders, so many brokers may not spread at all, and lenders may re-spread whatever a broker sends because a broker pack is a sales document. Separately: what is the ~1,400 'still by hand' firms figure? Is it a count of firms observed spreading by hand, or roughly the NACFB membership size? Settle this by pulling the BridgeTrade notes and asking 3 brokers what they send and whether the lender redoes it.
+- D3: What they do today, and why it's tolerable: a 10–50 person non-bank lender may already get categorised transactions from an open-banking or accounts vendor (e.g. Codat, Experian, Validis, Ocrolus) or from its loan-origination system, leaving only the memo, which is the analyst's judgement and the part they least want to hand over. Find out with a stack question in each interview.
+- D4: Who actually demands traceability? 'Compliance asks where a figure came from' assumes a regulator, funder or auditor who checks. Much limited-company SME lending is outside FCA regulation, so the pressure may come from warehouse funders, British Business Bank guarantee-scheme audits, or credit committees. That is a different buyer and a different pitch. Ask each head of credit for their last audit or funder finding on credit files.
+- D5: Why now, and does it survive a reversal? The differentiator answers LLM-invented figures, but that only matters to lenders who are using LLMs on memos. If they aren't, the problem isn't theirs yet. If incumbents ship cited memos (Plaid has just launched LendScore 2), the edge goes. Answer with a source search plus one interview question: 'Have you tried an AI tool on memos, and what went wrong?'
+- D6: Is the outcome metric readable and calibrated? 'Agree to a 30-minute look' measures curiosity. A price band named after a free demo costs the person nothing. The 3-of-20 threshold has no baseline: pull the reply rate from the BridgeTrade 2026 outreach log. The appetite is 2 weeks but the window runs 6 weeks to 19 Dec, and kill criterion 2 has no date. What should count as the signal?
+- D7: Can the owner run this test now? The build plan records an employment IP clause and an employer in merchant-funding risk. Selling to UK SME lenders and MCA providers while employed may hit conflict-of-interest, non-solicit or IP terms. Running real statements, even anonymised ones from sole traders, needs a data-protection basis. Read the actual contract clauses and draft the data-protection terms; memory doesn't count here.
 
 ## Evidence tasks
 
