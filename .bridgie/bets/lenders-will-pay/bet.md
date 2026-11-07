@@ -1,7 +1,7 @@
 ---
 id: lenders-will-pay
 title: UK SME lenders and brokers will pay for a credit memo whose every figure is cited and human-approved
-lane: engineering
+lane: product
 risk: none
 owner: Claude
 status: draft
