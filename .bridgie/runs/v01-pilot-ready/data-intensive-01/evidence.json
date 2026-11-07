@@ -1,0 +1,232 @@
+{
+  "task": "v01-pilot-ready",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "Read metrics.py end to end; probed zero-debt statement (12 card credits, no loan lines). Verified float sums are exact: 2700 comparisons of M2/M8/M9/M11/M12 against Decimal sums of the CSV strings across 60 seeds x 9 cases gave worst abs diff 0.0 after round(.,2); adversarial 5000 x 0.10 + 1e9 also exact. But M10 is set to the constant 99.0 when debt_service == 0, a figure computed from nothing on the statement.",
+      "result": "fail",
+      "artifact": "src/cma/metrics.py:98"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "Compared len(evidence) with the number of lines each metric sums over, for all three archetypes at profile stretched. M9 evidence capped at 200 of 362 operating lines (cafe), 200 of 205 (ecommerce); M6 capped at 50 of 291 overdrawn lines (cafe), 50 of 54 (trades). The figure cannot be recomputed from its cited lines.",
+      "result": "fail",
+      "artifact": "src/cma/metrics.py:89"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "Wrapped FakeLLM to capture the user prompt from graph.draft on examples/cafe_stretched.csv. Prompt contained no transaction ids ('T00' absent) and no descriptions ('CARD ACQUIRER' absent); only account name (file stem), period, metrics table and policy rules.",
+      "result": "pass",
+      "artifact": "src/cma/graph.py:87"
+    },
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Redraft loop verified by test_hallucinating_model_is_caught_and_redrafted (redrafts==2, interrupt payload guard_grounded False). But the guard itself lets invented figures through: '2.75x' and '1.25x' checked as plain integers 2 and 1 (grounded=True); '£48k' produces no NUMBER match at all; '£2,050' skipped as a year. So an ungrounded memo can reach finalise marked 'passed'.",
+      "result": "fail",
+      "artifact": "src/cma/guard.py:16"
+    },
+    {
+      "id": "R5",
+      "tier": "adversarial",
+      "check": "Graph: no final_memo before resume; re-invoking the same thread while awaiting review re-raises the interrupt; resume={} re-interrupts instead of finalising. But the CLI interactive path never sets reviewer, so the recorded identity is the model default 'analyst' (confirmed: resume={'approved': False} -> 'Reviewed by analyst').",
+      "result": "fail",
+      "artifact": "src/cma/cli.py:70"
+    },
+    {
+      "id": "R6",
+      "tier": "adversarial",
+      "check": "Rules are ordered and deterministic (categorise.py:14-35) and an unmatched credit returns OTHER. But description-only rules match credits: 'IWOCA LOAN ADVANCE' +25000 -> loan_repayment, 'RENT RECEIVED FLAT 2' +800 -> rent, 'DIVIDEND BT GROUP PLC' +120 -> owner_drawings. A drawdown credit makes M8 debt service negative (-6200) and M10 -1.94.",
+      "result": "fail",
+      "artifact": "src/cma/categorise.py:21"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "policy/uk_sme_default.yaml holds seven rules with op/threshold/on_fail/refer bands; policy.evaluate reads them generically (OPS table, RuleOutcome(rule['on_fail'])). No thresholds in code or prompts (grep SYSTEM_PROMPT: none).",
+      "result": "pass",
+      "artifact": "src/cma/policy.py:21"
+    },
+    {
+      "id": "R8",
+      "tier": "adversarial",
+      "check": "Listed every distinct description across examples/*.csv and evals/results/statements/*.csv (38 strings): synthetic company names, HMRC, generic bank narrative. Grepped for 8-digit account numbers, sort-code patterns and '@': none. Customer names come from the fixed CUSTOMER_NAMES list in synth.py.",
+      "result": "pass",
+      "artifact": "src/cma/synth.py:68"
+    },
+    {
+      "id": "R9",
+      "tier": "adversarial",
+      "check": "Fed load_csv nine malformed variants of examples/cafe_stretched.csv. Duplicate id: loaded, M2 +780.02, by_id() shrinks to 386 of 387. Corrupt balance -999999: loaded, M5 = -999999.0, M6 +1. Missing column: bare KeyError 'balance'. UK bank export header: KeyError 'id'. Bad date / non-numeric amount / empty amount: raw ValueError with no row context. Only the header-only case gives a clear message.",
+      "result": "fail",
+      "artifact": "src/cma/ingest.py:19"
+    },
+    {
+      "id": "R10",
+      "tier": "adversarial",
+      "check": "ci.yml runs pytest and evals/run_evals.py --llm fake; no secrets referenced. llm.py imports anthropic/openai lazily inside constructors. Ran pytest -q locally without keys: 38 passed.",
+      "result": "pass",
+      "artifact": ".github/workflows/ci.yml:24"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "Ran the P1 comparison (M2, M5, M6, M7, M8, M11, M12 vs Truth) over 60 seeds x 9 cases = 540 statements. 5 mismatches, all M5 on trades/good (seeds 1, 6, 9, 53, 57), e.g. seed 1: metric 17327.55 vs truth 14000.0. Cause: synth seeds `lowest` with the opening balance, which never appears as a statement line; metrics takes min over lines. The committed test only runs seed 7, where it happens not to bite.",
+      "result": "fail",
+      "artifact": "src/cma/synth.py:214"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "Property probed directly with guard.check: '£2,050' skipped (2000-2099 treated as years regardless of £); '2.75x' matched as '2' (plain int, allowed); '£48k' not matched at all; '£9.5k' flags '£9'. Numbers not derivable from any metric pass the guard.",
+      "result": "fail",
+      "artifact": "src/cma/guard.py:57"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "blocker",
+      "file": "src/cma/guard.py",
+      "line": 16,
+      "criterion": "P2",
+      "claim": "NUMBER's trailing lookahead (?![A-Za-z\\d]) makes any number followed by a unit letter either invisible or truncated to its leading digits. '2.75x' is checked as the plain integer 2 and passes; '£48k' yields no match; '1.42x [M10]' is 'grounded' without the value ever being compared. Real models write DSCR as '1.42x' and amounts as '£48k', so invented money figures reach the final memo stamped 'Grounding check: passed'.",
+      "repro": "PYTHONPATH=src python3 -c \"from cma import guard; from cma.models import Metric; ms=[Metric(id='M10',name='c',value=1.42,unit='ratio',method='x')]; print(guard.check('Debt service cover is 2.75x, above 1.25x. Stock is worth £48k.', ms))\"  -> numbers_checked=2 unmatched=[] missing_citations=[] (grounded). Also: [m.group(0) for m in guard.NUMBER.finditer('2.75x and £48k')] == ['2'].",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/guard.py",
+      "line": 57,
+      "criterion": "P2",
+      "claim": "`value in YEARS` skips every number from 2000 to 2099 before the £/% check, so any invented amount between £2,000 and £2,099 (or 2000-2099 of anything) is never checked. P2 only exempts four-digit years, not currency amounts.",
+      "repro": "PYTHONPATH=src python3 -c \"from cma import guard; print(guard.check('Rent is £2,400 and the overdraft limit is £2,050.', []))\" -> numbers_checked=1 unmatched=['£2,400'] : '£2,050' is silently skipped.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 98,
+      "criterion": "R1",
+      "claim": "When debt_service is 0 (no loan lines, or a debt-free business) M10 is set to the literal 99.0. That figure is not computed from the statement, is displayed as 'Debt service cover 99.00' in the metrics table, is quoted by the memo with a [M10] tag, and makes policy R2 pass. It is a hard-coded invented number in the money path. Also occurs with negative operating cash flow (M9 = -38000 still gives M10 = 99.0).",
+      "repro": "PYTHONPATH=src python3 -c \"from datetime import date; from cma import categorise, metrics, policy; from cma.models import Statement, Transaction; s=Statement(account_name='x',transactions=[Transaction(id=f'T{i}',date=date(2025,1+i,5),description='CARD ACQUIRER SETTLEMENT',amount=1000.0,balance=1000.0*(i+1)) for i in range(12)]); m={x.id:x for x in metrics.compute(categorise.categorise(s))}; print(m['M8'].value, m['M10'].value, m['M10'].evidence); print([r.detail for r in policy.evaluate(list(m.values())).rules if r.rule_id=='R2'])\" -> 0.0 99.0 [] ; 'Debt service cover is 99.00; rule requires >= 1.25.' (pass)",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 21,
+      "criterion": "R6",
+      "claim": "Rules test description only, not sign, so credits are matched by debit-oriented rules instead of falling to OTHER. A loan drawdown credit ('IWOCA LOAN ADVANCE' +25000) becomes loan_repayment, making M8 debt service negative (-6200 with 12 x 1150 repayments) and M10 -1.94, so policy R2 fails for the wrong reason. 'RENT RECEIVED' credits become rent, 'DIVIDEND ... PLC' credits become owner_drawings. A pilot statement with a facility drawdown in-period is the normal case for a lender.",
+      "repro": "PYTHONPATH=src python3 -c \"from datetime import date; from cma.categorise import categorise_one; from cma.models import Transaction; print([categorise_one(Transaction(id='x',date=date(2025,1,1),description=d,amount=a,balance=0)).value for d,a in [('IWOCA LOAN ADVANCE',25000.0),('RENT RECEIVED FLAT 2',800.0),('DIVIDEND BT GROUP PLC',120.0)]])\" -> ['loan_repayment', 'rent', 'owner_drawings']. Then add the drawdown plus 12 repayments to a 12-credit statement: metrics M8 = -6200.0, M10 = -1.94, R2 fail.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 57,
+      "criterion": "R1",
+      "claim": "Counterparty key for M15 is `description.split()[2:5]`, i.e. a fixed word window. Two-word payers absorb the invoice number ('T WHITTAKER INV1234' is a new counterparty per invoice) and four-word payers are truncated ('J & L CARTER' and 'J & L SMITH' collapse to 'J & L'). Concentration is understated or overstated arbitrarily: a single payer across 12 invoices reports 8.3% instead of 100%, so policy R7 passes a fully concentrated book.",
+      "repro": "PYTHONPATH=src python3 -c \"from datetime import date; from cma import categorise, metrics; from cma.models import Statement, Transaction; s=Statement(account_name='x',transactions=[Transaction(id=f'T{i}',date=date(2025,1+i,5),description=f'FPS CREDIT T WHITTAKER INV{1000+i}',amount=1000.0,balance=0) for i in range(12)]); print({m.id:m.value for m in metrics.compute(categorise.categorise(s))}['M15'])\" -> 8.3 (expected 100.0). Same with 'J & L CARTER' x12 + 'J & L SMITH' x12 -> 100.0 (expected 50.0). synth trades/good shows keys 'OAKFIELD PROPERTIES INV2162', 'OAKFIELD PROPERTIES INV2645', 'J & L'.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 89,
+      "criterion": "R2",
+      "claim": "Evidence lists are truncated: M6 `[:50]` (line 89), M9 `[:200]` (line 97), M15 `[:200]` (line 112). On the committed cafe statements M9 cites 200 of 362 lines and M6 cites 50 of 291, so neither figure can be reproduced from its cited transactions; a compliance reviewer following the ids would get a different total.",
+      "repro": "PYTHONPATH=src python3 -c \"from cma import ingest, categorise, metrics; s=categorise.categorise(ingest.load_csv('examples/cafe_stretched.csv')); m={x.id:x for x in metrics.compute(s)}; print(len(m['M9'].evidence), sum(1 for t in s.transactions if t.category.value not in ('loan_repayment','owner_drawings')), len(m['M6'].evidence), sum(1 for t in s.transactions if t.balance<0))\" -> 200 362 50 291",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 19,
+      "criterion": "R9",
+      "claim": "load_csv performs no validation of id uniqueness. A duplicated row (same id) is loaded, double-counted in every sum (M2 +780.02, M9 +780.02 on cafe_stretched), while Statement.by_id() silently keeps only the last, so evidence ids no longer map one-to-one to lines and mcp_server.transactions_for returns one line for two cited ids.",
+      "repro": "Append a verbatim copy of row 10 of examples/cafe_stretched.csv to a temp CSV and run: PYTHONPATH=src python3 -c \"from cma import ingest, categorise, metrics; s=ingest.load_csv('dup.csv'); print(len(s.transactions), len(s.by_id())); m={x.id:x for x in metrics.compute(categorise.categorise(s))}; print(m['M2'].value)\" -> 387 386 ; 266148.89 (baseline 265368.87). No error raised.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 28,
+      "criterion": "R9",
+      "claim": "The running balance column is read as-is and never reconciled against the amounts, so a corrupted or misaligned balance (opening-balance convention, wrong column, bad export) drives M5, M6 and policy R4 with no error. One corrupted cell gave M5 = -999999.0 and M6 +1.",
+      "repro": "Set the balance of row 51 of examples/cafe_stretched.csv to -999999.00 in a temp CSV: PYTHONPATH=src python3 -c \"from cma import ingest, categorise, metrics; m={x.id:x for x in metrics.compute(categorise.categorise(ingest.load_csv('badbal.csv')))}; print(m['M5'].value, m['M6'].value)\" -> -999999.0 218.0 (baseline -30121.84 217.0). A reconciliation `round(prev_balance + amount, 2) == balance` would have caught it; synth.py already guarantees that invariant on its output.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/synth.py",
+      "line": 214,
+      "criterion": "P1",
+      "claim": "P1 as stated is false. synth seeds `lowest` with the opening balance (line 214), which is never emitted as a statement line, while metrics.compute takes the minimum over lines (metrics.py:36). On trades/good the balance never dips below opening, so truth.lowest_balance = 14000.0 but M5 is the first line's balance. tests/test_metrics.py:16 only runs seed 7 and the default end date, so the suite passes by luck.",
+      "repro": "PYTHONPATH=src python3 -c \"from datetime import date; from cma import synth, categorise, metrics; from cma.models import Statement, Transaction; rows,t=synth.generate('trades','good',seed=1,end=date(2026,9,30)); s=Statement(account_name='x',transactions=[Transaction(id=r['id'],date=date.fromisoformat(r['date']),description=r['description'],amount=float(r['amount']),balance=float(r['balance'])) for r in rows]); print({m.id:m.value for m in metrics.compute(categorise.categorise(s))}['M5'], t.lowest_balance)\" -> 17327.55 14000.0. Over seeds 0-59 x 9 cases: 5 mismatches (seeds 1, 6, 9, 53, 57), all M5 trades/good.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 70,
+      "criterion": "R5",
+      "claim": "The interactive review path builds the decision as {'approved': ..., 'notes': ...} with no reviewer, so ReviewDecision falls back to the default 'analyst' (models.py:129) and the final memo is stamped 'Reviewed by analyst'. The pilot's recorded decision carries no reviewer identity.",
+      "repro": "PYTHONPATH=src python3 -c \"from langgraph.types import Command; from cma.graph import build; from cma.llm import FakeLLM; g=build(FakeLLM()); c={'configurable':{'thread_id':'r'}}; g.invoke({'statement_path':'examples/cafe_stretched.csv'},c); f=g.invoke(Command(resume={'approved':False,'notes':'x'}),c); print(f['review'].reviewer, f['final_memo'].splitlines()[-2])\" -> analyst ; 'Reviewed by analyst: NOT APPROVED. Notes: x'",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 24,
+      "criterion": "R1",
+      "claim": "`months` is the set of months with at least one transaction, so a dormant month inside the period is dropped: M1 reports 11 for a 12-calendar-month statement and M3 (total / len(months)) is inflated (24696.80 vs 24187.43 on cafe/good with February removed). The prompt's 'Period: 2025-10-01 to 2026-09-30' and M1 = 11 then contradict each other in front of the model.",
+      "repro": "PYTHONPATH=src python3 -c \"from datetime import date; from cma import synth, categorise, metrics; from cma.models import Statement, Transaction; rows,_=synth.generate('cafe','good',end=date(2026,9,30)); mk=lambda rs: {m.id:m.value for m in metrics.compute(categorise.categorise(Statement(account_name='x',transactions=[Transaction(id=r['id'],date=date.fromisoformat(r['date']),description=r['description'],amount=float(r['amount']),balance=float(r['balance'])) for r in rs])))}; a=mk(rows); b=mk([r for r in rows if not r['date'].startswith('2026-02')]); print(a['M1'],a['M3'],b['M1'],b['M3'])\" -> 12.0 24187.43 11.0 24696.8",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 34,
+      "criterion": "R1",
+      "claim": "When the first three months have zero revenue, trend is reported as 0.0% (a real figure the memo will quote with [M4]) rather than undefined, and policy R6 passes. Also with fewer than six months first3 and last3 overlap, so a 3-month statement always reports exactly 0.0%.",
+      "repro": "Strip all CARD lines dated before 2026-01-01 from synth cafe/good (end 2026-09-30) and compute: M4 = 0.0, R6 = pass. Restrict to rows >= 2026-07-01: M1 = 3.0, M4 = 0.0.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 37,
+      "criterion": "R1",
+      "claim": "M6 counts a day as overdrawn if any line that day has balance < 0, but the published method (line 88) says 'closing balance was below zero'. Intraday dips that are covered by end of day are counted. Ordering within a day is by id string (ingest.py:32), so the closing line is not identifiable anyway.",
+      "repro": "Code reading: `overdrawn_days = {t.date for t in txns if t.balance < 0}` vs method text at line 88. Two lines on one date with balances -100.0 then +400.0 add that date to the set.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 24,
+      "criterion": "R9",
+      "claim": "Schema errors surface as raw Python exceptions with no row or column context: a missing column is `KeyError: 'balance'`, a typical UK bank export (Date, Description, Paid out, Paid in, Balance) is `KeyError: 'id'`, a dd/mm/yyyy date is `ValueError: Invalid isoformat string: '03/10/2025'`, '£1,200.00' is `could not convert string to float`. The system does fail, but not with the clear error R9 asks for.",
+      "repro": "Remove the balance column from examples/cafe_stretched.csv and call ingest.load_csv -> KeyError: 'balance'. Write a one-row CSV with header 'Date,Description,Paid out,Paid in,Balance' -> KeyError: 'id'.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 33,
+      "criterion": "R3",
+      "claim": "account_name defaults to the CSV file stem and is placed verbatim in the model prompt (graph.py:93 'Account: ...'). A lender's anonymised statement named after the borrower or an account number leaks that string to the LLM provider.",
+      "repro": "Captured graph.draft prompt on examples/cafe_stretched.csv begins 'Account: cafe_stretched'. Rename the file to 'ACME_LTD_12345678.csv' and the first prompt line becomes 'Account: ACME_LTD_12345678'.",
+      "disposition": null
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "build/shaper:data-intensive",
+    "adapter": "claude-session",
+    "model": "claude-fable-5-1"
+  }
+}

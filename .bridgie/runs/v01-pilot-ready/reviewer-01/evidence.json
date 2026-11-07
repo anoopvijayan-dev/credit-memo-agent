@@ -1,0 +1,232 @@
+{
+  "task": "v01-pilot-ready",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "Read metrics.py end to end; confirmed every memo figure originates from compute() and the draft node (graph.py:87-100) passes only as_table() output plus policy result. FakeLLM/AnthropicLLM/OpenAILLM only emit prose. One sentinel (M10=99.0 when no debt) is a hard-coded figure rather than a computed one; filed as minor.",
+      "result": "pass",
+      "artifact": "src/cma/metrics.py:19"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "Read Metric.evidence construction. M6 evidence is sliced [:50], M9 and M15 [:200]; probe on all nine synthetic cases shows cafe/* M9 carries 200 of 360-368 operating ids and M6 carries 50 of 291 overdrawn lines. M1 carries no evidence at all.",
+      "result": "fail",
+      "artifact": "src/cma/metrics.py:97"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "Read draft(): user prompt is account name, period, metrics table, policy outcome and rule lines only. No transaction field reaches the model. (mcp_server.transactions_for exposes raw lines to an MCP client, but that is outside the memo graph.)",
+      "result": "pass",
+      "artifact": "src/cma/graph.py:92"
+    },
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Probed guard.check with invented figures. '3.7x', '£48k', '12mo' are never matched (NUMBER lookahead rejects a trailing letter); '£2,024'/'£2,050'/'2,050%' are skipped as years. Both pass as grounded. Redraft loop and not-grounded flag at review verified in graph.py:111-131.",
+      "result": "fail",
+      "artifact": "src/cma/guard.py:16"
+    },
+    {
+      "id": "R5",
+      "tier": "adversarial",
+      "check": "Probe: Command(resume=True) finalises with reviewer='analyst' (pydantic default). CLI interactive path never asks for a reviewer name; --yes approves with no human. A rejected review still yields final_memo and is written to --out.",
+      "result": "fail",
+      "artifact": "src/cma/graph.py:129"
+    },
+    {
+      "id": "R6",
+      "tier": "adversarial",
+      "check": "Ordered regex RULES, first match wins; unmatched credit returns OTHER, unmatched debit SUPPLIER. Literal clauses hold. Rules are sign-blind so a loan drawdown credit becomes LOAN_REPAYMENT and a supplier debit with an INV ref becomes REVENUE_TRANSFER; filed separately as a major.",
+      "result": "pass",
+      "artifact": "src/cma/categorise.py:33"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "policy.evaluate reads rules, ops, thresholds, on_fail and refer bands from YAML; no thresholds in code or prompt. uk_sme_default.yaml holds seven rules with pass/refer/fail.",
+      "result": "pass",
+      "artifact": "src/cma/policy.py:25"
+    },
+    {
+      "id": "R8",
+      "tier": "adversarial",
+      "check": "Read synth.py counterparty lists and all committed CSVs' headers; grepped src/tests/examples/evals/policy/docs for sort-code, 8-digit account-number and api-key patterns: no hits. All statements are generator output with .truth.json alongside.",
+      "result": "pass",
+      "artifact": "src/cma/synth.py:23"
+    },
+    {
+      "id": "R9",
+      "tier": "adversarial",
+      "check": "Fed load_csv duplicate ids, a balance column inconsistent with amounts, 'nan' and 'inf' amounts: all accepted and metrics computed (M2=nan, M5=-9999999). Missing column raises a bare KeyError. Only bad dates and non-numeric text fail.",
+      "result": "fail",
+      "artifact": "src/cma/ingest.py:22"
+    },
+    {
+      "id": "R10",
+      "tier": "adversarial",
+      "check": "ci.yml runs ruff, pytest and evals/run_evals.py --llm fake; get_llm defaults to FakeLLM; no secret referenced. Ran locally: 38 passed, ruff clean, cma.mcp_server imports.",
+      "result": "pass",
+      "artifact": ".github/workflows/ci.yml:21"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "Swept 675 generated statements (3 archetypes x 3 profiles x 25 seeds x months 6/12/18). 670 agree. 5 trades/good cases (seeds 1,6,9,16) disagree on M5: truth.lowest_balance returns the opening balance (14000.0) while metrics returns the lowest post-transaction balance. Shipped tests use seed 7 only.",
+      "result": "fail",
+      "artifact": "src/cma/synth.py:214"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "Counterexamples found: '£2,050' (year-shaped with £) and '£48k', '3.7x' (letter suffix) are not flagged. '£264.3 [M2]' is accepted via the /1000 variant although it is not a rounding of 264312.5.",
+      "result": "fail",
+      "artifact": "src/cma/guard.py:57"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "blocker",
+      "file": "src/cma/guard.py",
+      "line": 16,
+      "criterion": "R4",
+      "claim": "NUMBER ends with (?![A-Za-z\\d]), so any figure immediately followed by a letter is either skipped entirely or truncated to its leading integer. 'cover of 3.7x', '£48k', '£1.2m', '12mo' pass the guard; the 'x' suffix is the standard way DSCR is written, so an invented ratio will reach the analyst marked grounded.",
+      "repro": "PYTHONPATH=src python3 -c \"from cma import guard; from cma.models import Metric; ms=[Metric(id='M10',name='DSCR',value=1.42,unit='ratio',method='x'),Metric(id='M2',name='Rev',value=264312.5,unit='GBP',method='x')]; print(guard.check('Debt service cover is 3.7x. Stock is worth £48k.', ms))\" -> numbers_checked=1 unmatched=[] grounded=True",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/guard.py",
+      "line": 57,
+      "criterion": "P2",
+      "claim": "'value in YEARS' skips every value 2000-2099 regardless of a £ or % sign, so any monetary figure between £2,000 and £2,099 (or a percentage in that range) is never checked. P2 exempts only bare four-digit years. Lowest balances, VAT payments and loan instalments in this range are common.",
+      "repro": "PYTHONPATH=src python3 -c \"from cma import guard; from cma.models import Metric; print(guard.check('The overdraft should be £2,050 and growth was 2,050%.', [Metric(id='M2',name='Rev',value=264312.5,unit='GBP',method='x')]))\" -> numbers_checked=0 grounded=True",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 97,
+      "criterion": "R2",
+      "claim": "Evidence lists are truncated: M9 [:200] (line 97), M6 [:50] (line 89), M15 [:200] (line 112). On the committed examples/cafe_stretched.csv M9 is computed from 362 operating lines but cites 200, and M6 counts 217 days from 291 overdrawn lines but cites 50. The figure cannot be reconciled to statement lines, which is the bet's selling point. M1 cites nothing (line 75).",
+      "repro": "PYTHONPATH=src python3 -c \"from pathlib import Path; from cma import ingest,categorise,metrics; from cma.models import Category; s=categorise.categorise(ingest.load_csv(Path('examples/cafe_stretched.csv'))); m={x.id:x for x in metrics.compute(s)}; print(len(m['M9'].evidence), len([t for t in s.transactions if t.category not in {Category.LOAN_REPAYMENT,Category.OWNER_DRAWINGS}]), len(m['M6'].evidence), len([t for t in s.transactions if t.balance<0]))\" -> 200 362 50 291",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 22,
+      "criterion": "R9",
+      "claim": "load_csv performs no validation beyond float()/fromisoformat(): duplicate ids, balances that do not follow from amounts, and 'nan'/'inf' amounts are accepted and flow into metrics (M2=nan). Duplicate ids also break R2 traceability because Statement.by_id() silently keeps the last row. A missing column raises a bare KeyError rather than a clear error.",
+      "repro": "printf 'id,date,description,amount,balance\\nT1,2026-01-05,CARD ACQUIRER SETTLEMENT,nan,1000.00\\nT1,2026-01-06,CARD ACQUIRER SETTLEMENT,2000.00,-9999999.00\\n' > /tmp/bad.csv; PYTHONPATH=src python3 -c \"from pathlib import Path; from cma import ingest,categorise,metrics; s=categorise.categorise(ingest.load_csv(Path('/tmp/bad.csv'))); print([ (m.id,m.value) for m in metrics.compute(s) if m.id in ('M2','M5')])\" -> [('M2', nan), ('M5', -9999999.0)] with no error",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 21,
+      "criterion": null,
+      "claim": "Rules ignore the sign of the amount. A loan drawdown credit matching \\bLOAN\\b is categorised LOAN_REPAYMENT, so metrics.py:49 debt_service goes negative and M10 flips sign; policy R2 then FAILs a borrower whose true cover is 7.9x. Likewise a supplier debit carrying an INVnnnn reference (line 24) is counted as REVENUE_TRANSFER and reduces M2, and an 'HMRC VAT' refund credit (line 17) reduces M12.",
+      "repro": "printf 'id,date,description,amount,balance\\nT1,2026-01-05,CARD ACQUIRER SETTLEMENT,30000.00,30000.00\\nT2,2026-01-06,LOAN ADVANCE GROWTHCAP,50000.00,80000.00\\nT3,2026-02-06,DD GROWTHCAP LOAN,-1900.00,78100.00\\nT4,2026-03-06,DD GROWTHCAP LOAN,-1900.00,76200.00\\n' > /tmp/loan.csv; PYTHONPATH=src python3 -c \"from pathlib import Path; from cma import ingest,categorise,metrics,policy; s=categorise.categorise(ingest.load_csv(Path('/tmp/loan.csv'))); ms=metrics.compute(s); print({m.id:m.value for m in ms if m.id in ('M8','M10')}, policy.evaluate(ms).overall)\" -> {'M8': -46200.0, 'M10': -0.65} RuleOutcome.FAIL",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 57,
+      "criterion": null,
+      "claim": "Counterparty key for M15 is description words [2:5], which assumes 'FPS CREDIT <three-word name>'. Two-word payers absorb the invoice reference into the key and are split into one bucket per payment; concentration is understated and policy R7 can pass when it should refer. This fails on the project's own synthetic payers (T WHITTAKER, OAKFIELD PROPERTIES) and will fail on any real bank's narrative format.",
+      "repro": "PYTHONPATH=src python3 -c \"from datetime import date; from collections import defaultdict; import tempfile,pathlib; from cma import synth,ingest,categorise,metrics; from cma.models import Category; tmp=pathlib.Path(tempfile.mkdtemp()); rows,truth=synth.generate('trades','stretched',seed=20,end=date(2026,9,30)); csv,_=synth.write(rows,truth,tmp); s=categorise.categorise(ingest.load_csv(csv)); m={x.id:x for x in metrics.compute(s)}; by=defaultdict(float); [by.__setitem__(' '.join(t.description.split()[2:-1]), by[' '.join(t.description.split()[2:-1])]+t.amount) for t in s.transactions if t.category==Category.REVENUE_TRANSFER]; print(m['M15'].value, round(max(by.values())/sum(by.values())*100,1))\" -> 11.8 25.3",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 129,
+      "criterion": "R5",
+      "claim": "review() accepts a bare bool or any dict and builds ReviewDecision from it; reviewer defaults to the string 'analyst' (models.py:129). The CLI interactive path (cli.py:68-70) never asks who is approving. The final memo is therefore stamped 'Reviewed by analyst' with no identity recorded, contradicting ADR 001 point 5 and README ('resumes only with a recorded decision').",
+      "repro": "PYTHONPATH=src python3 -c \"import tempfile,pathlib; from datetime import date; from langgraph.types import Command; from cma import synth; from cma.graph import build; from cma.llm import FakeLLM; tmp=pathlib.Path(tempfile.mkdtemp()); rows,t=synth.generate('cafe','stretched',end=date(2026,9,30)); csv,_=synth.write(rows,t,tmp); g=build(FakeLLM()); cfg={'configurable':{'thread_id':'a'}}; g.invoke({'statement_path':str(csv)},cfg); f=g.invoke(Command(resume=True),cfg); print(f['review'], f['final_memo'][-90:])\" -> approved=True reviewer='analyst' notes='' ... Reviewed by analyst: APPROVED.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 66,
+      "criterion": "R5",
+      "claim": "--yes finalises an APPROVED memo with no human in the loop (reviewer string 'cli --yes'). The committed examples/cafe_stretched.memo.md, presented in the README as the reference output, carries 'Reviewed by cli --yes: APPROVED', so the shipped proof of the human gate is a memo that bypassed it.",
+      "repro": "PYTHONPATH=src python3 -m cma.cli run examples/cafe_stretched.csv --yes --out /tmp/m.md && tail -3 /tmp/m.md -> 'Reviewed by cli --yes: APPROVED.' ; see examples/cafe_stretched.memo.md last lines",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 141,
+      "criterion": "R5",
+      "claim": "finalise() always emits final_memo, including when review.approved is False; cli.py:73-74 then writes the rejected memo to --out. A declined memo exists on disk as 'the final memo' with only a trailing NOT APPROVED stamp distinguishing it.",
+      "repro": "Resume the graph with Command(resume={'approved': False}) after the interrupt (probe above); final state contains final_memo ending 'Reviewed by analyst: NOT APPROVED.'; tests/test_graph.py::test_rejection_is_recorded asserts this behaviour.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/synth.py",
+      "line": 214,
+      "criterion": "P1",
+      "claim": "Truth.lowest_balance is seeded with the opening balance before any transaction, while metrics.py:36 takes the minimum over transaction balances. When the account never dips below its opening balance the two disagree, so P1 does not hold for all seeds; tests and CI evals pass only because they fix seed 7.",
+      "repro": "PYTHONPATH=src python3 -c \"from datetime import date; import tempfile,pathlib; from cma import synth,ingest,categorise,metrics; tmp=pathlib.Path(tempfile.mkdtemp()); rows,t=synth.generate('trades','good',seed=1,end=date(2026,9,30)); csv,_=synth.write(rows,t,tmp); s=categorise.categorise(ingest.load_csv(csv)); print([m.value for m in metrics.compute(s) if m.id=='M5'], t.lowest_balance)\" -> [17327.55] 14000.0",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 98,
+      "criterion": "R1",
+      "claim": "When there is no debt service M10 is set to the literal 99.0 and displayed as '99.00'; the FakeLLM template and any model will write 'debt service cover of 99.00 [M10]' into the memo. That is a sentinel, not a computed figure, and a reader of the memo cannot tell.",
+      "repro": "Load a CSV with no LOAN/FINANCE lines (e.g. /tmp/bad.csv from the R9 repro) and run metrics.compute: M10.value == 99.0, M10.display() == '99.00'.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 37,
+      "criterion": null,
+      "claim": "M6 counts any day on which any line's running balance was negative, but its method string (line 88) says 'closing balance was below zero'. A day that dips negative intraday and closes positive is counted as overdrawn; policy R4 (fewer than fifteen days overdrawn) keys off this.",
+      "repro": "printf 'id,date,description,amount,balance\\nT1,2026-01-05,SO RENT PARKGATE,-2400.00,-400.00\\nT2,2026-01-05,CARD ACQUIRER SETTLEMENT,3000.00,2600.00\\n' > /tmp/d.csv; PYTHONPATH=src python3 -c \"from pathlib import Path; from cma import ingest,categorise,metrics; s=categorise.categorise(ingest.load_csv(Path('/tmp/d.csv'))); print([m.value for m in metrics.compute(s) if m.id=='M6'])\" -> [1.0] although the day closed at +2600",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/guard.py",
+      "line": 31,
+      "criterion": "R4",
+      "claim": "The round(value/1000, 1) variant intended for '£22.4k' is keyed on the bare number, so '£264.3 [M2]' is accepted as a grounded quotation of £264,312.50, while the intended form '£264.3k' is rejected (the 'k' breaks the regex and '£264' is flagged).",
+      "repro": "PYTHONPATH=src python3 -c \"from cma import guard; from cma.models import Metric; ms=[Metric(id='M2',name='Rev',value=264312.5,unit='GBP',method='x')]; print(guard.check('Revenue was £264.3 [M2].', ms).grounded, guard.check('Revenue was £264.3k [M2].', ms).unmatched)\" -> True [GuardFinding(number_text='£264', ...)]",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 125,
+      "criterion": "R4",
+      "claim": "The review interrupt payload carries guard_unmatched but not missing_citations, and the final stamp (line 139) reports only '<n> unmatched'. A memo that fails only on uncited metric values reaches the CLI as 'Unmatched numbers: []' (cli.py:63) and is stamped 'overridden (21 numbers checked, 0 unmatched)', so the reviewer is not told what was wrong.",
+      "repro": "Read graph.py:120-128 and 135-140: no reference to s['guard'].missing_citations. Construct any memo with an uncited metric value via tests/test_guard.py::test_missing_citation_is_caught and route it through review().",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/mcp_server.py",
+      "line": 23,
+      "criterion": null,
+      "claim": "All four MCP tools take an arbitrary filesystem path from the client and read it (CSV via ingest, YAML via yaml.safe_load at line 43) with no base-directory restriction, so an MCP client can probe any readable file on the host. transactions_for also returns raw statement lines to the model-side client, which is the data R3 keeps away from the drafting model.",
+      "repro": "Start `python -m cma.mcp_server` and call statement_summary(path='/etc/passwd') or check_policy(path=<csv>, policy_path='/any/readable.yaml'); the server attempts to open the path. No allow-list exists in the file.",
+      "disposition": null
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "verify/reviewer",
+    "adapter": "claude-session",
+    "model": "claude-fable-5-1"
+  }
+}

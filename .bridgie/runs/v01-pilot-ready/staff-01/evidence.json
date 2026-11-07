@@ -1,0 +1,241 @@
+{
+  "task": "v01-pilot-ready",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "specified",
+      "check": "Read metrics.py, graph.py, policy.py, llm.py. All sums, ratios and counts are computed in metrics.compute(); the only other numbers written into the memo are the finalise stamp counts (graph.py:139) which come from GuardResult, not the model. FakeLLM/AnthropicLLM only format table rows.",
+      "result": "pass",
+      "artifact": "src/cma/metrics.py:19"
+    },
+    {
+      "id": "R2",
+      "tier": "specified",
+      "check": "Read Metric.evidence population in metrics.compute(). M6, M9 and M15 slice evidence to [:50]/[:200]; on examples/cafe_stretched.csv M6 carries 50 of 291 overdrawn lines and M9 200 of 362 operating lines, so the figure cannot be reproduced from its cited ids. M10 cites only loan ids though it depends on M9.",
+      "result": "fail",
+      "artifact": "src/cma/metrics.py:89"
+    },
+    {
+      "id": "R3",
+      "tier": "specified",
+      "check": "Read graph.build.draft(): the user prompt contains account name, period, met.as_table(metrics), policy name/outcome/rules and guard feedback. No transaction fields are formatted into it. Account name defaults to the CSV filename stem (ingest.py:33), see minor finding.",
+      "result": "pass",
+      "artifact": "src/cma/graph.py:92"
+    },
+    {
+      "id": "R4",
+      "tier": "specified",
+      "check": "Ran graph with a FakeLLM subclass that drops one [M8] tag: guard.grounded=False, redrafts=2, graph stops at review. But interrupt payload (graph.py:120-127) exposes only guard_unmatched, which is []; missing_citations never reach the human or the final stamp (graph.py:138-139 prints 'overridden ... 0 unmatched'). Flagged in state, not presented.",
+      "result": "fail",
+      "artifact": "src/cma/graph.py:125"
+    },
+    {
+      "id": "R5",
+      "tier": "specified",
+      "check": "Resumed graph with Command(resume=True) and with {'approved': False}: both finalise with 'Reviewed by analyst' because ReviewDecision.reviewer defaults to 'analyst' (models.py:129) and review() accepts a bare bool (graph.py:129). Interactive CLI never asks for a name (cli.py:70); --yes records reviewer 'cli --yes' (cli.py:66). Interrupt itself works (test_graph.py).",
+      "result": "fail",
+      "artifact": "src/cma/graph.py:129"
+    },
+    {
+      "id": "R6",
+      "tier": "specified",
+      "check": "Rules are an ordered list, first match wins, fallthrough credit is OTHER (categorise.py:33-35). But rules are sign-blind: a credit 'BRIDGEPOINT FINANCE LOAN ADVANCE' +25,000 is categorised loan_repayment and a credit 'HMRC VAT REPAYMENT' as hmrc_vat, i.e. a credit is guessed into a debit-semantic category by regex rather than left as other.",
+      "result": "fail",
+      "artifact": "src/cma/categorise.py:21"
+    },
+    {
+      "id": "R7",
+      "tier": "specified",
+      "check": "policy/uk_sme_default.yaml holds metric, op, threshold, on_fail and refer bands; policy.evaluate() reads them with OPS and emits PASS/REFER/FAIL. No thresholds in graph.py SYSTEM_PROMPT or metrics.py.",
+      "result": "pass",
+      "artifact": "src/cma/policy.py:25"
+    },
+    {
+      "id": "R8",
+      "tier": "specified",
+      "check": "Grepped examples/, evals/results/ and synth.py: all statements are produced by synth.generate with fictional account names and seeded amounts. One supplier string 'PARCELFORCE WORLDWIDE DD' (synth.py:52) is a real UK company name, contradicting the README claim that counterparties are invented, but no real financial data is present.",
+      "result": "pass",
+      "artifact": "src/cma/synth.py:23"
+    },
+    {
+      "id": "R9",
+      "tier": "specified",
+      "check": "Fed six malformed CSVs to ingest.load_csv then metrics.compute. Missing column -> KeyError 'amount'; bad date -> ValueError; non-numeric -> ValueError; short row -> TypeError. Inconsistent balances ACCEPTED (M2=100, metrics computed); duplicate ids ACCEPTED (2 txns, by_id() collapses to 1). No validation code exists in ingest.py.",
+      "result": "fail",
+      "artifact": "src/cma/ingest.py:22"
+    },
+    {
+      "id": "R10",
+      "tier": "specified",
+      "check": "Read .github/workflows/ci.yml: pip install, ruff, pytest, evals --llm fake; no secrets referenced. Ran pytest (38 passed) and ruff (clean) locally with no API key; cma.mcp_server imports.",
+      "result": "pass",
+      "artifact": ".github/workflows/ci.yml:24"
+    },
+    {
+      "id": "P1",
+      "tier": "specified",
+      "check": "tests/test_metrics.py checks exactly M2,M5,M6,M7,M8,M11,M12 vs truth, but only seed 7. Re-ran the same checks over seeds 0-24 x 9 cases (225 statements): 3 failures, all M5 on trades/good seeds 1,6,9 (computed 17327.55 vs truth 14000.00) because synth.Truth.lowest_balance includes the opening balance (synth.py:214) and metrics takes min over transaction rows (metrics.py:36). Categoriser agreed with truth on all 225.",
+      "result": "fail",
+      "artifact": "src/cma/metrics.py:36"
+    },
+    {
+      "id": "P2",
+      "tier": "specified",
+      "check": "guard.check('... injected £2,050 in March and £2,099 in April.', metrics) returns numbers_checked=1, unmatched=[]: the YEARS exemption (guard.py:57) is applied before the £/% test so any value 2000-2099 is skipped whatever its prefix. '2,050%' likewise skipped. P2 allows only four-digit years.",
+      "result": "fail",
+      "artifact": "src/cma/guard.py:57"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/guard.py",
+      "line": 57,
+      "criterion": "P2",
+      "claim": "Any number between 2000 and 2099 is exempt from the grounding check even when written as money or a percentage, so an invented '£2,050' passes as grounded and is not even counted in numbers_checked.",
+      "repro": "PYTHONPATH=src python3 -c \"from cma import guard; from cma.models import Metric; print(guard.check('Revenue was £264,313 [M2]. The owner injected £2,050 in March.', [Metric(id='M2',name='r',value=264312.5,unit='GBP',method='x')]))\"  -> numbers_checked=1 unmatched=[]. Fix: test 'value in YEARS' only when raw has no £/% and no comma.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 22,
+      "criterion": "R9",
+      "claim": "load_csv performs no validation: a CSV whose running balances do not follow from the amounts, or which repeats a transaction id, is accepted and metrics are computed from it. Missing columns surface as a bare KeyError rather than a clear message.",
+      "repro": "Write 'id,date,description,amount,balance\\nT1,2026-01-05,CARD ACQUIRER SETTLEMENT,100.00,100.00\\nT2,2026-01-06,SO RENT,-50.00,999999.00' to a file and run categorise+metrics.compute on ingest.load_csv(path): returns M2=100.0, M5=100.0 with no error. Repeat with both rows id=T1: accepted, len(statement.transactions)=2, len(statement.by_id())=1.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 129,
+      "criterion": "R5",
+      "claim": "Finalisation does not require a reviewer identity: review() accepts a bare bool, ReviewDecision.reviewer defaults to 'analyst' (models.py:129), the interactive CLI never asks for a name (cli.py:70), and --yes records the non-human reviewer 'cli --yes' (cli.py:66). Every interactive approval in the audit trail reads 'Reviewed by analyst'.",
+      "repro": "g=build(FakeLLM()); cfg={'configurable':{'thread_id':'a'}}; g.invoke({'statement_path': csv}, cfg); g.invoke(Command(resume=True), cfg)['final_memo'] ends with 'Reviewed by analyst: APPROVED.'",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 125,
+      "criterion": "R4",
+      "claim": "A memo that fails grounding only on missing [Mn] citations reaches the human with guard_unmatched=[] and the CLI prints 'Unmatched numbers: []'; missing_citations are omitted from the interrupt payload and from the finalise stamp, which records 'overridden (21 numbers checked, 0 unmatched)'. The reason for the override is not in the record.",
+      "repro": "class DropTag(FakeLLM): complete=lambda self,s,u: FakeLLM.complete(self,s,u).replace(' [M8]',''). build(DropTag()).invoke(...) -> payload['guard_grounded']=False, payload['guard_unmatched']=[], state['guard'].missing_citations=['M8']; after resume the final stamp says '0 unmatched'.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 89,
+      "criterion": "R2",
+      "claim": "Evidence lists for M6 ([:50]), M9 ([:200]) and M15 ([:200]) are truncated, so the cited ids do not reproduce the figure; M10 cites only the loan lines though it is M9/M8. On the committed example M6 cites 50 of 291 overdrawn lines and M9 cites 200 of 362 operating lines.",
+      "repro": "s=categorise.categorise(ingest.load_csv(Path('examples/cafe_stretched.csv'))); ms={m.id:m for m in metrics.compute(s)}; len(ms['M6'].evidence)==50 while len([t for t in s.transactions if t.balance<0])==291; len(ms['M9'].evidence)==200 vs 362 operating txns. tests/test_metrics.py:45 only checks ids exist, not completeness.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 21,
+      "criterion": "R6",
+      "claim": "Rules are sign-blind, so credits that match debit-semantic patterns are guessed into those categories: a loan drawdown credit becomes loan_repayment and nets M8 debt service to a negative number, flipping M10 to -3.85 and the policy to FAIL; a VAT refund credit becomes hmrc_vat and reduces M12 'VAT paid'.",
+      "repro": "Append row T99999,2026-03-10,BRIDGEPOINT FINANCE LOAN ADVANCE,25000.00,99999.00 to a synth cafe/good statement: category=loan_repayment, M8=-11200.0 (truth 13800.0), M10=-3.85, policy overall=fail. Append HMRC VAT REPAYMENT,+3000: M12=22790.76 vs truth 25790.76.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 62,
+      "criterion": "R1",
+      "claim": "M13 'Late VAT payments' hard-codes one VAT stagger (payments expected 1st-11th of Jan/Apr/Jul/Oct). HMRC's due date is 1 month + 7 days after quarter end, so stagger-1 businesses (Mar/Jun/Sep/Dec quarters) legitimately pay on 7 Feb/May/Aug/Nov and every payment is counted late; the other staggers and monthly filers fare the same. The synthetic generator (synth.py:189-196) encodes the same non-HMRC due date, so the tests cannot see it. Policy rule R5 then refers roughly two of three real UK businesses.",
+      "repro": "Take synth trades/good, move each HMRC VAT row to the 7th of the following month (2026-02-07, 2026-05-07, 2026-08-07) and recompute: M13=3 of 3, policy R5 -> refer.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 57,
+      "criterion": "R1",
+      "claim": "M15 counterparty key is description.split()[2:5], which assumes a three-word payer after 'FPS CREDIT'. Two-word payers ('OAKFIELD PROPERTIES INV3723') get their invoice number in the key, so each invoice is a distinct counterparty and the concentration driving policy R7 is understated.",
+      "repro": "synth.generate('trades','poor',seed=35,end=date(2026,9,30)) -> M15=12.4 but OAKFIELD PROPERTIES actually paid 27.3% of transfer revenue. Counter of keys on trades/good seed 7 shows 16 separate 'OAKFIELD PROPERTIES INVnnnn' keys.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 98,
+      "criterion": "R1",
+      "claim": "M10 is labelled 'Debt service cover' and the policy's only FAIL rule rides on it, but its numerator (M9) excludes owner drawings, so an owner-managed business whose drawings exceed its post-debt cash shows cover 1.43 while the account is overdrawn 217 of 365 days and bottoms at -£30,122. A credit analyst's DSCR deducts drawings (or at least shows cover after drawings); a zero-debt account shows the magic value 99.00.",
+      "repro": "examples/cafe_stretched.csv: M9=19,721.52, M11=30,000, M8=13,800 -> M10=1.43 (pass with refer band) while M5=-30,121.84 and M6=217. Remove the LOAN rows from a synth statement: M8=0.0, M10=99.0 displayed '99.00'.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 87,
+      "criterion": "R1",
+      "claim": "M6's method text, shown to the model and the analyst, says 'closing balance was below zero' but the code counts any transaction-level running balance below zero. Synthetic data orders credits before debits within a day so the two coincide; a real statement that dips intraday and closes positive is counted.",
+      "repro": "CSV with T1 2026-01-05 SO RENT -500 balance -100 and T2 2026-01-05 CARD ACQUIRER SETTLEMENT +900 balance 800 -> M6=1 although the day closes at +800.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 36,
+      "criterion": "P1",
+      "claim": "M5 and the generator disagree on whether the opening balance counts as a 'running balance across the period': synth.Truth.lowest_balance starts from opening_balance (synth.py:214) while M5 takes the minimum over transaction rows. P1 fails on 3 of 225 seeds; the committed test passes only because seed 7 always dips below opening.",
+      "repro": "rows,truth=synth.generate('trades','good',seed=1,end=date(2026,9,30)); write, load, categorise, compute -> M5=17327.55, truth.lowest_balance=14000.0.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/guard.py",
+      "line": 16,
+      "criterion": "P2",
+      "claim": "A letter suffix makes NUMBER backtrack to a shorter match: '1.25x' is checked as '1' (passes as prose int) while '1.25' is flagged; '£264.3k' is checked as '£264' and flagged. The '/1000' variant at guard.py:31 can therefore never match and is dead code.",
+      "repro": "guard.check('Cover is 1.42 [M10] against a 1.25x threshold.', ms) -> unmatched=[]; guard.check('... a 1.25 threshold.', ms) -> unmatched=['1.25']; guard.check('roughly £264.3k [M2]', ms) -> unmatched=['£264'].",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 133,
+      "criterion": "R5",
+      "claim": "A rejected review still runs finalise and produces final_memo (stamped NOT APPROVED), and cli.run writes it to --out (cli.py:73-74). In six months someone will find 'final' memos in the output folder that were declined.",
+      "repro": "g.invoke(Command(resume={'approved': False}), cfg) -> 'final_memo' in result is True.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/policy.py",
+      "line": 43,
+      "criterion": "R4",
+      "claim": "RuleResult.detail injects threshold digits ('rule requires >= 1.25') into the draft prompt (graph.py:90) while the guard flags any number that is not a metric value, so a real model that explains the referred rule by quoting the threshold is guaranteed a redraft. The FakeLLM never does this, so evals show 0 redrafts.",
+      "repro": "guard.check('Cover is 1.42 [M10]; policy requires 1.25.', ms) -> unmatched=['1.25']. Thresholds should be in the allowed set (or stripped from detail).",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/synth.py",
+      "line": 52,
+      "criterion": "R8",
+      "claim": "'PARCELFORCE WORLDWIDE DD' is a real UK company (Royal Mail Group); README.md:89 and synth.py:23 say all counterparties are invented. No real financial data, but the claim is false as written.",
+      "repro": "grep -n PARCELFORCE src/cma/synth.py evals/results/statements/ecommerce_good.csv",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 33,
+      "criterion": "R3",
+      "claim": "account_name defaults to the CSV filename stem and is sent to the model (graph.py:93). A lender running 'ACME_LTD_anonymised.csv' leaks the name into the prompt and the memo heading.",
+      "repro": "ingest.load_csv(Path('ACME_LTD.csv')).account_name == 'ACME_LTD'; graph.build.draft formats it as 'Account: ACME_LTD'.",
+      "disposition": null
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "build/shaper:staff",
+    "adapter": "claude-session",
+    "model": "claude-fable-5-1"
+  }
+}

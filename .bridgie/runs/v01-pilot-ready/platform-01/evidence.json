@@ -1,0 +1,268 @@
+{
+  "task": "v01-pilot-ready",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "specified",
+      "check": "Read metrics.py, policy.py, graph.py, llm.py. All arithmetic is in metrics.compute(); policy.evaluate() only compares; draft() hands the model a rendered table; FakeLLM quotes values verbatim. No other module sums money. Note: M10 uses a hard-coded sentinel 99.0 when debt service is zero (metrics.py:98).",
+      "result": "pass",
+      "artifact": "src/cma/metrics.py:19"
+    },
+    {
+      "id": "R2",
+      "tier": "specified",
+      "check": "Read Metric.evidence construction at metrics.py:72-113 and counted evidence vs contributing transactions on all 9 synthetic cases. M6 evidence is sliced [:50] and M9 [:200]; in 6/9 cases the list is shorter than the set of lines the figure was computed from (e.g. cafe/stretched M9: 362 operating lines, 200 ids; M6: 291 overdrawn lines, 50 ids). M1 has no evidence; M13 cites all VAT lines, not the late ones.",
+      "result": "fail",
+      "artifact": "src/cma/metrics.py:89"
+    },
+    {
+      "id": "R3",
+      "tier": "specified",
+      "check": "Read graph.draft() at graph.py:87-100. User prompt = account name, period dates, metrics table, policy outcome, rule lines, guard feedback. No transaction fields are sent. Caveat: account_name is the CSV file stem (ingest.py:33), so the file name reaches the provider.",
+      "result": "pass",
+      "artifact": "src/cma/graph.py:92"
+    },
+    {
+      "id": "R4",
+      "tier": "specified",
+      "check": "Read guard.check() and ran adversarial memos (scratch probe). Flow draft->guard->redraft(max 2)->review is wired correctly (graph.py:111-117, 155-156) and the test test_hallucinating_model_is_caught_and_redrafted passes. But the guard itself misses whole classes of ungrounded figures: '48k', '£48k', '3bn' are never matched; '1.25x' is parsed as the integer 1 and allowed; '£2,050' is skipped as a year; an empty or number-free memo is reported grounded with rate 1.0.",
+      "result": "fail",
+      "artifact": "src/cma/guard.py:16"
+    },
+    {
+      "id": "R5",
+      "tier": "specified",
+      "check": "Read graph.review()/finalise() and cli.run(). interrupt() does stop the graph and final_memo is absent until resume (test_graph.py:27). But reviewer identity is not required: ReviewDecision.reviewer defaults to 'analyst' (models.py:129), the interactive CLI never asks for a name (cli.py:68-70), a bare `True` resume is accepted (graph.py:129-130), and `--yes` finalises with reviewer 'cli --yes' and no human (cli.py:65-66). Probe: resume with {'approved': True} -> 'Reviewed by analyst: APPROVED.'",
+      "result": "fail",
+      "artifact": "src/cma/models.py:129"
+    },
+    {
+      "id": "R6",
+      "tier": "specified",
+      "check": "Read categorise.py. Rules are ordered regexes, first match wins, unmatched credit -> OTHER (categorise.py:33-35) so the literal text holds. But the rules ignore sign, so credits are assigned to debit-only categories: 'IWOCA LOAN DRAWDOWN' +25,000 -> loan_repayment, 'HMRC VAT REPAYMENT' +2,000 -> hmrc_vat, 'FPS CREDIT ... RENT' -> rent, 'DIVIDEND RECEIVED' -> owner_drawings; and a debit 'PAYMENT TO STOCKHAVEN INV4471' -> revenue_transfer. These are not 'other', they are wrong, and they feed M2/M8/M10/M12 directly.",
+      "result": "fail",
+      "artifact": "src/cma/categorise.py:21"
+    },
+    {
+      "id": "R7",
+      "tier": "specified",
+      "check": "Read policy/uk_sme_default.yaml and policy.py. Rules, thresholds, operators, on_fail and refer bands are YAML; policy.py only interprets them; overall = worst outcome. No thresholds in prompts or code.",
+      "result": "pass",
+      "artifact": "src/cma/policy.py:21"
+    },
+    {
+      "id": "R8",
+      "tier": "specified",
+      "check": "Listed every committed statement description (uniq -c over examples/ and evals/results/statements/); all counterparties come from synth.ARCHETYPES/CUSTOMER_NAMES. Regex scan for sort codes, 8-digit account numbers, emails and NI numbers across src/, examples/, evals/, docs/, README: no hits.",
+      "result": "pass",
+      "artifact": "src/cma/synth.py:23"
+    },
+    {
+      "id": "R9",
+      "tier": "specified",
+      "check": "Read ingest.load_csv() and fed it malformed CSVs. Missing column -> bare KeyError 'balance' (traceback, not a clear error). Bad date / non-numeric amount -> ValueError from the stdlib (acceptable). Inconsistent running balance -> ACCEPTED and metrics computed. Duplicate ids -> ACCEPTED (M2 summed both; by_id() collapses them). amount 'nan' -> ACCEPTED, M2 = nan. Empty id -> ACCEPTED.",
+      "result": "fail",
+      "artifact": "src/cma/ingest.py:22"
+    },
+    {
+      "id": "R10",
+      "tier": "specified",
+      "check": "Read .github/workflows/ci.yml; ran `python3 -m pytest -q` (38 passed) and `python evals/run_evals.py --llm fake` (9/9) locally with no API key set. CMA_LLM defaults to 'fake' (llm.py:96) and provider SDKs are imported lazily (llm.py:63,82). Caveat: the mcp module is installed in CI but never imported by any test, so a broken mcp_server.py would not fail CI.",
+      "result": "pass",
+      "artifact": ".github/workflows/ci.yml:19"
+    },
+    {
+      "id": "P1",
+      "tier": "specified",
+      "check": "tests/test_metrics.py::test_metrics_match_truth asserts M2, M5, M6, M7, M8, M11, M12 against synth.Truth with abs=0.01 for all 9 archetype x profile cases; 38 tests pass. Note M6 agrees with truth because generator and metrics share the same 'any running balance < 0' rule; neither implements the 'closing balance' definition stated in the metric's method text.",
+      "result": "pass",
+      "artifact": "tests/test_metrics.py:31"
+    },
+    {
+      "id": "P2",
+      "tier": "specified",
+      "check": "Property violated by construction of guard.py. NUMBER regex requires the char after the number not to be a letter, so '48k', '£48k', '3bn' produce no match (numbers_checked=0, grounded=True) and '1.25x' backtracks to '1'. YEARS check at guard.py:57 runs before the £/% test, so '£2,050' is skipped although the property only exempts bare four-digit years. Probe output: [year-range GBP] grounded=True; [k suffix GBP] checked=0 grounded=True; [x suffix] grounded=True.",
+      "result": "fail",
+      "artifact": "src/cma/guard.py:57"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "blocker",
+      "file": "src/cma/guard.py",
+      "line": 16,
+      "criterion": "R4",
+      "claim": "The grounding guard does not see numbers followed by a letter suffix. '48k', '£48k', '£1.2m', '3bn' are never matched (the trailing negative lookahead rejects the whole token) and '1.25x' backtracks to the bare integer '1', which is then allowed as prose. A model writing '£48k of stock' or 'cover of 1.25x' passes the guard with zero findings, so the memo reaches the reviewer marked 'All figures trace to the metrics table'. This defeats the product's single differentiator.",
+      "repro": "PYTHONPATH=src python3 -c \"from cma import guard; from cma.models import Metric; ms=[Metric(id='M10',name='DSCR',value=1.42,unit='ratio',method='x')]; print(guard.check('Stock is worth £48k and cover is 1.25x.', ms))\"  -> numbers_checked=1 unmatched=[] missing_citations=[] (grounded). Fix: match optional k/m/bn/x suffixes and treat them as units; reject any number token that is immediately followed by a letter instead of dropping it.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/guard.py",
+      "line": 57,
+      "criterion": "P2",
+      "claim": "Any value in 2000..2099 is skipped as a 'year' before the currency/percent test runs, so '£2,050', '£2,075' or '2,099%' are never checked. P2 exempts only bare four-digit years.",
+      "repro": "PYTHONPATH=src python3 -c \"from cma import guard; from cma.models import Metric; ms=[Metric(id='M2',name='Rev',value=264312.5,unit='GBP',method='x')]; print(guard.check('Revenue was £264,313 [M2]. The owner injected £2,050 of capital.', ms).grounded)\" -> True. Fix: only apply YEARS when the raw token has no £/$/%/comma/decimal.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/guard.py",
+      "line": 69,
+      "criterion": "R4",
+      "claim": "A memo with no numbers at all is reported grounded (numbers_checked=0, grounding_rate 1.0 via models.py:121-124). AnthropicLLM.complete returns '' when the response has no text block (llm.py:75), and that empty memo flows through guard -> review as grounded and can be approved and stamped 'Grounding check: passed (0 numbers checked, 0 unmatched)'. The eval's headline 'grounded' metric is therefore gameable by a model that writes prose without figures.",
+      "repro": "Build the graph with an LLM whose complete() returns '' (or 'The business is healthy and should be approved.') and invoke on any synthetic statement: interrupt payload has guard_grounded=True, memo=''. Fix: guard should require numbers_checked > 0 and at least every metric referenced by a failed/referred rule to be cited; treat an empty completion as a provider error.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 21,
+      "criterion": "R6",
+      "claim": "Rules are sign-blind, so credits land in debit-only categories and debits in revenue. 'IWOCA LOAN DRAWDOWN' +£25,000 -> loan_repayment, which makes M8 debt service negative and M10 DSCR negative (policy R2 fails on a healthier business); 'HMRC VAT REPAYMENT' +£2,000 -> hmrc_vat reduces M12; 'DIVIDEND RECEIVED' credit -> owner_drawings; 'FPS CREDIT RIVERSIDE LETTINGS RENT' -> rent; and a debit 'PAYMENT TO STOCKHAVEN INV4471' matches `\\bINV\\d+` (line 24) -> revenue_transfer, reducing M2. Loan drawdowns and supplier invoice references are routine on real SME statements.",
+      "repro": "Generate cafe/good, append Transaction('IWOCA LOAN DRAWDOWN', +20000), categorise, compute: M8 13800 -> -6200, M10 3.12 -> -6.95, policy overall pass -> fail. Also: 'PAYMENT TO STOCKHAVEN INV4471' -12000 -> revenue_transfer, M2 30000 -> 18000. Fix: each rule should carry an expected sign (credit/debit); a sign mismatch falls through to OTHER.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 89,
+      "criterion": "R2",
+      "claim": "Evidence is truncated: M6 keeps the first 50 overdrawn lines (line 89), M9 and M15 the first 200 (lines 97, 112). In 6 of 9 synthetic cases M9 was computed from 203-368 lines but cites 200, and M6 from 54-376 lines but cites 50. A reviewer following the citation cannot reproduce the figure from the cited lines, which is exactly what R2 and the bet promise.",
+      "repro": "For each archetype/profile: s=categorise(load_csv(...)); m=compute(s); compare len(m['M9'].evidence) with len([t for t in s.transactions if t.category not in {LOAN_REPAYMENT, OWNER_DRAWINGS}]). cafe/stretched: 362 vs 200; M6: 291 vs 50. Fix: store the full id list (or a date range plus count) and let the UI paginate.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 22,
+      "criterion": "R9",
+      "claim": "load_csv performs no validation beyond 'at least one row'. A CSV with inconsistent running balances, duplicate ids, empty ids or amount='nan' is accepted and metrics are computed from it (M2 becomes nan with a nan amount; duplicate ids collapse in Statement.by_id() so evidence lookups return the wrong line). A missing column surfaces as a bare KeyError traceback rather than a clear error.",
+      "repro": "Write 'id,date,description,amount,balance\\nT1,2026-01-05,CARD ACQUIRER SETTLEMENT,100.00,100.00\\nT2,2026-01-06,CARD ACQUIRER SETTLEMENT,100.00,9999.00' and run categorise(load_csv(p)); compute(): returns M2=200.0. Same with duplicate 'T1' ids and with amount 'nan' (M2=nan). Fix: validate required columns, unique non-empty ids, finite amounts, and that balance[i] == balance[i-1] + amount[i] within 0.01 in file order; raise one ValueError naming the row.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/models.py",
+      "line": 129,
+      "criterion": "R5",
+      "claim": "Reviewer identity is optional and defaults to the placeholder 'analyst'. The interactive CLI never asks for a name (cli.py:68-70 builds {'approved', 'notes'} only) and graph.review accepts a bare bool (graph.py:129-130). Every memo approved through the documented interactive path is stamped 'Reviewed by analyst', which is not a recorded human identity.",
+      "repro": "graph.invoke(Command(resume={'approved': True, 'notes': ''}), cfg) -> final_memo ends 'Reviewed by analyst: APPROVED.' Same with Command(resume=True). Fix: make ReviewDecision.reviewer required and non-empty; have the CLI prompt for it (or read $USER / a --reviewer option) and refuse to finalise without it.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 65,
+      "criterion": "R5",
+      "claim": "`cma run --yes` finalises the memo with reviewer 'cli --yes' and no human in the loop, and evals/run_evals.py:48 does the same with reviewer 'eval'. The committed examples/cafe_stretched.memo.md is stamped 'Reviewed by cli --yes: APPROVED.' The human gate the bet relies on is a flag away from being skipped in the same binary a pilot would run.",
+      "repro": "cma run examples/cafe_stretched.csv --yes --out /tmp/x.md ; tail -3 /tmp/x.md -> 'Reviewed by cli --yes: APPROVED.' Fix: remove --yes from the production command (keep it only in an eval/test entry point) or have it emit a 'DRAFT - NOT REVIEWED' stamp rather than APPROVED.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 62,
+      "criterion": null,
+      "claim": "M13 'late VAT' assumes every business is on calendar quarters (Jan/Apr/Jul/Oct) and pays within 10 days of the quarter-start month (lines 62-66). UK VAT is due one month and seven days after the period end, so a compliant business paying on 7 May for a March quarter, or on any date for a Feb/May/Aug/Nov stagger, is counted late; the synthetic generator pays on the 7th of the quarter-start month (synth.py:189-196), which hides this. On a real statement this will produce spurious policy R5 refers, i.e. the analyst will not agree with the policy outcome.",
+      "repro": "Build a Statement with one HMRC VAT debit dated 2026-05-07 (correct deadline for a 31 March quarter) and the rest of the months populated; metrics.compute gives M13 = 1 -> policy R5 refer. Fix: define lateness relative to the statement's own observed VAT cadence, or make the stagger and deadline rule policy data.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 37,
+      "criterion": "R1",
+      "claim": "M6 counts a day as overdrawn if any transaction's running balance that day is below zero, but the metric's method text (line 88) says 'closing balance'. A day that dips negative intraday and closes positive is counted. P1 passes only because synth.py:219 uses the same intraday rule.",
+      "repro": "Statement with two lines on 2026-01-05: -500 (balance -200) then +900 (balance 700). compute() -> M6 = 1 although the closing balance is 700. Fix: compute per-day closing balance (last line of the day in file order) or change the method text.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 98,
+      "criterion": "R1",
+      "claim": "When there are no loan repayments, M10 is set to the constant 99.0, so the memo will read 'debt service cover of 99.00 [M10]' and policy R2 passes with a figure that was never computed from statement lines.",
+      "repro": "Remove LOAN_REPAYMENT lines from cafe/good and compute(): M8=0.0, M10=99.0, display '99.00'. Fix: make Metric.value Optional and have policy treat 'not applicable' explicitly.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 107,
+      "criterion": "R2",
+      "claim": "M13 (late VAT payments) cites every VAT line as evidence, not the ones judged late, so the citation does not point at the lines the count came from. M10 (line 100) likewise cites only loan lines although it is a ratio over M9.",
+      "repro": "cafe/poor: M13.value = 3, len(M13.evidence) = 3 (all VAT lines, coincidentally equal); cafe/good: M13.value = 0, evidence still lists 3 ids. Fix: collect late ids inside the loop at lines 64-70.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 44,
+      "criterion": "R5",
+      "claim": "The checkpointer is MemorySaver, created per build(). The awaiting-review state and the recorded decision live only in process memory; a second process (another CLI invocation, a web worker, a restarted pod) cannot resume the thread and a resume on an unknown thread_id silently starts a fresh run that dies with KeyError 'statement_path'. Fine for the v0.1 single-process CLI; a hard blocker for the v0.2 service direction, where the review interrupt must survive a redeploy.",
+      "repro": "g1=build(FakeLLM()); g1.invoke({...}, cfg); g2=build(FakeLLM()); g2.invoke(Command(resume={'approved': True}), cfg) -> KeyError: 'statement_path'. Fix: accept a checkpointer from config (SqliteSaver/PostgresSaver) and reject a resume whose thread has no checkpoint.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 47,
+      "criterion": null,
+      "claim": "No observability. There is no logging anywhere under src/ (grep for logging/logger returns nothing); the thread_id is generated and discarded; the guard result, redraft count, model name and reviewer decision are recorded nowhere except as text appended to the memo. There is no line an operator could alert on (e.g. 'memo not grounded after 2 redrafts', 'provider returned empty completion').",
+      "repro": "grep -rn 'logging\\|logger' src/ -> no output. Fix: emit one structured log/trace event per node (thread_id, metric count, guard.numbers_checked, unmatched, redrafts, llm.name, reviewer) - this is also the hook Langfuse would attach to in v0.2.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/llm.py",
+      "line": 69,
+      "criterion": null,
+      "claim": "Provider calls have no timeout, no retry and no error mapping; the OpenAI call (lines 88-92) sets no max_tokens; a response with no text block is returned as '' rather than raised. Any SDK exception propagates out of graph.invoke and the CLI exits with a traceback after the deterministic work is done, with nothing persisted.",
+      "repro": "Read llm.py:68-75 and 87-92: only max_tokens=1500 on the Anthropic path; no timeout/max_retries arguments and no try/except. Fix: pass timeout and max_retries to the clients, raise on empty content, and surface a 'draft failed' state to the reviewer instead of crashing.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 141,
+      "criterion": "R5",
+      "claim": "A rejected memo still produces final_memo, and cli.py:72-74 writes it to --out, so a 'NOT APPROVED' document lands in the same place and shape as an approved one. The stamp at line 138 also reads 'Grounding check: overridden' when an ungrounded memo was rejected, which is the opposite of what happened (tests/test_graph.py:55 asserts this wording).",
+      "repro": "graph.invoke(Command(resume={'approved': False, 'reviewer': 'x'}), cfg) -> 'final_memo' in state is True, stamp 'Reviewed by x: NOT APPROVED.' Fix: on rejection, write a 'rejected' state (no final_memo) and only stamp 'overridden' when approved and not grounded.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 33,
+      "criterion": "R3",
+      "claim": "account_name defaults to the CSV file stem and is sent verbatim to the model provider (graph.py:93). If a lender names the file after the borrower ('acme-ltd-2026.csv'), the identity leaves the building even though the statement content is anonymised.",
+      "repro": "ingest.load_csv(Path('examples/cafe_stretched.csv')).account_name -> 'cafe_stretched'. Fix: require an explicit --account-name or send a neutral 'the applicant' to the model.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 58,
+      "criterion": "R10",
+      "claim": "The eval's truth check compares only M2 (revenue_matches_truth) and the exit code at line 72 depends only on that, while ci.yml:22-23 and README.md:56,60 state that the job fails if any metric disagrees with ground truth. The other truth fields (M5-M8, M11, M12) are covered by pytest, not by the eval that will be run against a real model.",
+      "repro": "Read evals/run_evals.py:58 and :72. Fix: compare every Truth field as test_metrics.py does and report per-metric agreement in the JSON.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/mcp_server.py",
+      "line": 21,
+      "criterion": null,
+      "claim": "Every MCP tool takes an arbitrary filesystem path and reads it (lines 23, 35, 42, 50), so when this is served beyond local stdio any client can read any CSV the process can. transactions_for (line 52) silently drops unknown ids instead of erroring, so a reviewer asking for evidence can get a shorter list than the metric cites without being told. No test imports this module, so CI would not catch it breaking (ci.yml installs mcp but nothing exercises it).",
+      "repro": "Read mcp_server.py:48-52: `[... for i in ids if i in by_id]`. Fix: resolve paths under a configured statements root; raise on unknown ids; add one import/smoke test.",
+      "disposition": null
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "build/shaper:platform",
+    "adapter": "claude-session",
+    "model": "claude-fable-5-1"
+  }
+}
