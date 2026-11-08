@@ -1,0 +1,52 @@
+{
+  "seat": "evidence",
+  "summary_md": "No evidence exists yet, so confidence stays at **opinion**. The only 'problem in their words' is an assumption the owner wrote, and the ~1,400 firms figure is unverified. I designed one method per evidence task. Task 1 is five past-behaviour interviews, run before any demo, with a stop rule. Task 2 is the purchase-history block inside the same sessions. Five interviews can reach at most **anecdote** (1–5 sources). Reaching **data** needs the reply-rate pull from the BridgeTrade log, and reaching **test** needs a fake-door or priced offer, which is outside this 2w appetite. Two things must be settled before any outreach: who is interviewed, and whether the employment contract allows it (D7).",
+  "questions": [
+    {
+      "context": "Who do the 5 interviews come from? A warm list gives friendlier answers than strangers. Pick one, so the synthesis can say which pool the quotes came from.",
+      "options": [
+        "3 lender analysts/heads of credit + 2 brokers, drawn from the BridgeTrade 2026 outreach replies",
+        "3 lender analysts/heads of credit + 2 brokers, cold from NACFB directory and LinkedIn (no prior contact)",
+        "Mixed: at least 2 of the 5 must be people who never replied to BridgeTrade outreach"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Interviews and outreach to UK SME lenders and MCA providers may hit your employment IP, conflict-of-interest or non-solicit terms (D7). Has the actual contract been read? I can't run the interviews until this is settled.",
+      "options": [
+        "Contract read, no clause blocks outreach. I will paste the clause refs into the bet.",
+        "Contract not yet read. Read it first, interviews wait.",
+        "Clause blocks or is ambiguous. Pause the bet and take advice."
+      ],
+      "allow_free_text": false
+    },
+    {
+      "context": "D6 needs a baseline for the 3-of-20 kill criterion. Which data source holds the BridgeTrade 2026 outreach log (sent / replied / took a call)?",
+      "options": [
+        "A CRM or spreadsheet I can export",
+        "Email sent folder only (I will count by hand)",
+        "No log exists, so there is no baseline and the kill threshold stays uncalibrated"
+      ],
+      "allow_free_text": true
+    }
+  ],
+  "proposals": [
+    {
+      "kind": "confidence",
+      "text": "Keep confidence at `opinion`. Tier definitions: opinion = no sources; anecdote = 1–5 sources; data = measured; test = an experiment ran. Reason: 0 interviews done. The pain statement is labelled ASSUMPTION in the bet, and the 1,400-firm figure has no stated method (D2). After 5 completed interviews, propose `anecdote` at most, and only if the quotes are tallied per the synthesis template. Do not propose `data` until the BridgeTrade reply rate is pulled. Do not propose `test` until a priced fake-door or paid-pilot ask has run."
+    },
+    {
+      "kind": "gotcha",
+      "text": "2026-11-07: A price band or budget owner named after a free demo is opinion, not evidence. Count only past purchases (who signed, what it cost, when)."
+    },
+    {
+      "kind": "task",
+      "text": "Before outreach: read the employment contract (IP, conflict, non-solicit) and draft data-protection terms for any statement shared, even anonymised (D7). Add the result to the bet's decision log."
+    },
+    {
+      "kind": "test",
+      "text": "After the interviews, if at least 3 of 5 name the same unprompted pain, run a fake-door next: a one-page fixed-fee 'cited credit memo assessment' with a price shown, sent to 20 contacts. The signal is a reply that asks to book or to pay, not a request for a demo. Set the end date on the kill criterion (D6) before starting."
+    }
+  ],
+  "artifact_md": "# Evidence guide: lenders-will-pay\n\nStatus: no results yet. Tier today: **opinion**.\n\n## Rules for both tasks\n- Ask about the last time something happened. Never ask 'would you', 'how useful', or 'is this a problem'.\n- No demo, no pitch, no mention of AI or citations until the closing block.\n- Each question is built so the honest answer can be 'no', 'never', or 'we don't do that'. Record those answers; they are findings.\n- Quote people verbatim. Count how many of the interviewees said a thing. Do not average or summarise opinions into a conclusion.\n\n## Task 1: Interview 5 about the last memo they wrote\n\n**Method:** interview, 30 min, past behaviour only.\n**Sample:** 5 completed interviews. Mix is set by the owner's answer to the sourcing question (default: 3 lender analysts/heads of credit, 2 brokers).\n**Stop rule:** stop at 5 completed interviews, or on 2026-11-28 if fewer than 5 are done. If fewer than 3 are done by then, do not draw a conclusion. Report it as 'insufficient access' and raise a question. Do not recruit people who are more likely to say yes just to hit 5.\n\n### Block A: the last memo (lenders and analysts)\n1. Think of the last credit memo you or your team wrote on an SME application. Walk me through it from the moment the statements arrived. (Let them talk. Note which step they name first, unprompted.)\n2. How long did the statement-spreading take, start to finish? How long did the memo take? Who did it?\n3. Was any figure in that memo, or any recent one, found to be wrong after it was written? Who found it and how? If none in the last 10 memos, say so.\n4. Did anyone (credit committee, funder, auditor, compliance) ask where a figure came from on that file? What did they ask and how was it answered? If nobody asked, say so.\n5. When did a funder, auditor or scheme review (for example a warehouse funder or British Business Bank guarantee audit) last look at your credit files? What did they flag? (D4)\n6. What tools touched that file before the memo: spreading spreadsheet, open-banking or categorisation vendor, loan-origination system? Which of them produced the categorised transactions? (D3)\n7. Have you used an AI or LLM tool on a memo or on spreading? What happened, and what went wrong? If you haven't, what is the reason? (D5)\n\n### Block B: what brokers send (brokers only, plus lenders on the receiving side) (D2)\n8. For the last deal you sent to a lender, what did you actually send: raw statements, your own spreading, a memo? Who prepared it?\n9. Did the lender use what you sent, or redo it? How do you know?\n10. Roughly how many of your last 10 submissions included your own analysis rather than raw statements?\n\n### Block C: what was bought (feeds Task 2)\nSee Task 2.\n\n### Closing (only after A–C are complete)\n11. If I'm wrong that this costs you much time or trouble, what would the reason be?\n12. Who else should I speak to who would disagree with what you've told me? (Skip any pitch or demo offer in this session.)\n\n## Task 2: Who owns the budget for analyst tooling at a 10–50 person lender\n\n**Method:** the same interviews, plus a document check where possible. This block asks only about a past purchase, not a hypothetical one.\n**Sample:** all lender-side interviewees (target 3). Brokers are asked the same questions about their own tools.\n**Stop rule:** stop once 3 distinct named past purchases are recorded, or at the interview stop date. If fewer than 2 interviewees can name one, record 'budget owner unknown' and do not infer.\n\n### Block C questions\n13. What is the last piece of software or data service your credit or underwriting team started paying for? When was that?\n14. Who asked for it, who evaluated it, and who signed it off? What was the rough annual cost?\n15. How long from first look to signature? Did it need a board, a funder, or a compliance sign-off?\n16. Name a tool you looked at and did not buy. Why not?\n17. Is there a budget line for credit-team tooling, or does each purchase come out of someone's own cost centre?\n\n**Document check (optional, one per lender where publicly available):** read the lender's last accounts, funder disclosures or procurement notes only to confirm size and who is named as responsible for credit. Do not use this as a substitute for question 14.\n\n## Synthesis template (fill after interviews)\n\n| Claim | Count (n of 5) | Verbatim quotes (initials, role) | Contradicting answers |\n|---|---|---|---|\n| Named spreading/memo time as the first pain, unprompted | | | |\n| Found a wrong figure in a memo in the last 10 files | | | |\n| Was asked for the source of a figure by someone other than the analyst | | | |\n| A funder/auditor/scheme review flagged credit-file evidence | | | |\n| Already gets categorised transactions from a vendor or LOS | | | |\n| Has tried an LLM on memos | | | |\n| Broker sends raw statements only | | | |\n| Lender redoes broker analysis | | | |\n| Named a past tool purchase with a signer and a cost | | | |\n\nRules: quote and count; leave a cell blank rather than guess; list contradicting answers beside the claim; write 'n=5, anecdote' on any conclusion drawn from this.\n\n## Open items from the grill that this guide does not close\n- D2 (1,400 firms figure) needs the BridgeTrade notes pulled, a data/document check, separate from the interviews.\n- D6 (reply-rate baseline, end date for kill criterion 2) needs the outreach log export.\n- D7 (contract and data protection) is a gate, not evidence, and must clear first."
+}

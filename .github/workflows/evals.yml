@@ -1,0 +1,74 @@
+name: Real-model evals
+
+# Runs the nine synthetic cases against Claude with no API key: GitHub's OIDC token
+# is exchanged for a short-lived Anthropic token (Claude Console workload identity
+# federation). Manual only, and only from main, because the federation rule is
+# pinned to repo:anoopvijayan-dev/credit-memo-agent:ref:refs/heads/main.
+on:
+  workflow_dispatch:
+    inputs:
+      code_ref:
+        description: "Branch or commit whose code to evaluate (the workflow itself runs from main)"
+        default: main
+        required: true
+      model:
+        description: "Claude model"
+        default: claude-sonnet-5-5
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: real-model-evals
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+      ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+      ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+      ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+      ANTHROPIC_IDENTITY_TOKEN_FILE: ${{ runner.temp }}/gha-jwt
+      CMA_ANTHROPIC_MODEL: ${{ inputs.model }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check federation variables are set
+        run: |
+          for v in ANTHROPIC_FEDERATION_RULE_ID ANTHROPIC_ORGANIZATION_ID ANTHROPIC_SERVICE_ACCOUNT_ID; do
+            if [ -z "${!v}" ]; then echo "::error::Repository variable $v is not set (Settings → Secrets and variables → Actions → Variables)"; exit 1; fi
+          done
+      - run: pip install -e ".[llm]"
+      - name: Fetch GitHub OIDC token
+        run: |
+          curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+            | jq -r .value > "$ANTHROPIC_IDENTITY_TOKEN_FILE"
+      - name: Run evals against Claude
+        run: python evals/run_evals.py --llm anthropic | tee evals-output.txt
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Real-model evals: ${{ inputs.model }} on \`${{ inputs.code_ref }}\`"
+            echo '```'
+            cat evals-output.txt 2>/dev/null || echo "no output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evals-${{ inputs.model }}-${{ github.run_id }}
+          path: |
+            evals/results/
+            evals-output.txt

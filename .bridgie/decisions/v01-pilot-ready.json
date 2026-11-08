@@ -1,5 +1,414 @@
 {
   "bet": "v01-pilot-ready",
-  "next_id": 1,
-  "decisions": []
+  "next_id": 19,
+  "decisions": [
+    {
+      "id": "D1",
+      "type": "question",
+      "raised_by": {
+        "seat": "grill",
+        "run": "grill-01"
+      },
+      "context": "Where did the problem quote come from? This bet calls it a paraphrase of BridgeTrade broker conversations; lenders-will-pay/bet.md:23 says it is an assumption not yet quoted from anyone. To settle it, produce the dated notes or run one new interview. Recalling it from memory does not count as evidence.",
+      "options": [
+        "Dated notes exist with at least one broker saying something close to it",
+        "Owner remembers conversations but has no notes",
+        "It is a composite the owner wrote; no one said it",
+        "Don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-07T23:01:49.762Z"
+    },
+    {
+      "id": "D2",
+      "type": "question",
+      "raised_by": {
+        "seat": "grill",
+        "run": "grill-01"
+      },
+      "context": "What file will a pilot lender actually send? v0.1 reads only the synthetic five-column CSV (id, date, description, amount, balance), and CAMT/MT940 adapters are a non-goal. To find out, ask three contacts to describe or send a redacted sample of what their analysts receive today.",
+      "options": [
+        "A CSV export that maps cleanly to the v0.1 schema",
+        "Bank PDF statements (needs OCR or extraction before ingest)",
+        "Open Banking or aggregator JSON (Plaid/TrueLayer/Codat)",
+        "The lender's own spread spreadsheet, not raw lines",
+        "Don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-07T23:01:49.766Z"
+    },
+    {
+      "id": "D3",
+      "type": "question",
+      "raised_by": {
+        "seat": "grill",
+        "run": "grill-01"
+      },
+      "context": "Who anonymises the statement, under what data-protection basis, and does the anonymised data still work? A sole trader's statement is personal data even with the name removed. Redacting payer names breaks M15 and the FPS CREDIT categoriser rules. Test this by running one redacted statement the way the lender would redact it and see which metrics survive.",
+      "options": [
+        "Lender redacts names and shares under a short data-processing agreement",
+        "Owner receives raw data and anonymises it (owner becomes a processor; needs a DPA and secure handling)",
+        "Lender runs v0.1 inside its own environment; no data leaves",
+        "Owner builds a synthetic lookalike from the lender's description of a real case",
+        "Don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-07T23:01:49.767Z"
+    },
+    {
+      "id": "D4",
+      "type": "question",
+      "raised_by": {
+        "seat": "grill",
+        "run": "grill-01"
+      },
+      "context": "Outcome and baseline: the success measure is 'zero ungrounded numbers', but a number can be grounded and still wrong. Is there an existing analyst spread of the same statement to compare metrics against, and what tolerance counts as a match? Getting this needs a data request to the pilot lender.",
+      "options": [
+        "Yes: the analyst's existing spread is available and each metric must match within an agreed tolerance",
+        "No spread exists; the analyst will judge qualitatively",
+        "Grounding alone is the bar for v0.1; correctness is v0.2",
+        "Don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-07T23:01:49.769Z"
+    },
+    {
+      "id": "D5",
+      "type": "question",
+      "raised_by": {
+        "seat": "grill",
+        "run": "grill-01"
+      },
+      "context": "Who, by name, would run the statement? Is there anyone who has said yes in principle, and when does the 'week 6' kill clock start? The playbook has outreach in week 3, and C1–C6 still need fixing first. Check this against the outreach log, not memory.",
+      "options": [
+        "At least one named analyst or broker has agreed in writing",
+        "Warm contacts exist from BridgeTrade but none has been asked about this",
+        "No current contact; cold NACFB list only",
+        "Don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-07T23:01:49.771Z"
+    },
+    {
+      "id": "D6",
+      "type": "question",
+      "raised_by": {
+        "seat": "grill",
+        "run": "grill-01"
+      },
+      "context": "Why now: is there evidence that UK lenders are actually trialling LLM memo tools and getting burned by invented figures? And would the differentiator survive if Ocrolus, Codat or Plaid ship cited memos (Plaid launched LendScore 2 on 6 Oct 2026)? Answering needs a source search or three interview questions.",
+      "options": [
+        "A public incident or report names this failure at a UK lender",
+        "One or more contacts described it first-hand",
+        "Owner's inference from general LLM hallucination coverage",
+        "Don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-07T23:01:49.772Z"
+    },
+    {
+      "id": "D7",
+      "type": "question",
+      "raised_by": {
+        "seat": "grill",
+        "run": "grill-01"
+      },
+      "context": "Scope of this bet: kill criterion 2 ('no lender or broker agrees to run a statement by week 6') tests demand and overlaps lenders-will-pay. As written, an engineering bet can be killed by a sales outcome, and its own engineering fitness has no pass date.",
+      "options": [
+        "Keep both criteria here",
+        "Move criterion 2 to lenders-will-pay; replace with 'C1–C6 fixed and panel run 02 passes R2, R4, R5, R9 by a fixed date'",
+        "Add a correctness criterion against real-format descriptors (e.g. revenue within 2% on a hand-built real-format statement) alongside the panel re-run",
+        "Don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-07T23:01:49.774Z"
+    },
+    {
+      "id": "D8",
+      "type": "sign",
+      "raised_by": null,
+      "context": "Sign \"credit-memo-agent v0.1 is fit to run a lender's anonymised statement in a pilot\"? lane engineering, risk money, confidence opinion, appetite 2w.",
+      "options": [
+        "sign",
+        "kill",
+        "need more evidence"
+      ],
+      "allow_free_text": false,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-07T23:01:49.813Z"
+    },
+    {
+      "id": "D9",
+      "type": "question",
+      "raised_by": {
+        "seat": "researcher",
+        "run": "researcher-01"
+      },
+      "context": "Geography: this report assumes UK non-bank SME lenders and commercial-finance brokers, per the bet. Plaid and Ocrolus lean US. Confirm the scope.",
+      "options": [
+        "UK only",
+        "UK plus Ireland/EU",
+        "Include US"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:18:27.785Z"
+    },
+    {
+      "id": "D10",
+      "type": "question",
+      "raised_by": {
+        "seat": "researcher",
+        "run": "researcher-01"
+      },
+      "context": "Segment: the Who is a role at two kinds of firm. Crediflow, Heron and Arya.ai sell to lenders. Heron has a separate broker suite. Which one do you pilot first?",
+      "options": [
+        "Non-bank lenders",
+        "Commercial-finance brokers",
+        "Whichever says yes first"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:18:27.792Z"
+    },
+    {
+      "id": "D11",
+      "type": "question",
+      "raised_by": {
+        "seat": "researcher",
+        "run": "researcher-01"
+      },
+      "context": "Page fetches were blocked in this run, so all facts come from search-result summaries. Should I rerun with fetch enabled to read vendor pricing and review pages in full and check dates?",
+      "options": [
+        "Yes, rerun with fetch",
+        "No, accept as is"
+      ],
+      "allow_free_text": false,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:18:27.795Z"
+    },
+    {
+      "id": "D12",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "D1/D6: Every lens rests on the traceability pain, and research found no lender voicing it. Is there a dated note of any UK lender or broker saying untraceable or invented figures are a problem? Recall from memory doesn't count.",
+      "options": [
+        "Yes, I have dated notes and will attach them",
+        "No notes; I will run three interviews and ask about the worst part of spreading before pitching",
+        "No; I'll lead with speed (time to draft memo) instead",
+        "don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:22:54.511Z"
+    },
+    {
+      "id": "D13",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "D5: Who, by name, would run the statement, and has anyone said yes in principle? Check against the outreach log. This also sets when the week-6 kill clock starts.",
+      "options": [
+        "A named analyst has said yes in principle (name and date in the log)",
+        "Contacts exist but nobody has said yes yet",
+        "No outreach has happened yet",
+        "don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:22:54.517Z"
+    },
+    {
+      "id": "D14",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "D10: Lender or broker first? They get different files, write different memos, and face different competitors (Crediflow/Arya sell to lenders; Heron has a broker suite; DocuClipper serves small brokers from $20/month).",
+      "options": [
+        "Non-bank SME lenders first",
+        "Commercial-finance brokers first",
+        "Whichever named contact says yes first",
+        "don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:22:54.519Z"
+    },
+    {
+      "id": "D15",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "D2: What file will a pilot lender actually send? v0.1 reads only the synthetic five-column CSV. Settle this with three redacted samples or format descriptions run through `ingest` unchanged.",
+      "options": [
+        "Bank CSV export (format varies by bank)",
+        "PDF statement",
+        "Open-banking feed (no file)",
+        "don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:22:54.521Z"
+    },
+    {
+      "id": "D16",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "D3: Who anonymises the statement, and under what data-protection basis? Redacting payer names breaks M15 and the FPS CREDIT categoriser, and a sole trader's statement is still personal data. Test it by redacting one statement the way the lender would.",
+      "options": [
+        "The lender redacts before sending; we accept the degraded metrics",
+        "The owner receives the statement under a written DPA and does the redaction and conversion",
+        "Build a synthetic look-alike of their statement together with the lender",
+        "don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:22:54.526Z"
+    },
+    {
+      "id": "D17",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "Crediflow already fills the lender's template with source traceability and names UK customers. Have you seen what its traceability actually does, and what can v0.1 do that a head of credit would count (hours, errors, audit findings)?",
+      "options": [
+        "Seen a demo; v0.1 is clearly different (I'll write the side-by-side)",
+        "Not seen; I'll book a demo",
+        "Not seen; I'll ask a named Crediflow customer",
+        "don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:22:54.527Z"
+    },
+    {
+      "id": "D18",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "Moat and product both ask this: is the business software revenue, or expert consulting with the repo as a calling card? The answer changes whether moat is the right test and who v0.1 is for: the analyst or the repo reader.",
+      "options": [
+        "Software product (needs a moat beyond the repo)",
+        "Consulting, with the repo as credential",
+        "Consulting first, productise once pilots build a data asset",
+        "don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:22:54.529Z"
+    }
+  ]
 }
