@@ -11,7 +11,7 @@ from datetime import UTC, date, datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool, field_validator
 
 
 class Category(str, Enum):
@@ -42,6 +42,10 @@ class Transaction(BaseModel):
     category: Category | None = Field(
         default=None, description="Set by the categoriser; never read from the input file."
     )
+    reverses: str | None = Field(
+        default=None,
+        description="For a returned direct debit: the id of the debit it undoes. Set by the categoriser.",
+    )
 
 
 class Statement(BaseModel):
@@ -65,21 +69,31 @@ class Metric(BaseModel):
 
     id: str = Field(description="Stable citation key, e.g. M4.")
     name: str
-    value: float
+    value: float | None = Field(
+        description="None when the figure cannot be computed from this statement (say why in `method`)."
+    )
     unit: Literal["GBP", "pct", "count", "days", "ratio", "months"]
     method: str = Field(description="One sentence saying how it was computed.")
     evidence: list[str] = Field(
         default_factory=list, description="Transaction ids this figure was computed from."
     )
 
+    @property
+    def available(self) -> bool:
+        return self.value is not None
+
     def display(self) -> str:
+        """The figure as the memo should quote it. Negative figures keep their minus sign."""
+        v = self.value
+        if v is None:
+            return "n/a"
         if self.unit == "GBP":
-            return f"£{self.value:,.0f}"
+            return f"{'-' if v < 0 else ''}£{abs(v):,.0f}"
         if self.unit == "pct":
-            return f"{self.value:.1f}%"
+            return f"{v:.1f}%"
         if self.unit == "ratio":
-            return f"{self.value:.2f}"
-        return f"{self.value:.0f}"
+            return f"{v:.2f}x"
+        return f"{v:.0f}"
 
 
 class RuleOutcome(str, Enum):
@@ -94,12 +108,22 @@ class RuleResult(BaseModel):
     metric_id: str
     outcome: RuleOutcome
     detail: str
+    op: str = ""
+    threshold: float | None = None
+    refer_below: float | None = None
+    refer_above: float | None = None
+    unit: str = Field(default="", description="Unit of the metric the threshold applies to.")
+
+    def citable_values(self) -> list[float]:
+        """Values a memo may quote with this rule's [Rn] tag."""
+        return [v for v in (self.threshold, self.refer_below, self.refer_above) if v is not None]
 
 
 class PolicyResult(BaseModel):
     policy_name: str
     overall: RuleOutcome
     rules: list[RuleResult]
+    policy_sha256: str = Field(default="", description="Hash of the policy file the rules came from.")
 
 
 class GuardFinding(BaseModel):
@@ -126,13 +150,26 @@ class GuardResult(BaseModel):
 
 
 class ReviewDecision(BaseModel):
-    """A human decision on a memo. There is no default reviewer: someone must be named."""
+    """A human decision on a memo. There is no default reviewer: someone must be named.
 
-    approved: bool
+    `decided_at` is stamped by the system when the decision is accepted; the review
+    node refuses a decision that tries to set it.
+    """
+
+    approved: StrictBool
     reviewer: str = Field(min_length=1, description="Name of the person who decided.")
     notes: str = ""
     decided_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    override_grounding: bool = Field(
+    override_grounding: StrictBool = Field(
         default=False,
         description="True when approving a memo the guard did not ground; requires notes.",
     )
+    mode: Literal["interactive", "automated"] = Field(
+        default="interactive",
+        description="automated: approved by a script (--yes); stamped on the memo as no interactive review.",
+    )
+
+    @field_validator("reviewer", "notes", mode="before")
+    @classmethod
+    def _strip(cls, v):
+        return v.strip() if isinstance(v, str) else v

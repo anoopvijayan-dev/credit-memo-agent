@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import typer
@@ -13,9 +14,10 @@ from rich.markdown import Markdown
 from rich.table import Table
 
 from . import synth
-from .graph import build
+from .graph import build, evidence_record, sqlite_checkpointer
 from .ingest import StatementError
 from .llm import get_llm
+from .policy import PolicyError
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 import_app = typer.Typer(no_args_is_help=True, help="Convert a bank export into a statement CSV.")
@@ -40,26 +42,85 @@ def generate(
 @app.command()
 def run(
     statement: Path,
-    policy: Path | None = typer.Option(None, help="Policy YAML; defaults to policy/uk_sme_default.yaml"),
+    policy: Path | None = typer.Option(None, help="Policy YAML; defaults to the packaged uk_sme_default policy."),
     llm: str = typer.Option("fake", help="fake | anthropic | openai"),
+    vat_stagger: int | None = typer.Option(
+        None, min=1, max=3,
+        help="HMRC VAT stagger group (1, 2 or 3, from the VAT certificate). Without it, VAT timeliness is referred.",
+    ),
     reviewer: str | None = typer.Option(None, help="Your name, recorded on the memo."),
     yes: bool = typer.Option(
-        False, "--yes", help="Approve without prompting (scripts). Needs --reviewer; refuses ungrounded memos."
+        False, "--yes",
+        help="Approve without prompting (scripts). Needs --reviewer; refuses ungrounded memos; "
+        "the memo is stamped 'automated, no interactive review'.",
     ),
-    out: Path | None = typer.Option(None, help="Write the approved memo here (nothing is written if rejected)."),
+    out: Path | None = typer.Option(
+        None, help="Write the approved memo here, with NAME.evidence.json beside it. A rejected memo goes to "
+        "NAME.rejected.md instead."
+    ),
+    checkpoint_db: Path | None = typer.Option(
+        None, help="SQLite file that keeps a pending review across restarts (needs the 'durable' extra)."
+    ),
+    thread: str | None = typer.Option(None, help="Name this review, to pick it up later with `cma resume`."),
 ):
     """Run the memo graph on a statement and stop for human review."""
-    if yes and not reviewer:
+    if yes and not (reviewer or "").strip():
         console.print("[red]--yes needs --reviewer NAME: an approval must say who approved.[/red]")
         raise typer.Exit(code=2)
-    graph = build(get_llm(llm))
-    cfg = {"configurable": {"thread_id": str(uuid.uuid4())}}
+    thread_id = thread or str(uuid.uuid4())
+    with _checkpointer(checkpoint_db) as saver:
+        graph = build(get_llm(llm), checkpointer=saver)
+        cfg = {"configurable": {"thread_id": thread_id}}
+        try:
+            state = graph.invoke(
+                {"statement_path": str(statement), "policy_path": str(policy) if policy else None,
+                 "vat_stagger": vat_stagger},
+                cfg,
+            )
+        except (StatementError, PolicyError) as e:
+            console.print(f"[red]Refused.[/red] {e}")
+            raise typer.Exit(code=2) from e
+        if checkpoint_db:
+            console.print(f"review id: {thread_id} (kept in {checkpoint_db}; `cma resume {thread_id}` picks it up)")
+        _review(graph, cfg, state, reviewer, yes, out)
+
+
+@app.command()
+def resume(
+    thread: str = typer.Argument(..., help="The review id printed by `cma run --checkpoint-db`."),
+    checkpoint_db: Path = typer.Option(..., help="The SQLite file the review was kept in."),
+    reviewer: str | None = typer.Option(None, help="Your name, recorded on the memo."),
+    out: Path | None = typer.Option(None, help="As for `cma run`."),
+):
+    """Pick up a memo that is waiting for review, after a restart."""
+    if not checkpoint_db.exists():
+        console.print(f"[red]{checkpoint_db} does not exist.[/red]")
+        raise typer.Exit(code=2)
+    with _checkpointer(checkpoint_db) as saver:
+        graph = build(get_llm("fake"), checkpointer=saver)  # the draft is already made; no model call
+        cfg = {"configurable": {"thread_id": thread}}
+        snap = graph.get_state(cfg)
+        if not snap.interrupts:
+            console.print(f"[red]Nothing is waiting for review under {thread}.[/red]")
+            raise typer.Exit(code=1)
+        state = {**snap.values, "__interrupt__": snap.interrupts}
+        _review(graph, cfg, state, reviewer, False, out)
+
+
+@contextmanager
+def _checkpointer(path: Path | None):
+    if path is None:
+        yield None
+        return
     try:
-        state = graph.invoke({"statement_path": str(statement), "policy_path": str(policy) if policy else None}, cfg)
-    except StatementError as e:
-        console.print(f"[red]Statement refused.[/red] {e}")
+        with sqlite_checkpointer(path) as saver:
+            yield saver
+    except RuntimeError as e:
+        console.print(f"[red]{e}[/red]")
         raise typer.Exit(code=2) from e
 
+
+def _review(graph, cfg, state, reviewer, yes, out):
     interrupts = state.get("__interrupt__") or []
     if not interrupts:
         raise typer.Exit(code=1)
@@ -72,7 +133,7 @@ def run(
     console.rule("Grounding check")
     grounded = payload["guard_grounded"]
     if grounded:
-        console.print("[green]All figures trace to the metrics table.[/green]")
+        console.print("[green]All figures trace to the metrics table or the policy.[/green]")
     else:
         console.print(f"[red]Unmatched numbers:[/red] {payload['guard_unmatched']}")
         if payload["guard_missing_citations"]:
@@ -82,7 +143,8 @@ def run(
         if not grounded:
             console.print("[red]--yes will not approve a memo that failed the grounding check. Review it interactively.[/red]")
             raise typer.Exit(code=3)
-        decision = {"approved": True, "reviewer": reviewer}
+        decision = {"approved": True, "reviewer": reviewer, "mode": "automated",
+                    "notes": "Approved by script (--yes); the draft was not reviewed interactively."}
     else:
         decision = _ask(payload, grounded, reviewer)
 
@@ -94,20 +156,27 @@ def run(
             raise typer.Exit(code=3)
         decision = _ask(payload, grounded, reviewer)
         final = graph.invoke(Command(resume=decision), cfg)
-    if not final["review"].approved:
+
+    approved = final["review"].approved
+    if out:
+        target = out if approved else out.with_name(out.stem + ".rejected.md")
+        target.write_text(final["final_memo"])
+        evidence = out.with_name(out.stem + ".evidence.json")
+        evidence.write_text(json.dumps(evidence_record(final), indent=2, default=str))
+        console.print(f"wrote {target} and {evidence}")
+    if not approved:
         console.rule("Not approved")
         console.print(Markdown(final["final_memo"]))
         raise typer.Exit(code=1)
-    if out:
-        out.write_text(final["final_memo"])
-        console.print(f"wrote {out}")
-    else:
+    if not out:
         console.rule("Final")
         console.print(Markdown(final["final_memo"]))
 
 
 def _ask(payload: dict, grounded: bool, reviewer: str | None) -> dict:
-    name = reviewer or typer.prompt("Your name (recorded on the memo)")
+    name = (reviewer or "").strip()
+    while not name:
+        name = typer.prompt("Your name (recorded on the memo)").strip()
     approved = typer.confirm(payload["question"], default=False)
     override = False
     if approved and not grounded:

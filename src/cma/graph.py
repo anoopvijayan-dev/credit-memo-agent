@@ -5,13 +5,21 @@
                                                +---- redraft ----+  (if ungrounded, max 2)
 
 The model writes prose in `draft`. It never computes anything: it is handed the
-metrics table and the policy result and told to quote only from them, with a [Mn]
-tag on every figure. `guard` checks that it did. `review` stops the graph and waits
-for a person; nothing is final until they say so.
+metrics table and the policy table and told to quote only from them, each figure
+followed by its [Mn] or [Rn] tag. `guard` checks that it did. `review` stops the graph
+and waits for a named person; nothing is final until they say so. `finalise` stamps
+the decision and appends the figures, rules, model and file hashes the memo rests on,
+so the written memo can answer "where did this figure come from" on its own.
+
+Checkpoints: the default MemorySaver lives in memory, so a pending review is lost when
+the process exits. Pass a durable checkpointer (`sqlite_checkpointer(path)`, needs the
+`durable` extra) to keep pending reviews across restarts.
 """
 
 from __future__ import annotations
 
+import hashlib
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TypedDict
 
@@ -42,22 +50,51 @@ CHECKPOINT_TYPES = [
 ]
 
 
+def _serde() -> JsonPlusSerializer:
+    return JsonPlusSerializer(allowed_msgpack_modules=CHECKPOINT_TYPES)
+
+
 def default_checkpointer() -> MemorySaver:
-    return MemorySaver(serde=JsonPlusSerializer(allowed_msgpack_modules=CHECKPOINT_TYPES))
+    return MemorySaver(serde=_serde())
+
+
+@contextmanager
+def sqlite_checkpointer(path: Path):
+    """A checkpointer that survives restarts, so a memo waiting for review is not lost."""
+    try:
+        import sqlite3
+
+        from langgraph.checkpoint.sqlite import SqliteSaver
+    except ImportError as e:  # pragma: no cover - depends on the optional extra
+        raise RuntimeError("durable checkpoints need: pip install 'credit-memo-agent[durable]'") from e
+    conn = sqlite3.connect(str(path), check_same_thread=False)
+    try:
+        yield SqliteSaver(conn, serde=_serde())
+    finally:
+        conn.close()
+
+
+REVIEW_KEYS = {"approved", "reviewer", "notes", "override_grounding", "mode"}
 
 SYSTEM_PROMPT = """You are a credit analyst drafting an internal memo for a UK SME working-capital facility.
 
-Rules you must follow:
-1. Quote numbers ONLY from the metrics table you are given. Do not compute, estimate, or recall any figure.
-2. Every number you quote must be followed by its citation tag in square brackets, e.g. "£22,400 [M3]".
-3. Use exactly these headings: Business overview, Revenue, Cash position, Obligations and conduct, Recommendation.
-4. The Recommendation must state the policy outcome and which rules were referred or failed. You do not decide; the analyst does.
-5. Plain English, no hedging filler, under 400 words."""
+Rules you must follow. An automatic check enforces 1-5 and rejects the draft if any figure breaks them.
+1. Quote numbers ONLY from the metrics table or the policy table you are given. Do not compute, estimate, round differently, or recall any figure.
+2. Write each figure in digits exactly as the table shows it, followed immediately by its tag: "£22,400 [M3]", "1.42x [M10]", "-12.3% [M4]", "25 [M6] days". A policy threshold takes its rule's tag: "at least 1.25x [R2]".
+3. Keep minus signs. A negative figure is written with its minus, as the table shows it ("-£3,200 [M5]"), never as a positive with words like "deficit".
+4. Write no other number, in digits or in words. Refer to rules by id ("R2 and R5 were referred"), not by counting them. Write dates as YYYY-MM-DD.
+5. A metric shown as n/a could not be computed. Say so with its tag and give the reason from the method column: "Debt service cover is n/a [M10]: there are no loan repayments."
+6. Use exactly these headings: Business overview, Revenue, Cash position, Obligations and conduct, Recommendation.
+7. The Recommendation states the policy outcome and names each rule that was referred or failed. You do not decide; the analyst does.
+8. Plain English, no hedging filler, under 400 words."""
 
 
 class MemoState(TypedDict, total=False):
     statement_path: str
     policy_path: str | None
+    vat_stagger: int | None
+    model: str
+    statement_sha256: str
     statement: Statement
     metrics: list[Metric]
     policy: PolicyResult
@@ -73,6 +110,9 @@ def _review_problem(decision, grounded: bool) -> str | None:
     """Why this decision cannot be accepted, or None if it can."""
     if not isinstance(decision, dict):
         return "answer with {'approved': bool, 'reviewer': '<name>', 'notes': '...'}"
+    unknown = sorted(set(decision) - REVIEW_KEYS)
+    if unknown:
+        return f"unexpected field(s): {', '.join(unknown)}; the time of the decision is recorded by the system"
     try:
         review = ReviewDecision(**decision)
     except ValidationError as e:
@@ -86,17 +126,83 @@ def _review_problem(decision, grounded: bool) -> str | None:
     return None
 
 
+def _threshold(value: float | None, unit: str) -> str:
+    if value is None:
+        return ""
+    if unit == "GBP":
+        return f"{'-' if value < 0 else ''}£{abs(value):,.0f}"
+    if unit == "pct":
+        return f"{value:g}%"
+    if unit == "ratio":
+        return f"{value:g}x"
+    return f"{value:g}"
+
+
+def rules_table(p: PolicyResult) -> str:
+    lines = ["| id | rule | metric | requirement | outcome | detail |", "|---|---|---|---|---|---|"]
+    for r in p.rules:
+        req = f"{r.op} {_threshold(r.threshold, r.unit)}"
+        if r.refer_below is not None:
+            req += f"; referred below {_threshold(r.refer_below, r.unit)}"
+        if r.refer_above is not None:
+            req += f"; referred above {_threshold(r.refer_above, r.unit)}"
+        lines.append(f"| {r.rule_id} | {r.description} | {r.metric_id} | {req} | {r.outcome.value} | {r.detail} |")
+    return "\n".join(lines)
+
+
+def appendix(s: MemoState) -> str:
+    """What the memo rests on, printed under it, so the file stands on its own."""
+    st, p = s["statement"], s["policy"]
+    lines = [
+        "## Appendix: the figures behind this memo",
+        "",
+        f"Statement: {Path(s['statement_path']).name}, {len(st.transactions)} transactions, "
+        f"{st.start} to {st.end}, sha256 {s.get('statement_sha256', '')[:16]}",
+        f"Model: {s.get('model', '-')}. Policy: {p.policy_name}, sha256 {p.policy_sha256[:16]}, "
+        f"overall {p.overall.value}. VAT stagger: {s.get('vat_stagger') or 'not given'}.",
+        "Evidence: every transaction id behind each figure is in the .evidence.json file written beside this memo.",
+        "",
+        "| id | metric | value | method | lines |",
+        "|---|---|---|---|---|",
+    ]
+    lines += [f"| {m.id} | {m.name} | {m.display()} | {m.method} | {len(m.evidence)} |" for m in s["metrics"]]
+    lines += ["", rules_table(p)]
+    return "\n".join(lines)
+
+
+def evidence_record(s: MemoState) -> dict:
+    """Everything needed to audit the memo later, as plain JSON."""
+    return {
+        "statement": {"path": s["statement_path"], "sha256": s.get("statement_sha256"),
+                      "start": str(s["statement"].start), "end": str(s["statement"].end),
+                      "transactions": len(s["statement"].transactions)},
+        "model": s.get("model"),
+        "vat_stagger": s.get("vat_stagger"),
+        "metrics": [m.model_dump() for m in s["metrics"]],
+        "policy": s["policy"].model_dump(mode="json"),
+        "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
+        "redrafts": s.get("redrafts", 0),
+        "review": s["review"].model_dump(mode="json") if s.get("review") else None,
+        "memo": s.get("memo"),
+    }
+
+
 def build(llm: LLM | None = None, checkpointer=None):
     llm = llm or get_llm()
 
     def load(s: MemoState) -> MemoState:
-        return {"statement": ingest.load_csv(Path(s["statement_path"]))}
+        path = Path(s["statement_path"])
+        return {
+            "statement": ingest.load_csv(path),
+            "statement_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
+        }
 
     def categorise(s: MemoState) -> MemoState:
         return {"statement": cat.categorise(s["statement"])}
 
     def metrics(s: MemoState) -> MemoState:
-        return {"metrics": met.compute(s["statement"])}
+        return {"metrics": met.compute(s["statement"], vat_stagger=s.get("vat_stagger"))}
 
     def policy(s: MemoState) -> MemoState:
         p = pol.load_policy(Path(s["policy_path"])) if s.get("policy_path") else None
@@ -104,21 +210,19 @@ def build(llm: LLM | None = None, checkpointer=None):
 
     def draft(s: MemoState) -> MemoState:
         table = met.as_table(s["metrics"])
-        rules = "\n".join(
-            f"- {r.rule_id} {r.description}: {r.outcome.value} ({r.detail})" for r in s["policy"].rules
-        )
         user = (
             f"Account: {s['statement'].account_name}\n"
             f"Period: {s['statement'].start} to {s['statement'].end}\n\n"
             f"Metrics table:\n{table}\n\n"
-            f"Policy: {s['policy'].policy_name}\nOverall policy outcome: {s['policy'].overall.value}\n{rules}\n"
+            f"Policy: {s['policy'].policy_name}\nOverall policy outcome: {s['policy'].overall.value}\n"
+            f"Policy table:\n{rules_table(s['policy'])}\n"
         )
         if s.get("guard_feedback"):
             user += f"\nYour previous draft was rejected by the grounding check:\n{s['guard_feedback']}\nRewrite it using only figures from the table, each with its tag.\n"
         return {"memo": llm.complete(SYSTEM_PROMPT, user), "redrafts": s.get("redrafts", 0)}
 
     def guard(s: MemoState) -> MemoState:
-        g = grd.check(s["memo"], s["metrics"])
+        g = grd.check(s["memo"], s["metrics"], s["policy"])
         feedback = ""
         if not g.grounded:
             parts = [f"- {f.number_text}: {f.reason}" for f in g.unmatched]
@@ -164,14 +268,15 @@ def build(llm: LLM | None = None, checkpointer=None):
             grounding = "overridden by reviewer"
         else:
             grounding = "failed"
+        how = " (automated, no interactive review)" if r.mode == "automated" else ""
         stamp = (
-            f"\n\n---\n{'APPROVED' if r.approved else 'NOT APPROVED'} by {r.reviewer}"
+            f"\n\n---\n{'APPROVED' if r.approved else 'NOT APPROVED'} by {r.reviewer}{how}"
             f" at {r.decided_at.strftime('%Y-%m-%d %H:%M UTC')}."
             + (f" Notes: {r.notes}" if r.notes else "")
             + f"\nGrounding check: {grounding} ({g.numbers_checked} numbers checked,"
             f" {len(g.unmatched)} unmatched, {len(g.missing_citations)} missing citations)."
         )
-        return {"final_memo": s["memo"] + stamp}
+        return {"final_memo": s["memo"] + stamp + "\n\n" + appendix(s)}
 
     g = StateGraph(MemoState)
     for name, fn in [

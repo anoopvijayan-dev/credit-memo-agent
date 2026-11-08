@@ -117,3 +117,21 @@ def test_reviewer_sees_missing_citations(tmp_path):
     payload = state["__interrupt__"][0].value
     assert payload["guard_grounded"] is False
     assert "M2" in payload["guard_missing_citations"]
+
+
+# --- panel run 02, D12 --------------------------------------------------------------
+
+@pytest.mark.parametrize("decision, match", [
+    ({"approved": True, "reviewer": "   "}, "reviewer"),
+    ({"approved": True, "reviewer": "A", "decided_at": "2020-01-01T00:00:00Z"}, "decided_at"),
+    ({"approved": "yes", "reviewer": "A"}, "approved"),
+])
+def test_review_refuses_blank_names_backdating_and_loose_booleans(tmp_path, decision, match):
+    graph, cfg, _ = _stopped(tmp_path, tid=f"t-d12-{match}")
+    _asked_again(graph.invoke(Command(resume=decision), cfg), match)
+
+
+def test_reviewer_name_is_stripped(tmp_path):
+    graph, cfg, _ = _stopped(tmp_path, tid="t-strip")
+    final = graph.invoke(Command(resume={"approved": True, "reviewer": "  A. Analyst  "}), cfg)
+    assert final["review"].reviewer == "A. Analyst"

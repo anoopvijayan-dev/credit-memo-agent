@@ -37,10 +37,12 @@ def test_missing_citation_is_caught():
     assert "M2" in g.missing_citations
 
 
-def test_small_prose_integers_are_allowed():
-    memo = "Three of the 9 rules passed over the period [M7]."
-    g = guard.check(memo, _metrics())
-    assert g.unmatched == []
+def test_counts_are_checked_like_any_other_figure():
+    # Panel run 02, D5: the old 0-31 exemption let "2 returned direct debits" through when M7 = 1.
+    g = guard.check("Revenue £264,313 [M2]. There were 2 returned direct debits.", _metrics())
+    assert "2" in [f.number_text for f in g.unmatched]
+    g = guard.check("Revenue £264,313 [M2]. Three of the 9 rules passed.", _metrics())
+    assert {"Three", "9"} <= {f.number_text for f in g.unmatched}
 
 
 # --- C1: suffixed numbers (panel run 01, 6/6 seats) -------------------------------
@@ -110,3 +112,92 @@ def test_small_integer_metric_needs_its_tag():
 def test_citation_digits_are_not_counted_as_numbers():
     g = guard.check("Revenue £264,313 [M2]. Cover 1.42 [M10].", _metrics())
     assert g.numbers_checked == 2
+
+
+# --- panel run 02 ------------------------------------------------------------------
+
+def _with_negatives():
+    return [*_metrics(), Metric(id="M5", name="Lowest balance", value=-3200.0, unit="GBP", method="x"),
+            Metric(id="M1", name="Months covered", value=12, unit="months", method="x")]
+
+
+@pytest.mark.parametrize("memo, reason", [
+    ("Revenue £264,313 [M2]. A healthy £3,200 [M5] in credit.", "sign"),     # D2: sign
+    ("Revenue £264,313 [M2]. Statements cover 12% [M1].", "unit"),           # D2: unit
+    ("Revenue £264,313 [M2]. Cover is £1.42 [M10].", "unit"),
+    ("Revenue $264,313 [M2].", "unit"),
+])
+def test_sign_and_unit_must_fit_the_tagged_metric(memo, reason):
+    g = guard.check(memo, _with_negatives())
+    assert not g.grounded
+    assert any(reason in f.reason for f in g.unmatched), g.unmatched
+
+
+def test_negative_figures_written_with_minus_are_grounded():
+    for memo in ["Lowest balance -£3,200 [M5].", "Lowest balance £-3,200 [M5].", "Lowest balance \u2212£3,200 [M5]."]:
+        g = guard.check(memo, _with_negatives())
+        assert g.grounded, (memo, g)
+
+
+@pytest.mark.parametrize("memo, bad", [
+    ("Revenue £264,313 [M2]. Stock is 48250GBP.", "48250GBP"),                # D3: glued units
+    ("Revenue £264,313 [M2]. The facility is GBP1.2m.", "GBP1.2m"),
+    ("Revenue £264,313 [M2]. Stock is c.48k.", "48k"),
+    ("Revenue £264,313 [M2]. Stock is worth 48 thousand pounds.", "48 thousand"),
+    ("Revenue £264,313 [M2]. Stock is forty-eight thousand pounds.", "forty-eight"),
+    ("Revenue £264,313 [M2]. There were five returned direct debits.", "five"),
+])
+def test_glued_units_and_number_words_are_read(memo, bad):
+    g = guard.check(memo, _metrics())
+    assert not g.grounded
+    assert any(bad in f.number_text for f in g.unmatched), g.unmatched
+
+
+def test_rounding_cannot_drift_more_than_half_a_percent():
+    ms = [Metric(id="M2", name="Total revenue", value=48_400.0, unit="GBP", method="x")]
+    assert not guard.check("Revenue £48k [M2].", ms).grounded
+    assert guard.check("Revenue £48.4k [M2].", ms).grounded
+
+
+def test_tag_must_follow_its_figure_and_name_the_right_metric():
+    assert "M3" in guard.check("Revenue averaged £22,114 a month [M3].", _metrics()).missing_citations
+    g = guard.check("Revenue averaged £22,114 [M2].", _metrics())  # right number, wrong tag
+    assert not g.grounded and "M2" in g.unmatched[0].reason
+
+
+def _policy():
+    from cma.models import PolicyResult, RuleOutcome, RuleResult
+    return PolicyResult(policy_name="p", overall=RuleOutcome.REFER, rules=[
+        RuleResult(rule_id="R2", description="Debt service cover of at least 1.25x", metric_id="M10",
+                   outcome=RuleOutcome.REFER, detail="", op=">=", threshold=1.25, refer_below=1.5, unit="ratio"),
+        RuleResult(rule_id="R4", description="Fewer than 15 days overdrawn", metric_id="M6",
+                   outcome=RuleOutcome.REFER, detail="", op="<", threshold=15, unit="days"),
+    ])
+
+
+def test_policy_thresholds_are_citable_with_rule_tags():
+    # Panel run 02, D6: the model was asked to explain rules but every threshold was flagged.
+    memo = ("Cover is 1.42x [M10], above the 1.25x [R2] minimum but below the 1.5x [R2] band. "
+            "The account was overdrawn on 25 [M6] days against a limit of 15 [R4].")
+    assert guard.check(memo, _metrics(), _policy()).grounded
+
+
+def test_wrong_threshold_under_a_rule_tag_is_caught():
+    g = guard.check("Cover is 1.42x [M10] against a 1.1x [R2] minimum.", _metrics(), _policy())
+    assert not g.grounded and "R2" in g.unmatched[0].reason
+
+
+def test_dates_and_list_markers_are_not_figures():
+    memo = "1. Period 2025-10-01 to 2026-09-30, last paid 7 January 2026 and on 07/04/2026. Revenue £264,313 [M2]."
+    assert guard.check(memo, _metrics()).grounded
+
+
+def test_identifiers_are_not_figures():
+    assert guard.check("Rules R2 and R5 were referred; see M10 and INV1234. Revenue £264,313 [M2].", _metrics()).grounded
+
+
+def test_missing_metric_cannot_be_quoted():
+    ms = [*_metrics(), Metric(id="M13", name="Late VAT", value=None, unit="count", method="unknown stagger")]
+    g = guard.check("Revenue £264,313 [M2]. Late VAT payments: 0 [M13].", ms)
+    assert not g.grounded and "no value" in g.unmatched[0].reason
+    assert guard.check("Revenue £264,313 [M2]. Late VAT payments: n/a [M13].", ms).grounded
