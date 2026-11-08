@@ -123,3 +123,44 @@ def test_flex_is_debt_not_a_supplier(tmp_path):
     assert cats["LOAN REPAYMENT MONZO FLEX"] == "loan_repayment"
     m = {x.id: x for x in metrics.compute(s)}
     assert m["M8"].value == 300.0
+
+
+# --- panel run 03 ------------------------------------------------------------------
+
+def _row_ref(tid, d, kind, name, amount, notes="", description=""):
+    r = _row(tid, d, "09:00:00", kind, name, amount)
+    r[11], r[14] = notes, description
+    return r
+
+
+def test_invoice_reference_survives_import_and_counts_as_revenue(tmp_path):
+    # E3: the reference was dropped, so no Monzo transfer could ever be revenue.
+    rows = [_row_ref("tx_a", "01/03/2026", "Faster payment", "Oakfield Properties", 4800.0, description="INV 1042"),
+            _row_ref("tx_b", "02/03/2026", "Bacs (Direct Credit)", "Acme Ltd", 900.0, notes="invoice 2210 #work")]
+    out = tmp_path / "o.csv"
+    monzo.convert(_write(tmp_path, rows), out, opening_balance=0)
+    s = categorise.categorise(ingest.load_csv(out))
+    assert [t.description for t in s.transactions] == [
+        "FPS CREDIT OAKFIELD PROPERTIES INV1042", "BACS CREDIT ACME LTD INVOICE2210"]
+    assert {t.category.value for t in s.transactions} == {"revenue_transfer"}
+    # ...and every line keeps Monzo's own id.
+    assert [t.id for t in s.transactions] == ["tx_a", "tx_b"]
+
+
+def test_supplied_opening_balance_is_checked_against_monzo(tmp_path):
+    # E4: a wrong opening balance silently shifted every balance.
+    header = [*HEADER, "Balance", "Balance currency"]
+    rows = [[*_row("tx_1", "01/03/2026", "09:00:00", "Faster payment", "Client A", 100.0), "600.00", "GBP"],
+            [*_row("tx_2", "02/03/2026", "09:00:00", "Card payment", "Shop", -50.0), "550.00", "GBP"]]
+    src = _write(tmp_path, rows, header=header)
+    with pytest.raises(monzo.MonzoImportError, match=r"implies 500\.00"):
+        monzo.convert(src, tmp_path / "o.csv", opening_balance=5000)
+    assert monzo.convert(src, tmp_path / "o2.csv", opening_balance=500).closing_balance == 550.0
+
+
+@pytest.mark.parametrize("amount", ["1e5", "1,234.00", "£12.00"])
+def test_monzo_amounts_must_be_plain(tmp_path, amount):
+    row = _row("tx_1", "01/03/2026", "09:00:00", "Card payment", "Shop", -1.0)
+    row[7] = amount
+    with pytest.raises(monzo.MonzoImportError, match="plain amount"):
+        monzo.convert(_write(tmp_path, [row]), tmp_path / "o.csv", opening_balance=0)

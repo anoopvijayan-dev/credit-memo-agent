@@ -10,7 +10,11 @@ So this module:
 - uses the signed `Amount` column (account currency), never Money In/Out as well;
 - orders rows oldest first by date and time, then Transaction ID;
 - walks a running balance forward from an opening balance the owner supplies, or uses
-  Monzo's own Balance column when the export has one and checks it agrees;
+  Monzo's own Balance column when the export has one; whenever that column is there,
+  every walked balance is checked against it, including a supplied opening balance;
+- keeps Monzo's Transaction ID as the line id, so every figure traces back to Monzo;
+- carries invoice references from Notes and Description into the description, so a
+  customer payment marked "INV 1234" is recognised as revenue;
 - builds a bank-style description from Type, direction and Name (for example
   "FPS CREDIT ACME LTD", "DD COUNCIL TAX", "CARD TESCO"), so the categoriser sees
   the payment rail the way it would on a bank statement;
@@ -24,11 +28,16 @@ from __future__ import annotations
 
 import csv
 import math
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
+from ..categorise import INVOICE_REF
+
 REQUIRED = ("Transaction ID", "Date", "Type", "Name", "Amount")
+PLAIN_MONEY = re.compile(r"^[-+]?\d+(?:\.\d{1,2})?$")
+SAFE_ID = re.compile(r"^[A-Za-z0-9_.:-]+$")
 
 
 class MonzoImportError(ValueError):
@@ -60,13 +69,24 @@ def _parse_date(raw: str) -> date:
 
 
 def _money(raw: str | None, field: str, line: int) -> float:
-    try:
-        v = float((raw or "").replace(",", "").strip())
-    except ValueError as e:
-        raise MonzoImportError(f"line {line}: {field} {raw!r} is not a number") from e
+    text = (raw or "").strip()
+    if not PLAIN_MONEY.match(text):
+        raise MonzoImportError(f"line {line}: {field} {raw!r} is not a plain amount like -12.40")
+    v = float(text)
     if not math.isfinite(v):
         raise MonzoImportError(f"line {line}: {field} {raw!r} is not finite")
     return v
+
+
+def references(*fields: str | None) -> str:
+    """Invoice references found in Monzo's free-text fields, e.g. "INV1234"."""
+    found = []
+    for f in fields:
+        for m in INVOICE_REF.finditer((f or "").upper()):
+            ref = re.sub(r"\s+", "", m.group(0))
+            if ref not in found:
+                found.append(ref)
+    return " ".join(found)
 
 
 def describe(kind: str, name: str, amount: float, extra: str = "") -> str:
@@ -127,6 +147,8 @@ def convert(src: Path, dst: Path, opening_balance: float | None = None) -> Impor
         tid = (r.get("Transaction ID") or "").strip()
         if not tid:
             raise MonzoImportError(f"line {i}: empty Transaction ID")
+        if not SAFE_ID.match(tid):
+            raise MonzoImportError(f"line {i}: unexpected characters in Transaction ID {tid!r}")
         if tid in seen:
             raise MonzoImportError(f"line {i}: duplicate Transaction ID {tid}")
         seen.add(tid)
@@ -138,29 +160,36 @@ def convert(src: Path, dst: Path, opening_balance: float | None = None) -> Impor
         t = (r.get("Time") or "00:00:00").strip()
         amount = _money(r["Amount"], "Amount", i)
         bal = _money(r["Balance"], "Balance", i) if has_balance and (r.get("Balance") or "").strip() else None
-        desc = describe(r.get("Type", ""), r.get("Name", ""), amount)
+        refs = references(r.get("Notes and #tags"), r.get("Description"))
+        desc = describe(r.get("Type", ""), r.get("Name", ""), amount, refs)
         parsed.append((d, t, tid, desc, amount, bal))
 
     parsed.sort(key=lambda x: (x[0], x[1], x[2]))
+    first = parsed[0]
+    implied = round(first[5] - first[4], 2) if first[5] is not None else None
     if opening_balance is None:
-        first = parsed[0]
-        if first[5] is None:
+        if implied is None:
             raise MonzoImportError("first row has no Balance; pass --opening-balance")
-        opening_balance = round(first[5] - first[4], 2)
+        opening_balance = implied
         source = "Monzo Balance column"
     else:
+        if implied is not None and abs(implied - opening_balance) > 0.005:
+            raise MonzoImportError(
+                f"--opening-balance {opening_balance:.2f} disagrees with Monzo's Balance column, "
+                f"which implies {implied:.2f}; leave --opening-balance out to use Monzo's"
+            )
         source = "opening balance supplied"
 
     out_rows = []
     bal = opening_balance
-    for n, (d, _t, tid, desc, amount, monzo_bal) in enumerate(parsed, start=1):
+    for d, _t, tid, desc, amount, monzo_bal in parsed:
         bal = round(bal + amount, 2)
-        if monzo_bal is not None and source == "Monzo Balance column" and abs(monzo_bal - bal) > 0.01:
+        if monzo_bal is not None and abs(monzo_bal - bal) > 0.005:
             raise MonzoImportError(
                 f"{tid}: walked balance {bal:.2f} disagrees with Monzo's {monzo_bal:.2f}; "
                 "the export may be missing transactions"
             )
-        out_rows.append({"id": f"M{n:05d}", "date": d.isoformat(), "description": desc,
+        out_rows.append({"id": tid, "date": d.isoformat(), "description": desc,
                          "amount": f"{amount:.2f}", "balance": f"{bal:.2f}"})
 
     Path(dst).parent.mkdir(parents=True, exist_ok=True)

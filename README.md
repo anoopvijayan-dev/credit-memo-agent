@@ -38,14 +38,17 @@ cma run examples/cafe_stretched.csv --vat-stagger 3
 # "automated, no interactive review". --out also writes memo.evidence.json
 # (every transaction id behind every figure); a rejected memo goes to
 # memo.rejected.md.
-cma run examples/cafe_stretched.csv --vat-stagger 3 --yes --reviewer "A. Analyst" --out memo.md
+# Existing files are never overwritten.
+cma run examples/cafe_stretched.csv --vat-stagger 3 --yes --reviewer "A. Analyst" --out private/memo.md
 
-# Keep a pending review across restarts (pip install -e ".[durable]").
-cma run examples/cafe_stretched.csv --checkpoint-db reviews.sqlite --thread case-7
-cma resume case-7 --checkpoint-db reviews.sqlite
+# Keep a pending review across restarts (pip install -e ".[durable]"). The database
+# holds the whole statement, so keep it in private/ too.
+cma run examples/cafe_stretched.csv --checkpoint-db private/reviews.sqlite --thread case-7
+cma resume case-7 --checkpoint-db private/reviews.sqlite
 
-# Your own Monzo export, converted locally (nothing leaves the machine).
-cma import monzo "Monzo Data Export.csv" --opening-balance 123.45 --out private/mine.csv
+# A real statement: keep the export and everything made from it under private/
+# (git-ignored, as are *.csv, memo files, evidence files and databases anywhere).
+cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out private/mine.csv
 
 # Use a real model instead of the offline one.
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
@@ -99,7 +102,9 @@ each seat in a fresh context against written requirements. Verdict: **fail**, wi
 The blocker and the five majors that broke the core promises (C1–C6) are fixed, each
 with regression tests taken from the seats' repros. A second panel run on the fixes
 ([`panel-02.md`](.bridgie/runs/v01-pilot-ready/panel-02.md)) found 19 more (D1–D19,
-one blocker); those are fixed too, with tests named after each finding.
+one blocker), and a third ([`panel-03.md`](.bridgie/runs/v01-pilot-ready/panel-03.md))
+found 27 (E1–E27, one blocker) in those fixes and the new code; all are fixed, with
+tests named after each finding.
 
 ## Known limits (v0.1)
 
@@ -112,6 +117,13 @@ one blocker); those are fixed too, with tests named after each finding.
 - Revenue by bank transfer needs an invoice reference to count. Statements without
   references show it as unclassified inflows (M16), which refers the case.
 - Pending reviews live in memory unless you pass `--checkpoint-db`.
+- The reviewer's name is asserted, not authenticated: anyone at the terminal can type
+  any name. A pilot inside a lender would put the CLI behind their own sign-in.
+- Debt service cover (M10) is historical and covers existing debt only; it does not
+  include the facility being applied for. Money in that isn't explained as trading
+  is left out of it, and shows as unclassified inflows (M16).
+- The categoriser knows the synthetic acquirer names. Card revenue from a real
+  acquirer it doesn't recognise lands in M16 and refers the case until a rule is added.
 - Policy thresholds are illustrative. They are not any lender's real policy.
 
 ## Data

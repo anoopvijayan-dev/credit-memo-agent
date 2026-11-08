@@ -32,3 +32,28 @@ def test_refuses_other_paths(data, path):
 def test_policy_path_is_checked_too(data):
     with pytest.raises(ValueError):
         mcp_server.check_policy("cafe.csv", policy_path="/etc/hosts")
+
+
+# --- panel run 03 ------------------------------------------------------------------
+
+def test_no_data_dir_means_no_reads(tmp_path, monkeypatch):
+    # E12: the root defaulted to the working directory, often / for MCP hosts.
+    monkeypatch.delenv("CMA_DATA_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "x.csv").write_text("id,date,description,amount,balance\n")
+    with pytest.raises(ValueError, match="CMA_DATA_DIR is not set"):
+        mcp_server.statement_summary("x.csv")
+
+
+def test_refused_statement_does_not_echo_cell_values(data):
+    (data / "data" / "bad.csv").write_text("id,date,description,amount,balance\nT1,2026-01-01,A,SECRET-VALUE,1\n")
+    with pytest.raises(ValueError) as e:
+        mcp_server.statement_summary("bad.csv")
+    assert "SECRET-VALUE" not in str(e.value) and "line 2" in str(e.value)
+
+
+def test_descriptions_only_on_request_and_marked_untrusted(data):
+    rows = mcp_server.transactions_for("cafe.csv", ["T00001"])
+    assert "description" not in rows[0] and "untrusted_description" not in rows[0]
+    rows = mcp_server.transactions_for("cafe.csv", ["T00001"], include_descriptions=True)
+    assert rows[0]["untrusted_description"]
