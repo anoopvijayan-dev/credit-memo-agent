@@ -9,3 +9,20 @@ build/
 .env
 out/
 evals/results/
+
+# Real statements never go in this public repo. Everything the CLI reads or writes for a
+# real case is ignored by default; the synthetic examples and test data are let back in
+# explicitly, so a new data file has to be added on purpose.
+private/
+*.private.csv
+*.csv
+*.memo.md
+memo*.md
+*.rejected.md
+*.evidence.json
+*.sqlite
+*.sqlite3
+*.db
+!examples/*.csv
+!examples/*.evidence.json
+!examples/*.memo.md

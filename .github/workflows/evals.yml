@@ -4,13 +4,13 @@ name: Real-model evals
 # is exchanged for a short-lived Anthropic token (Claude Console workload identity
 # federation). Manual only, and only from main, because the federation rule is
 # pinned to repo:anoopvijayan-dev/credit-memo-agent:ref:refs/heads/main.
+#
+# It evaluates main's own code and nothing else. Running another branch's code here
+# would hand that code a token the federation rule treats as main's. To evaluate a
+# branch, merge it first.
 on:
   workflow_dispatch:
     inputs:
-      code_ref:
-        description: "Branch or commit whose code to evaluate (the workflow itself runs from main)"
-        default: main
-        required: true
       model:
         description: "Claude model"
         default: claude-sonnet-5-5
@@ -34,21 +34,27 @@ jobs:
       ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
       ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
       ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
-      ANTHROPIC_IDENTITY_TOKEN_FILE: ${{ runner.temp }}/gha-jwt
+      # runner.temp is not available in job-level env; /tmp is the runner's temp dir.
+      ANTHROPIC_IDENTITY_TOKEN_FILE: /tmp/gha-jwt
       CMA_ANTHROPIC_MODEL: ${{ inputs.model }}
+    defaults:
+      run:
+        shell: bash  # -eo pipefail: a failing eval fails the step even through `| tee`
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.code_ref }}
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Check federation variables are set
         run: |
+          if ! [[ "$CMA_ANTHROPIC_MODEL" =~ ^[a-z0-9.-]+$ ]]; then echo "::error::model must look like claude-sonnet-5-5"; exit 1; fi
           for v in ANTHROPIC_FEDERATION_RULE_ID ANTHROPIC_ORGANIZATION_ID ANTHROPIC_SERVICE_ACCOUNT_ID; do
             if [ -z "${!v}" ]; then echo "::error::Repository variable $v is not set (Settings → Secrets and variables → Actions → Variables)"; exit 1; fi
           done
       - run: pip install -e ".[llm]"
+      # The token is fetched last, after everything is installed, and only main's code runs with it.
       - name: Fetch GitHub OIDC token
         run: |
           curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
@@ -60,15 +66,18 @@ jobs:
         if: always()
         run: |
           {
-            echo "### Real-model evals: ${{ inputs.model }} on \`${{ inputs.code_ref }}\`"
+            echo "### Real-model evals: $CMA_ANTHROPIC_MODEL on main@${GITHUB_SHA::7}"
             echo '```'
             cat evals-output.txt 2>/dev/null || echo "no output"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove the token before uploading anything
+        if: always()
+        run: rm -f "$ANTHROPIC_IDENTITY_TOKEN_FILE"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: evals-${{ inputs.model }}-${{ github.run_id }}
+          name: evals-${{ github.run_id }}
           path: |
-            evals/results/
+            evals/results/*.json
             evals-output.txt
