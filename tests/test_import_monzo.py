@@ -99,7 +99,25 @@ def test_rejects_duplicate_transaction_ids(tmp_path):
     [("Faster payment", 10, "FPS CREDIT"), ("Faster payment", -10, "FPS DEBIT"),
      ("Bacs (Direct Credit)", 10, "BACS CREDIT"), ("Direct Debit", -10, "DD"),
      ("Card payment", -10, "CARD"), ("Card payment", 10, "CARD REFUND"),
-     ("Account interest", 1, "INTEREST"), ("Monzo-to-Monzo", 10, "FPS CREDIT")],
+     ("Account interest", 1, "INTEREST"), ("Monzo-to-Monzo", 10, "FPS CREDIT"),
+     ("Bank transfer", 10, "FPS CREDIT"), ("Bank transfer", -10, "FPS DEBIT"),
+     ("Flex", -10, "LOAN REPAYMENT"), ("Flex", 10, "LOAN DRAWDOWN")],
 )
 def test_description_prefixes(kind, amount, prefix):
     assert monzo.describe(kind, "X", amount).startswith(prefix + " ")
+
+
+def test_flex_is_debt_not_a_supplier(tmp_path):
+    rows = [
+        _row("tx_1", "01/03/2026", "09:00:00", "Card payment", "Laptop Shop", -900.0),
+        _row("tx_2", "01/03/2026", "09:05:00", "Flex", "Monzo Flex", 900.0),
+        _row("tx_3", "01/04/2026", "06:00:00", "Flex", "Monzo Flex", -300.0),
+    ]
+    out = tmp_path / "o.csv"
+    monzo.convert(_write(tmp_path, rows), out, opening_balance=1000.0)
+    s = categorise.categorise(ingest.load_csv(out))
+    cats = {t.description: t.category.value for t in s.transactions}
+    assert cats["LOAN DRAWDOWN MONZO FLEX"] == "loan_drawdown"
+    assert cats["LOAN REPAYMENT MONZO FLEX"] == "loan_repayment"
+    m = {x.id: x for x in metrics.compute(s)}
+    assert m["M8"].value == 300.0

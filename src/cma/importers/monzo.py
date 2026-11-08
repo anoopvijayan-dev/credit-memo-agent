@@ -13,7 +13,9 @@ So this module:
   Monzo's own Balance column when the export has one and checks it agrees;
 - builds a bank-style description from Type, direction and Name (for example
   "FPS CREDIT ACME LTD", "DD COUNCIL TAX", "CARD TESCO"), so the categoriser sees
-  the payment rail the way it would on a bank statement.
+  the payment rail the way it would on a bank statement;
+- treats Monzo Flex as the credit line it is: money in is "LOAN DRAWDOWN MONZO FLEX",
+  money out is "LOAN REPAYMENT MONZO FLEX", so repayments count as debt service.
 
 It reads the file locally and writes a new file. Nothing is sent anywhere.
 """
@@ -72,7 +74,13 @@ def describe(kind: str, name: str, amount: float, extra: str = "") -> str:
     k = kind.strip().lower()
     who = " ".join(f"{name} {extra}".split()).upper() or "UNKNOWN"
     incoming = amount > 0
-    if "faster payment" in k or "monzo-to-monzo" in k or k == "p2p_payment":
+    if "flex" in k or "MONZO FLEX" in who:
+        # Monzo Flex is credit: money in is a drawdown, money out is a repayment.
+        prefix = "LOAN DRAWDOWN" if incoming else "LOAN REPAYMENT"
+        if "FLEX" not in who:
+            who = f"MONZO FLEX {who}"
+    elif ("faster payment" in k or "monzo-to-monzo" in k or k == "p2p_payment"
+          or "bank transfer" in k):
         prefix = "FPS CREDIT" if incoming else "FPS DEBIT"
     elif "bacs" in k:
         prefix = "BACS CREDIT" if incoming else "BACS DEBIT"
