@@ -1,6 +1,6 @@
 {
   "bet": "v01-pilot-ready",
-  "next_id": 9,
+  "next_id": 12,
   "decisions": [
     {
       "id": "D1",
@@ -183,6 +183,71 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-07T23:01:49.813Z"
+    },
+    {
+      "id": "D9",
+      "type": "question",
+      "raised_by": {
+        "seat": "researcher",
+        "run": "researcher-01"
+      },
+      "context": "Geography: this report assumes UK non-bank SME lenders and commercial-finance brokers, per the bet. Plaid and Ocrolus lean US. Confirm the scope.",
+      "options": [
+        "UK only",
+        "UK plus Ireland/EU",
+        "Include US"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:18:27.785Z"
+    },
+    {
+      "id": "D10",
+      "type": "question",
+      "raised_by": {
+        "seat": "researcher",
+        "run": "researcher-01"
+      },
+      "context": "Segment: the Who is a role at two kinds of firm. Crediflow, Heron and Arya.ai sell to lenders. Heron has a separate broker suite. Which one do you pilot first?",
+      "options": [
+        "Non-bank lenders",
+        "Commercial-finance brokers",
+        "Whichever says yes first"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:18:27.792Z"
+    },
+    {
+      "id": "D11",
+      "type": "question",
+      "raised_by": {
+        "seat": "researcher",
+        "run": "researcher-01"
+      },
+      "context": "Page fetches were blocked in this run, so all facts come from search-result summaries. Should I rerun with fetch enabled to read vendor pricing and review pages in full and check dates?",
+      "options": [
+        "Yes, rerun with fetch",
+        "No, accept as is"
+      ],
+      "allow_free_text": false,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:18:27.795Z"
     }
   ]
 }

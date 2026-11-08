@@ -46,6 +46,9 @@ Raised by the review panel; see `.bridgie/runs/v01-pilot-ready/`.
 - D5: Who, by name, would run the statement? Is there anyone who has said yes in principle, and when does the 'week 6' kill clock start? The playbook has outreach in week 3, and C1–C6 still need fixing first. Check this against the outreach log, not memory.
 - D6: Why now: is there evidence that UK lenders are actually trialling LLM memo tools and getting burned by invented figures? And would the differentiator survive if Ocrolus, Codat or Plaid ship cited memos (Plaid launched LendScore 2 on 6 Oct 2026)? Answering needs a source search or three interview questions.
 - D7: Scope of this bet: kill criterion 2 ('no lender or broker agrees to run a statement by week 6') tests demand and overlaps lenders-will-pay. As written, an engineering bet can be killed by a sales outcome, and its own engineering fitness has no pass date.
+- D9: Geography: this report assumes UK non-bank SME lenders and commercial-finance brokers, per the bet. Plaid and Ocrolus lean US. Confirm the scope.
+- D10: Segment: the Who is a role at two kinds of firm. Crediflow, Heron and Arya.ai sell to lenders. Heron has a separate broker suite. Which one do you pilot first?
+- D11: Page fetches were blocked in this run, so all facts come from search-result summaries. Should I rerun with fetch enabled to read vendor pricing and review pages in full and check dates?
 
 ## Evidence tasks
 
