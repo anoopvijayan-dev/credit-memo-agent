@@ -39,7 +39,7 @@ def test_no_debt_means_no_cover_figure_and_a_loss_maker_fails():
     s = statement(monthly([("CARD ACQUIRER SETTLEMENT", 6000.0), ("BREW SUPPLY CO DD", -10000.0)]), opening=200000)
     m = by_id(s, vat_stagger=3)
     assert m["M8"].value == 0
-    assert m["M10"].value is None and "nothing to cover" in m["M10"].method
+    assert m["M10"].value is None and "no existing debt" in m["M10"].method
     assert m["M9"].value == -48000.0
     result = policy.evaluate(list(m.values()))
     outcomes = {r.rule_id: r.outcome for r in result.rules}
@@ -166,14 +166,15 @@ def test_returned_vat_payment_counts_once():
 
 # D16 / D17: lowest balance and months covered.
 
-def test_months_covered_ignores_short_boundary_months_and_counts_dormant_ones():
+def test_months_covered_is_the_period_length_and_counts_dormant_months():
     lines = [(date(2025, 10, 25), "CARD ACQUIRER SETTLEMENT", 100.0)]
     lines += [(date(2025 + (m > 12), (m - 1) % 12 + 1, 10), "CARD ACQUIRER SETTLEMENT", 1000.0)
               for m in range(11, 21) if m != 15]  # March 2026 has no transactions
     lines.append((date(2026, 9, 30), "CARD ACQUIRER SETTLEMENT", 100.0))
     m = by_id(statement(lines))
-    assert m["M1"].value == 11  # 25 Oct to 30 Sep: October has 7 days inside, so it does not count
-    assert m["M3"].value == pytest.approx(m["M2"].value / 11, abs=0.01)
+    assert m["M1"].value == 11  # 25 Oct to 30 Sep is 341 days: 11 months to the nearest month
+    days = (date(2026, 9, 30) - date(2025, 10, 25)).days + 1
+    assert m["M3"].value == pytest.approx(m["M2"].value / (days / (365.25 / 12)), abs=0.01)
 
 
 def test_lowest_balance_is_the_lowest_running_balance():

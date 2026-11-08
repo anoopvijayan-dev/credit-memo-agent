@@ -71,9 +71,10 @@ PROFILES: dict[str, dict] = {
     # Tuned so that, under the default policy, good passes (or is referred only for
     # seasonality), stretched is referred and poor fails, with cover measured after
     # owner drawings.
-    "good": {"revenue_mult": 1.30, "returned_dds": 0, "hmrc_late": False, "opening_balance": 14_000},
-    "stretched": {"revenue_mult": 1.18, "returned_dds": 1, "hmrc_late": False, "opening_balance": 3_500},
-    "poor": {"revenue_mult": 0.85, "returned_dds": 4, "hmrc_late": True, "opening_balance": 600},
+    # capital_in is money the owner puts in mid-year: not revenue, not operating cash.
+    "good": {"revenue_mult": 1.30, "returned_dds": 0, "hmrc_late": False, "opening_balance": 14_000, "capital_in": 0},
+    "stretched": {"revenue_mult": 1.18, "returned_dds": 1, "hmrc_late": False, "opening_balance": 3_500, "capital_in": 8_000},
+    "poor": {"revenue_mult": 0.85, "returned_dds": 4, "hmrc_late": True, "opening_balance": 600, "capital_in": 15_000},
 }
 
 CUSTOMER_NAMES = [
@@ -99,6 +100,10 @@ class Truth:
     lowest_balance: float = 0.0
     days_overdrawn: int = 0
     top_customer_share: float | None = None
+    average_monthly_revenue: float = 0.0
+    net_operating: float = 0.0
+    debt_cover: float | None = None
+    unclassified_share: float | None = None
     vat_stagger: int = VAT_STAGGER
     late_vat_count: int = 0
     category_by_id: dict[str, str] = field(default_factory=dict)
@@ -214,12 +219,17 @@ def generate(
         events.append((pay, "HMRC VAT", -vat, Category.HMRC_VAT))
         truth.total_hmrc_vat += vat
 
+    # The owner props up the account once, half way through.
+    if p["capital_in"]:
+        mid = starts[len(starts) // 2]
+        events.append((mid + timedelta(days=14), "FPS CREDIT DIRECTOR CAPITAL INTRODUCED", float(p["capital_in"]), Category.OTHER))
+
     # Returned direct debits: a scheduled DD bounces, the bank returns it two days later
     # and charges a fee, and the payee re-presents it a week after the original.
     bounceable = [i for i, e in enumerate(events)
                   if e[3] in (Category.SUPPLIER, Category.LOAN_REPAYMENT)
-                  and (e[1].endswith(" DD") or e[1].startswith("DD ")) and e[0] >= starts[3]]
-    for i in rng.sample(bounceable, p["returned_dds"]):
+                  and (e[1].endswith(" DD") or e[1].startswith("DD ")) and e[0] >= starts[min(3, len(starts) - 1)]]
+    for i in rng.sample(bounceable, min(p["returned_dds"], len(bounceable))):
         d, desc, amt, cat = events[i]
         payee = desc[3:] if desc.startswith("DD ") else desc
         events.append((d + timedelta(days=2), f"UNPAID DD {payee}", -amt, Category.RETURNED_DD))
@@ -259,13 +269,34 @@ def generate(
         if q_end >= first_day - timedelta(days=1) and window <= last_day and p["hmrc_late"]:
             truth.late_vat_count += 1
 
+    # The figures that decide the fail rules, from the generator's own events: operating
+    # cash is everything except financing and the owner's capital; a returned DD and its
+    # re-presentation net to one payment.
+    financing = {Category.LOAN_REPAYMENT, Category.LOAN_DRAWDOWN, Category.OWNER_DRAWINGS}
+    returned_cat = {f"UNPAID DD {d[3:] if d.startswith('DD ') else d}": c
+                    for _, d, _, c in events if c in (Category.SUPPLIER, Category.LOAN_REPAYMENT)}
+    op = 0.0
+    for _, desc, amt, cat in events:
+        effective = returned_cat.get(desc, cat) if cat == Category.RETURNED_DD else cat
+        if effective in financing or cat == Category.OTHER:
+            continue
+        op += amt
+    truth.net_operating = round(op, 2)
+    if truth.total_debt_service:
+        truth.debt_cover = round((truth.net_operating - truth.total_owner_drawings) / truth.total_debt_service, 4)
+    money_in = sum(a for _, _, a, c in events if a > 0 and c not in (Category.RETURNED_DD, Category.LOAN_DRAWDOWN))
+    other_in = sum(a for _, _, a, c in events if a > 0 and c == Category.OTHER)
+    truth.unclassified_share = round(other_in / money_in * 100, 2) if money_in else None
+    period_days = (events[-1][0] - events[0][0]).days + 1
+    truth.average_monthly_revenue = round(truth.total_revenue / (period_days / (365.25 / 12)), 2)
+
     truth.lowest_balance = lowest
     truth.days_overdrawn = overdrawn
     truth.total_revenue = round(truth.total_revenue, 2)
     truth.total_hmrc_vat = round(truth.total_hmrc_vat, 2)
     truth.monthly_revenue = {k: round(v, 2) for k, v in truth.monthly_revenue.items()}
     if by_customer:
-        truth.top_customer_share = round(max(by_customer.values()) / sum(by_customer.values()) * 100, 1)
+        truth.top_customer_share = round(max(by_customer.values()) / sum(by_customer.values()) * 100, 2)
     return rows, truth
 
 

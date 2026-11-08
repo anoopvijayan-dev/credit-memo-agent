@@ -58,7 +58,7 @@ rules:
     when_missing: refer
 
   - id: R6
-    description: Revenue not declining by more than 15%
+    description: Revenue trend no worse than -15%
     metric: M4
     op: ">="
     threshold: -15

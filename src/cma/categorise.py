@@ -14,7 +14,8 @@ some real revenue on statements without invoice references, but the alternative 
 that money the owner moves in and out counts as trading income and lifts debt cover.
 
 A returned direct debit ("UNPAID DD ...") is linked to the debit it reverses, so a
-bounced and re-presented payment counts once, not twice.
+bounced and re-presented payment counts once, not twice. An invoice-referenced credit
+from someone the applicant also pays by transfer is not revenue (round trip).
 """
 
 from __future__ import annotations
@@ -65,13 +66,20 @@ def categorise_one(t: Transaction) -> Category:
     return Category.OTHER
 
 
-def _payee(description: str) -> str:
-    """The counterparty part of a description, for matching a reversal to its debit."""
-    d = description.upper()
-    d = re.sub(r"^UNPAID DD\s+", "", d)
-    d = re.sub(r"^(DD|SO|FPS DEBIT|BACS DEBIT)\s+", "", d)
+RAIL_PREFIX = re.compile(
+    r"^(?:UNPAID DD|FPS CREDIT|FPS DEBIT|BACS CREDIT|BACS DEBIT|DD REFUND|CARD REFUND|FPS|BACS|TFR|BGC|DD|SO|CARD)\s+"
+)
+REFERENCE_TOKEN = re.compile(rf"{INVOICE_REF.pattern}|\b\w*\d\w*\b")
+
+
+def counterparty(description: str) -> str:
+    """Who is on the other side of a line: the description without the payment rail,
+    a trailing " DD", invoice numbers or other references with digits in them. One
+    normaliser for reversal matching, round-trip detection and concentration (M15)."""
+    d = RAIL_PREFIX.sub("", description.upper())
     d = re.sub(r"\s+DD$", "", d)
-    return " ".join(d.split())
+    d = REFERENCE_TOKEN.sub(" ", d)
+    return " ".join(d.split()) or description.upper().strip()
 
 
 def link_reversals(statement: Statement) -> Statement:
@@ -86,14 +94,14 @@ def link_reversals(statement: Statement) -> Statement:
     for i, r in enumerate(txns):
         if r.category != Category.RETURNED_DD or r.amount <= 0:
             continue
-        payee = _payee(r.description)
+        payee = counterparty(r.description)
         for o in reversed(txns[:i]):
             if (
                 o.id not in taken
                 and o.amount < 0
                 and o.category not in (Category.RETURNED_DD, None)
                 and abs(o.amount + r.amount) < 0.005
-                and _payee(o.description) == payee
+                and counterparty(o.description) == payee
             ):
                 r.reverses = o.id
                 taken.add(o.id)
@@ -101,8 +109,27 @@ def link_reversals(statement: Statement) -> Statement:
     return statement
 
 
+OUTGOING_TRANSFER = re.compile(r"^(?:FPS DEBIT|BACS DEBIT|TFR)\b")
+
+
+def unmark_round_trips(statement: Statement) -> Statement:
+    """A "customer" the applicant also sends transfers to is not counted as revenue.
+
+    Money sent out by transfer and received back with an invoice reference is the
+    cheapest way to manufacture revenue. Such credits become OTHER (and so show in M16).
+    This also catches a genuine customer who is paid a refund by transfer: the cost is
+    understated revenue, which a person can add back; the alternative is gameable.
+    """
+    paid_out = {counterparty(t.description) for t in statement.transactions
+                if t.amount < 0 and OUTGOING_TRANSFER.search(t.description.upper())}
+    for t in statement.transactions:
+        if t.category == Category.REVENUE_TRANSFER and counterparty(t.description) in paid_out:
+            t.category = Category.OTHER
+    return statement
+
+
 def categorise(statement: Statement) -> Statement:
     for t in statement.transactions:
         t.category = categorise_one(t)
         t.reverses = None
-    return link_reversals(statement)
+    return link_reversals(unmark_round_trips(statement))

@@ -1,8 +1,8 @@
 """Offline evaluation across every archetype x profile.
 
 Reports, per case: policy outcome, grounding rate of the drafted memo, redrafts
-needed, and every metric that disagrees with the generator's ground truth (M2, M5,
-M6, M7, M8, M11, M12, M13, M15). Run with the fake model for a deterministic
+needed, and every metric that disagrees with the generator's ground truth (M2, M3,
+M5-M13, M15, M16), including the inputs to the fail rules (M9, M10). Run with the fake model for a deterministic
 baseline, or with a real provider to measure it.
 
 Exit code: 1 if any metric disagrees with truth, or if the fake model's memo is not
@@ -86,14 +86,18 @@ def truth_metrics(truth) -> dict[str, float | None]:
     """The figures the generator knows, keyed by the metric that must reproduce them."""
     return {
         "M2": truth.total_revenue,
+        "M3": truth.average_monthly_revenue,
         "M5": truth.lowest_balance,
         "M6": truth.days_overdrawn,
         "M7": truth.returned_dd_count,
         "M8": truth.total_debt_service,
+        "M9": truth.net_operating,
+        "M10": truth.debt_cover,
         "M11": truth.total_owner_drawings,
         "M12": truth.total_hmrc_vat,
         "M13": truth.late_vat_count,
         "M15": truth.top_customer_share,
+        "M16": truth.unclassified_share,
     }
 
 

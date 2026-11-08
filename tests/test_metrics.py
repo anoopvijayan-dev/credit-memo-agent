@@ -46,6 +46,11 @@ def test_metrics_match_truth(statement_for, archetype, profile):
     assert m["M12"].value == pytest.approx(truth.total_hmrc_vat, abs=0.01)
     assert m["M13"].value == truth.late_vat_count
     assert m["M15"].value == truth.top_customer_share
+    # The inputs to the fail-level rules (R2, R8) and to R9 (panel run 03, E26).
+    assert m["M3"].value == pytest.approx(truth.average_monthly_revenue, abs=0.01)
+    assert m["M9"].value == pytest.approx(truth.net_operating, abs=0.01)
+    assert m["M10"].value == pytest.approx(truth.debt_cover, abs=0.0001)
+    assert m["M16"].value == pytest.approx(truth.unclassified_share, abs=0.01)
 
 
 @pytest.mark.parametrize("archetype,profile", CASES)

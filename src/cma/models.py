@@ -78,22 +78,28 @@ class Metric(BaseModel):
         default_factory=list, description="Transaction ids this figure was computed from."
     )
 
-    @property
-    def available(self) -> bool:
-        return self.value is not None
-
     def display(self) -> str:
         """The figure as the memo should quote it. Negative figures keep their minus sign."""
-        v = self.value
-        if v is None:
-            return "n/a"
-        if self.unit == "GBP":
-            return f"{'-' if v < 0 else ''}£{abs(v):,.0f}"
-        if self.unit == "pct":
-            return f"{v:.1f}%"
-        if self.unit == "ratio":
-            return f"{v:.2f}x"
-        return f"{v:.0f}"
+        return format_value(self.value, self.unit)
+
+
+# How many decimals each unit is shown with. The memo copies figures as shown, and the
+# guard treats a figure written at this precision as exact (see guard._value_fits).
+DISPLAY_DECIMALS = {"GBP": 0, "pct": 1, "ratio": 2}
+
+
+def format_value(v: float | None, unit: str) -> str:
+    """One display convention for metrics and policy thresholds alike."""
+    if v is None:
+        return "n/a"
+    d = DISPLAY_DECIMALS.get(unit, 0)
+    if unit == "GBP":
+        return f"{'-' if v < 0 else ''}£{abs(v):,.{d}f}"
+    if unit == "pct":
+        return f"{v:.{d}f}%"
+    if unit == "ratio":
+        return f"{v:.{d}f}x"
+    return f"{v:.{d}f}"
 
 
 class RuleOutcome(str, Enum):
