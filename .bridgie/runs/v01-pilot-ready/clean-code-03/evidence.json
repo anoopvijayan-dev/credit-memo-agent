@@ -1,0 +1,214 @@
+{
+  "task": "v01-pilot-ready",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "specified",
+      "check": "Read metrics.py end to end; every Metric value is computed in compute() and the graph only quotes as_table(); no figure comes from llm.py.",
+      "result": "pass",
+      "artifact": "src/cma/metrics.py:120"
+    },
+    {
+      "id": "R2",
+      "tier": "specified",
+      "check": "Every Metric carries evidence ids (metrics.py:231-274); tests/test_metrics.py::test_evidence_reproduces_each_figure. But the CLI writes the evidence record to a path that a later rejected run overwrites, so an approved memo can end up beside another run's evidence (probe2.py).",
+      "result": "fail",
+      "artifact": "src/cma/cli.py:164"
+    },
+    {
+      "id": "R3",
+      "tier": "specified",
+      "check": "draft() builds the prompt from account name, period, as_table(metrics) and rules_table(policy) only. No test asserts that transactions are absent from the prompt.",
+      "result": "pass",
+      "artifact": "src/cma/graph.py:211"
+    },
+    {
+      "id": "R4",
+      "tier": "specified",
+      "check": "Redraft loop capped at MAX_REDRAFTS=2, then review with guard_grounded=False (graph.py:233-236). The guard lets ungrounded numbers through: '4 may' is blanked as a date, and 'one' is exempt (probe1.py P3).",
+      "result": "fail",
+      "artifact": "src/cma/guard.py:55"
+    },
+    {
+      "id": "R5",
+      "tier": "specified",
+      "check": "review() interrupts until a valid named decision; finalise only after review; tests test_graph_stops_for_review_then_finalises, test_approval_without_a_name_is_asked_again.",
+      "result": "pass",
+      "artifact": "src/cma/graph.py:241"
+    },
+    {
+      "id": "R6",
+      "tier": "specified",
+      "check": "Ordered RULES list; an unmatched credit falls to Category.OTHER; tests/test_categorise.py, test_categoriser_matches_truth.",
+      "result": "pass",
+      "artifact": "src/cma/categorise.py:58"
+    },
+    {
+      "id": "R7",
+      "tier": "specified",
+      "check": "Packaged YAML with on_fail/when_missing, validated by policy.validate. No test covers validate() or PolicyError (grep returns nothing in tests/).",
+      "result": "pass",
+      "artifact": "src/cma/policies/uk_sme_default.yaml:14"
+    },
+    {
+      "id": "R8",
+      "tier": "specified",
+      "check": "Spot-read fixtures (test_import_monzo uses 'Example Employer Ltd', synth uses fictional names). No full scan of every committed file done by this seat.",
+      "result": "not_proven",
+      "artifact": null
+    },
+    {
+      "id": "R9",
+      "tier": "specified",
+      "check": "ingest.load_csv collects missing columns, bad/future dates, non-plain amounts, order, balance chain and duplicate ids; tests/test_ingest.py (13 tests).",
+      "result": "pass",
+      "artifact": "src/cma/ingest.py:53"
+    },
+    {
+      "id": "R10",
+      "tier": "specified",
+      "check": "ci.yml runs ruff, pytest and evals/run_evals.py --llm fake with no secrets; 174 tests pass locally in 7.3s.",
+      "result": "pass",
+      "artifact": ".github/workflows/ci.yml:23"
+    },
+    {
+      "id": "P1",
+      "tier": "specified",
+      "check": "Ran synth.generate for 9 archetype/profile pairs x 15 seeds x 2 end dates (270 statements); M2, M5, M6, M7, M8, M11, M12 equal truth within 0.01 in every case.",
+      "result": "pass",
+      "artifact": "tests/test_metrics.py::test_metrics_match_truth"
+    },
+    {
+      "id": "P2",
+      "tier": "specified",
+      "check": "Probed guard.check with untagged numbers: 'A further 4 may bounce' and 'one late VAT payment' (M13=2) are both reported grounded.",
+      "result": "fail",
+      "artifact": "src/cma/guard.py:55"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "blocker",
+      "file": "src/cma/metrics.py",
+      "line": 174,
+      "criterion": null,
+      "claim": "D4 is not fixed for debt cover. Net operating cash flow (M9) includes every non-financing line, so a non-trading credit categorised OTHER (capital injection, savings or pot transfer, HMRC refund, insurance claim) still counts as operating cash and lifts DSCR (M10). One £9,000 capital injection moves M10 from 1.00 to 1.62: R2 goes from fail to pass and the overall outcome from fail to refer. R9 does not catch it because M16 is only 7.0%. categorise.py:13-14 claims this design prevents owner money lifting debt cover; it does so only for a round trip that nets to zero, which is the only case tested (test_panel_run02_metrics.py:73).",
+      "repro": "cd /home/claude/cma-fix && PYTHONPATH=src python3 /tmp/claude-0/-home-claude/2adee499-4534-5c98-9209-a2ce9b0b4719/scratchpad/panel03/clean-code/probe2.py /tmp/claude-0/-home-claude/2adee499-4534-5c98-9209-a2ce9b0b4719/scratchpad/panel03/clean-code  -> 'before M9 14400.0 M10 1.0 R2 fail overall fail' / 'after M9 23400.0 M10 1.62 M16 7.0 R2 pass R9 pass overall refer'. Statement: 12 months of CARD ACQUIRER SETTLEMENT 10000, BREW SUPPLY CO DD -8800, DD HOLLOWAY BRIDGE FINANCE LOAN -1200, plus one 'FPS CREDIT CAPITAL INJECTION' 9000.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 240,
+      "criterion": null,
+      "claim": "M3 (average monthly revenue) divides total revenue, which includes revenue from short boundary months that covered_months() drops, by the count of covered months only. A statement from 2025-10-18 to 2026-10-14 at a flat £100/day gives M1=11, M3=£3,290.91, but the true average over the 11 covered months is £3,036.36 (8.4% overstated). tests/test_panel_run02_metrics.py:176 asserts M3 == M2/11 and so locks the error in.",
+      "repro": "probe1.py section P1: daily 'CARD ACQUIRER SETTLEMENT' 100.0 from 2025-10-18 to 2026-10-14 -> 'M1 11.0 M2 36200.0 M3 3290.91 true avg/month over covered months 3036.36'.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 164,
+      "criterion": "R2",
+      "claim": "The evidence file is always written as NAME.evidence.json, whether the memo was approved or rejected (line 162 sends a rejection to NAME.rejected.md, but line 164 does not change the evidence path). If a case is approved and then rerun and rejected with the same --out, memo.md still says 'APPROVED by A. Approver' while memo.evidence.json now holds B. Rejecter's rejected run, with a different vat_stagger. The approved memo loses its audit record.",
+      "repro": "probe2.py section CLI: `cma run X --yes --reviewer 'A. Approver' --vat-stagger 3 --out memo.md`, then `cma run X --out memo.md` answering 'B. Rejecter', n -> memo.md: APPROVED by A. Approver; memo.evidence.json review: B. Rejecter False, vat_stagger None.",
+      "disposition": null
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 141,
+      "criterion": null,
+      "claim": "The Monzo importer drops the payment reference. describe() takes an `extra` argument (line 72) but its only caller never passes it, so Monzo's Description column (where the reference sits) is lost. An invoice-referenced customer payment ('INV 1042') becomes 'FPS CREDIT OAKFIELD PROPERTIES' and is categorised other, not revenue_transfer. On any Monzo statement with transfer revenue: M2=0, M16=100%, M15 n/a (R7 passes by when_missing), and R9 always refers.",
+      "repro": "probe2.py section Monzo: one 'Faster payment' row, Name 'Oakfield Properties', Description 'INV 1042', Amount 4800 -> 'description: FPS CREDIT OAKFIELD PROPERTIES | category: other', 'M2 0.0 M16 100.0'; categorise_one on the same text with ' INV 1042' appended gives revenue_transfer.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/guard.py",
+      "line": 55,
+      "criterion": "P2",
+      "claim": "The DATES pattern '\\d{1,2}\\s+MONTHS' is case-insensitive and includes 'May', so a bare count followed by the verb 'may' is blanked as a date and never checked.",
+      "repro": "guard.check('Revenue was £120,000 [M2]. A further 4 may bounce next quarter.', metrics) -> grounded=True, unmatched=[] (probe1.py P3).",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/guard.py",
+      "line": 60,
+      "criterion": "P2",
+      "claim": "NUMBER_WORDS leaves out 'one' on purpose (docstring line 16), but P2 allows only years, dates and list markers as exemptions. A wrong count written as 'one' passes the guard.",
+      "repro": "With M13=2: guard.check('Revenue was £120,000 [M2]. There was one late VAT payment.', ms) -> grounded=True (probe1.py P3).",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/policies/uk_sme_default.yaml",
+      "line": 61,
+      "criterion": "R4",
+      "claim": "The R6 description says '15%', but its threshold is -15. Line 12 of the same file says descriptions are written so a memo can quote them with [Rn], yet quoting R6's own description is flagged, which forces a pointless redraft.",
+      "repro": "guard.check('... declining by more than 15% [R6].', ms, policy_result) -> unmatched [('15%', \"does not match R6's threshold (-15, pct)\")] (probe1.py P4).",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 108,
+      "criterion": null,
+      "claim": "Duplication introduced: INV_TOKEN and RAIL_PREFIX (lines 108-109) repeat the invoice-reference regex in categorise.py:29 and the rail-prefix stripping in categorise._payee (categorise.py:68). The two counterparty normalisers already differ (_payee strips DD/SO/FPS DEBIT; payer_key strips FPS CREDIT/BACS/TFR/BGC), so a new rail prefix must be added in two modules or concentration and reversal-linking will drift apart.",
+      "repro": "Read src/cma/metrics.py:108-117 and src/cma/categorise.py:29, 68-74.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 129,
+      "criterion": null,
+      "claim": "_threshold() duplicates Metric.display() (models.py:86) with different formatting ({:g} against fixed decimals), so the policy table and the metrics table can show the same unit differently. The guard's precision rule (DISPLAY_DECIMALS, guard.py:119) is a third copy of the display convention.",
+      "repro": "Read src/cma/graph.py:129-138, src/cma/models.py:86-96 and src/cma/guard.py:119.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 85,
+      "criterion": null,
+      "claim": "Test gap: synth truth and the evals have no ground truth for M3, M9, M10 or M16. M9 and M10 feed the only fail-level cash rules (R2, R8). That gap is why the blocker and the M3 finding above pass CI. There is also no test of policy.validate or PolicyError (a grep of tests/ finds none), although D14 claims validation, and no test asserts that the draft prompt excludes transactions (R3).",
+      "repro": "grep -n 'PolicyError\\|validate' tests/*.py -> no output; read evals/run_evals.py:85-97 (nine keys, no M9/M10).",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 158,
+      "criterion": null,
+      "claim": "When --opening-balance is given and the export also has a Balance column, Monzo's balances are never checked (the condition requires source == 'Monzo Balance column'). This contradicts the module docstring (line 13), and a wrong opening balance shifts M5 and M6 with no warning.",
+      "repro": "Export with Balance column: tx_1 Faster payment +100.00 Balance 600.00; tx_2 Card payment -50.00 Balance 550.00; monzo.convert(src, dst, opening_balance=0) succeeds with source 'opening balance supplied' and writes balances 100.00, 50.00 against Monzo's 600.00, 550.00.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": ".github/workflows/evals.yml",
+      "line": 42,
+      "criterion": null,
+      "claim": "The job is gated to run from main and has id-token: write (line 20), but it checks out and executes inputs.code_ref (any branch or commit). Code that is not on main therefore receives the main-pinned Anthropic federated token.",
+      "repro": "Read .github/workflows/evals.yml:10, 20, 29, 42.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/models.py",
+      "line": 81,
+      "criterion": null,
+      "claim": "Metric.available has no caller in src, tests or evals: dead abstraction.",
+      "repro": "grep -rn '\\.available\\b' src tests evals -> no output.",
+      "disposition": null
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "build/shaper:clean-code",
+    "adapter": "claude-session",
+    "model": "claude-opus-5-5"
+  }
+}
