@@ -21,6 +21,7 @@ class LLM(Protocol):
 
 class FakeLLM:
     name = "fake"
+    model = "offline-template"
 
     def __init__(self, hallucinate: bool = False):
         self.hallucinate = hallucinate

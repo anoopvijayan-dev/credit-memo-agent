@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Tests read the repository and nothing else.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -16,9 +20,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: pip install -e ".[dev,mcp]"
+      - run: pip install -e ".[dev,mcp,durable]"
       - run: ruff check src tests evals
       - run: pytest -q
       # Offline evals run with the fake model so CI needs no API keys. The job fails
-      # if any computed metric disagrees with the generator's ground truth.
+      # if any computed metric disagrees with the generator's ground truth, or if the
+      # fake model's memo is not grounded.
       - run: python evals/run_evals.py --llm fake
+      # The default policy must ship inside the wheel: install it outside the repo.
+      - run: |
+          pip install build
+          python -m build --wheel --outdir /tmp/dist
+          python -m venv /tmp/wheelcheck
+          /tmp/wheelcheck/bin/pip install /tmp/dist/*.whl
+          cd /tmp && /tmp/wheelcheck/bin/python -c "from cma import policy; print(policy.load_policy()['name'])"
