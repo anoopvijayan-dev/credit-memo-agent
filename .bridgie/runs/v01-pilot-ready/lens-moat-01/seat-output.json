@@ -1,0 +1,39 @@
+{
+  "seat": "lens-moat",
+  "summary_md": "PASS (3/10). Biggest risk: Crediflow AI, a seed-funded Manchester vendor with named UK customers, already drafts source-traceable memos into the lender's own template. That leaves deterministic-plus-cited memos slightly better at best, and the public repo hands the method to every competitor.",
+  "artifact_md": "Score: 3 | Vote: PASS\n## What is strong\n- **The niche is narrow.** \"UK non-bank SME lenders and commercial-finance brokers who spread twelve months of statements by hand\" (bet.md:15) is a small enough market to own in principle. Nobody has counted how many such firms exist. The research step should get that number.\n- **There is one gap in positioning.** Research found \"no vendor that pairs deterministic metrics with a human-approval stop and a public repo\" (research.md:6). That is the only claim to being different that the research supports.\n- **The core problem is one the buyer cares about.** The bet's stated pain is traceability: \"when compliance asks where a figure came from nobody can say\" (bet.md:23). If that pain is real, it touches regulatory risk, and buyers tend to spend on that, not just on convenience. It is also the one area where the bet could become many times better rather than slightly better.\n## What would kill it\n1. **A funded incumbent already sells the differentiator.** Crediflow AI (Manchester, seed-funded) \"fills the lender's own template with tables, charts and source traceability\" and names UK customers AddWorking Capital and Iveco Capital (research.md:15). Research rates its traceability claim as \"close\" (research.md:6). If Crediflow's memo already cites figures to statement lines, v0.1 is slightly better at best, and slightly better loses. To test: get a Crediflow demo, or ask a named customer whether its memo figures link back to statement lines.\n2. **Nothing stops a copy, and the public repo makes copying easier.** Deterministic metrics plus a human-approval stop is a design choice that Crediflow, Arya.ai or Heron could add in a release. Those three already have the parsing, categorisation and lender relationships (research.md:15-17). The bet names \"the public repo is the proof\" (bet.md:29), but that gives the method away. The bet names no data, switching cost, network, licence or exclusive relationship. To test: list what a competitor would still lack after reading the repo. If the list is empty, there is no moat.\n3. **The secret has no evidence behind it.** The plan depends on \"lenders are trialling LLM tools and getting burned by invented figures\" (bet.md:29). Research found \"No lender complains about invented figures\"; only law firms raise it (research.md:5). The loudest real complaint is that Ocrolus is slow and pricey (research.md:5), which is a speed and cost problem, not a grounding one. The problem quote itself is unsourced (D1). To test: three lender or broker interviews asking \"has an AI tool ever put a wrong figure in a memo, and what did it cost you?\", with dated notes.\n\nFurther risks: open-banking feeds (Equifax Share by Bank, Experian, Yapily; research.md:24) could make the statement file itself disappear. Distribution so far is the owner's personal contacts, and no one has been named (D5).\n## Questions for the owner\n- What exactly does Crediflow's \"source traceability\" do, and what can your memo do that theirs cannot? Answer in terms a head of credit would count: hours saved, errors avoided, findings at a compliance audit.\n- Which segment do you start with, lenders or brokers (D10)? Heron has a broker suite, and DocuClipper serves small brokers from $20/month (research.md:4), so neither segment is empty. Where is there no competitor today?\n- How will the first hundred customers hear of this, and does that channel get cheaper as you grow? Today the only named channel is BridgeTrade broker conversations (bet.md:23).\n- Once the repo is public, what will a customer have with you after a year that they would lose by switching? Examples: their own analyst-labelled spreads, a policy-rule library tuned to them, an FCA-facing audit trail.\n- Is the business software revenue or expert consulting with the repo as a calling card? The moat answer differs for each, and this bet does not say which.\n- How many UK non-bank SME lenders and commercial-finance brokers exist, and what does an analyst's afternoon of spreading cost (research.md:36)? Nobody has sourced either number. Research should get the count; the numbers step should get the cost.\n## Conditions\nThese are what would turn this into FUND IF:\n1. Produce dated notes from at least three UK lenders or brokers, each stating that untraceable or invented figures are a problem they would pay to remove. This settles D1 and D6.\n2. Write a side-by-side comparison against Crediflow (and Arya.ai if you can), based on a demo or a customer conversation. It should show at least one thing a buyer counts on which v0.1 is many times better, not slightly better.\n3. Name one advantage that builds up over time and that publishing the repo does not give away, such as an exclusive data agreement, a labelled-spread dataset from the pilot lender, or a named design partner. Make it a deliverable of the pilot.\n4. Name the first segment and the firm that will run the pilot (D5, D10). Write down the one channel you will use to reach the next ten firms like it.\n",
+  "questions": [
+    {
+      "context": "Moat: Crediflow AI already sells cited, template-filled credit memos to UK lenders (research.md:15). What is the source of advantage that publishing the repo does not give away?",
+      "options": [
+        "Data: the pilot lender's analyst-labelled spreads",
+        "Relationship: an exclusive or design-partner agreement",
+        "Regulatory: an audit trail built for FCA scrutiny",
+        "None yet: this is a portfolio or consulting showcase, not a product"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Beachhead (D10): which segment do you aim to own first?",
+      "options": [
+        "UK non-bank SME lenders",
+        "UK commercial-finance brokers"
+      ],
+      "allow_free_text": true
+    }
+  ],
+  "proposals": [
+    {
+      "kind": "task",
+      "text": "Get a Crediflow AI demo, or speak to one named customer (AddWorking Capital or Iveco Capital), and record whether its memo figures link back to statement lines."
+    },
+    {
+      "kind": "task",
+      "text": "Run three lender or broker interviews with the question 'has an AI tool ever put a wrong figure in a memo, and what did it cost you?' and save dated notes. This settles D1 and D6."
+    },
+    {
+      "kind": "confidence",
+      "text": "Keep confidence at 'opinion'. The 'why now' claim (bet.md:29) is contradicted by research.md:5, which found no lender voice complaining about invented figures."
+    }
+  ]
+}

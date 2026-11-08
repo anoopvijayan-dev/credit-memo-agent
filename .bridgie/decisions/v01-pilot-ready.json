@@ -1,6 +1,6 @@
 {
   "bet": "v01-pilot-ready",
-  "next_id": 12,
+  "next_id": 19,
   "decisions": [
     {
       "id": "D1",
@@ -248,6 +248,167 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-08T09:18:27.795Z"
+    },
+    {
+      "id": "D12",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "D1/D6: Every lens rests on the traceability pain, and research found no lender voicing it. Is there a dated note of any UK lender or broker saying untraceable or invented figures are a problem? Recall from memory doesn't count.",
+      "options": [
+        "Yes, I have dated notes and will attach them",
+        "No notes; I will run three interviews and ask about the worst part of spreading before pitching",
+        "No; I'll lead with speed (time to draft memo) instead",
+        "don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:22:54.511Z"
+    },
+    {
+      "id": "D13",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "D5: Who, by name, would run the statement, and has anyone said yes in principle? Check against the outreach log. This also sets when the week-6 kill clock starts.",
+      "options": [
+        "A named analyst has said yes in principle (name and date in the log)",
+        "Contacts exist but nobody has said yes yet",
+        "No outreach has happened yet",
+        "don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:22:54.517Z"
+    },
+    {
+      "id": "D14",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "D10: Lender or broker first? They get different files, write different memos, and face different competitors (Crediflow/Arya sell to lenders; Heron has a broker suite; DocuClipper serves small brokers from $20/month).",
+      "options": [
+        "Non-bank SME lenders first",
+        "Commercial-finance brokers first",
+        "Whichever named contact says yes first",
+        "don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:22:54.519Z"
+    },
+    {
+      "id": "D15",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "D2: What file will a pilot lender actually send? v0.1 reads only the synthetic five-column CSV. Settle this with three redacted samples or format descriptions run through `ingest` unchanged.",
+      "options": [
+        "Bank CSV export (format varies by bank)",
+        "PDF statement",
+        "Open-banking feed (no file)",
+        "don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:22:54.521Z"
+    },
+    {
+      "id": "D16",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "D3: Who anonymises the statement, and under what data-protection basis? Redacting payer names breaks M15 and the FPS CREDIT categoriser, and a sole trader's statement is still personal data. Test it by redacting one statement the way the lender would.",
+      "options": [
+        "The lender redacts before sending; we accept the degraded metrics",
+        "The owner receives the statement under a written DPA and does the redaction and conversion",
+        "Build a synthetic look-alike of their statement together with the lender",
+        "don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:22:54.526Z"
+    },
+    {
+      "id": "D17",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "Crediflow already fills the lender's template with source traceability and names UK customers. Have you seen what its traceability actually does, and what can v0.1 do that a head of credit would count (hours, errors, audit findings)?",
+      "options": [
+        "Seen a demo; v0.1 is clearly different (I'll write the side-by-side)",
+        "Not seen; I'll book a demo",
+        "Not seen; I'll ask a named Crediflow customer",
+        "don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:22:54.527Z"
+    },
+    {
+      "id": "D18",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "Moat and product both ask this: is the business software revenue, or expert consulting with the repo as a calling card? The answer changes whether moat is the right test and who v0.1 is for: the analyst or the repo reader.",
+      "options": [
+        "Software product (needs a moat beyond the repo)",
+        "Consulting, with the repo as credential",
+        "Consulting first, productise once pilots build a data asset",
+        "don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-08T09:22:54.529Z"
     }
   ]
 }
