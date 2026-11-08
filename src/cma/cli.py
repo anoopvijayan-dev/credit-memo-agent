@@ -17,6 +17,8 @@ from .graph import build
 from .llm import get_llm
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
+import_app = typer.Typer(no_args_is_help=True, help="Convert a bank export into a statement CSV.")
+app.add_typer(import_app, name="import")
 console = Console()
 
 
@@ -93,6 +95,30 @@ def _print_policy(p):
     for r in p.rules:
         t.add_row(f"{r.rule_id} {r.description}", f"[{colour[r.outcome.value]}]{r.outcome.value}[/]", r.detail)
     console.print(t)
+
+
+@import_app.command("monzo")
+def import_monzo(
+    export: Path = typer.Argument(..., help="The CSV exported from the Monzo app."),
+    out: Path = typer.Option(..., "-o", "--out", help="Where to write the statement CSV. Keep it out of git."),
+    opening_balance: float | None = typer.Option(
+        None, help="Balance just before the first transaction. Needed when the export has no Balance column."
+    ),
+):
+    """Convert a Monzo export locally. Nothing is uploaded; the file stays on this machine."""
+    from .importers import monzo
+
+    try:
+        r = monzo.convert(export, out, opening_balance)
+    except monzo.MonzoImportError as e:
+        console.print(f"[red]Import refused.[/red] {e}")
+        raise typer.Exit(code=2) from e
+    console.print(
+        f"wrote {out}: {r.rows} transactions, {r.start} to {r.end}; "
+        f"opening £{r.opening_balance:,.2f}, closing £{r.closing_balance:,.2f} ({r.balance_source})"
+        + (f"; skipped {r.skipped_non_gbp} non-GBP rows" if r.skipped_non_gbp else "")
+    )
+    console.print("Check the closing balance against your Monzo app before trusting any metric.")
 
 
 @app.command()
