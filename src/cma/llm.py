@@ -13,6 +13,10 @@ import re
 from typing import Protocol
 
 
+class LLMError(RuntimeError):
+    """The model call failed or came back unusable (cut off, empty)."""
+
+
 class LLM(Protocol):
     name: str
 
@@ -71,16 +75,18 @@ class AnthropicLLM:
     def __init__(self, model: str | None = None):
         import anthropic
 
-        self.client = anthropic.Anthropic()
+        self.client = anthropic.Anthropic(timeout=120.0, max_retries=2)
         self.model = model or os.getenv("CMA_ANTHROPIC_MODEL", "claude-sonnet-5-5")
 
     def complete(self, system: str, user: str) -> str:
         msg = self.client.messages.create(
             model=self.model,
-            max_tokens=1500,
+            max_tokens=2000,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
+        if msg.stop_reason == "max_tokens":
+            raise LLMError("the model's reply was cut off at the token limit")
         return "".join(block.text for block in msg.content if getattr(block, "type", "") == "text")
 
 
@@ -90,7 +96,7 @@ class OpenAILLM:
     def __init__(self, model: str | None = None):
         from openai import OpenAI
 
-        self.client = OpenAI()
+        self.client = OpenAI(timeout=120.0, max_retries=2)
         self.model = model or os.getenv("CMA_OPENAI_MODEL", "gpt-4.1")
 
     def complete(self, system: str, user: str) -> str:
@@ -98,6 +104,8 @@ class OpenAILLM:
             model=self.model,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
         )
+        if r.choices[0].finish_reason == "length":
+            raise LLMError("the model's reply was cut off at the token limit")
         return r.choices[0].message.content or ""
 
 

@@ -82,8 +82,9 @@ def test_rejected_memo_is_kept_as_rejected_not_as_the_memo(tmp_path):
     assert r.exit_code == 1
     assert not out.exists()
     assert "NOT APPROVED by B. Credit" in (tmp_path / "memo.rejected.md").read_text()
-    record = json.loads((tmp_path / "memo.evidence.json").read_text())
+    record = json.loads((tmp_path / "memo.rejected.evidence.json").read_text())
     assert record["review"]["approved"] is False and record["review"]["notes"] == "needs 24 months"
+    assert not (tmp_path / "memo.evidence.json").exists()
 
 
 def test_bad_statement_is_refused_cleanly(tmp_path):
@@ -92,3 +93,77 @@ def test_bad_statement_is_refused_cleanly(tmp_path):
     r = runner.invoke(app, ["run", str(bad), "--yes", "--reviewer", "A"])
     assert r.exit_code == 2
     assert "duplicate id T1" in r.output
+
+
+# --- panel run 03 ------------------------------------------------------------------
+
+def test_an_earlier_memo_and_its_evidence_are_never_overwritten(tmp_path):
+    # E5: a rejected re-run replaced the approved memo's evidence.
+    out = tmp_path / "memo.md"
+    csv = _statement(tmp_path)
+    assert runner.invoke(app, ["run", str(csv), "--yes", "--reviewer", "A", "--out", str(out)]).exit_code == 0
+    before = (tmp_path / "memo.evidence.json").read_text()
+    r = runner.invoke(app, ["run", str(csv), "--out", str(out)], input="B\nn\n\n")
+    assert r.exit_code == 2 and "Refusing to overwrite" in r.output
+    assert (tmp_path / "memo.evidence.json").read_text() == before
+
+
+def _pending(tmp_path, thread="case-1"):
+    pytest.importorskip("langgraph.checkpoint.sqlite")
+    db = tmp_path / "reviews.sqlite"
+    csv = _statement(tmp_path)
+    runner.invoke(app, ["run", str(csv), "--checkpoint-db", str(db), "--thread", thread], input="\x04")
+    return db, csv
+
+
+def test_a_review_id_cannot_be_reused(tmp_path):
+    # E9: a reused thread inherited redrafts, feedback and the old review.
+    db, csv = _pending(tmp_path)
+    r = runner.invoke(app, ["run", str(csv), "--checkpoint-db", str(db), "--thread", "case-1"])
+    assert r.exit_code == 2 and "already used" in r.output
+
+
+def test_second_reviewer_is_told_the_review_was_already_decided(tmp_path):
+    # E10: the second decision was dropped and reported as the first reviewer's approval.
+    from cma.cli import _decide
+    from cma.graph import build, sqlite_checkpointer
+    from cma.llm import FakeLLM
+
+    db, _ = _pending(tmp_path)
+    cfg = {"configurable": {"thread_id": "case-1"}}
+    with sqlite_checkpointer(db) as a, sqlite_checkpointer(db) as b:
+        ga, gb = build(FakeLLM(), checkpointer=a), build(FakeLLM(), checkpointer=b)
+        assert ga.get_state(cfg).interrupts and gb.get_state(cfg).interrupts
+        _decide(ga, cfg, {"approved": True, "reviewer": "A. First"})
+        import typer
+        with pytest.raises(typer.Exit) as e:
+            _decide(gb, cfg, {"approved": False, "reviewer": "B. Second"})
+        assert e.value.exit_code == 5
+
+
+def test_resume_refuses_a_changed_statement(tmp_path):
+    # E20: resume trusted the stored state.
+    db, csv = _pending(tmp_path)
+    csv.write_text(csv.read_text().replace("CARD ACQUIRER SETTLEMENT", "CARD ACQUIRER SETTLEMENT X", 1))
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C"], input="y\n\n")
+    assert r.exit_code == 2 and "has changed" in r.output
+
+
+@pytest.mark.parametrize("body, expected", [
+    (None, "no such file"),
+    ("cp1252", "not UTF-8"),
+])
+def test_unreadable_statements_are_refused_cleanly(tmp_path, body, expected):
+    # E24: tracebacks instead of a refusal.
+    p = tmp_path / "s.csv"
+    if body == "cp1252":
+        p.write_bytes("id,date,description,amount,balance\nT1,2026-01-01,CAF\xc9 \xa3,1.00,1.00\n".encode("cp1252"))
+    r = runner.invoke(app, ["run", str(p), "--yes", "--reviewer", "A"])
+    assert r.exit_code == 2 and expected in r.output
+
+
+def test_bad_policy_yaml_is_refused_cleanly(tmp_path):
+    bad = tmp_path / "p.yaml"
+    bad.write_text("rules: [")
+    r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--policy", str(bad), "--yes", "--reviewer", "A"])
+    assert r.exit_code == 2 and "not valid YAML" in r.output

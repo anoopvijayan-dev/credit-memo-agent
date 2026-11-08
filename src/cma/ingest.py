@@ -22,7 +22,6 @@ from pathlib import Path
 from .models import Statement, Transaction
 
 REQUIRED = ("id", "date", "description", "amount", "balance")
-BALANCE_TOLERANCE = 0.01
 MAX_REPORTED = 20
 
 
@@ -40,6 +39,11 @@ AMOUNT = re.compile(r"^[-+]?\d+(?:\.\d{1,2})?$")
 SPLIT_COLUMNS = {"paid in", "paid out", "money in", "money out", "debit", "credit"}
 
 
+def _pence(v: float) -> int:
+    """Amounts have at most two decimals (checked), so whole pence compare exactly."""
+    return round(v * 100)
+
+
 def _number(raw: str | None) -> float | None:
     """A plain signed decimal with at most two places: "-1150.00", "812.4". Thousands
     separators, currency signs, exponents and words are refused rather than guessed."""
@@ -53,21 +57,28 @@ def _number(raw: str | None) -> float | None:
 def load_csv(path: Path, account_name: str | None = None, today: date | None = None) -> Statement:
     path = Path(path)
     today = today or date.today()
-    with path.open(newline="", encoding="utf-8-sig") as f:  # tolerate a byte-order mark
-        reader = csv.DictReader(f)
-        header = [h.strip() for h in (reader.fieldnames or [])]
-        reader.fieldnames = header
-        missing = [c for c in REQUIRED if c not in header]
-        if missing:
-            hint = ""
-            if SPLIT_COLUMNS & {h.lower() for h in header}:
-                hint = " This looks like a paid-in/paid-out export; convert it to one signed amount column first."
-            if {"Transaction ID", "Money Out"} <= set(header):
-                hint = " This looks like a Monzo export; run `cma import monzo` on it first."
-            raise StatementError(path, [
-                f"missing column(s): {', '.join(missing)} (found: {', '.join(header) or 'none'}).{hint}"
-            ])
-        rows = list(reader)
+    if not path.is_file():
+        raise StatementError(path, ["no such file"])
+    try:
+        with path.open(newline="", encoding="utf-8-sig") as f:  # tolerate a byte-order mark
+            reader = csv.DictReader(f)
+            header = [h.strip() for h in (reader.fieldnames or [])]
+            reader.fieldnames = header
+            rows = list(reader)
+    except UnicodeDecodeError as e:
+        raise StatementError(path, [
+            f"not UTF-8 (byte {e.start}); re-save it as 'CSV UTF-8' (Excel) and try again"
+        ]) from e
+    missing = [c for c in REQUIRED if c not in header]
+    if missing:
+        hint = ""
+        if SPLIT_COLUMNS & {h.lower() for h in header}:
+            hint = " This looks like a paid-in/paid-out export; convert it to one signed amount column first."
+        if {"Transaction ID", "Money Out"} <= set(header):
+            hint = " This looks like a Monzo export; run `cma import monzo` on it first."
+        raise StatementError(path, [
+            f"missing column(s): {', '.join(missing)} (found: {', '.join(header) or 'none'}).{hint}"
+        ])
     if not rows:
         raise StatementError(path, ["no transactions"])
 
@@ -114,7 +125,7 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
 
     prev_balance: float | None = None
     for line, _, _, _, amount, balance in parsed:
-        if None not in (amount, balance, prev_balance) and abs(prev_balance + amount - balance) > BALANCE_TOLERANCE:
+        if None not in (amount, balance, prev_balance) and _pence(prev_balance) + _pence(amount) != _pence(balance):
             problems.append(
                 f"line {line}: running balance {balance:.2f} does not follow from previous {prev_balance:.2f} "
                 f"{'+' if amount >= 0 else '-'} {abs(amount):.2f}"

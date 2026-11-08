@@ -24,7 +24,7 @@ def test_graph_stops_for_review_then_finalises(tmp_path):
     payload = state["__interrupt__"][0].value
     assert payload["guard_grounded"] is True
     assert "## Recommendation" in payload["memo"]
-    assert "final_memo" not in state
+    assert state.get("final_memo") is None
 
     final = graph.invoke(Command(resume={"approved": True, "reviewer": "A. Analyst", "notes": "ok"}), cfg)
     assert "APPROVED by A. Analyst at " in final["final_memo"]
@@ -69,7 +69,7 @@ def _stopped(tmp_path, llm=None, tid="t"):
 
 def _asked_again(state, match):
     payload = state["__interrupt__"][0].value
-    assert "final_memo" not in state
+    assert state.get("final_memo") is None
     assert match in payload["error"]
 
 

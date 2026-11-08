@@ -187,9 +187,53 @@ def test_wrong_threshold_under_a_rule_tag_is_caught():
     assert not g.grounded and "R2" in g.unmatched[0].reason
 
 
-def test_dates_and_list_markers_are_not_figures():
-    memo = "1. Period 2025-10-01 to 2026-09-30, last paid 7 January 2026 and on 07/04/2026. Revenue £264,313 [M2]."
+def test_iso_dates_are_not_figures():
+    memo = "Period 2025-10-01 to 2026-09-30. Revenue £264,313 [M2]."
     assert guard.check(memo, _metrics()).grounded
+
+
+# --- panel run 03 ------------------------------------------------------------------
+
+@pytest.mark.parametrize("memo, bad", [
+    ("Revenue £264,313 [M2]. The account was overdrawn on 40 may be a concern.", "40"),   # E2: "may" the verb
+    ("Revenue £264,313 [M2]. These 9 may recur.", "9"),
+    ("Revenue £264,313 [M2]. Arrears of £75 may follow.", "£75"),
+    ("Revenue £264,313 [M2]. In March 62% of transfer revenue came from one payer.", "62%"),
+    ("Revenue £264,313 [M2]. By September 85 days had closed overdrawn.", "85"),
+    ("Revenue £264,313 [M2]. Last paid 7 January 2026.", "7"),
+    ("Revenue £264,313 [M2]. Arrears are 12/34/5678 pounds.", "12"),
+    ("Revenue £264,313 [M2] and the business also owes HMRC\n45000. That is a concern.", "45000"),
+    ("Revenue £264,313 [M2].\n1. Cash is tight.", "1"),
+])
+def test_only_iso_dates_are_exempt(memo, bad):
+    g = guard.check(memo, _metrics())
+    flagged = {f.number_text for f in g.unmatched}
+    assert not g.grounded and (bad in flagged or g.missing_citations), g
+
+
+@pytest.mark.parametrize("phrase", [
+    "Revenue roughly halved.", "The top customer is a third of income.", "Revenue doubled.",
+    "Drawings were twice the loan repayments.", "There was one returned direct debit.", "Takings fell by half.",
+])
+def test_fractions_multiples_and_one_are_flagged(phrase):
+    # E14
+    g = guard.check(f"Revenue £264,313 [M2]. {phrase}", _metrics())
+    assert not g.grounded and any("words" in f.reason for f in g.unmatched)
+
+
+def test_rule_tag_needs_a_limit_word():
+    # E15: an applicant figure dressed up as the threshold.
+    g = guard.check("Revenue £264,313 [M2]. Debt service cover is 1.25x [R2].", _metrics(), _policy())
+    assert not g.grounded and any("policy limit" in f.reason for f in g.unmatched)
+    assert guard.check("Cover 1.42x [M10] is above the 1.25x [R2] minimum.", _metrics(), _policy()).grounded
+
+
+def test_truncated_memo_is_not_grounded():
+    # E24: a reply cut off before the Recommendation.
+    memo = "## Business overview\nRevenue £264,313 [M2].\n## Revenue\nTrend -7.3% [M4]."
+    g = guard.check(memo, _metrics(), required_headings=guard.REQUIRED_HEADINGS)
+    assert not g.grounded
+    assert "missing heading: Recommendation (truncated or off-format)" in [f.reason for f in g.unmatched]
 
 
 def test_identifiers_are_not_figures():

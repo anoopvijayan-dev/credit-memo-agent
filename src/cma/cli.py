@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from contextlib import contextmanager
@@ -13,6 +14,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.table import Table
 
+from . import guard as grd
 from . import synth
 from .graph import build, evidence_record, sqlite_checkpointer
 from .ingest import StatementError
@@ -67,10 +69,14 @@ def run(
     if yes and not (reviewer or "").strip():
         console.print("[red]--yes needs --reviewer NAME: an approval must say who approved.[/red]")
         raise typer.Exit(code=2)
+    _refuse_to_overwrite(out)
     thread_id = thread or str(uuid.uuid4())
     with _checkpointer(checkpoint_db) as saver:
         graph = build(get_llm(llm), checkpointer=saver)
         cfg = {"configurable": {"thread_id": thread_id}}
+        if graph.get_state(cfg).values:
+            console.print(f"[red]Review id {thread_id} is already used in {checkpoint_db}. Pick a new --thread.[/red]")
+            raise typer.Exit(code=2)
         try:
             state = graph.invoke(
                 {"statement_path": str(statement), "policy_path": str(policy) if policy else None,
@@ -80,6 +86,9 @@ def run(
         except (StatementError, PolicyError) as e:
             console.print(f"[red]Refused.[/red] {e}")
             raise typer.Exit(code=2) from e
+        except Exception as e:  # the model provider: network, auth, cut-off reply
+            console.print(f"[red]The model call failed[/red] ({type(e).__name__}): {e}")
+            raise typer.Exit(code=4) from e
         if checkpoint_db:
             console.print(f"review id: {thread_id} (kept in {checkpoint_db}; `cma resume {thread_id}` picks it up)")
         _review(graph, cfg, state, reviewer, yes, out)
@@ -96,6 +105,7 @@ def resume(
     if not checkpoint_db.exists():
         console.print(f"[red]{checkpoint_db} does not exist.[/red]")
         raise typer.Exit(code=2)
+    _refuse_to_overwrite(out)
     with _checkpointer(checkpoint_db) as saver:
         graph = build(get_llm("fake"), checkpointer=saver)  # the draft is already made; no model call
         cfg = {"configurable": {"thread_id": thread}}
@@ -103,8 +113,45 @@ def resume(
         if not snap.interrupts:
             console.print(f"[red]Nothing is waiting for review under {thread}.[/red]")
             raise typer.Exit(code=1)
+        problem = _stored_state_problem(snap.values)
+        if problem:
+            console.print(f"[red]Not resuming {thread}:[/red] {problem}")
+            raise typer.Exit(code=2)
         state = {**snap.values, "__interrupt__": snap.interrupts}
         _review(graph, cfg, state, reviewer, False, out)
+
+
+def _stored_state_problem(values: dict) -> str | None:
+    """A stored review is only resumed if it still says what it said: the statement file
+    is unchanged and the stored memo still passes (or fails) the guard the same way."""
+    path = Path(values["statement_path"])
+    if not path.is_file():
+        return f"the statement {path} is no longer there"
+    if hashlib.sha256(path.read_bytes()).hexdigest() != values.get("statement_sha256"):
+        return f"the statement {path} has changed since the memo was drafted"
+    again = grd.check(values["memo"], values["metrics"], values["policy"], required_headings=grd.REQUIRED_HEADINGS)
+    if again.grounded != values["guard"].grounded:
+        return "the stored grounding result does not match the stored memo"
+    return None
+
+
+def _refuse_to_overwrite(out: Path | None) -> None:
+    """Never replace an earlier memo or its evidence: the pair is the audit record."""
+    if out is None:
+        return
+    taken = [p for p in _outputs(out) if p.exists()]
+    if taken:
+        console.print(f"[red]Refusing to overwrite {', '.join(map(str, taken))}. Choose another --out.[/red]")
+        raise typer.Exit(code=2)
+
+
+def _outputs(out: Path) -> list[Path]:
+    rejected = out.with_name(out.stem + ".rejected.md")
+    return [out, _evidence_path(out), rejected, _evidence_path(rejected)]
+
+
+def _evidence_path(memo: Path) -> Path:
+    return memo.with_name(memo.stem + ".evidence.json")
 
 
 @contextmanager
@@ -148,20 +195,20 @@ def _review(graph, cfg, state, reviewer, yes, out):
     else:
         decision = _ask(payload, grounded, reviewer)
 
-    final = graph.invoke(Command(resume=decision), cfg)
+    final = _decide(graph, cfg, decision)
     while "__interrupt__" in final:
         payload = final["__interrupt__"][0].value
         console.print(f"[red]Not accepted:[/red] {payload['error']}")
         if yes:
             raise typer.Exit(code=3)
         decision = _ask(payload, grounded, reviewer)
-        final = graph.invoke(Command(resume=decision), cfg)
+        final = _decide(graph, cfg, decision)
 
     approved = final["review"].approved
     if out:
         target = out if approved else out.with_name(out.stem + ".rejected.md")
+        evidence = _evidence_path(target)
         target.write_text(final["final_memo"])
-        evidence = out.with_name(out.stem + ".evidence.json")
         evidence.write_text(json.dumps(evidence_record(final), indent=2, default=str))
         console.print(f"wrote {target} and {evidence}")
     if not approved:
@@ -171,6 +218,32 @@ def _review(graph, cfg, state, reviewer, yes, out):
     if not out:
         console.rule("Final")
         console.print(Markdown(final["final_memo"]))
+
+
+def _decide(graph, cfg, decision: dict) -> dict:
+    """Resume with this decision, and make sure it is the one that was recorded.
+
+    Two people can open the same pending review from a shared --checkpoint-db. If
+    someone else decided first, resuming is a no-op that returns *their* decision; say
+    so instead of reporting it as ours.
+    """
+    if not graph.get_state(cfg).interrupts:
+        _decided_elsewhere(graph.get_state(cfg).values)
+    final = graph.invoke(Command(resume=decision), cfg)
+    review = final.get("review")
+    if "__interrupt__" not in final and (
+        review is None or review.reviewer != (decision.get("reviewer") or "").strip()
+        or review.approved != decision.get("approved")
+    ):
+        _decided_elsewhere(final)
+    return final
+
+
+def _decided_elsewhere(values: dict) -> None:
+    r = values.get("review")
+    who = f"{r.reviewer} at {r.decided_at:%Y-%m-%d %H:%M UTC}" if r else "someone else"
+    console.print(f"[red]This review was already decided by {who}. Your decision was not recorded.[/red]")
+    raise typer.Exit(code=5)
 
 
 def _ask(payload: dict, grounded: bool, reviewer: str | None) -> dict:

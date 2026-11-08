@@ -35,7 +35,7 @@ from . import ingest
 from . import metrics as met
 from . import policy as pol
 from .llm import LLM, get_llm
-from .models import GuardResult, Metric, PolicyResult, ReviewDecision, Statement
+from .models import GuardResult, Metric, PolicyResult, ReviewDecision, Statement, format_value
 
 MAX_REDRAFTS = 2
 
@@ -78,15 +78,16 @@ REVIEW_KEYS = {"approved", "reviewer", "notes", "override_grounding", "mode"}
 
 SYSTEM_PROMPT = """You are a credit analyst drafting an internal memo for a UK SME working-capital facility.
 
-Rules you must follow. An automatic check enforces 1-5 and rejects the draft if any figure breaks them.
+Rules you must follow. An automatic check enforces 1-7 and rejects the draft if any figure breaks them.
 1. Quote numbers ONLY from the metrics table or the policy table you are given. Do not compute, estimate, round differently, or recall any figure.
 2. Write each figure in digits exactly as the table shows it, followed immediately by its tag: "£22,400 [M3]", "1.42x [M10]", "-12.3% [M4]", "25 [M6] days". A policy threshold takes its rule's tag: "at least 1.25x [R2]".
 3. Keep minus signs. A negative figure is written with its minus, as the table shows it ("-£3,200 [M5]"), never as a positive with words like "deficit".
-4. Write no other number, in digits or in words. Refer to rules by id ("R2 and R5 were referred"), not by counting them. Write dates as YYYY-MM-DD.
+4. Write no other number, in digits or in words (not "one", "half", "doubled"). Refer to rules by id ("R2 and R5 were referred"), not by counting them. Write dates as YYYY-MM-DD. Use "-" bullets, never numbered lists.
 5. A metric shown as n/a could not be computed. Say so with its tag and give the reason from the method column: "Debt service cover is n/a [M10]: there are no loan repayments."
-6. Use exactly these headings: Business overview, Revenue, Cash position, Obligations and conduct, Recommendation.
-7. The Recommendation states the policy outcome and names each rule that was referred or failed. You do not decide; the analyst does.
-8. Plain English, no hedging filler, under 400 words."""
+6. Use exactly these headings, as "## " markdown headings: Business overview, Revenue, Cash position, Obligations and conduct, Recommendation.
+7. A policy limit takes its rule tag and is introduced as a limit: "above the 1.25x [R2] minimum", never "cover is 1.25x [R2]".
+8. The Recommendation states the policy outcome and names each rule that was referred or failed. You do not decide; the analyst does.
+9. Plain English, no hedging filler, under 400 words."""
 
 
 class MemoState(TypedDict, total=False):
@@ -102,8 +103,8 @@ class MemoState(TypedDict, total=False):
     guard: GuardResult
     guard_feedback: str
     redrafts: int
-    review: ReviewDecision
-    final_memo: str
+    review: ReviewDecision | None
+    final_memo: str | None
 
 
 def _review_problem(decision, grounded: bool) -> str | None:
@@ -127,15 +128,7 @@ def _review_problem(decision, grounded: bool) -> str | None:
 
 
 def _threshold(value: float | None, unit: str) -> str:
-    if value is None:
-        return ""
-    if unit == "GBP":
-        return f"{'-' if value < 0 else ''}£{abs(value):,.0f}"
-    if unit == "pct":
-        return f"{value:g}%"
-    if unit == "ratio":
-        return f"{value:g}x"
-    return f"{value:g}"
+    return "" if value is None else format_value(value, unit)
 
 
 def rules_table(p: PolicyResult) -> str:
@@ -192,10 +185,16 @@ def build(llm: LLM | None = None, checkpointer=None):
 
     def load(s: MemoState) -> MemoState:
         path = Path(s["statement_path"])
+        statement = ingest.load_csv(path)
         return {
-            "statement": ingest.load_csv(path),
+            "statement": statement,
             "statement_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
+            # A run starts clean, even on a thread that has run before.
+            "redrafts": 0,
+            "guard_feedback": "",
+            "review": None,
+            "final_memo": None,
         }
 
     def categorise(s: MemoState) -> MemoState:
@@ -222,7 +221,7 @@ def build(llm: LLM | None = None, checkpointer=None):
         return {"memo": llm.complete(SYSTEM_PROMPT, user), "redrafts": s.get("redrafts", 0)}
 
     def guard(s: MemoState) -> MemoState:
-        g = grd.check(s["memo"], s["metrics"], s["policy"])
+        g = grd.check(s["memo"], s["metrics"], s["policy"], required_headings=grd.REQUIRED_HEADINGS)
         feedback = ""
         if not g.grounded:
             parts = [f"- {f.number_text}: {f.reason}" for f in g.unmatched]

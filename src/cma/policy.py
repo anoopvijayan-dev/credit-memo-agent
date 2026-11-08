@@ -31,9 +31,15 @@ def default_policy_text() -> str:
 
 
 def load_policy(path: Path | None = None) -> dict:
-    text = Path(path).read_text() if path else default_policy_text()
-    policy = yaml.safe_load(text)
-    validate(policy, source=str(path or f"cma/policies/{DEFAULT_POLICY_NAME}"))
+    source = str(path or f"cma/policies/{DEFAULT_POLICY_NAME}")
+    try:
+        text = Path(path).read_text() if path else default_policy_text()
+        policy = yaml.safe_load(text)
+    except FileNotFoundError as e:
+        raise PolicyError(f"{source}: no such file") from e
+    except yaml.YAMLError as e:
+        raise PolicyError(f"{source}: not valid YAML ({e.__class__.__name__})") from e
+    validate(policy, source=source)
     policy["_sha256"] = hashlib.sha256(text.encode()).hexdigest()
     return policy
 

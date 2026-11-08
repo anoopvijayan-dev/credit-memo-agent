@@ -12,8 +12,11 @@ The contract the model is given, and this module enforces:
 - Its unit must fit: £/GBP/pounds only for money metrics, % only for percentages, x for
   ratios, a bare number for counts, days, months or ratios.
 - Its sign must match. A negative figure is written with a minus, as in the table.
-- Numbers are not written in words ("forty-eight thousand", "five returned debits");
-  "one" is the only number word allowed, because it is everywhere in plain English.
+- A figure tagged with a rule ([R2]) must be introduced as a limit ("at least", "limit",
+  "threshold", "below"...), so a threshold value can't be passed off as the applicant's.
+- Numbers are not written in words: no "forty-eight thousand", "five", "one", "half",
+  "a third", "doubled", "twice". The memo states quantities with tagged figures only.
+- The memo has every required heading (a truncated reply is not grounded).
 
 What is read as a number: an optional minus, an optional currency (£ $ € GBP EUR USD,
 glued or spaced), digits with optional thousands commas and decimals, then an optional
@@ -23,8 +26,8 @@ scale or unit (k, m, bn, thousand, million, billion, x, %, per cent, GBP, pounds
 
 Exemptions, kept deliberately small:
 - four-digit years (1990-2099) written bare;
-- ISO dates (2026-09-30), day/month/year dates and dates with a month name ("7 January");
-- a list marker at the start of a line ("1. ").
+- ISO dates (2026-09-30). The prompt asks for dates in that form only; "7 January",
+  "07/01/2026" and numbered lists are read as figures and flagged.
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .models import GuardFinding, GuardResult, Metric, PolicyResult
+from .models import DISPLAY_DECIMALS, GuardFinding, GuardResult, Metric, PolicyResult
 
 TAG = re.compile(r"\[([MR]\d+)\]")
 TAG_AFTER = re.compile(r"[ \t]*\[([MR]\d+)\]")
@@ -48,20 +51,23 @@ NUMBER = re.compile(
     r"|\s?(?:GBP|pounds)\b)?",
     re.IGNORECASE,
 )
-MONTHS = (r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?"
-          r"|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)")
-DATES = re.compile(
-    r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b"
-    rf"|\b\d{{1,2}}(?:st|nd|rd|th)?\s+{MONTHS}\b|\b{MONTHS}\s+\d{{1,2}}(?:st|nd|rd|th)?\b(?!,\d)",
-    re.IGNORECASE,
-)
-LIST_MARKER = re.compile(r"^(\s*)\d+[.)](?=\s)", re.MULTILINE)
+ISO_DATE = re.compile(r"(?<![\d-])(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?![\d-])")
 NUMBER_WORDS = re.compile(
-    r"\b(?:zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen"
+    r"\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen"
     r"|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety"
-    r"|hundred|thousand|million|billion|dozen)(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?\b",
+    r"|hundred|thousand|million|billion|dozen|half|halved|halves|third|thirds|fourfold|threefold|twofold"
+    r"|double|doubled|doubling|twice|triple|tripled|treble|trebled|quadrupled)"
+    r"(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?\b",
     re.IGNORECASE,
 )
+# Words that introduce a policy limit; a figure tagged [Rn] must follow one of them.
+LIMIT_WORDS = re.compile(
+    r"\b(?:at least|at most|minimum|maximum|limit|threshold|below|above|under|over|requires?|required"
+    r"|no more than|fewer than|less than|more than|worse than|better than|up to|within|floor|ceiling|band|cap)"
+    r"\b[^.]{0,40}$",
+    re.IGNORECASE,
+)
+REQUIRED_HEADINGS = ("Business overview", "Revenue", "Cash position", "Obligations and conduct", "Recommendation")
 
 SCALE = {"k": 1e3, "thousand": 1e3, "m": 1e6, "mn": 1e6, "million": 1e6, "bn": 1e9, "billion": 1e9}
 GBP_WORDS = {"£", "gbp", "pounds"}
@@ -116,9 +122,6 @@ def _unit_fits(w: Written, unit: str) -> bool:
     return unit in ("count", "days", "months", "ratio")
 
 
-DISPLAY_DECIMALS = {"GBP": 0, "pct": 1, "ratio": 2}
-
-
 def _value_fits(w: Written, target: float, unit: str) -> bool:
     """Equal at the precision written. Written less precisely than the table shows it
     ("£48k", "1.4x", "11%"), it must also be within half a percent of the value."""
@@ -138,7 +141,12 @@ def _sign_only(w: Written, target: float, unit: str) -> bool:
     return target != 0 and _fits(flipped, target, unit)
 
 
-def check(memo: str, metrics: list[Metric], policy: PolicyResult | None = None) -> GuardResult:
+def check(
+    memo: str,
+    metrics: list[Metric],
+    policy: PolicyResult | None = None,
+    required_headings: tuple[str, ...] = (),
+) -> GuardResult:
     findings: list[GuardFinding] = []
     missing: set[str] = set()
     checked = 0
@@ -147,11 +155,14 @@ def check(memo: str, metrics: list[Metric], policy: PolicyResult | None = None) 
         return GuardResult(numbers_checked=0, unmatched=[GuardFinding(number_text="", reason="memo is empty")])
     if not re.search(r"\[M\d+\]", memo):
         findings.append(GuardFinding(number_text="", reason="memo cites no metrics"))
+    for heading in required_headings:
+        if not re.search(rf"^#+\s*{re.escape(heading)}\s*$", memo, re.MULTILINE | re.IGNORECASE):
+            findings.append(GuardFinding(number_text="", reason=f"missing heading: {heading} (truncated or off-format)"))
 
     by_id = {m.id: m for m in metrics}
     rules = {r.rule_id: r for r in policy.rules} if policy else {}
 
-    text = _blank(_blank(memo, DATES), LIST_MARKER)
+    text = _blank(memo, ISO_DATE)
     for sentence in SENTENCE.split(text):
         scan = _blank(sentence, TAG)  # tags contain digits; never read them as figures
         for match in NUMBER.finditer(scan):
@@ -182,6 +193,11 @@ def check(memo: str, metrics: list[Metric], policy: PolicyResult | None = None) 
                 elif not any(_fits(w, v, r.unit) for v in r.citable_values()):
                     shown = ", ".join(f"{v:g}" for v in r.citable_values())
                     findings.append(GuardFinding(number_text=w.text, reason=f"does not match {tag_id}'s threshold ({shown}, {r.unit})"))
+                elif not LIMIT_WORDS.search(sentence[: w.end - len(w.text)]):
+                    findings.append(GuardFinding(
+                        number_text=w.text,
+                        reason=f"{tag_id} is a policy limit; introduce it as one ('at least', 'limit', 'below')",
+                    ))
                 continue
 
             owners = sorted(m.id for m in metrics if m.value is not None and _fits(w, m.value, m.unit))
