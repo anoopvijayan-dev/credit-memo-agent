@@ -52,6 +52,13 @@ Raised by the grill.
 - D9: Crediflow (Manchester) already sells a UK credit-memo generator that fills lenders' own templates with source traceability (launched Oct 2026, per Business Cloud and StartupMag). Your 'cited and human-approved' edge may not be unique. Which angle should the next seat test against it?
 - D10: The bet's 'Who' lists two buyers: non-bank lender credit analysts and NACFB brokers. They have different pains, budgets and competitors, and the ~1,400 figure counts NACFB members, not broker firms found spreading by hand. Which one should the research and interviews target first?
 - D11: Which segment of lending should pricing and competitor research cover? Limited-company lending sits outside FCA regulation (FCA response to the FSB super-complaint), so the pull for traceability may come from funders or guarantee schemes, not the regulator.
+- D12: D7: all three lenses make this a precondition. After reading the actual IP, non-solicit and conflict-of-interest clauses (not from memory), what does your employment contract allow before you go freelance?
+- D13: D4/D11: limited-company lending sits mostly outside the FCA. Can you name a real case where a warehouse funder, a British Business Bank guarantee-scheme audit or a credit committee asked where a figure in a credit file came from?
+- D14: D6: the 3-of-20 threshold needs a baseline. From the BridgeTrade 2026 outreach log, what was the reply rate from UK commercial-finance brokers and lenders, and how much came via your employer's network?
+- D15: D9: Crediflow already fills the lender's own template with source traceability and has named UK customers. In one line a head of credit would care about, what is your difference?
+- D16: D2/D10: every lens says the two buyers are two different products. Which one gets all 20 contacts?
+- D17: D6: offer and moat say a price band named after a free demo measures curiosity. What should count as the signal by 2026-12-19?
+- D18: Product lens: no weekly user is named. Is there one real analyst or head of credit, outside your employer's network, whose last memo you could rebuild end to end as the demo?
 
 ## Evidence tasks
 
