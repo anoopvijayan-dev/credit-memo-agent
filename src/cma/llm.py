@@ -63,7 +63,7 @@ class AnthropicLLM:
         import anthropic
 
         self.client = anthropic.Anthropic()
-        self.model = model or os.getenv("CMA_ANTHROPIC_MODEL", "claude-sonnet-4-5")
+        self.model = model or os.getenv("CMA_ANTHROPIC_MODEL", "claude-sonnet-5-5")
 
     def complete(self, system: str, user: str) -> str:
         msg = self.client.messages.create(
