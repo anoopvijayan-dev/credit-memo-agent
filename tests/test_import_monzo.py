@@ -59,8 +59,10 @@ def test_end_to_end_metrics_run(tmp_path):
     monzo.convert(_write(tmp_path, ROWS), out, opening_balance=1000.00)
     s = categorise.categorise(ingest.load_csv(out))
     m = {x.id: x for x in metrics.compute(s)}
-    # A salary arrives by Faster Payment, so the business rules count it as revenue.
-    assert m["M2"].value == 5000.00
+    # A salary by Faster Payment has no invoice reference, so it is not business revenue:
+    # it shows as unclassified money in (M16) for a person to explain.
+    assert m["M2"].value == 0.0
+    assert m["M16"].value == 100.0
     assert m["M5"].value == 800.00
 
 

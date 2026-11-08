@@ -5,7 +5,12 @@ them. Each statement comes with a ground-truth file so the metrics layer can be 
 against known answers rather than eyeballed.
 
 Three archetypes (cafe, trades, ecommerce) x three risk profiles (good, stretched, poor).
-Everything is seeded, so the same arguments always produce the same statement.
+Everything is seeded, so the same arguments always produce the same statement, and
+the default end date is fixed (30 September 2026) rather than "last month", so a
+generated example does not change from one day to the next.
+
+The ground truth is worked out from the generator's own events, not by calling the
+metrics module, so a bug there cannot hide by agreeing with itself.
 """
 
 from __future__ import annotations
@@ -20,6 +25,9 @@ from pathlib import Path
 
 from .models import Category
 
+DEFAULT_END = date(2026, 9, 30)
+VAT_STAGGER = 3  # quarters end Feb, May, Aug, Nov; due the 7th of Apr, Jul, Oct, Jan.
+
 # Counterparties are fictional. Any resemblance to a real business is accidental.
 ARCHETYPES: dict[str, dict] = {
     "cafe": {
@@ -27,10 +35,10 @@ ARCHETYPES: dict[str, dict] = {
         "channel": "card",
         "monthly_revenue": 22_000,
         "seasonality": [0.80, 0.82, 0.90, 0.98, 1.05, 1.12, 1.18, 1.15, 1.02, 0.98, 0.95, 1.05],
-        "suppliers": [("FRESHFIELD FOODS LTD DD", 4_600), ("BREW SUPPLY CO DD", 1_500), ("CITY WASTE SERVICES DD", 180), ("NORTHGRID ENERGY DD", 950)],
+        "suppliers": [("FRESHFIELD FOODS LTD DD", 4_600), ("BREW SUPPLY CO DD", 1_500), ("CITY WASTE SERVICES DD", 180), ("LANTERN ENERGY DD", 950)],
         "rent": 2_400,
         "payroll": 7_200,
-        "loan": ("BRIDGEPOINT FINANCE LOAN", 1_150),
+        "loan": ("HOLLOWAY BRIDGE FINANCE LOAN", 1_150),
         "drawings": 2_500,
     },
     "trades": {
@@ -38,7 +46,7 @@ ARCHETYPES: dict[str, dict] = {
         "channel": "bacs",
         "monthly_revenue": 31_000,
         "seasonality": [1.15, 1.10, 1.00, 0.92, 0.88, 0.85, 0.85, 0.88, 0.98, 1.08, 1.15, 1.16],
-        "suppliers": [("PLUMBWORLD TRADE DD", 9_800), ("FLEETCARD FUEL DD", 980), ("ABBEY VAN LEASE DD", 620), ("TRADESURE INSURANCE DD", 260)],
+        "suppliers": [("PIPEWELL TRADE SUPPLIES DD", 9_800), ("ROADLINE FUEL CARD DD", 980), ("ABBEY VAN LEASE DD", 620), ("TRADESURE INSURANCE DD", 260)],
         "rent": 900,
         "payroll": 9_800,
         "loan": ("ASSETLINE VAN FINANCE", 1_900),
@@ -49,7 +57,7 @@ ARCHETYPES: dict[str, dict] = {
         "channel": "gateway",
         "monthly_revenue": 41_000,
         "seasonality": [0.85, 0.80, 0.88, 0.92, 0.95, 0.90, 0.88, 0.92, 1.00, 1.15, 1.45, 1.30],
-        "suppliers": [("STOCKHAVEN WHOLESALE", 15_500), ("PARCELFORCE WORLDWIDE DD", 3_100), ("SHOPFRONT PLATFORM DD", 290), ("ADSPEND MEDIA", 4_900)],
+        "suppliers": [("STOCKHAVEN WHOLESALE", 15_500), ("PARCELWAY COURIERS DD", 3_100), ("SHOPFRONT PLATFORM DD", 290), ("ADSPEND MEDIA", 4_900)],
         "rent": 1_600,
         "payroll": 8_400,
         "loan": ("GROWTHCAP REVENUE LOAN", 1_900),
@@ -60,9 +68,12 @@ ARCHETYPES: dict[str, dict] = {
 PROFILES: dict[str, dict] = {
     # revenue_mult scales revenue; returned_dds is how many direct debits bounce in the
     # year; hmrc_late delays VAT payments; opening_balance sets how much headroom exists.
-    "good": {"revenue_mult": 1.10, "returned_dds": 0, "hmrc_late": False, "opening_balance": 14_000},
-    "stretched": {"revenue_mult": 1.00, "returned_dds": 1, "hmrc_late": False, "opening_balance": 3_500},
-    "poor": {"revenue_mult": 0.82, "returned_dds": 4, "hmrc_late": True, "opening_balance": 600},
+    # Tuned so that, under the default policy, good passes (or is referred only for
+    # seasonality), stretched is referred and poor fails, with cover measured after
+    # owner drawings.
+    "good": {"revenue_mult": 1.30, "returned_dds": 0, "hmrc_late": False, "opening_balance": 14_000},
+    "stretched": {"revenue_mult": 1.18, "returned_dds": 1, "hmrc_late": False, "opening_balance": 3_500},
+    "poor": {"revenue_mult": 0.85, "returned_dds": 4, "hmrc_late": True, "opening_balance": 600},
 }
 
 CUSTOMER_NAMES = [
@@ -87,6 +98,9 @@ class Truth:
     returned_dd_count: int = 0
     lowest_balance: float = 0.0
     days_overdrawn: int = 0
+    top_customer_share: float | None = None
+    vat_stagger: int = VAT_STAGGER
+    late_vat_count: int = 0
     category_by_id: dict[str, str] = field(default_factory=dict)
 
 
@@ -123,11 +137,12 @@ def generate(
 
     rng = random.Random(f"{archetype}:{profile}:{seed}")
     a, p = ARCHETYPES[archetype], PROFILES[profile]
-    end = end or (date.today().replace(day=1) - timedelta(days=1))
+    end = end or DEFAULT_END
     starts = _month_starts(end, months)
     truth = Truth(archetype, profile, seed, [s.strftime("%Y-%m") for s in starts])
 
     events: list[tuple[date, str, float, Category]] = []
+    by_customer: dict[str, float] = {}
 
     # Revenue
     for s in starts:
@@ -164,6 +179,7 @@ def generate(
                 who = rng.choice(CUSTOMER_NAMES)
                 events.append((x, f"FPS CREDIT {who} INV{rng.randint(1000, 9999)}", amt, Category.REVENUE_TRANSFER))
                 truth.monthly_revenue[key] += amt
+                by_customer[who] = by_customer.get(who, 0.0) + amt
         truth.total_revenue += truth.monthly_revenue[key]
 
     # Fixed outgoings
@@ -186,48 +202,79 @@ def generate(
             day = s + timedelta(days=rng.randint(2, 24))
             events.append((day, name, -round(amt * rng.uniform(0.85, 1.15), 2), Category.SUPPLIER))
 
-    # VAT, quarterly, paid on the 7th of the month after the quarter ends.
-    quarters = [s for s in starts if s.month in (1, 4, 7, 10)]
-    for q in quarters:
-        prev3 = [m for m in truth.monthly_revenue if m < q.strftime("%Y-%m")][-3:]
-        if len(prev3) < 3:
-            continue
-        vat = round(sum(truth.monthly_revenue[m] for m in prev3) * 0.12, 2)
+    # VAT for stagger group 3: the quarter ending Nov is due 7 Jan, Feb due 7 Apr, and so
+    # on. A good payer pays on the due date; a late one three weeks after it. A quarter
+    # partly before the statement is estimated from the months that are inside it.
+    avg_month = sum(truth.monthly_revenue.values()) / len(truth.monthly_revenue)
+    for q in [s for s in starts if s.month in (1, 4, 7, 10)]:
+        qy, qm = (q.year, q.month - 2) if q.month > 2 else (q.year - 1, q.month + 10)
+        quarter = [f"{qy if m > 0 else qy - 1:04d}-{(m - 1) % 12 + 1:02d}" for m in (qm - 2, qm - 1, qm)]
+        vat = round(sum(truth.monthly_revenue.get(m, avg_month) for m in quarter) * 0.12, 2)
         pay = q + timedelta(days=6 + (23 if p["hmrc_late"] else 0))
         events.append((pay, "HMRC VAT", -vat, Category.HMRC_VAT))
         truth.total_hmrc_vat += vat
 
-    # Returned direct debits: the original DD bounces, bank charges a fee, supplier
-    # re-presents a week later.
-    for _ in range(p["returned_dds"]):
-        s = rng.choice(starts[3:])
-        name, amt = rng.choice(a["suppliers"])
-        day = s + timedelta(days=rng.randint(10, 20))
-        events.append((day, f"UNPAID DD {name}", 0.0, Category.RETURNED_DD))
-        events.append((day, "UNPAID ITEM FEE", -15.0, Category.BANK_FEES))
+    # Returned direct debits: a scheduled DD bounces, the bank returns it two days later
+    # and charges a fee, and the payee re-presents it a week after the original.
+    bounceable = [i for i, e in enumerate(events)
+                  if e[3] in (Category.SUPPLIER, Category.LOAN_REPAYMENT)
+                  and (e[1].endswith(" DD") or e[1].startswith("DD ")) and e[0] >= starts[3]]
+    for i in rng.sample(bounceable, p["returned_dds"]):
+        d, desc, amt, cat = events[i]
+        payee = desc[3:] if desc.startswith("DD ") else desc
+        events.append((d + timedelta(days=2), f"UNPAID DD {payee}", -amt, Category.RETURNED_DD))
+        events.append((d + timedelta(days=2), "UNPAID ITEM FEE", -15.0, Category.BANK_FEES))
+        events.append((d + timedelta(days=7), desc, amt, cat))
         truth.returned_dd_count += 1
 
     # Order, then walk the balance.
     events.sort(key=lambda e: (e[0], e[2] < 0, e[1]))
     balance = float(p["opening_balance"])
     rows: list[dict] = []
-    lowest = balance
-    overdrawn_days: set[date] = set()
+    lowest: float | None = None
+    closing: dict[date, float] = {}
     for i, (d, desc, amt, cat) in enumerate(events, start=1):
         balance = round(balance + amt, 2)
-        lowest = min(lowest, balance)
-        if balance < 0:
-            overdrawn_days.add(d)
+        lowest = balance if lowest is None else min(lowest, balance)
+        closing[d] = balance
         tid = f"T{i:05d}"
         rows.append(
             {"id": tid, "date": d.isoformat(), "description": desc, "amount": f"{amt:.2f}", "balance": f"{balance:.2f}"}
         )
         truth.category_by_id[tid] = cat.value
+
+    # Days that closed overdrawn, carrying each day's closing balance forward.
+    day, last_day, carried, overdrawn = events[0][0], events[-1][0], 0.0, 0
+    while day <= last_day:
+        carried = closing.get(day, carried)
+        overdrawn += carried < 0
+        day += timedelta(days=1)
+
+    # Which VAT quarters fall wholly inside the statement, and were they paid late?
+    first_day = events[0][0]
+    for q in [s for s in starts if s.month in (1, 4, 7, 10)]:
+        q_end = date(q.year, q.month, 1) - timedelta(days=1)
+        q_end = date(q_end.year, q_end.month, 1) - timedelta(days=1)
+        window = _working_days_after(q + timedelta(days=6), 3)  # due on the 7th, plus DD collection
+        if q_end >= first_day - timedelta(days=1) and window <= last_day and p["hmrc_late"]:
+            truth.late_vat_count += 1
+
     truth.lowest_balance = lowest
-    truth.days_overdrawn = len(overdrawn_days)
+    truth.days_overdrawn = overdrawn
     truth.total_revenue = round(truth.total_revenue, 2)
+    truth.total_hmrc_vat = round(truth.total_hmrc_vat, 2)
     truth.monthly_revenue = {k: round(v, 2) for k, v in truth.monthly_revenue.items()}
+    if by_customer:
+        truth.top_customer_share = round(max(by_customer.values()) / sum(by_customer.values()) * 100, 1)
     return rows, truth
+
+
+def _working_days_after(d: date, n: int) -> date:
+    while n:
+        d += timedelta(days=1)
+        if d.weekday() < 5:
+            n -= 1
+    return d
 
 
 def write(rows: list[dict], truth: Truth, out_dir: Path, stem: str | None = None) -> tuple[Path, Path]:

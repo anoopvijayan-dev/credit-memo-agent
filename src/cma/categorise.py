@@ -1,10 +1,20 @@
 """Rule-based transaction categoriser.
 
 Deterministic on purpose. Rules are ordered; the first match whose direction also
-matches wins. Direction matters: "BRIDGEPOINT FINANCE LOAN" is a repayment when money
-leaves and a drawdown when it arrives, and a drawdown is financing, not revenue or
-debt service. Anything that falls through is OTHER (credits) or SUPPLIER (debits).
-The model never overrides a rule match.
+matches wins. Direction matters: "HOLLOWAY BRIDGE FINANCE LOAN" is a repayment when
+money leaves and a drawdown when it arrives, and a drawdown is financing, not revenue
+or debt service. The model never overrides a rule match.
+
+Revenue is claimed narrowly. A card or gateway settlement is trading income. A bank
+transfer in is only counted as a customer payment when it carries an invoice
+reference (INV1234, INVOICE 1234); anything else that arrives by transfer (the owner
+putting money back, a capital injection, a VAT repayment, a transfer from savings) is
+OTHER and shows up in M16, unclassified inflows, for a person to look at. That costs
+some real revenue on statements without invoice references, but the alternative is
+that money the owner moves in and out counts as trading income and lifts debt cover.
+
+A returned direct debit ("UNPAID DD ...") is linked to the debit it reverses, so a
+bounced and re-presented payment counts once, not twice.
 """
 
 from __future__ import annotations
@@ -16,6 +26,13 @@ from .models import Category, Statement, Transaction
 
 Direction = Literal["in", "out", "any"]
 
+INVOICE_REF = re.compile(r"\bINV(?:OICE)?\s*[-#:]?\s*\d+")
+# Money in that is never trading income, whatever reference it carries.
+NON_TRADING_IN = re.compile(
+    r"\bDIRECTOR\b|\bOWNER\b|\bCAPITAL\b|\bSHAREHOLDER\b|\bHMRC\b|\bREFUND\b|\bREVERSAL\b"
+    r"|\bSAVINGS\b|\bPOT TRANSFER\b|\bINTEREST\b|\bGRANT\b|\bINSURANCE CLAIM\b"
+)
+
 RULES: list[tuple[re.Pattern[str], Direction, Category]] = [
     (re.compile(r"^UNPAID DD\b"), "any", Category.RETURNED_DD),
     (re.compile(r"UNPAID ITEM FEE|ACCOUNT FEES|BANK CHARGES"), "out", Category.BANK_FEES),
@@ -26,8 +43,9 @@ RULES: list[tuple[re.Pattern[str], Direction, Category]] = [
     (re.compile(r"\bLOAN\b|FINANCE\b"), "out", Category.LOAN_REPAYMENT),
     (re.compile(r"\bLOAN\b|FINANCE\b"), "in", Category.LOAN_DRAWDOWN),
     (re.compile(r"OWNER DRAWINGS|DIRECTOR DRAWINGS|DIVIDEND"), "out", Category.OWNER_DRAWINGS),
+    (NON_TRADING_IN, "in", Category.OTHER),
     (re.compile(r"ACQUIRER SETTLEMENT|PAYGATE PAYOUT|CARD SETTLEMENT"), "in", Category.REVENUE_CARD),
-    (re.compile(r"^FPS CREDIT|^BACS CREDIT|\bINV\d+"), "in", Category.REVENUE_TRANSFER),
+    (INVOICE_REF, "in", Category.REVENUE_TRANSFER),
 ]
 
 
@@ -47,7 +65,44 @@ def categorise_one(t: Transaction) -> Category:
     return Category.OTHER
 
 
+def _payee(description: str) -> str:
+    """The counterparty part of a description, for matching a reversal to its debit."""
+    d = description.upper()
+    d = re.sub(r"^UNPAID DD\s+", "", d)
+    d = re.sub(r"^(DD|SO|FPS DEBIT|BACS DEBIT)\s+", "", d)
+    d = re.sub(r"\s+DD$", "", d)
+    return " ".join(d.split())
+
+
+def link_reversals(statement: Statement) -> Statement:
+    """Point each returned DD credit at the most recent unreversed debit it undoes.
+
+    Same amount, same payee, on or before the reversal date. A returned DD with no
+    amount (some banks print a zero-value notice) or no matching debit stays unlinked:
+    it still counts in M7 but changes no sum.
+    """
+    taken: set[str] = set()
+    txns = statement.transactions
+    for i, r in enumerate(txns):
+        if r.category != Category.RETURNED_DD or r.amount <= 0:
+            continue
+        payee = _payee(r.description)
+        for o in reversed(txns[:i]):
+            if (
+                o.id not in taken
+                and o.amount < 0
+                and o.category not in (Category.RETURNED_DD, None)
+                and abs(o.amount + r.amount) < 0.005
+                and _payee(o.description) == payee
+            ):
+                r.reverses = o.id
+                taken.add(o.id)
+                break
+    return statement
+
+
 def categorise(statement: Statement) -> Statement:
     for t in statement.transactions:
         t.category = categorise_one(t)
-    return statement
+        t.reverses = None
+    return link_reversals(statement)
