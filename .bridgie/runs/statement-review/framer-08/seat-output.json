@@ -1,0 +1,97 @@
+{
+  "seat": "framer",
+  "summary_md": "- **Assumed, not known:** the person and their pain come from one friend of the owner, passed on second-hand. There are no direct quotes, the friend's firm type and country are unknown (the repo's Monzo import hints at UK), and we don't know whether other underwriters have the same problem.\n- **Assumed, not known:** \"most of each application\" goes on statement reading, but there is no starting measurement. Hours per file, files per week and statement format (PDF, CSV or Open Banking) are all unmeasured.\n- **Assumed, not known:** the reasons the firm gives (generic AI is banned because a made-up number lands on whoever signs the file; dedicated tools are being phased out or cost too much) are unverified. Nobody has said which tools, what they cost, or whether the firm would let an agent near real files within the 2-week appetite.",
+  "artifact_md": "## Who\n\nAn underwriter at a lender that makes small-business loans. Right now that is one friend of the owner. They work through a queue of applications, and for each one they must read several months of the applicant's business bank statements before they can write the credit memo. Their name goes on the file they sign. (Assumption: lender type, firm size, country and number of underwriters are unknown. The repo's Monzo import suggests the UK, but nobody has confirmed it.)\n\n## Problem in their words\n\nNo direct quotes yet. Everything below is the owner paraphrasing one conversation, and none of it is backed by a ticket, an interview note or data.\n\n- \"I'm buried in applications.\" They cancelled a weekend road trip to catch up. (paraphrase, second-hand)\n- Most of the time on each application goes on reading months of bank statements line by line before the memo can be written. (paraphrase; the share of time has not been measured)\n- \"If the AI makes up a number, it's my name on the file.\" This is given as the reason the firm won't allow generic AI. (assumption: our wording of the firm's stated reason)\n- The tools built for this job are being phased out or cost too much. (paraphrase; which tools and what they cost is unknown)\n\n## Why now\n\nThe owner reports two triggers. Neither has been checked:\n\n1. The tools the firm could use for statement analysis are being withdrawn or priced out of reach, so the cheaper option is disappearing. (assumption: tools and dates not named)\n2. Application volume has grown to the point where the underwriter gives up weekends. (assumption: we don't know since when, or whether it is seasonal)\n\nBetter language models are not a trigger from the customer's side. If neither claim survives a check, the honest answer is \"nothing changed for them; the backlog is chronic\".\n\n## What they do today\n\nThey read every statement by hand, line by line. Probably that means PDFs downloaded from the applicant's bank, with figures (income, outgoings, average balance, bounced payments, existing loan repayments) totted up in a spreadsheet or by eye, then typed into the memo. (assumption: the exact format and tooling are unknown)\n\n- **Generic AI:** firm policy forbids it, because nothing traces a figure back to a transaction.\n- **Dedicated statement-analysis or Open Banking categorisation products:** they have used or looked at these, but say they are being phased out or cost too much. (assumption: products not named)\n- **Alternative:** staying slow. The cost of the backlog falls on the underwriter's own time, not on the firm's budget.\n\n## Expected outcome\n\n**Metric:** hours this underwriter spends reading statements per application.\n\n- **Baseline:** unknown. All we have is \"most of each application\". We need a timed baseline on 3 to 5 real files, read the usual way.\n- **Target:** at least half the time cut on the same number of comparable files where the agent does the statement reading.\n- **Trust condition:** every figure in the draft must link to the transactions behind it, with zero figures that can't be traced. The underwriter must say they would sign a file that uses the agent's figures, after checking them.\n- **When it can be read:** by 2026-11-29, the end of the 2-week appetite. That date only holds if we can get anonymised or real statements in time; otherwise we can't read the result at all.",
+  "questions": [
+    {
+      "context": "Who: what kind of lender does the underwriter work for, and where? This decides statement formats, regulation and whether \"small business\" means sole traders or limited companies.",
+      "options": [
+        "UK bank or building society, SME lending desk",
+        "UK specialist or alternative lender, or a commercial finance broker",
+        "Outside the UK (say where in a note)",
+        "Don't know"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Who: is this one person's backlog, or a pattern across underwriters? Right now the frame rests on one friend.",
+      "options": [
+        "Just this one underwriter so far",
+        "Their whole team has the same problem (they've said so)",
+        "I know underwriters at other firms who say the same",
+        "Don't know"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Expected outcome needs a baseline: how long does reading statements take on one typical application today?",
+      "options": [
+        "Under 1 hour",
+        "1 to 3 hours",
+        "More than 3 hours",
+        "Don't know (I'll ask them to time 3 files)"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Volume: how many applications does the underwriter handle per week? This tells us whether the saving is worth the risk to them.",
+      "options": [
+        "Fewer than 5",
+        "5 to 15",
+        "More than 15",
+        "Don't know"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "What they do today: what format do the statements arrive in? The agent can only cite transactions it can read reliably.",
+      "options": [
+        "PDF statements downloaded from the bank",
+        "CSV or spreadsheet exports",
+        "An Open Banking feed through a provider",
+        "Don't know"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Why now: which purpose-built tools are being phased out or are too expensive, and what does that cost? This claim is our only external trigger.",
+      "options": [
+        "A named product being withdrawn (name it in a note)",
+        "Available, but priced above what the firm will pay (give the figure if known)",
+        "They've never used one; this is what they've heard",
+        "Don't know"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Problem in their words: is \"a made-up number lands on whoever signs\" the firm's actual reason for banning AI, or our reading of it? And would a version with citations to transactions change the firm's answer?",
+      "options": [
+        "That's the firm's stated reason, and citations would address it",
+        "That's the stated reason, but there's also a blanket data/vendor policy citations won't fix",
+        "We're inferring the reason; it hasn't been asked",
+        "Don't know"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Expected outcome is only readable with real files. Can the underwriter test the agent on real or properly anonymised statements before 2026-11-29?",
+      "options": [
+        "Yes, anonymised real statements, with the firm's OK",
+        "Only on their own time with redacted samples, without firm involvement",
+        "No; we'd have to use synthetic or our own statements",
+        "Don't know"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Expected outcome: what would the underwriter count as success? Time saved alone, or something about trust as well?",
+      "options": [
+        "At least half the statement-reading time saved, with no wrong figures",
+        "They would sign a file using the agent's figures after checking the citations",
+        "Their firm would approve it for use on live files",
+        "Don't know"
+      ],
+      "allow_free_text": true
+    }
+  ]
+}
