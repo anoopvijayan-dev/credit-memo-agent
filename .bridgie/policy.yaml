@@ -1,0 +1,11 @@
+# Project overrides of Bridgie's default policy. Only list keys you change.
+version: 1
+default_lane: engineering
+# Verification commands per tier. Every tier the policy requires at a bet's risk needs at least one
+# command; a required tier with no command is recorded as not_proven and the task cannot pass.
+# Without this block, Bridgie uses the lane's commands for the stacks it detects (package.json, *.sln).
+# verify:
+#   commands:
+#     mechanical: ['npm run lint', 'npm run build']
+#     specified: ['npm test']
+#     contracts: ['npm run test:contracts']
