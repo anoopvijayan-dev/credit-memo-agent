@@ -1,0 +1,48 @@
+name: Progress page
+
+# Publishes a public, read-only Bridgie progress page to GitHub Pages whenever the bets change.
+# Only the bets listed in PUBLIC_BETS are published (repository variable, space-separated; Settings,
+# Secrets and variables, Actions, Variables). Everything else in .bridgie/, and all code, stays private.
+on:
+  push:
+    branches: [main]
+    paths: ['.bridgie/**', '.github/workflows/progress-page.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: progress-page
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Render the page for the public bets only
+        env:
+          PUBLIC_BETS: ${{ vars.PUBLIC_BETS || 'statement-review' }}
+        run: |
+          args=()
+          for b in $PUBLIC_BETS; do args+=(--bet "$b"); done
+          npx -y bridgie@0.6.2 open --public "${args[@]}" --out _site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
