@@ -140,6 +140,7 @@ Every answer and decision, dated.
 - 2026-11-16 D31 (question): Counted as trading receipts, with deposits above a threshold flagged → recorded [Anoop Vijayan]
 - 2026-11-16 D32 (question): Don't build it; time files with a stopwatch → recorded [Anoop Vijayan]
 - 2026-11-16 D33 (question): Tier 1 only by 2026-11-29 (design default) → recorded [Anoop Vijayan]
+- 2026-11-16 D34 (approve_design): request changes — Reshape with the owner's answers: count cash deposits as trading receipts, with deposits above a threshold flagged (D31); show pass/refer/fail, labelled as illustrative thresholds, not the firm's policy (D28); don't build underwriter timing, time files with a stopwatch (D32). Everything else as designed. → changes requested: Reshape with the owner's answers: count cash deposits as trading receipts, with deposits above a threshold flagged (D31); show pass/refer/fail, labelled as illustrative thresholds, not the firm's policy (D28); don't build underwriter timing, time files with a stopwatch (D32). Everything else as designed.; re-run bridgie shape statement-review [Anoop Vijayan]
 
 ## Idea
 
