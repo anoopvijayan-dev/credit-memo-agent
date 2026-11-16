@@ -83,6 +83,7 @@ Questions raised by the grill. Answer them on the decision surface (`bridgie ope
 ## Evidence tasks
 
 Things that need real-world evidence before signing.
+- [ ] E1: The real blocker (D7 against the title). The title assumes the firm would hand over statement reading 'if it never invents a number'. D7 says the actual objections are price, wanting to see it working, and applicant data leaving the firm (GDPR). If data leaving the firm is what blocks it, citations don't matter; where the tool runs does. Ask whoever would approve a tool (operations, compliance or head of credit, not the friend) what would block a pilot. (from D10)
 
 ## Decision log
 
@@ -100,6 +101,7 @@ Every answer and decision, dated.
 - 2026-11-16 D15 (question): Skip it and treat this as a showcase for one firm, not a market bet → recorded [Anoop Vijayan]
 - 2026-11-16 D23 (question): The owner's own statements, presented as a demo of the mechanism, not the time saving → recorded [Anoop Vijayan]
 - 2026-11-16 D24 (question): None planned: this is a showcase for one firm → recorded [Anoop Vijayan]
+- 2026-11-16 D10 (question): Don't know → evidence task E1 created [Anoop Vijayan]
 
 ## Idea
 
