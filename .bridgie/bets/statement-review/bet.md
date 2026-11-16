@@ -135,6 +135,7 @@ Every answer and decision, dated.
 - 2026-11-16 D26 (question): E4: monthly application counts for the last 12 months → recorded [Anoop Vijayan]
 - 2026-11-16 D17 (sign): sign → bet signed [Anoop Vijayan]
 - 2026-11-16 D28 (question): Show it, labelled as illustrative thresholds, not the firm's policy → recorded [Anoop Vijayan]
+- 2026-11-16 D29 (question): Local-first now; hosted only after the approver asks (design default) → recorded [Anoop Vijayan]
 
 ## Idea
 
