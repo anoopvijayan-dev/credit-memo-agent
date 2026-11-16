@@ -89,6 +89,7 @@ Things that need real-world evidence before signing.
 - [ ] E4: Why now (D6, volume). With 'being phased out' gone from D6, the only trigger left is rising application volume, and a cancelled weekend in November could be a quarter-end or seasonal peak. Get monthly application counts for the last 12 months from the underwriter's queue. (from D16)
 - [ ] E5: Offline mode and the approver (sharpens D10; raised by offer and moat). Would the firm's approver, not the friend, treat a version that runs on the firm's own machine as outside its ban on generic AI and inside its GDPR bar? Offline mode sends nothing out. With a hosted model, only 'Applicant', the dates and the metrics and policy tables leave (src/cma/graph.py:212-218). (from D18)
 - [ ] E6: The product the firm turned down (sharpens D11; raised by moat and offer). Moat's PASS rests partly on this. If the incumbent already links each figure to its transactions, this tool is a cheaper copy. Name the product, the quote and who turned it down. (from D19)
+- [ ] E7: The Open Banking provider (sharpens D12; raised by all three lenses). Which provider sends the feed, and what does its output already give the underwriter? Pull one sample. If it already categorises transactions with drill-down to the lines, little reading is left for the agent to take over. (from D20)
 
 ## Decision log
 
@@ -112,6 +113,7 @@ Every answer and decision, dated.
 - 2026-11-16 D16 (question): Don't know → evidence task E4 created [Anoop Vijayan]
 - 2026-11-16 D18 (question): Don't know → evidence task E5 created [Anoop Vijayan]
 - 2026-11-16 D19 (question): Don't know → evidence task E6 created [Anoop Vijayan]
+- 2026-11-16 D20 (question): Don't know → evidence task E7 created [Anoop Vijayan]
 
 ## Idea
 
