@@ -98,6 +98,7 @@ Every answer and decision, dated.
 - 2026-11-16 D9 (question): At least half the statement-reading time saved, with no wrong figures → recorded [Anoop Vijayan]
 - 2026-11-16 D14 (question): other — Send documents and get demo approval: build a working model to showcase its usability, then get approval to onboard it to the firm. Think of this as a SaaS. → recorded [Anoop Vijayan]
 - 2026-11-16 D15 (question): Skip it and treat this as a showcase for one firm, not a market bet → recorded [Anoop Vijayan]
+- 2026-11-16 D23 (question): The owner's own statements, presented as a demo of the mechanism, not the time saving → recorded [Anoop Vijayan]
 
 ## Idea
 
