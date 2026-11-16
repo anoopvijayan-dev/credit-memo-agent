@@ -78,6 +78,7 @@ Every answer and decision, dated.
 - 2026-11-16 D3 (question): 1 to 3 hours → recorded [Anoop Vijayan]
 - 2026-11-16 D4 (question): More than 15 → recorded [Anoop Vijayan]
 - 2026-11-16 D5 (question): An Open Banking feed through a provider — We can't determine what users will share. → recorded [Anoop Vijayan]
+- 2026-11-16 D6 (question): Available, but priced above what the firm will pay (give the figure if known) → recorded [Anoop Vijayan]
 
 ## Idea
 
