@@ -1,0 +1,49 @@
+{
+  "task": "T01",
+  "claims": [
+    {
+      "text": "P7 under v1: with CMA_RULESET=v1, M1-M16 (id, unit, value, evidence ids) and every line's category and reversal link equal the baseline computed by the pre-change code (commit fd7b64c) on all 13 synthetic cases (9 archetype x profile plus the seed-3 and 2/3/4-month variants the tests use, each at vat_stagger None and the truth stagger), the committed example examples/cafe_stretched.csv, all 35 distinct statements the test suite computes metrics on, and the 17 lines tests categorise one at a time. No exceptions.",
+      "proof_cmd": "pytest -q tests/test_rules.py -k p7",
+      "proof_output": "51 passed, 19 deselected in 0.27s"
+    },
+    {
+      "text": "The baseline was captured from the unchanged code at fd7b64c (HEAD, before any src change), by a pytest plugin that recorded every statement passed to metrics.compute and every categorise_one call, then make_p7_baseline.py; both scripts are in the run directory.",
+      "proof_cmd": "zcat tests/golden/p7_v1_baseline.json.gz | python -c \"import json,sys;g=json.load(sys.stdin);print(g['made_at_commit'],len(g['synthetic']),len(g['examples']),len(g['fixtures']),len(g['lines']))\"; git log -1 --format=%h",
+      "proof_output": "fd7b64c 13 1 35 17\nfd7b64c"
+    },
+    {
+      "text": "P7 is sensitive: removing PAYGATE PAYOUT from the v1 table makes the P7 tests fail (file restored afterwards, cmp identical).",
+      "proof_cmd": "sed -i \"s/'ACQUIRER SETTLEMENT|PAYGATE PAYOUT|CARD SETTLEMENT'/'ACQUIRER SETTLEMENT|CARD SETTLEMENT'/\" src/cma/rules/v1.yaml && pytest -q tests/test_rules.py -k p7; cp v1.bak src/cma/rules/v1.yaml && cmp v1.bak src/cma/rules/v1.yaml && echo restored",
+      "proof_output": "FAILED tests/test_rules.py::test_p7_v1_synthetic_cases_match_the_baseline[ecommerce-poor-s7-m12]\n3 failed, 48 passed, 19 deselected in 0.28s\nrestored"
+    },
+    {
+      "text": "The built-in table is packaged YAML (src/cma/rules/v1.yaml, frozen: true) with an id and the sha256 of its file; it is validated on load (not a mapping, no rules, missing/mismatched id, frozen not bool, unknown keys, missing rule keys, bad direction, unknown category, regex that does not compile, duplicate rule id are all refused naming the problem); CMA_RULESET chooses the table, an unknown value is refused naming CMA_RULESET and the known ids, an id can never name a path, unset uses the default; the categoriser uses only the table it is given (no table left in code).",
+      "proof_cmd": "pytest -q tests/test_rules.py -k \"malformed or unknown or path or chooses or default or given or packaged or frozen\"",
+      "proof_output": "18 passed, 52 deselected in 0.06s"
+    },
+    {
+      "text": "R54: the evidence record of a cma run carries the ruleset used, {id, sha256}; with CMA_RULESET=v1 it records v1. The key is additive; existing keys unchanged.",
+      "proof_cmd": "pytest -q tests/test_rules.py -k evidence",
+      "proof_output": "1 passed, 69 deselected in 0.26s"
+    },
+    {
+      "text": "The rule table ships in the wheel and loads from an installed wheel, not just from src.",
+      "proof_cmd": "pip wheel --no-deps -w wheel . && python -m zipfile -l wheel/*.whl | grep rules/ ; (unzip wheel to whl/) PYTHONPATH=whl CMA_RULESET=v1 python -c \"import cma.categorise as c; r=c.active_ruleset(); print(c.__file__.split('/')[-3], r.id, r.sha256[:12], len(r.rules))\"",
+      "proof_output": "cma/rules/__init__.py 2020-02-02 00:00:00 0\ncma/rules/v1.yaml 2020-02-02 00:00:00 2035\nwhl v1 7573366854a6 12"
+    },
+    {
+      "text": "Nothing else regresses: full test suite, ruff, and the offline evals (exit 0 = every metric agrees with synthetic truth and the fake memo is grounded) pass.",
+      "proof_cmd": "pytest -q; ruff check src tests; CMA_RULESET=v1 python evals/run_evals.py --llm fake --out <scratch>/evals; echo evals_exit=$?",
+      "proof_output": "298 passed, 4 skipped in 2.33s\nAll checks passed!\nevals_exit=0"
+    }
+  ],
+  "files_changed": [
+    "src/cma/categorise.py",
+    "src/cma/graph.py",
+    "src/cma/rules/__init__.py",
+    "src/cma/rules/v1.yaml",
+    "tests/test_rules.py",
+    "tests/golden/p7_v1_baseline.json.gz"
+  ],
+  "notes": "Changes are left uncommitted in the worktree on branch bridgie-task/statement-review/T01. Decisions: (1) DEFAULT_RULESET is v1 and RULESETS is ('v1',) because v2 does not exist yet; the design makes v2 the default in step 2 (a later task), which should add v2.yaml to RULESETS and change DEFAULT_RULESET. The P7 tests pin CMA_RULESET=v1 explicitly, so they stay valid after that switch. (2) The loader follows policy.py: a packaged package (cma.rules) read via importlib.resources, sha256 of the file text, errors collected and raised as RulesetError (a ValueError). Only ids in RULESETS load, so CMA_RULESET cannot point at a path. Every rule has an id now, ready for 'which rule set the category' in C1. (3) The matching passes (link_reversals, unmark_round_trips, counterparty) stay in code as the design says. INVOICE_REF stays a code constant because counterparty() and importers/monzo.py use it; v1.yaml repeats the same regex text for its invoice rule (a deliberate small duplication; P7 would catch drift). NON_TRADING_IN and RULES were module constants with no other users (rg over src and tests) and are removed. (4) R54's 'record v1 in every evidence record': graph.py's categorise node now stores {id, sha256} in a new MemoState key 'ruleset', and evidence_record writes it under 'ruleset' (additive; s.get so old checkpoints resume and give null). No new type enters graph state, so CHECKPOINT_TYPES is unchanged. Case-store evidence (evidence JSON v1, schema_version) is later work. (5) The P7 golden compares M1-M16 by id, unit, value and a sha256 of the evidence id list, not by name, because M16 is renamed in a later task (R10). It is gzipped (40 KB; 406 KB uncompressed) to keep diff packets small; read it with zcat. Its synthetic entries also pin the generator's CSV sha256, so generator drift is reported as such, not as a ruleset change. The capture plugin and builder script are in the run directory (capture_plugin.py, make_p7_baseline.py); they must not be rerun on newer code. (6) committed examples (memo.md, evidence.json, truth.json) were not touched: nothing in T01 changes their figures, and their regeneration belongs to the M16 rename / v2 tasks."
+}
