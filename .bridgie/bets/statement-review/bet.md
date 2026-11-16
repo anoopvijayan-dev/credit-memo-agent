@@ -4,12 +4,14 @@ title: "Small-business underwriters lose most of each application to reading ban
 lane: engineering
 risk: data
 owner: Anoop Vijayan
-status: evidence
+status: signed
 confidence: anecdote
 appetite: { time: 2w, tokens_usd: 20 }
 kill_criteria: []
 non_goals: []
 created: 2026-11-15
+signed_at: "2026-11-16T16:11:11.193Z"
+signed_by: Anoop Vijayan
 ---
 
 # Small-business underwriters lose most of each application to reading bank statements, and would hand that part to an agent if it never invents a number
@@ -125,6 +127,7 @@ Every answer and decision, dated.
 - 2026-11-16 D27 (confidence): accept anecdote → confidence set to anecdote [Anoop Vijayan]
 - 2026-11-16 D25 (question): Ask the friend to pass three written questions to their head of credit or compliance → recorded [Anoop Vijayan]
 - 2026-11-16 D26 (question): E4: monthly application counts for the last 12 months → recorded [Anoop Vijayan]
+- 2026-11-16 D17 (sign): sign → bet signed [Anoop Vijayan]
 
 ## Idea
 
