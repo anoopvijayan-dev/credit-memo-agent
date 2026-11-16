@@ -144,6 +144,7 @@ Every answer and decision, dated.
 - 2026-11-16 D34 (approve_design): request changes — Reshape with the owner's answers: count cash deposits as trading receipts, with deposits above a threshold flagged (D31); show pass/refer/fail, labelled as illustrative thresholds, not the firm's policy (D28); don't build underwriter timing, time files with a stopwatch (D32). Everything else as designed. → changes requested: Reshape with the owner's answers: count cash deposits as trading receipts, with deposits above a threshold flagged (D31); show pass/refer/fail, labelled as illustrative thresholds, not the firm's policy (D28); don't build underwriter timing, time files with a stopwatch (D32). Everything else as designed.; re-run bridgie shape statement-review [Anoop Vijayan]
 - 2026-11-16 D35 (question): £2,500 per deposit and 50% of a month's trading receipts → recorded [Anoop Vijayan]
 - 2026-11-16 D36 (approve_design): approve → design approved [Anoop Vijayan]
+- 2026-11-16 D37 (ack_risk): ack → risk paths acknowledged [Anoop Vijayan]
 
 ## Idea
 
