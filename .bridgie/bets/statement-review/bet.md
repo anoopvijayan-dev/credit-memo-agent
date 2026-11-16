@@ -76,6 +76,7 @@ Every answer and decision, dated.
 - 2026-11-16 D1 (question): UK specialist or alternative lender, or a commercial finance broker → recorded [Anoop Vijayan]
 - 2026-11-16 D2 (question): Their whole team has the same problem (they've said so) → recorded [Anoop Vijayan]
 - 2026-11-16 D3 (question): 1 to 3 hours → recorded [Anoop Vijayan]
+- 2026-11-16 D4 (question): More than 15 → recorded [Anoop Vijayan]
 
 ## Idea
 
