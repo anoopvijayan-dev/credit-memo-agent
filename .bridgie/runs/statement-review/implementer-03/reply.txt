@@ -1,0 +1,57 @@
+I built T12, the case log, in a new module `src/cma/case.py`, with 67 tests in `tests/test_case_log.py`. The full suite (286 passed, 5 skipped) and `ruff` both pass. Nothing is committed, `.bridgie/` is untouched, and the verifier still has to accept it.
+
+- **Hash chain (R42):** the log is one JSON line per entry. Each entry carries the hash of the entry before it and its own hash.
+- **Tamper detection (P15):** the tests try every possible change on logs of 2 to 6 entries, so each case is checked rather than sampled. Changing any field of an entry before the head, removing one, adding one or swapping two is caught on the next load, and the first bad entry is named by number. If someone edits an entry and recomputes its hash, the next entry is the one named, because its link to the edited one no longer holds.
+- **Torn last entry (R43):** a last line without its newline is reported as an unfinished write, not as tampering, and is named. Nothing more can be added to the log until someone confirms dropping it with their name, and that drop is itself logged. `require_intact()` refuses with the first bad entry named, and sign-off is meant to refuse when it does.
+- **One writer at a time:** a second writer, in the same process or another one, is refused straight away. A write based on an out-of-date position is refused as a conflict and writes nothing. If the program crashes, the operating system releases the lock.
+- **Error messages** give the entry number only, never what the entry contains.
+
+Limits:
+- **Removing the newest entry can't be detected from the file alone.** P15 only covers entries before the newest one. A sign-off or pack should record the log's position and newest hash at that moment, so a later removal can be spotted.
+- **Nothing uses the log yet.** Imports, overrides, previews, packs and sign-off come in later tasks (T13, T16, T23, T27). Those have to write through this log and check `require_intact()` before accepting a sign-off.
+- **The Windows lock path has not been run.** Only the Linux path is tested.
+
+I ran the tests in a temporary environment in my scratch folder, because the system Python lacks the project's dependencies.
+
+```json
+{
+  "task": "T12",
+  "claims": [
+    {
+      "text": "R42: each case-log entry carries the hash of the entry before it (GENESIS for the first) and its own sha256 over the canonical JSON of seq, prev, at (UTC), event and data; append returns the new head.",
+      "proof_cmd": "pytest -q tests/test_case_log.py -k hash_of_the_entry_before",
+      "proof_output": "1 passed, 66 deselected in 0.03s"
+    },
+    {
+      "text": "P15: on logs of 2 to 6 entries, changing any field of, removing, duplicating/inserting or reordering any entry before the head is detected on the next load, and the first bad entry is named by number; an entry changed with its own hash recomputed is caught at the next entry, whose link no longer holds.",
+      "proof_cmd": "pytest -q tests/test_case_log.py -k p15",
+      "proof_output": "50 passed, 17 deselected in 0.23s"
+    },
+    {
+      "text": "R43: a torn last entry (no trailing newline, whether or not it parses) is reported as incomplete and named, separately from tampering; require_intact raises CaseLogBroken with first_bad and torn, which sign-off is to refuse on; appends are refused until drop_torn_entry (named, expected-position checked) truncates it and logs torn_entry_dropped; drop is refused when nothing is torn or the chain is broken before the tail.",
+      "proof_cmd": "pytest -q tests/test_case_log.py -k torn",
+      "proof_output": "8 passed, 59 deselected in 0.07s"
+    },
+    {
+      "text": "Single writer: a non-blocking OS lock (flock; msvcrt on Windows) on log.jsonl.lock refuses a second writer with CaseLocked, in the same process and from another process; a stale expected position raises LogConflict(expected, actual) and writes nothing.",
+      "proof_cmd": "pytest -q tests/test_case_log.py -k \"conflict or lock or second_writer\"",
+      "proof_output": "4 passed, 63 deselected in 0.13s"
+    },
+    {
+      "text": "Error messages name the entry by number and never quote entry content.",
+      "proof_cmd": "pytest -q tests/test_case_log.py -k holds_no_entry_content",
+      "proof_output": "1 passed, 66 deselected in 0.02s"
+    },
+    {
+      "text": "Whole suite and lint still pass with the new module and tests.",
+      "proof_cmd": "ruff check src tests && pytest -q",
+      "proof_output": "All checks passed!\n286 passed, 5 skipped in 1.97s"
+    }
+  ],
+  "files_changed": [
+    "src/cma/case.py",
+    "tests/test_case_log.py"
+  ],
+  "notes": "New module src/cma/case.py (design C3 names case.py; T13 depends on T12 and will add the case root to it). API: CaseLog(path).append(event, data, expected=n), verify() -> LogCheck(head, entries, first_bad, reason, torn), require_intact() -> Head(position, hash), entries(), writer() context manager, drop_torn_entry(expected=, by=); errors CaseLogBroken, LogConflict, CaseLocked. Not wired into any caller yet: imports, overrides, previews, packs and sign-off are later tasks (T13, T16, T23, T27), which must append through this and call require_intact before accepting a sign-off. Limit by design: removing the head entry alone is not detectable from the file (P15 covers entries before the head); a sign-off or pack should record the head position and hash to pin it. Tests ran in a scratchpad venv (pip install -e .[dev]) because the system Python lacks the project dependencies. Nothing committed; .bridgie/ untouched."
+}
+```
