@@ -87,6 +87,7 @@ Things that need real-world evidence before signing.
 - [ ] E2: Buyer and price (D6, D1). D6 says purpose-built tools exist but cost more than the firm will pay. No product or price is named, and the claim that tools are 'being phased out' has dropped. If the firm won't pay the existing tools' price, who pays for this one, and how much? D1 also merged 'specialist lender' and 'broker'. A broker prepares files for a lender and may not sign the credit decision, which changes who carries the 'my name on the file' risk. Get the product name, the quoted price and who turned it down. (from D11)
 - [ ] E3: Input format (D5). D5 says statements come as an Open Banking feed through a provider, then adds 'we can't determine what users will share'. The repo reads only CSV and Monzo exports; the README lists Open Banking JSON as 'next' and has no plan for PDFs. An Open Banking feed usually arrives structured and is often already categorised by the provider, which leaves less reading for the agent to take over. PDFs are where extraction errors, the real 'invented numbers', happen. Ask the underwriter to count the formats across their last 15 applications. (from D12)
 - [ ] E4: Why now (D6, volume). With 'being phased out' gone from D6, the only trigger left is rising application volume, and a cancelled weekend in November could be a quarter-end or seasonal peak. Get monthly application counts for the last 12 months from the underwriter's queue. (from D16)
+- [ ] E5: Offline mode and the approver (sharpens D10; raised by offer and moat). Would the firm's approver, not the friend, treat a version that runs on the firm's own machine as outside its ban on generic AI and inside its GDPR bar? Offline mode sends nothing out. With a hosted model, only 'Applicant', the dates and the metrics and policy tables leave (src/cma/graph.py:212-218). (from D18)
 
 ## Decision log
 
@@ -108,6 +109,7 @@ Every answer and decision, dated.
 - 2026-11-16 D11 (question): Don't know → evidence task E2 created [Anoop Vijayan]
 - 2026-11-16 D12 (question): Don't know → evidence task E3 created [Anoop Vijayan]
 - 2026-11-16 D16 (question): Don't know → evidence task E4 created [Anoop Vijayan]
+- 2026-11-16 D18 (question): Don't know → evidence task E5 created [Anoop Vijayan]
 
 ## Idea
 
