@@ -50,7 +50,10 @@ cma resume case-7 --checkpoint-db private/reviews.sqlite
 # (git-ignored, as are *.csv, memo files, evidence files and databases anywhere).
 cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out private/mine.csv
 
-# Use a real model instead of the offline one.
+# Use a real model instead of the offline one. The offline lock in firm.yaml (under
+# CMA_HOME, default private/cma) is on by default and refuses hosted models and the MCP
+# server; turn it off on purpose first. The prompt still carries only the tables.
+mkdir -p private/cma && printf 'offline_lock: false\n' > private/cma/firm.yaml
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
 cma run examples/cafe_stretched.csv --llm anthropic
 ```
@@ -71,7 +74,7 @@ example.
 | Draft | `graph.py` + `llm.py` | The model gets the metrics table and the policy table, nothing else, and must tag every figure ([Mn]) and threshold ([Rn]). |
 | Guard | `guard.py` | Reads every number in the memo, in digits or words, back against the table: value at the precision written, unit, sign, and the tag right after it. |
 | Review | `graph.py` | LangGraph `interrupt()`; resumes only with a named reviewer's decision. The final memo carries an appendix of every figure, rule, the model and file hashes. |
-| MCP server | `mcp_server.py` | Exposes metrics, policy and evidence lookup as tools for any MCP client; reads only .csv/.yaml under `CMA_DATA_DIR`. |
+| MCP server | `mcp_server.py` | Exposes metrics, policy and evidence lookup as tools for any MCP client; reads only .csv/.yaml under `CMA_DATA_DIR`; refuses to start while the offline lock is on. |
 | Evals | `evals/run_evals.py` | Runs all nine cases, reports grounding rate, redrafts and agreement with ground truth on nine metrics. Fails CI if any metric disagrees with truth or the offline memo is ungrounded. |
 
 ## Evaluation

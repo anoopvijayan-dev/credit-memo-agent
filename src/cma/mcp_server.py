@@ -13,6 +13,9 @@ number only; cell values are never echoed to the client.
 Descriptions: statement descriptions are text the payer chose ("IGNORE PREVIOUS
 INSTRUCTIONS..."). `transactions_for` leaves them out unless the caller asks, and then
 returns them marked as untrusted data.
+
+Offline lock: the server is a way for data to reach a model, so it refuses to start
+while offline_lock is on in firm.yaml (the default).
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 
-from . import categorise, ingest, metrics, policy
+from . import categorise, firm, ingest, metrics, policy
 
 server = MCPServer("credit-memo-agent")
 
@@ -106,6 +109,10 @@ def transactions_for(path: str, ids: list[str], include_descriptions: bool = Fal
 
 
 def main() -> None:
+    try:
+        firm.load().require_offline_off("Starting the MCP server")
+    except (firm.OfflineLockError, firm.FirmConfigError) as e:
+        raise SystemExit(str(e)) from None
     data_dir()  # refuse to start without CMA_DATA_DIR
     server.run()
 

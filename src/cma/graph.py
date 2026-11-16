@@ -11,6 +11,10 @@ and waits for a named person; nothing is final until they say so. `finalise` sta
 the decision and appends the figures, rules, model and file hashes the memo rests on,
 so the written memo can answer "where did this figure come from" on its own.
 
+Prompts: `draft_prompt` is the only thing that reaches the model. It carries the metric
+and rule tables, the period and a placeholder account name, never a description, a
+payer, the account's real name or a file path (ADR 001, R30).
+
 Checkpoints: the default MemorySaver lives in memory, so a pending review is lost when
 the process exits. Pass a durable checkpointer (`sqlite_checkpointer(path)`, needs the
 `durable` extra) to keep pending reviews across restarts.
@@ -30,14 +34,15 @@ from langgraph.types import interrupt
 from pydantic import ValidationError
 
 from . import categorise as cat
+from . import firm, ingest
 from . import guard as grd
-from . import ingest
 from . import metrics as met
 from . import policy as pol
-from .llm import LLM, get_llm
+from .llm import LLM, FakeLLM, get_llm
 from .models import GuardResult, Metric, PolicyResult, ReviewDecision, Statement, format_value
 
 MAX_REDRAFTS = 2
+PROMPT_ACCOUNT_NAME = "Applicant"
 
 # Our pydantic models travel through the checkpointer between the review interrupt and
 # the resume, so they must be on the allow-list.
@@ -95,6 +100,8 @@ class MemoState(TypedDict, total=False):
     policy_path: str | None
     vat_stagger: int | None
     model: str
+    offline_lock: bool
+    egress: str
     statement_sha256: str
     statement: Statement
     metrics: list[Metric]
@@ -143,6 +150,20 @@ def rules_table(p: PolicyResult) -> str:
     return "\n".join(lines)
 
 
+def draft_prompt(statement: Statement, metrics: list[Metric], policy: PolicyResult, feedback: str) -> str:
+    """The user prompt: the tables, the period and the placeholder name, nothing else."""
+    user = (
+        f"Account: {PROMPT_ACCOUNT_NAME}\n"
+        f"Period: {statement.start} to {statement.end}\n\n"
+        f"Metrics table:\n{met.as_table(metrics)}\n\n"
+        f"Policy: {policy.policy_name}\nOverall policy outcome: {policy.overall.value}\n"
+        f"Policy table:\n{rules_table(policy)}\n"
+    )
+    if feedback:
+        user += f"\nYour previous draft was rejected by the grounding check:\n{feedback}\nRewrite it using only figures from the table, each with its tag.\n"
+    return user
+
+
 def appendix(s: MemoState) -> str:
     """What the memo rests on, printed under it, so the file stands on its own."""
     st, p = s["statement"], s["policy"]
@@ -170,6 +191,8 @@ def evidence_record(s: MemoState) -> dict:
                       "start": str(s["statement"].start), "end": str(s["statement"].end),
                       "transactions": len(s["statement"].transactions)},
         "model": s.get("model"),
+        # Where data went. Records made before the offline lock existed have no lock flag.
+        "egress": {"offline_lock": s.get("offline_lock"), "destination": s.get("egress")},
         "vat_stagger": s.get("vat_stagger"),
         "metrics": [m.model_dump() for m in s["metrics"]],
         "policy": s["policy"].model_dump(mode="json"),
@@ -190,6 +213,8 @@ def build(llm: LLM | None = None, checkpointer=None):
             "statement": statement,
             "statement_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
+            "offline_lock": firm.load().offline_lock,
+            "egress": "offline" if isinstance(llm, FakeLLM) else f"{llm.name}:{getattr(llm, 'model', '-')}",
             # A run starts clean, even on a thread that has run before.
             "redrafts": 0,
             "guard_feedback": "",
@@ -208,16 +233,7 @@ def build(llm: LLM | None = None, checkpointer=None):
         return {"policy": pol.evaluate(s["metrics"], p)}
 
     def draft(s: MemoState) -> MemoState:
-        table = met.as_table(s["metrics"])
-        user = (
-            f"Account: {s['statement'].account_name}\n"
-            f"Period: {s['statement'].start} to {s['statement'].end}\n\n"
-            f"Metrics table:\n{table}\n\n"
-            f"Policy: {s['policy'].policy_name}\nOverall policy outcome: {s['policy'].overall.value}\n"
-            f"Policy table:\n{rules_table(s['policy'])}\n"
-        )
-        if s.get("guard_feedback"):
-            user += f"\nYour previous draft was rejected by the grounding check:\n{s['guard_feedback']}\nRewrite it using only figures from the table, each with its tag.\n"
+        user = draft_prompt(s["statement"], s["metrics"], s["policy"], s.get("guard_feedback", ""))
         return {"memo": llm.complete(SYSTEM_PROMPT, user), "redrafts": s.get("redrafts", 0)}
 
     def guard(s: MemoState) -> MemoState:

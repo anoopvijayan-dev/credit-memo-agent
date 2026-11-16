@@ -16,6 +16,7 @@ from rich.table import Table
 
 from . import guard as grd
 from . import synth
+from .firm import FirmConfigError, OfflineLockError
 from .graph import build, evidence_record, sqlite_checkpointer
 from .ingest import StatementError
 from .llm import get_llm
@@ -70,9 +71,14 @@ def run(
         console.print("[red]--yes needs --reviewer NAME: an approval must say who approved.[/red]")
         raise typer.Exit(code=2)
     _refuse_to_overwrite(out)
+    try:
+        model = get_llm(llm)  # under the offline lock a hosted model is refused here, before any call
+    except (OfflineLockError, FirmConfigError) as e:
+        console.print(f"[red]Refused.[/red] {e}")
+        raise typer.Exit(code=2) from e
     thread_id = thread or str(uuid.uuid4())
     with _checkpointer(checkpoint_db) as saver:
-        graph = build(get_llm(llm), checkpointer=saver)
+        graph = build(model, checkpointer=saver)
         cfg = {"configurable": {"thread_id": thread_id}}
         if graph.get_state(cfg).values:
             console.print(f"[red]Review id {thread_id} is already used in {checkpoint_db}. Pick a new --thread.[/red]")
@@ -83,7 +89,7 @@ def run(
                  "vat_stagger": vat_stagger},
                 cfg,
             )
-        except (StatementError, PolicyError) as e:
+        except (StatementError, PolicyError, FirmConfigError) as e:
             console.print(f"[red]Refused.[/red] {e}")
             raise typer.Exit(code=2) from e
         except Exception as e:  # the model provider: network, auth, cut-off reply

@@ -4,6 +4,9 @@ The memo graph only needs `complete(system, user) -> str`. `FakeLLM` writes a me
 from the metrics table with no network call, so tests and CI run without keys. It
 also has a `hallucinate` switch so the grounding guard can be tested against a memo
 that invents a number.
+
+The hosted providers check the firm's offline lock (firm.yaml, on by default) before
+anything else, so under the lock no client is created and no connection is attempted.
 """
 
 from __future__ import annotations
@@ -11,6 +14,8 @@ from __future__ import annotations
 import os
 import re
 from typing import Protocol
+
+from . import firm
 
 
 class LLMError(RuntimeError):
@@ -73,6 +78,7 @@ class AnthropicLLM:
     name = "anthropic"
 
     def __init__(self, model: str | None = None):
+        firm.load().require_offline_off("A hosted model (anthropic)")
         import anthropic
 
         self.client = anthropic.Anthropic(timeout=120.0, max_retries=2)
@@ -94,6 +100,7 @@ class OpenAILLM:
     name = "openai"
 
     def __init__(self, model: str | None = None):
+        firm.load().require_offline_off("A hosted model (openai)")
         from openai import OpenAI
 
         self.client = OpenAI(timeout=120.0, max_retries=2)
