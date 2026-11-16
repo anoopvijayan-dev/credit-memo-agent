@@ -80,6 +80,7 @@ Every answer and decision, dated.
 - 2026-11-16 D5 (question): An Open Banking feed through a provider — We can't determine what users will share. → recorded [Anoop Vijayan]
 - 2026-11-16 D6 (question): Available, but priced above what the firm will pay (give the figure if known) → recorded [Anoop Vijayan]
 - 2026-11-16 D7 (question): other — It's confidence and price. They want to see a tool working, and they're worried about data being moved out (GDPR risk etc.). → recorded [Anoop Vijayan]
+- 2026-11-16 D8 (question): other — We need to use our own statements and showcase it to get it run with the firm. → recorded [Anoop Vijayan]
 
 ## Idea
 
