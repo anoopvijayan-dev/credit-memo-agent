@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 18,
+  "next_id": 25,
   "decisions": [
     {
       "id": "D1",
@@ -389,6 +389,169 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-16T09:04:12.905Z"
+    },
+    {
+      "id": "D18",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "Offline mode and the approver (sharpens D10; raised by offer and moat). Would the firm's approver, not the friend, treat a version that runs on the firm's own machine as outside its ban on generic AI and inside its GDPR bar? Offline mode sends nothing out. With a hosted model, only 'Applicant', the dates and the metrics and policy tables leave (src/cma/graph.py:212-218).",
+      "options": [
+        "Yes: a pilot on real files is possible if it runs inside the firm",
+        "Only under the firm's own sign-in and IT approval (name the step)",
+        "No: any new tool needs vendor onboarding and a data processing agreement, wherever it runs",
+        "Not asked yet",
+        "Don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-16T09:15:39.900Z"
+    },
+    {
+      "id": "D19",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "The product the firm turned down (sharpens D11; raised by moat and offer). Moat's PASS rests partly on this. If the incumbent already links each figure to its transactions, this tool is a cheaper copy. Name the product, the quote and who turned it down.",
+      "options": [
+        "It already links figures to transactions (record the product and quote)",
+        "It gives categorised totals with no drill-down to lines (record the product and quote)",
+        "Nobody was quoted; it's the underwriter's impression",
+        "Don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-16T09:15:39.903Z"
+    },
+    {
+      "id": "D20",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "The Open Banking provider (sharpens D12; raised by all three lenses). Which provider sends the feed, and what does its output already give the underwriter? Pull one sample. If it already categorises transactions with drill-down to the lines, little reading is left for the agent to take over.",
+      "options": [
+        "Raw transactions only; the underwriter does all the sorting (name the provider)",
+        "Categorised transactions, but no totals linked to their lines",
+        "Categorised totals the underwriter can drill into; the job is largely done",
+        "Don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-16T09:15:39.904Z"
+    },
+    {
+      "id": "D21",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "The memo template (raised by product). Which fields does the friend's memo template ask for, and how many map to M1-M16? Get a redacted blank template. This decides whether the output saves copying or adds to it.",
+      "options": [
+        "Most fields map to M1-M16 (attach the template)",
+        "About half; the rest are judgements the tool doesn't make (related parties, director loans, gambling, cash)",
+        "The figures are keyed into a loan system, not a memo",
+        "Don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-16T09:15:39.906Z"
+    },
+    {
+      "id": "D22",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "The friend's own success bar (extends D13 and D9; raised by offer and product). The owner set D9. After timing 3 real files, what does the friend say would make them use this on a live file? Count checking and copying time, not only reading.",
+      "options": [
+        "At least half the time saved, after checking and copying",
+        "Every figure traced so they would sign it, even if little time is saved",
+        "A short list of the lines they need to judge, found faster",
+        "Don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-16T09:15:39.907Z"
+    },
+    {
+      "id": "D23",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "The demo statement (extends D8 and D14; raised by product and offer). The planned demo uses the owner's own statements. They are personal, the importer reads Monzo Flex as a loan, and the categoriser knows only the synthetic acquirer names, so the demo can't show how much lands in M16. What will the demo run on?",
+      "options": [
+        "A consenting small business's real export, with its written OK",
+        "A synthetic trades or e-commerce case from synth.py, labelled as synthetic",
+        "The owner's own statements, presented as a demo of the mechanism, not the time saving",
+        "Don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-16T09:15:39.910Z"
+    },
+    {
+      "id": "D24",
+      "type": "question",
+      "raised_by": {
+        "seat": "chair",
+        "run": "chair-01"
+      },
+      "context": "Lenders 2 to 10 (raised by moat). After the friend's firm, how would the next lenders hear of this, and what would one lose by leaving after six months? Moat found nothing that makes leaving costly today.",
+      "options": [
+        "Through the Open Banking provider, as a partner or integration",
+        "Through a lender or broker network (name it)",
+        "Direct sales, one compliance review at a time",
+        "None planned: this is a showcase for one firm",
+        "Don't know"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-16T09:15:39.911Z"
     }
   ]
 }
