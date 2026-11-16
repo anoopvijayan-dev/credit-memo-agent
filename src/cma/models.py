@@ -27,10 +27,45 @@ class Category(str, Enum):
     BANK_FEES = "bank_fees"
     OWNER_DRAWINGS = "owner_drawings"
     RETURNED_DD = "returned_dd"
-    OTHER = "other"
+    OTHER = "other"  # a credit no rule explains: unexplained money in
+    CASH_DEPOSIT = "cash_deposit"
+    OWN_ACCOUNT_TRANSFER = "own_account_transfer"  # either direction
+    DIRECTOR_FUNDING = "director_funding"
+    REFUND_IN = "refund_in"
+    HMRC_REPAYMENT = "hmrc_repayment"
+    OTHER_EXPLAINED_IN = "other_explained_in"  # grants, insurance claims, interest
 
 
-REVENUE_CATEGORIES = {Category.REVENUE_CARD, Category.REVENUE_TRANSFER}
+class Bucket(str, Enum):
+    """The money-in buckets. Every credit is in exactly one (R1, R3)."""
+
+    TRADING_RECEIPTS = "trading_receipts"
+    OWN_ACCOUNT_IN = "own_account_transfers_in"
+    DIRECTOR_FUNDING = "director_shareholder_funding"
+    LENDING_DRAWDOWNS = "lending_drawdowns"
+    REFUNDS_RETURNED = "refunds_returned_payments_in"
+    HMRC_REPAYMENTS = "hmrc_repayments"
+    OTHER_EXPLAINED_IN = "other_explained_money_in"
+    UNEXPLAINED = "unexplained_money_in"
+
+
+# The bucket each credit category belongs to. A credit in a category missing from this
+# map is a reconciliation failure, never a guess.
+CREDIT_BUCKET: dict[Category, Bucket] = {
+    Category.REVENUE_CARD: Bucket.TRADING_RECEIPTS,
+    Category.REVENUE_TRANSFER: Bucket.TRADING_RECEIPTS,
+    Category.CASH_DEPOSIT: Bucket.TRADING_RECEIPTS,  # D31: cash takings are trading receipts
+    Category.OWN_ACCOUNT_TRANSFER: Bucket.OWN_ACCOUNT_IN,
+    Category.DIRECTOR_FUNDING: Bucket.DIRECTOR_FUNDING,
+    Category.LOAN_DRAWDOWN: Bucket.LENDING_DRAWDOWNS,
+    Category.REFUND_IN: Bucket.REFUNDS_RETURNED,
+    Category.RETURNED_DD: Bucket.REFUNDS_RETURNED,
+    Category.HMRC_REPAYMENT: Bucket.HMRC_REPAYMENTS,
+    Category.OTHER_EXPLAINED_IN: Bucket.OTHER_EXPLAINED_IN,
+    Category.OTHER: Bucket.UNEXPLAINED,
+}
+
+REVENUE_CATEGORIES = {Category.REVENUE_CARD, Category.REVENUE_TRANSFER, Category.CASH_DEPOSIT}
 
 
 class Transaction(BaseModel):
@@ -45,6 +80,15 @@ class Transaction(BaseModel):
     reverses: str | None = Field(
         default=None,
         description="For a returned direct debit: the id of the debit it undoes. Set by the categoriser.",
+    )
+    # Optional, with defaults, so a Transaction stored before they existed (a pending
+    # review in a checkpoint) still loads.
+    account_key: str = Field(default="main", description="Which of the case's accounts the line is from.")
+    rule_id: str | None = Field(
+        default=None, description="The built-in rule, firm rule or override that set the category."
+    )
+    provider_hint: str | None = Field(
+        default=None, description="The provider's own category. Untrusted; no figure reads it."
     )
 
 
