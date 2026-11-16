@@ -79,6 +79,8 @@ Questions raised by the grill. Answer them on the decision surface (`bridgie ope
 - D22: The friend's own success bar (extends D13 and D9; raised by offer and product). The owner set D9. After timing 3 real files, what does the friend say would make them use this on a live file? Count checking and copying time, not only reading.
 - D23: The demo statement (extends D8 and D14; raised by product and offer). The planned demo uses the owner's own statements. They are personal, the importer reads Monzo Flex as a loan, and the categoriser knows only the synthetic acquirer names, so the demo can't show how much lands in M16. What will the demo run on?
 - D24: Lenders 2 to 10 (raised by moat). After the friend's firm, how would the next lenders hear of this, and what would one lose by leaving after six months? Moat found nothing that makes leaving costly today.
+- D25: E1 and E5 ask what the firm's approver thinks. The reply only says 'the IT/compliance team would still need to approve it' and that an on-machine version 'could be attractive'. That is the friend guessing what the approver thinks, not the approver speaking. Nothing changes on E1/E5 until someone who can approve a pilot answers. Who should be asked, and through whom?
+- D26: Several figures in the reply are hedged estimates ('perhaps 9 would…', 'I'd estimate…', 'Assuming we're a direct lender'). They also match a reply from a different person about an Indian lender. To count any of them as data rather than anecdote, they need to come from the firm's own records. Which one should the friend firm up first?
 
 ## Evidence tasks
 

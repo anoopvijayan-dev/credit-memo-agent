@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 25,
+  "next_id": 28,
   "decisions": [
     {
       "id": "D1",
@@ -552,6 +552,72 @@
       "decided_at": "2026-11-16T13:20:15.435Z",
       "effect": "recorded",
       "created_at": "2026-11-16T09:15:39.911Z"
+    },
+    {
+      "id": "D25",
+      "type": "question",
+      "raised_by": {
+        "seat": "evidence",
+        "run": "evidence-01"
+      },
+      "context": "E1 and E5 ask what the firm's approver thinks. The reply only says 'the IT/compliance team would still need to approve it' and that an on-machine version 'could be attractive'. That is the friend guessing what the approver thinks, not the approver speaking. Nothing changes on E1/E5 until someone who can approve a pilot answers. Who should be asked, and through whom?",
+      "options": [
+        "Ask the friend to pass three written questions to their head of credit or compliance",
+        "Ask the friend to introduce the owner to IT/compliance for a 20-minute call",
+        "Don't contact the approver before the demo; leave E1/E5 open and present the demo as unapproved"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-16T13:37:59.830Z"
+    },
+    {
+      "id": "D26",
+      "type": "question",
+      "raised_by": {
+        "seat": "evidence",
+        "run": "evidence-01"
+      },
+      "context": "Several figures in the reply are hedged estimates ('perhaps 9 would…', 'I'd estimate…', 'Assuming we're a direct lender'). They also match a reply from a different person about an Indian lender. To count any of them as data rather than anecdote, they need to come from the firm's own records. Which one should the friend firm up first?",
+      "options": [
+        "E3: the actual formats of their last 15 applications, counted from the queue",
+        "E10: time 3 real files with a stopwatch, split into calculating / judging unclear lines / reconciling",
+        "E2/E6: the name of the vendor that was evaluated and turned down, and the quote",
+        "E4: monthly application counts for the last 12 months"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-16T13:37:59.832Z"
+    },
+    {
+      "id": "D27",
+      "type": "confidence",
+      "raised_by": {
+        "seat": "evidence",
+        "run": "evidence-01"
+      },
+      "context": "Evidence proposal: confidence opinion → anecdote. anecdote: one source outside the owner (the underwriter friend's written reply of 2026-11-16) describes a 45–60 minute statement review in which 25–45 minutes goes on interpreting unclear transactions. It names data protection and accuracy as the blockers to a pilot and gives a success bar of 60 → 25–30 minutes with every figure clickable to its transactions. All figures are the friend's estimates, not measurements. The owner flags that the reply may be templated (it matches another person's reply section for section, including the same numbers), so even its independence is uncertain. Nobody who can approve a pilot, and no other underwriter, has been heard from. Stay at the bottom of the anecdote tier, and don't move to data until at least E3 or E10 is counted from real files.",
+      "options": [
+        "accept anecdote",
+        "keep opinion"
+      ],
+      "allow_free_text": false,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-16T13:37:59.834Z"
     }
   ]
 }
