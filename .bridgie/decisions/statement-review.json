@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 37,
+  "next_id": 38,
   "decisions": [
     {
       "id": "D1",
@@ -811,6 +811,25 @@
       "decided_at": "2026-11-16T17:24:03.979Z",
       "effect": "design approved",
       "created_at": "2026-11-16T17:04:20.126Z"
+    },
+    {
+      "id": "D37",
+      "type": "ack_risk",
+      "risk": "money",
+      "raised_by": null,
+      "context": "Bet 'statement-review' is risk 'money'; policy requires a human acknowledgement before agents build or verify it.",
+      "options": [
+        "ack",
+        "decline"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-16T17:39:34.726Z"
     }
   ]
 }
