@@ -123,6 +123,7 @@ Every answer and decision, dated.
 - 2026-11-16 D22 (question): Don't know → evidence task E9 created [Anoop Vijayan]
 - 2026-11-16 D13 (question): Don't know (timing not done yet) → evidence task E10 created [Anoop Vijayan]
 - 2026-11-16 D27 (confidence): accept anecdote → confidence set to anecdote [Anoop Vijayan]
+- 2026-11-16 D25 (question): Ask the friend to pass three written questions to their head of credit or compliance → recorded [Anoop Vijayan]
 
 ## Idea
 
