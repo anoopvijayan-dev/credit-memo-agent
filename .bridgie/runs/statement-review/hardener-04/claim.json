@@ -1,0 +1,61 @@
+{
+  "task": "T17",
+  "claims": [
+    {
+      "text": "Full suite passes with every extra installed (llm, mcp, durable), so no P18/P5 test is skipped; lint is clean.",
+      "proof_cmd": "uv run --extra dev --extra mcp --extra llm --extra durable python -m pytest -q && uv run --extra dev ruff check src tests evals",
+      "proof_output": "285 passed in 6.01s; All checks passed!"
+    },
+    {
+      "text": "P18 / R29 (failure-modes: external call defined on failure): under the lock (no file, explicit true, or a file that only sets show_policy_verdict) both hosted providers, by name, by CMA_LLM and by direct class construction, raise OfflineLockError before the SDK client is created, with sockets patched to record any connect/getaddrinfo; MCP main() exits before server.run.",
+      "proof_cmd": "uv run --extra dev --extra mcp --extra llm python -m pytest -q tests/test_firm.py -k 'refuse or lock'",
+      "proof_output": "29 passed, 24 deselected in 1.87s"
+    },
+    {
+      "text": "P18 end-to-end through real entry points: `python -m cma.mcp_server` refuses under the lock; `mcp run src/cma/mcp_server.py` cannot load the module at all (relative imports), so it is not a bypass; evals/run_evals.py --llm anthropic refuses.",
+      "proof_cmd": "CMA_HOME=$(mktemp -d) CMA_DATA_DIR=/tmp uv run --extra mcp python -m cma.mcp_server </dev/null; CMA_HOME=$(mktemp -d) CMA_DATA_DIR=/tmp uv run --extra mcp mcp run src/cma/mcp_server.py </dev/null; CMA_HOME=$(mktemp -d) uv run --extra llm python evals/run_evals.py --llm anthropic",
+      "proof_output": "Starting the MCP server refused: the offline lock is on in /tmp/tmp.fh6wLrm0dF/firm.yaml ...; ImportError: attempted relative import with no known parent package; cma.firm.OfflineLockError: A hosted model (anthropic) refused: the offline lock is on ... (exit=1)"
+    },
+    {
+      "text": "Input validated at the boundary: a malformed firm.yaml is refused, never read as a different setting; through the CLI it exits 2 with the file and the problem named, and no memo is written.",
+      "proof_cmd": "printf 'offline_lock: nope\\n' > $H/firm.yaml && CMA_HOME=$H uv run --extra llm cma run examples/cafe_stretched.csv --yes --reviewer A --out $O/m.md; ls $O",
+      "proof_output": "Refused. /tmp/tmp.iKMCVugeIK/firm.yaml: offline_lock must be true or false; exit=2; output dir empty. Unit cases: tests/test_firm.py::test_malformed_file_is_refused (8 parametrised cases)"
+    },
+    {
+      "text": "P5 / R30 / R34 (prompt side): every prompt (first draft and guard-driven redrafts) built for all archetypes x profiles, with a sentinel in every description, the statement path and the account name, contains no sentinel and carries the placeholder 'Account: Applicant'; draft_prompt emits only account/period/table/policy lines.",
+      "proof_cmd": "uv run --extra dev --extra mcp --extra llm python -m pytest -q tests/test_firm.py -k 'prompt or line_level'",
+      "proof_output": "19 passed, 34 deselected in 0.90s"
+    },
+    {
+      "text": "R29 'record offline mode in every evidence record' (observability: the behaviour leaves a trace): evidence.json gains egress {offline_lock, destination}; asserted for lock on + offline model and lock off + offline model. Pre-change records simply lack the key (additive).",
+      "proof_cmd": "uv run --extra dev --extra mcp --extra llm python -m pytest -q tests/test_firm.py -k evidence",
+      "proof_output": "covered in the 285-pass run: test_evidence_records_offline_mode, test_evidence_records_lock_off_with_offline_model"
+    },
+    {
+      "text": "Data/migration: additive only. New MemoState keys are optional (s.get), evidence gains one key, CHECKPOINT_TYPES unchanged; a pending review from an old checkpoint resumes (resume builds with the fake model, which never checks the lock) and records egress as nulls. Rollback = set offline_lock: false or revert the commit; no data to repair. firm.yaml lives under private/ which is git-ignored.",
+      "proof_cmd": "git diff HEAD~1 -- src/cma/graph.py | grep -n CHECKPOINT_TYPES; git check-ignore -v private/cma/firm.yaml",
+      "proof_output": "(no CHECKPOINT_TYPES change); .gitignore:16:private/\tprivate/cma/firm.yaml"
+    },
+    {
+      "text": "Operability / config for deploy: the flag defaults on with no file; CI evals turn it off on purpose for synthetic data in .github/workflows/evals.yml before the Anthropic step; README documents how to turn it off. No secrets added; no new dependency (yaml already used by policy.py).",
+      "proof_cmd": "git diff HEAD~1 --stat; git diff HEAD~1 -- pyproject.toml",
+      "proof_output": "8 files changed, 423 insertions(+), 17 deletions(-); pyproject.toml unchanged"
+    },
+    {
+      "text": "Not applicable with reason: N+1 queries/indexes/pagination (no database, no list endpoints); retries/backoff/dead letter (no new external call; the change only prevents calls); idempotency key (firm.load is a read; no mutation); dashboards/remote alerts (design: nothing leaves the machine; the alert is the non-zero exit with a 'Refused' message, proved above). Hot path cost: one small YAML read per model construction and per run, not per line.",
+      "proof_cmd": "grep -n 'firm.load' src/cma/*.py",
+      "proof_output": "llm.py (AnthropicLLM.__init__, OpenAILLM.__init__), mcp_server.py main(), graph.py load node: one read each"
+    }
+  ],
+  "files_changed": [
+    ".github/workflows/evals.yml",
+    "README.md",
+    "src/cma/cli.py",
+    "src/cma/firm.py",
+    "src/cma/graph.py",
+    "src/cma/llm.py",
+    "src/cma/mcp_server.py",
+    "tests/test_firm.py"
+  ],
+  "notes": "Hardener made no code changes (worktree clean after removing a uv.lock the test run generated). Gaps for the owner: (1) P5 says 'descriptions and profile'; the case profile does not exist until C3 lands, so only descriptions, path and account name are sentinel-tested. Extend test_no_prompt_carries_line_level_text when case.yaml exists. (2) R29 'open no network connection other than the loopback workspace' is enforced for the two hosted clients and the MCP server only. Nothing yet guards later network code, such as a future importer fetching a feed. A process-wide guard is a design call. (3) Library callers can still do `from cma.mcp_server import server; server.run()` and skip main(). Supported launches (python -m, the mcp CLI) cannot. Moving the check into server start-up (a lifespan hook) would close it. (4) R34's escaping and CSV-formula parts belong to C5/C6, not this task; only the 'never send it to a model' part is covered here. (5) Turning the lock off is recorded per evidence record (egress), not as its own event. The case log that would record it is C3. (6) Changelog line: the repo has no CHANGELOG. The README text is the user-facing note. (7) The rollback (offline_lock: false) was tried only in tests and the CI step, not in a non-production deploy, because there is none."
+}

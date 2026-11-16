@@ -1,0 +1,35 @@
+T17 is built in the worktree. The full suite passes (281 passed, 4 skipped), ruff is clean, and the offline evals pass (9/9 memos grounded). The new `tests/test_firm.py` was written first and failed before any code existed.
+
+**What changed**
+- **Firm settings (`src/cma/firm.py`, new):** reads `firm.yaml` from `CMA_HOME`, or `private/cma` under the working directory. `offline_lock` and `show_policy_verdict` are on by default, and the firm rules, thresholds and memo field map paths have defaults. A malformed file is refused with an error naming the file and the problem.
+- **Hosted models (`llm.py`):** under the lock, Anthropic and OpenAI are refused before their client is created. That holds through `get_llm`, `CMA_LLM` and building the classes directly. The test that proves it makes any network attempt fail, and none was attempted. The offline model still works.
+- **MCP server (`mcp_server.py`):** `main()` checks the lock first, so the server refuses to start.
+- **`cma run` (`cli.py`):** asking for a hosted model under the lock exits with code 2 and a refusal message, not a traceback.
+- **Prompts (`graph.py`):** `draft_prompt` builds the only text the model sees: the tables, the period and the placeholder name "Applicant". It never uses the real account name. P5 was checked on all 9 synthetic cases, including redraft prompts, with a sentinel string in every description and in the statement's folder path. No prompt contained one.
+- **Evidence (`graph.py`):** every record `cma run` writes now has an extra `egress` field: whether the lock was on and where data went (`offline` or the model's name).
+- **Callers:** the CI real-model eval job runs `--llm anthropic`, so it now writes a `firm.yaml` with `offline_lock: false` first. `README.md` says the same for anyone running a real model.
+
+**Open points for the verifier (also in `notes`)**
+- Nothing reads `show_policy_verdict` or the three file paths yet; the workspace, pack and loaders are later tasks.
+- The case store doesn't exist yet, so `firm.case_root()` finds the folder itself. The case store should reuse it.
+- The MCP lock only covers `main()`. A host that imports the server object and starts it directly gets past it.
+- With the lock off, the MCP tool `transactions_for(include_descriptions=True)` still returns payer-written text to a client that may be a model. That is existing behaviour, but it falls short of R34.
+- No case profile exists yet, so P5 only covers the account name and file path.
+- Turning the lock off is recorded in each run's evidence, but there is no case log yet to record the change itself.
+
+```json
+{
+  "task": "T17",
+  "claims": [
+    {"text": "firm.yaml at the case root (CMA_HOME, else private/cma) is read by src/cma/firm.py: offline_lock and show_policy_verdict default true, paths default under the root, malformed files refused naming file and problem.", "proof_cmd": "/tmp/claude-0/t17venv/bin/python -m pytest -q tests/test_firm.py -k 'defaults or root_defaults or file_sets or malformed_file or empty_file'", "proof_output": "12 passed, 41 deselected in 0.37s"},
+    {"text": "P18 hosted models: under the lock, get_llm/CMA_LLM/direct construction of AnthropicLLM and OpenAILLM raise OfflineLockError before the SDK client is created, with no socket attempt; offline model allowed; lock off allows the client with no network call.", "proof_cmd": "/tmp/claude-0/t17venv/bin/python -m pytest -q tests/test_firm.py -k 'hosted_model_refused_under_lock or offline_model_is_allowed or lock_is_off or malformed_firm_file_refuses'", "proof_output": "16 passed, 37 deselected in 1.74s"},
+    {"text": "P18 MCP: mcp_server.main() refuses under the lock before CMA_DATA_DIR and server.run; starts with the lock off.", "proof_cmd": "/tmp/claude-0/t17venv/bin/python -m pytest -q tests/test_firm.py -k mcp_server; cd $(mktemp -d) && env -u CMA_HOME PYTHONPATH=<worktree>/src /tmp/claude-0/t17venv/bin/python -m cma.mcp_server; echo \"mcp exit $?\"", "proof_output": "4 passed, 49 deselected in 0.75s\nStarting the MCP server refused: the offline lock is on in /tmp/tmp.M4rRB62tL5/private/cma/firm.yaml, so no data leaves this machine. Set offline_lock: false there to allow it.\nmcp exit 1"},
+    {"text": "cma run --llm anthropic under the lock exits 2 with the refusal before any network call.", "proof_cmd": "/tmp/claude-0/t17venv/bin/python -m pytest -q tests/test_firm.py -k cli_refuses", "proof_output": "1 passed, 52 deselected in 0.29s"},
+    {"text": "Evidence records carry additive egress {offline_lock, destination}.", "proof_cmd": "/tmp/claude-0/t17venv/bin/python -m pytest -q tests/test_firm.py -k evidence_records", "proof_output": "2 passed, 51 deselected in 0.37s"},
+    {"text": "P5: prompts carry only tables, period, outcome line and placeholder 'Applicant'; no sentinel from descriptions, account name or path reaches any prompt across 9 cases including redrafts.", "proof_cmd": "/tmp/claude-0/t17venv/bin/python -m pytest -q tests/test_firm.py -k 'no_prompt_carries or placeholder'", "proof_output": "19 passed, 34 deselected in 0.95s"},
+    {"text": "Full suite, ruff and offline evals pass; CI real-model job's firm.yaml step reads as lock off.", "proof_cmd": "P=/tmp/claude-0/t17venv/bin/python; $P -m pytest -q | tail -1; /tmp/claude-0/t17venv/bin/ruff check src tests; $P evals/run_evals.py --llm fake --out /tmp/claude-0/t17evals >/dev/null 2>&1; echo \"evals exit $?\"; (cd $(mktemp -d) && bash -c \"mkdir -p private/cma\nprintf 'offline_lock: false\\n' > private/cma/firm.yaml\" && env -u CMA_HOME PYTHONPATH=<worktree>/src $P -c \"from cma import firm; print('ci lock', firm.load().offline_lock)\")", "proof_output": "281 passed, 4 skipped in 4.27s\nAll checks passed!\nevals exit 0\nci lock False"}
+  ],
+  "files_changed": ["src/cma/firm.py", "src/cma/llm.py", "src/cma/mcp_server.py", "src/cma/graph.py", "src/cma/cli.py", "tests/test_firm.py", ".github/workflows/evals.yml", "README.md"],
+  "notes": "See claim.json in the run directory for the full notes: case_root lives in firm.py until C3 lands; show_policy_verdict/paths have no readers yet; egress added to the only evidence writer (cma run), pack evidence must carry it; lock flip recorded per run, no case log yet; MCP lock gates main() only; P5 profile sentinels pending a profile; transactions_for with lock off still returns untrusted descriptions (R53 vs R34 residual); cma run/evals with hosted models now need offline_lock: false, CI and README updated."
+}
+```
