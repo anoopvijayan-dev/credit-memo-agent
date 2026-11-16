@@ -74,6 +74,7 @@ Things that need real-world evidence before signing.
 
 Every answer and decision, dated.
 - 2026-11-16 D1 (question): UK specialist or alternative lender, or a commercial finance broker → recorded [Anoop Vijayan]
+- 2026-11-16 D2 (question): Their whole team has the same problem (they've said so) → recorded [Anoop Vijayan]
 
 ## Idea
 
