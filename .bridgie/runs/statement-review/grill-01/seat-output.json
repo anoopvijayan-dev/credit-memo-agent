@@ -1,0 +1,87 @@
+{
+  "seat": "grill",
+  "summary_md": "**Verdict: kill or re-frame before building.** D7 moves the main blocker from 'never invents a number' to price and applicant data leaving the firm (GDPR), and D8 rules out real files by 2026-11-29, so the stated outcome can't be read.\n**Strongest assumption:** that statement reading is mostly adding up figures an agent can take over. With an Open Banking feed (D5) the lines may already be structured and categorised, and the remaining 1-3 h may be judging unclear lines, which the agent leaves for the underwriter (unclassified inflows, M16).\n**Weakest evidence:** all nine answers (D1-D9) are the owner remembering conversations with one friend, submitted together at 08:58 on 2026-11-16 with no quote, timing, product name, price or document attached. Tier: opinion.\n**Pre-mortem 1:** the demo on our own statements impresses the friend, but the firm never pilots it: data protection or vendor onboarding blocks it, and nobody with a budget feels the pain (it falls on the underwriter's weekends, not the firm's spend).\n**Pre-mortem 2:** on real applicant files (PDFs or mixed formats, unknown card acquirers, director and related-party transfers) most hard lines land in M16 as unclassified, the underwriter still reads them, and the time saved is well under half.",
+  "questions": [
+    {
+      "context": "The real blocker (D7 against the title). The title assumes the firm would hand over statement reading 'if it never invents a number'. D7 says the actual objections are price, wanting to see it working, and applicant data leaving the firm (GDPR). If data leaving the firm is what blocks it, citations don't matter; where the tool runs does. Ask whoever would approve a tool (operations, compliance or head of credit, not the friend) what would block a pilot.",
+      "options": [
+        "Data protection: any outside processing of applicant data needs a DPA and vendor onboarding; a tool that runs inside the firm, with no transaction data leaving, might pass",
+        "Price: they have a ceiling per application or per month (record the figure); accuracy comes second",
+        "Traceability: figures cited to transactions are what would change their answer, as the title assumes",
+        "Nobody beyond the underwriter has been asked yet",
+        "Don't know"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Buyer and price (D6, D1). D6 says purpose-built tools exist but cost more than the firm will pay. No product or price is named, and the claim that tools are 'being phased out' has dropped. If the firm won't pay the existing tools' price, who pays for this one, and how much? D1 also merged 'specialist lender' and 'broker'. A broker prepares files for a lender and may not sign the credit decision, which changes who carries the 'my name on the file' risk. Get the product name, the quoted price and who turned it down.",
+      "options": [
+        "Lender; a named product was quoted at a price the firm turned down (record product and price)",
+        "Lender; nobody has priced a tool, it's the underwriter's impression",
+        "Broker; the lender makes the credit decision, so the underwriter's risk is to reputation, not sign-off",
+        "Don't know"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Input format (D5). D5 says statements come as an Open Banking feed through a provider, then adds 'we can't determine what users will share'. The repo reads only CSV and Monzo exports; the README lists Open Banking JSON as 'next' and has no plan for PDFs. An Open Banking feed usually arrives structured and is often already categorised by the provider, which leaves less reading for the agent to take over. PDFs are where extraction errors, the real 'invented numbers', happen. Ask the underwriter to count the formats across their last 15 applications.",
+      "options": [
+        "Mostly Open Banking through a provider (name it, and note whether it already categorises transactions)",
+        "Mostly PDF statements uploaded by the applicant",
+        "Mixed; at least a third are PDFs or scans",
+        "Don't know"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Where the 1-3 hours go (D3, D4). D3 and D4 together imply 15-45 hours a week on statement reading alone, at more than 15 applications a week, which leaves little time for memos and calls; these look like guesses. More importantly, the agent marks anything it can't classify as unclassified and refers it to the underwriter (per the README, card acquirers it doesn't recognise and bank transfers without an invoice reference land in M16). If the time goes on judging unclear lines (related-party transfers, director loans, cash deposits) rather than adding up clear ones, the agent hands the hard part back. Ask the underwriter to time 3 real files and split the time between the two.",
+      "options": [
+        "Mostly adding up figures that are already clear (over half the time)",
+        "Mostly investigating unexplained or unclear lines",
+        "Roughly even",
+        "Don't know (timing not done yet)"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Can the outcome be read by 2026-11-29 (D8, D9)? The metric is hours per application on comparable real files, but D8 says the test will use our own statements as a demo. Our statements don't look like a small-business applicant's (volume, card settlements, VAT, loans), and the underwriter has no baseline from reading them the usual way. The D9 success bar was also set by the owner, not the underwriter. By 2026-11-29, the honest result is the underwriter's reaction to a demo. Pick the metric you will actually read.",
+      "options": [
+        "The underwriter reads one of our statements by hand, timed, then again with the agent, checking every figure (demo-grade, one file)",
+        "The firm agrees in writing to a pilot on anonymised real files by a named date (the outcome moves past 2026-11-29)",
+        "Re-scope success to 'the firm's approver asks for a pilot after seeing the demo'",
+        "Don't know"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Evidence beyond one source (D2). 'Their whole team has the same problem' is the friend's report, relayed by the owner, so it is still one source. Before building for 'small-business underwriters' in general, talk to at least two underwriters at other UK lenders who aren't friends, and ask what they use today and what it costs.",
+      "options": [
+        "Two or more underwriters outside the friend's firm interviewed and the problem confirmed (attach notes)",
+        "They already use a statement-analysis tool and are happy with it",
+        "Skip it and treat this as a showcase for one firm, not a market bet",
+        "Don't know"
+      ],
+      "allow_free_text": true
+    },
+    {
+      "context": "Why now (D6, volume). With 'being phased out' gone from D6, the only trigger left is rising application volume, and a cancelled weekend in November could be a quarter-end or seasonal peak. Get monthly application counts for the last 12 months from the underwriter's queue.",
+      "options": [
+        "Volume clearly up in the last 6 months, not seasonal (attach the counts)",
+        "Steady high volume; the backlog is chronic",
+        "A seasonal peak that will ease",
+        "Don't know"
+      ],
+      "allow_free_text": true
+    }
+  ],
+  "proposals": [
+    {
+      "kind": "confidence",
+      "text": "Keep confidence at 'opinion'. Every claim, including D1-D9, is the owner remembering conversations with one underwriter. The answers were submitted together at 08:58 on 2026-11-16 with no quote, timing, product name, price or document attached. The strongest material (the cancelled trip, 'my name on the file') is second-hand anecdote at best. Move to 'anecdote' only with a direct quote or interview note from the underwriter, and to 'data' only with timed files or application counts."
+    },
+    {
+      "kind": "test",
+      "text": "Add kill criteria before any build work (kill_criteria is currently empty). Kill or re-frame if any one holds: (1) the firm's approver names data leaving the firm or vendor onboarding as a block that a tool running inside the firm would not clear; (2) the timed split on 3 real files shows less than a third of statement time goes on adding up figures that are already clear; (3) most recent applications arrive as PDFs, and a PDF path doesn't fit in the 2-week appetite."
+    }
+  ]
+}

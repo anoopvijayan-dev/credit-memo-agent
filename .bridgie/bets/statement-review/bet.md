@@ -4,7 +4,7 @@ title: "Small-business underwriters lose most of each application to reading ban
 lane: engineering
 risk: data
 owner: Anoop Vijayan
-status: draft
+status: evidence
 confidence: opinion
 appetite: { time: 2w, tokens_usd: 20 }
 kill_criteria: []
@@ -65,6 +65,13 @@ Questions raised by the grill. Answer them on the decision surface (`bridgie ope
 - D7: Problem in their words: is "a made-up number lands on whoever signs" the firm's actual reason for banning AI, or our reading of it? And would a version with citations to transactions change the firm's answer?
 - D8: Expected outcome is only readable with real files. Can the underwriter test the agent on real or properly anonymised statements before 2026-11-29?
 - D9: Expected outcome: what would the underwriter count as success? Time saved alone, or something about trust as well?
+- D10: The real blocker (D7 against the title). The title assumes the firm would hand over statement reading 'if it never invents a number'. D7 says the actual objections are price, wanting to see it working, and applicant data leaving the firm (GDPR). If data leaving the firm is what blocks it, citations don't matter; where the tool runs does. Ask whoever would approve a tool (operations, compliance or head of credit, not the friend) what would block a pilot.
+- D11: Buyer and price (D6, D1). D6 says purpose-built tools exist but cost more than the firm will pay. No product or price is named, and the claim that tools are 'being phased out' has dropped. If the firm won't pay the existing tools' price, who pays for this one, and how much? D1 also merged 'specialist lender' and 'broker'. A broker prepares files for a lender and may not sign the credit decision, which changes who carries the 'my name on the file' risk. Get the product name, the quoted price and who turned it down.
+- D12: Input format (D5). D5 says statements come as an Open Banking feed through a provider, then adds 'we can't determine what users will share'. The repo reads only CSV and Monzo exports; the README lists Open Banking JSON as 'next' and has no plan for PDFs. An Open Banking feed usually arrives structured and is often already categorised by the provider, which leaves less reading for the agent to take over. PDFs are where extraction errors, the real 'invented numbers', happen. Ask the underwriter to count the formats across their last 15 applications.
+- D13: Where the 1-3 hours go (D3, D4). D3 and D4 together imply 15-45 hours a week on statement reading alone, at more than 15 applications a week, which leaves little time for memos and calls; these look like guesses. More importantly, the agent marks anything it can't classify as unclassified and refers it to the underwriter (per the README, card acquirers it doesn't recognise and bank transfers without an invoice reference land in M16). If the time goes on judging unclear lines (related-party transfers, director loans, cash deposits) rather than adding up clear ones, the agent hands the hard part back. Ask the underwriter to time 3 real files and split the time between the two.
+- D14: Can the outcome be read by 2026-11-29 (D8, D9)? The metric is hours per application on comparable real files, but D8 says the test will use our own statements as a demo. Our statements don't look like a small-business applicant's (volume, card settlements, VAT, loans), and the underwriter has no baseline from reading them the usual way. The D9 success bar was also set by the owner, not the underwriter. By 2026-11-29, the honest result is the underwriter's reaction to a demo. Pick the metric you will actually read.
+- D15: Evidence beyond one source (D2). 'Their whole team has the same problem' is the friend's report, relayed by the owner, so it is still one source. Before building for 'small-business underwriters' in general, talk to at least two underwriters at other UK lenders who aren't friends, and ask what they use today and what it costs.
+- D16: Why now (D6, volume). With 'being phased out' gone from D6, the only trigger left is rising application volume, and a cancelled weekend in November could be a quarter-end or seasonal peak. Get monthly application counts for the last 12 months from the underwriter's queue.
 
 ## Evidence tasks
 
