@@ -49,6 +49,23 @@ def test_written_memo_carries_its_evidence(tmp_path):
     assert record["vat_stagger"] == 3 and record["guard"]["grounded"] is True
 
 
+def test_unknown_cma_ruleset_is_refused_not_blamed_on_the_model(tmp_path, monkeypatch):
+    # T01: exit 4 means the model failed; a bad CMA_RULESET is a refusal (exit 2).
+    monkeypatch.setenv("CMA_RULESET", "v9")
+    r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A"])
+    assert r.exit_code == 2, r.output
+    assert "Refused." in r.output and "CMA_RULESET" in r.output and "model call failed" not in r.output
+
+
+def test_written_evidence_records_the_ruleset(tmp_path, monkeypatch):
+    monkeypatch.delenv("CMA_RULESET", raising=False)
+    out = tmp_path / "memo.md"
+    r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A", "--out", str(out)])
+    assert r.exit_code == 0, r.output
+    record = json.loads((tmp_path / "memo.evidence.json").read_text())
+    assert record["ruleset"]["id"] == "v1" and len(record["ruleset"]["sha256"]) == 64
+
+
 def test_whitespace_reviewer_is_refused(tmp_path):
     r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "   "])
     assert r.exit_code == 2

@@ -34,3 +34,4 @@ jobs:
           python -m venv /tmp/wheelcheck
           /tmp/wheelcheck/bin/pip install /tmp/dist/*.whl
           cd /tmp && /tmp/wheelcheck/bin/python -c "from cma import policy; print(policy.load_policy()['name'])"
+          cd /tmp && /tmp/wheelcheck/bin/python -c "from cma import categorise as c; r = c.load_ruleset('v1'); print(r.id, r.sha256)"

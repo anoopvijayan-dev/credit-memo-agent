@@ -16,6 +16,7 @@ from rich.table import Table
 
 from . import guard as grd
 from . import synth
+from .categorise import RulesetError
 from .graph import build, evidence_record, sqlite_checkpointer
 from .ingest import StatementError
 from .llm import get_llm
@@ -83,7 +84,7 @@ def run(
                  "vat_stagger": vat_stagger},
                 cfg,
             )
-        except (StatementError, PolicyError) as e:
+        except (StatementError, PolicyError, RulesetError) as e:
             console.print(f"[red]Refused.[/red] {e}")
             raise typer.Exit(code=2) from e
         except Exception as e:  # the model provider: network, auth, cut-off reply
