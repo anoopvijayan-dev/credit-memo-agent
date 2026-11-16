@@ -139,6 +139,7 @@ Every answer and decision, dated.
 - 2026-11-16 D30 (question): OBIE v3.1 and TrueLayer (design default) → recorded [Anoop Vijayan]
 - 2026-11-16 D31 (question): Counted as trading receipts, with deposits above a threshold flagged → recorded [Anoop Vijayan]
 - 2026-11-16 D32 (question): Don't build it; time files with a stopwatch → recorded [Anoop Vijayan]
+- 2026-11-16 D33 (question): Tier 1 only by 2026-11-29 (design default) → recorded [Anoop Vijayan]
 
 ## Idea
 
