@@ -5,6 +5,12 @@ matches wins. Direction matters: "HOLLOWAY BRIDGE FINANCE LOAN" is a repayment w
 money leaves and a drawdown when it arrives, and a drawdown is financing, not revenue
 or debt service. The model never overrides a rule match.
 
+The rule table is data, not code: src/cma/rules/<id>.yaml, validated on load like the
+policy, with an id and the hash of its file. CMA_RULESET chooses the table (default
+v1). v1 is the table as it was when it lived here, frozen, so CMA_RULESET=v1 always
+reproduces those categories. The matching passes below (reversals, round trips) stay
+in code.
+
 Revenue is claimed narrowly. A card or gateway settlement is trading income. A bank
 transfer in is only counted as a customer payment when it carries an invoice
 reference (INV1234, INVOICE 1234); anything else that arrives by transfer (the owner
@@ -20,34 +26,128 @@ from someone the applicant also pays by transfer is not revenue (round trip).
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
+from dataclasses import dataclass
+from functools import lru_cache
+from importlib import resources
 from typing import Literal
+
+import yaml
 
 from .models import Category, Statement, Transaction
 
 Direction = Literal["in", "out", "any"]
 
 INVOICE_REF = re.compile(r"\bINV(?:OICE)?\s*[-#:]?\s*\d+")
-# Money in that is never trading income, whatever reference it carries.
-NON_TRADING_IN = re.compile(
-    r"\bDIRECTOR\b|\bOWNER\b|\bCAPITAL\b|\bSHAREHOLDER\b|\bHMRC\b|\bREFUND\b|\bREVERSAL\b"
-    r"|\bSAVINGS\b|\bPOT TRANSFER\b|\bINTEREST\b|\bGRANT\b|\bINSURANCE CLAIM\b"
-)
 
-RULES: list[tuple[re.Pattern[str], Direction, Category]] = [
-    (re.compile(r"^UNPAID DD\b"), "any", Category.RETURNED_DD),
-    (re.compile(r"UNPAID ITEM FEE|ACCOUNT FEES|BANK CHARGES"), "out", Category.BANK_FEES),
-    (re.compile(r"HMRC VAT"), "out", Category.HMRC_VAT),
-    (re.compile(r"HMRC PAYE"), "out", Category.HMRC_PAYE),
-    (re.compile(r"PAYROLL|SALARIES"), "out", Category.PAYROLL),
-    (re.compile(r"\bRENT\b"), "out", Category.RENT),
-    (re.compile(r"\bLOAN\b|FINANCE\b"), "out", Category.LOAN_REPAYMENT),
-    (re.compile(r"\bLOAN\b|FINANCE\b"), "in", Category.LOAN_DRAWDOWN),
-    (re.compile(r"OWNER DRAWINGS|DIRECTOR DRAWINGS|DIVIDEND"), "out", Category.OWNER_DRAWINGS),
-    (NON_TRADING_IN, "in", Category.OTHER),
-    (re.compile(r"ACQUIRER SETTLEMENT|PAYGATE PAYOUT|CARD SETTLEMENT"), "in", Category.REVENUE_CARD),
-    (INVOICE_REF, "in", Category.REVENUE_TRANSFER),
-]
+RULESET_ENV = "CMA_RULESET"
+RULESETS = ("v1",)
+DEFAULT_RULESET = "v1"
+DIRECTIONS = ("in", "out", "any")
+TABLE_KEYS = {"id", "frozen", "rules"}
+RULE_KEYS = {"id", "pattern", "direction", "category"}
+
+
+class RulesetError(ValueError):
+    """The rule table is unknown or malformed; nothing should be categorised with it."""
+
+
+@dataclass(frozen=True)
+class Rule:
+    id: str
+    pattern: re.Pattern[str]
+    direction: Direction
+    category: Category
+
+
+@dataclass(frozen=True)
+class Ruleset:
+    id: str
+    sha256: str
+    rules: tuple[Rule, ...]
+
+
+def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> None:
+    if not isinstance(data, dict):
+        raise RulesetError(f"{source}: not a mapping")
+    problems: list[str] = []
+    if "id" not in data:
+        problems.append("missing id")
+    elif data["id"] != expected_id:
+        problems.append(f"id {data['id']!r} does not match the file ({expected_id!r})")
+    if not isinstance(data.get("frozen"), bool):
+        problems.append("frozen must be true or false")
+    for key in sorted(set(data) - TABLE_KEYS):
+        problems.append(f"unknown key {key!r}")
+    rules = data.get("rules")
+    if not isinstance(rules, list) or not rules:
+        raise RulesetError(f"{source}: " + "; ".join([*problems, "no rules"]))
+    categories = {c.value for c in Category}
+    seen: set[object] = set()
+    for i, r in enumerate(rules, start=1):
+        where = f"rule {i} ({r.get('id', '?') if isinstance(r, dict) else '?'})"
+        if not isinstance(r, dict):
+            problems.append(f"{where}: not a mapping")
+            continue
+        for key in sorted(RULE_KEYS - set(r)):
+            problems.append(f"{where}: missing {key}")
+        for key in sorted(set(r) - RULE_KEYS):
+            problems.append(f"{where}: unknown key {key!r}")
+        if "id" in r:
+            if r["id"] in seen:
+                problems.append(f"{where}: duplicate id")
+            seen.add(r["id"])
+        if "direction" in r and r["direction"] not in DIRECTIONS:
+            problems.append(f"{where}: direction {r['direction']!r} is not one of {list(DIRECTIONS)}")
+        if "category" in r and r["category"] not in categories:
+            problems.append(f"{where}: category {r['category']!r} is not a category")
+        if "pattern" in r:
+            try:
+                if not isinstance(r["pattern"], str) or not r["pattern"]:
+                    raise re.error("not a non-empty string")
+                re.compile(r["pattern"])
+            except re.error as e:
+                problems.append(f"{where}: pattern does not compile ({e})")
+    if problems:
+        raise RulesetError(f"{source}: " + "; ".join(problems))
+
+
+def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) -> Ruleset:
+    validate_ruleset(data, expected_id, source)
+    assert isinstance(data, dict)
+    return Ruleset(
+        id=data["id"],
+        sha256=sha256,
+        rules=tuple(
+            Rule(r["id"], re.compile(r["pattern"]), r["direction"], Category(r["category"]))
+            for r in data["rules"]
+        ),
+    )
+
+
+@lru_cache
+def load_ruleset(ruleset_id: str) -> Ruleset:
+    """A packaged table by id. Only ids in RULESETS load, so an id never names a path."""
+    if ruleset_id not in RULESETS:
+        raise RulesetError(f"unknown ruleset {ruleset_id!r}; known: {', '.join(RULESETS)}")
+    source = f"cma/rules/{ruleset_id}.yaml"
+    text = resources.files("cma.rules").joinpath(f"{ruleset_id}.yaml").read_text()
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        raise RulesetError(f"{source}: not valid YAML ({e.__class__.__name__})") from e
+    return ruleset_from_data(data, ruleset_id, source, hashlib.sha256(text.encode()).hexdigest())
+
+
+def active_ruleset() -> Ruleset:
+    """The table CMA_RULESET names, or the default when it is unset."""
+    chosen = os.environ.get(RULESET_ENV) or DEFAULT_RULESET
+    try:
+        return load_ruleset(chosen)
+    except RulesetError as e:
+        raise RulesetError(f"{RULESET_ENV}={chosen!r}: {e}") from e
 
 
 def _direction_ok(direction: Direction, amount: float) -> bool:
@@ -56,11 +156,11 @@ def _direction_ok(direction: Direction, amount: float) -> bool:
     return amount > 0 if direction == "in" else amount < 0
 
 
-def categorise_one(t: Transaction) -> Category:
+def categorise_one(t: Transaction, ruleset: Ruleset | None = None) -> Category:
     desc = t.description.upper()
-    for pattern, direction, cat in RULES:
-        if pattern.search(desc) and _direction_ok(direction, t.amount):
-            return cat
+    for rule in (ruleset or active_ruleset()).rules:
+        if rule.pattern.search(desc) and _direction_ok(rule.direction, t.amount):
+            return rule.category
     if t.amount < 0:
         return Category.SUPPLIER
     return Category.OTHER
@@ -128,8 +228,9 @@ def unmark_round_trips(statement: Statement) -> Statement:
     return statement
 
 
-def categorise(statement: Statement) -> Statement:
+def categorise(statement: Statement, ruleset: Ruleset | None = None) -> Statement:
+    ruleset = ruleset or active_ruleset()
     for t in statement.transactions:
-        t.category = categorise_one(t)
+        t.category = categorise_one(t, ruleset)
         t.reverses = None
     return link_reversals(unmark_round_trips(statement))

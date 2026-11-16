@@ -97,6 +97,7 @@ class MemoState(TypedDict, total=False):
     model: str
     statement_sha256: str
     statement: Statement
+    ruleset: dict  # {"id", "sha256"} of the categorisation table used (CMA_RULESET)
     metrics: list[Metric]
     policy: PolicyResult
     memo: str
@@ -171,6 +172,7 @@ def evidence_record(s: MemoState) -> dict:
                       "transactions": len(s["statement"].transactions)},
         "model": s.get("model"),
         "vat_stagger": s.get("vat_stagger"),
+        "ruleset": s.get("ruleset"),
         "metrics": [m.model_dump() for m in s["metrics"]],
         "policy": s["policy"].model_dump(mode="json"),
         "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
@@ -198,7 +200,9 @@ def build(llm: LLM | None = None, checkpointer=None):
         }
 
     def categorise(s: MemoState) -> MemoState:
-        return {"statement": cat.categorise(s["statement"])}
+        rules = cat.active_ruleset()
+        return {"statement": cat.categorise(s["statement"], rules),
+                "ruleset": {"id": rules.id, "sha256": rules.sha256}}
 
     def metrics(s: MemoState) -> MemoState:
         return {"metrics": met.compute(s["statement"], vat_stagger=s.get("vat_stagger"))}
