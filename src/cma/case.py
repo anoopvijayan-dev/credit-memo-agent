@@ -105,7 +105,11 @@ class LogCheck:
 
 
 def _canonical(obj: Any) -> bytes:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    # allow_nan=False: NaN and Infinity are not JSON, and another reader of the log
+    # (verify, a future hosted version) must be able to recompute every hash.
+    return json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    ).encode("utf-8")
 
 
 def entry_hash(entry: dict[str, Any]) -> str:
@@ -237,25 +241,60 @@ class CaseLog:
                 raise CaseLogBroken(self.path, check.first_bad, check.reason, False)
             if check.head.position != expected:
                 raise LogConflict(expected, check.head.position)
-            with self.path.open("r+b") as f:
-                f.truncate(check.intact_bytes)
-                f.flush()
-                os.fsync(f.fileno())
-            return self._write(TORN_DROPPED, {"seq": check.first_bad, "by": by.strip()}, check.head)
+            # Write the intact prefix plus the drop entry to a temporary file and rename it
+            # over the log, so a crash leaves either the torn log or the repaired one, never
+            # a truncated log with no record of who dropped the entry.
+            intact = self.path.read_bytes()[: check.intact_bytes]
+            entry, line = self._encode(TORN_DROPPED, {"seq": check.first_bad, "by": by.strip()}, check.head)
+            tmp = self.path.with_name(self.path.name + ".tmp")
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                _write_all(fd, intact + line)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            try:
+                os.replace(tmp, self.path)
+            except OSError:
+                tmp.unlink(missing_ok=True)
+                raise
+            _fsync_dir(self.path.parent)
+            return entry
 
-    def _write(self, event: str, data: dict[str, Any], head: Head) -> Entry:
+    @staticmethod
+    def _encode(event: str, data: dict[str, Any], head: Head) -> tuple[Entry, bytes]:
         body = {"seq": head.position + 1, "prev": head.hash, "at": _utc_now(), "event": event, "data": data}
         entry = Entry(**body, hash=entry_hash(body))
-        line = _canonical({**body, "hash": entry.hash}) + b"\n"
+        return entry, _canonical({**body, "hash": entry.hash}) + b"\n"
+
+    def _write(self, event: str, data: dict[str, Any], head: Head) -> Entry:
+        entry, line = self._encode(event, data, head)
+        created = not self.path.exists()
         fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:
-            view = memoryview(line)
-            while view:  # one entry per call in practice; loop on a short write
-                view = view[os.write(fd, view):]
+            _write_all(fd, line)
             os.fsync(fd)
         finally:
             os.close(fd)
+        if created:
+            _fsync_dir(self.path.parent)  # make the new file's name durable too
         return entry
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:  # one call in practice; loop on a short write
+        view = view[os.write(fd, view):]
+
+
+def _fsync_dir(path: Path) -> None:
+    if os.name == "nt":  # pragma: no cover - Windows cannot open a directory for fsync
+        return
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 if os.name == "nt":  # pragma: no cover - exercised on Windows only

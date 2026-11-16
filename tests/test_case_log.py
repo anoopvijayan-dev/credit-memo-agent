@@ -250,6 +250,45 @@ def test_drop_torn_entry_refuses_when_nothing_is_torn_or_the_chain_is_broken(tmp
     assert not err.value.torn and err.value.first_bad == 1
 
 
+def test_a_crash_while_dropping_a_torn_entry_leaves_the_torn_log_unchanged(tmp_path, monkeypatch):
+    log = _log(tmp_path, 3)
+    lines = _lines(log)
+    _write(log, [*lines[:2], lines[2][:15]])
+    before = log.path.read_bytes()
+
+    def crash(*_a, **_k):
+        raise OSError("power lost")
+
+    monkeypatch.setattr(case.os, "replace", crash)
+    with pytest.raises(OSError):
+        log.drop_torn_entry(expected=2, by="A. Underwriter")
+    assert log.path.read_bytes() == before  # still torn, still names entry 3
+    assert log.verify().torn and log.verify().first_bad == 3
+    assert not (tmp_path / "log.jsonl.tmp").exists()
+    monkeypatch.undo()
+    log.drop_torn_entry(expected=2, by="A. Underwriter")
+    assert log.require_intact().position == 3
+
+
+def test_data_that_is_not_strict_json_is_refused(tmp_path):
+    log = case.CaseLog(tmp_path / "log.jsonl")
+    for bad in ({"x": float("nan")}, {"x": float("inf")}, {"x": object()}):
+        with pytest.raises(ValueError):
+            log.append("override", bad, expected=0)
+    assert not log.path.exists()
+
+
+def test_new_log_and_lock_files_are_private_to_their_owner(tmp_path):
+    import os
+    import stat
+
+    if os.name == "nt":
+        pytest.skip("POSIX permissions")
+    log = _log(tmp_path, 1)
+    assert stat.S_IMODE(log.path.stat().st_mode) & 0o077 == 0
+    assert stat.S_IMODE(log.lock_path.stat().st_mode) & 0o077 == 0
+
+
 def test_a_complete_head_without_its_newline_is_still_torn(tmp_path):
     log = _log(tmp_path, 2)
     _write(log, [*_lines(log)[:1], _lines(log)[1].rstrip("\n")])
