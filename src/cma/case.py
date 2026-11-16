@@ -1,0 +1,278 @@
+"""The case log: an append-only, hash-chained record of everything done to a case (R42, R43).
+
+One JSON object per line, written in a single write that ends with its newline:
+
+    {"seq": 3, "prev": "<hash of entry 2>", "at": "2026-11-16T10:04:01.123456Z",
+     "event": "override", "data": {...}, "hash": "<sha256 of the other five fields>"}
+
+The first entry's `prev` is GENESIS. Each entry carries the hash of the entry before it
+and its own hash, so a changed, removed, inserted or reordered entry anywhere before the
+head breaks the chain on the next load, and `verify` names the first entry that does not
+hold. A last line without its newline is a torn entry (the process or the power stopped
+mid-write); it is reported as incomplete, not as tampering, and stays in the way of
+appends and sign-off until someone confirms dropping it (`drop_torn_entry`), which is
+itself logged. Removing the head itself cannot be seen from the file alone: whoever
+needs to pin the head (a sign-off, a pack) records its position and hash.
+
+One writer at a time: every append takes an exclusive, non-blocking lock on a sibling
+lock file and re-reads the log under it, and the caller states the position it last
+saw. A second tab or terminal that read an older position gets LogConflict and reloads;
+one that tries while another holds the lock gets CaseLocked. The operating system drops
+the lock when its holder dies, so a crash never leaves the case locked.
+
+Messages name entries by number only and never quote their content: data holds case
+details, and errors end up in terminals and logs.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+GENESIS = "0" * 64
+HASHED_FIELDS = ("seq", "prev", "at", "event", "data")
+ENTRY_FIELDS = frozenset((*HASHED_FIELDS, "hash"))
+TORN_DROPPED = "torn_entry_dropped"
+
+
+class CaseLogError(Exception):
+    """Base for case-log refusals."""
+
+
+class CaseLogBroken(CaseLogError):
+    """The chain does not hold, or the last entry is incomplete. Nothing may be appended
+    and no sign-off accepted until it is resolved."""
+
+    def __init__(self, path: Path, first_bad: int, reason: str, torn: bool):
+        self.first_bad = first_bad
+        self.torn = torn
+        self.reason = reason
+        super().__init__(f"{path}: case log entry {first_bad} {reason}")
+
+
+class LogConflict(CaseLogError):
+    """The writer's view of the log is stale: someone appended since it last read."""
+
+    def __init__(self, expected: int, actual: int):
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"case log is at entry {actual}, not {expected}: it changed since you loaded it; reload"
+        )
+
+
+class CaseLocked(CaseLogError):
+    """Another writer holds the case."""
+
+
+@dataclass(frozen=True)
+class Entry:
+    seq: int
+    prev: str
+    at: str
+    event: str
+    data: dict[str, Any]
+    hash: str
+
+
+@dataclass(frozen=True)
+class Head:
+    """Where the intact log ends: `position` entries, the last with hash `hash`."""
+
+    position: int
+    hash: str
+
+
+@dataclass(frozen=True)
+class LogCheck:
+    head: Head  # the end of the intact prefix
+    entries: list[Entry] = field(repr=False)
+    first_bad: int | None = None  # 1-based entry number; None when the log is intact
+    reason: str = ""
+    torn: bool = False
+    intact_bytes: int = field(default=0, repr=False)
+
+    @property
+    def ok(self) -> bool:
+        return self.first_bad is None
+
+
+def _canonical(obj: Any) -> bytes:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def entry_hash(entry: dict[str, Any]) -> str:
+    """sha256 over the canonical JSON of the hashed fields (everything but `hash`)."""
+    return hashlib.sha256(_canonical({k: entry.get(k) for k in HASHED_FIELDS})).hexdigest()
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _parse(line: bytes, n: int, prev: str) -> tuple[Entry | None, str]:
+    """Check one complete line as entry number `n` following hash `prev`."""
+    try:
+        obj = json.loads(line.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None, "is not a readable entry"
+    if not isinstance(obj, dict) or set(obj) != ENTRY_FIELDS:
+        return None, "has missing or extra fields"
+    seq, hsh = obj["seq"], obj["hash"]
+    if not isinstance(seq, int) or isinstance(seq, bool) or not isinstance(hsh, str) \
+            or not isinstance(obj["prev"], str) or not isinstance(obj["at"], str) \
+            or not isinstance(obj["event"], str) or not isinstance(obj["data"], dict):
+        return None, "has a field of the wrong type"
+    if entry_hash(obj) != hsh:
+        return None, "was changed: its hash does not match its content"
+    if seq != n:
+        return None, f"is out of place: it says it is entry {seq}; an entry is missing, added or reordered"
+    if obj["prev"] != prev:
+        return None, f"does not follow entry {n - 1}: the hash it carries for it does not match"
+    return Entry(**obj), ""
+
+
+class CaseLog:
+    def __init__(self, path: Path | str):
+        self.path = Path(path)
+        self.lock_path = self.path.with_name(self.path.name + ".lock")
+        self._lock_fd: int | None = None
+        self._lock_depth = 0
+
+    # --- reading -----------------------------------------------------------------------
+
+    def verify(self) -> LogCheck:
+        """Walk the chain from the start and stop at the first entry that does not hold."""
+        raw = self.path.read_bytes() if self.path.exists() else b""
+        pieces = raw.split(b"\n")
+        complete, tail = pieces[:-1], pieces[-1]  # tail is non-empty only if torn
+        entries: list[Entry] = []
+        prev, offset = GENESIS, 0
+        for n, line in enumerate(complete, start=1):
+            entry, reason = _parse(line, n, prev)
+            if entry is None:
+                return LogCheck(Head(n - 1, prev), entries, n, reason, False, offset)
+            entries.append(entry)
+            prev, offset = entry.hash, offset + len(line) + 1
+        if tail:
+            n = len(complete) + 1
+            reason = ("is incomplete: the write did not finish (the process or power stopped); "
+                      "confirm dropping it before anything else is recorded or signed off")
+            return LogCheck(Head(n - 1, prev), entries, n, reason, True, offset)
+        return LogCheck(Head(len(entries), prev), entries, intact_bytes=offset)
+
+    def require_intact(self) -> Head:
+        """The head of an intact log, or CaseLogBroken naming the first bad entry. Sign-off
+        calls this and refuses on the exception (R43)."""
+        check = self.verify()
+        if not check.ok:
+            raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
+        return check.head
+
+    def entries(self) -> list[Entry]:
+        """Every entry of an intact log; CaseLogBroken otherwise."""
+        check = self.verify()
+        if not check.ok:
+            raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
+        return check.entries
+
+    # --- writing -----------------------------------------------------------------------
+
+    @contextmanager
+    def writer(self) -> Iterator[CaseLog]:
+        """Hold the case's single-writer lock; refuses at once if another writer has it."""
+        if self._lock_depth == 0:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                _lock(fd)
+            except OSError as e:
+                os.close(fd)
+                raise CaseLocked(f"{self.path}: another window or command is writing to this case") from e
+            self._lock_fd = fd
+        self._lock_depth += 1
+        try:
+            yield self
+        finally:
+            self._lock_depth -= 1
+            if self._lock_depth == 0 and self._lock_fd is not None:
+                _unlock(self._lock_fd)
+                os.close(self._lock_fd)
+                self._lock_fd = None
+
+    def append(self, event: str, data: dict[str, Any], *, expected: int) -> Entry:
+        """Append one entry if the log is intact and still at `expected` entries."""
+        if not isinstance(event, str) or not event.strip():
+            raise ValueError("event must be a non-empty string")
+        if not isinstance(data, dict):
+            raise ValueError("data must be a mapping")
+        try:
+            _canonical(data)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"data is not plain JSON: {e}") from e
+        with self.writer():
+            head = self.require_intact()
+            if head.position != expected:
+                raise LogConflict(expected, head.position)
+            return self._write(event, data, head)
+
+    def drop_torn_entry(self, *, expected: int, by: str) -> Entry:
+        """Cut an incomplete last entry off and record who confirmed it. `expected` is the
+        intact position the person was shown. Refused if the last entry is not torn, or
+        if the chain is broken before it (that is tampering, not a torn write)."""
+        if not isinstance(by, str) or not by.strip():
+            raise ValueError("a name is required to drop a torn entry")
+        with self.writer():
+            check = self.verify()
+            if not check.torn:
+                if check.ok:
+                    raise CaseLogBroken(self.path, check.head.position + 1, "does not exist: nothing is torn", False)
+                raise CaseLogBroken(self.path, check.first_bad, check.reason, False)
+            if check.head.position != expected:
+                raise LogConflict(expected, check.head.position)
+            with self.path.open("r+b") as f:
+                f.truncate(check.intact_bytes)
+                f.flush()
+                os.fsync(f.fileno())
+            return self._write(TORN_DROPPED, {"seq": check.first_bad, "by": by.strip()}, check.head)
+
+    def _write(self, event: str, data: dict[str, Any], head: Head) -> Entry:
+        body = {"seq": head.position + 1, "prev": head.hash, "at": _utc_now(), "event": event, "data": data}
+        entry = Entry(**body, hash=entry_hash(body))
+        line = _canonical({**body, "hash": entry.hash}) + b"\n"
+        fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            view = memoryview(line)
+            while view:  # one entry per call in practice; loop on a short write
+                view = view[os.write(fd, view):]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        return entry
+
+
+if os.name == "nt":  # pragma: no cover - exercised on Windows only
+    import msvcrt
+
+    def _lock(fd: int) -> None:
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+
+    def _unlock(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _lock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
