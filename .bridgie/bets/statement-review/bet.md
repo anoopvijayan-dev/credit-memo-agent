@@ -137,6 +137,7 @@ Every answer and decision, dated.
 - 2026-11-16 D28 (question): Show it, labelled as illustrative thresholds, not the firm's policy → recorded [Anoop Vijayan]
 - 2026-11-16 D29 (question): Local-first now; hosted only after the approver asks (design default) → recorded [Anoop Vijayan]
 - 2026-11-16 D30 (question): OBIE v3.1 and TrueLayer (design default) → recorded [Anoop Vijayan]
+- 2026-11-16 D31 (question): Counted as trading receipts, with deposits above a threshold flagged → recorded [Anoop Vijayan]
 
 ## Idea
 
