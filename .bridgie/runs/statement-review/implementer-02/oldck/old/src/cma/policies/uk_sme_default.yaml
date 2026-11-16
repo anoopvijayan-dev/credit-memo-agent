@@ -1,0 +1,91 @@
+# Default lending policy for a UK SME working-capital facility.
+# Each rule compares one metric to a threshold. Outcomes: pass, refer, fail.
+# "refer" means a human must look; "fail" means decline unless overridden with a reason.
+# These thresholds are illustrative, not any lender's real policy.
+#
+# Fields per rule:
+#   id, description, metric (M1..M16), op (>=, <=, >, <, ==), threshold (number)
+#   on_fail:      refer | fail          what a breach means
+#   when_missing: pass | refer | fail   what it means when the metric cannot be computed
+#                                       (default refer: a missing figure is never a silent pass)
+#   refer_below / refer_above (optional): a pass this close to the line is referred instead.
+# Descriptions use digits, so a memo can quote a threshold with its [Rn] tag.
+
+name: uk_sme_default
+rules:
+  - id: R1
+    description: At least 12 months of statements
+    metric: M1
+    op: ">="
+    threshold: 12
+    on_fail: refer
+    when_missing: refer
+
+  - id: R2
+    description: Debt service cover, after owner drawings, of at least 1.25x
+    metric: M10
+    op: ">="
+    threshold: 1.25
+    on_fail: fail
+    refer_below: 1.5
+    # No existing debt: cover cannot be computed, so a person sizes the new facility.
+    when_missing: refer
+
+  - id: R3
+    description: No more than 2 returned direct debits in the period
+    metric: M7
+    op: "<="
+    threshold: 2
+    on_fail: fail
+    refer_above: 0
+    when_missing: refer
+
+  - id: R4
+    description: Fewer than 15 days overdrawn
+    metric: M6
+    op: "<"
+    threshold: 15
+    on_fail: refer
+    when_missing: refer
+
+  - id: R5
+    description: No late or missed VAT payments
+    metric: M13
+    op: "=="
+    threshold: 0
+    on_fail: refer
+    # Unknown stagger group or no VAT quarter in the period: someone checks the VAT record.
+    when_missing: refer
+
+  - id: R6
+    description: Revenue trend no worse than -15%
+    metric: M4
+    op: ">="
+    threshold: -15
+    on_fail: refer
+    when_missing: refer
+
+  - id: R7
+    description: Top customer below 60% of transfer revenue
+    metric: M15
+    op: "<"
+    threshold: 60
+    on_fail: refer
+    # Card-settled revenue hides the customers; concentration is not assessable, not a breach.
+    when_missing: pass
+
+  - id: R8
+    description: Positive net operating cash flow over the period
+    metric: M9
+    op: ">"
+    threshold: 0
+    on_fail: fail
+    when_missing: refer
+
+  - id: R9
+    description: No more than 20% of money in left unexplained
+    metric: M16
+    op: "<="
+    threshold: 20
+    on_fail: refer
+    when_missing: refer

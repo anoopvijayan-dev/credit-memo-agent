@@ -1,0 +1,34 @@
+T02 is built and committed as `3667577` on `bridgie-task/statement-review/T02`. The full suite passes (241 passed, 1 skipped; it was 223 before), lint is clean and all 9 eval memos are still grounded.
+
+**What changed**
+- **Categories (`src/cma/models.py`):** six new values (`cash_deposit`, `own_account_transfer`, `director_funding`, `refund_in`, `hmrc_repayment`, `other_explained_in`). The existing values are unchanged.
+- **Bucket map:** a `Bucket` enum with the eight money-in buckets, and `CREDIT_BUCKET`, which maps every credit category to exactly one bucket as in the design table. Categories that only apply to money going out are left out on purpose, so a credit in one of them fails reconciliation (R3) rather than being guessed.
+- **Cash counts as trading:** `cash_deposit` is now in `REVENUE_CATEGORIES`, so cash deposits will count as trading receipts (D31, R55). Nothing assigns that category yet, so no figure moves.
+- **Transaction fields:** `account_key` (default `"main"`), `rule_id` and `provider_hint` (both default `None`).
+
+**Old checkpoints still resume (R53)**
+- **New test (`tests/test_models.py`):** it rewrites a stored checkpoint so its transactions lack the new fields, then runs `cma resume`, which approves and writes the memo.
+- **Real old checkpoint:** I also exported the pre-change code from git, wrote a checkpoint with it, and resumed that with the new code. It exited 0 and wrote "APPROVED by C. Later". The scripts are in the run directory under `oldck/`.
+- **No allow-list change:** the checkpoint allow-list (`CHECKPOINT_TYPES`) is unchanged, because `Bucket` never goes into the stored graph state. Transactions aren't written to the evidence JSON, so that is unaffected too.
+
+The tests ran in a virtual environment I created in the scratchpad, since this machine's Python has no pytest.
+
+```json
+{
+ "task": "T02",
+ "claims": [
+  {"text": "Full existing suite plus new tests pass (baseline before the change was 223 passed, 1 skipped).",
+   "proof_cmd": "python -m pytest -q", "proof_output": "241 passed, 1 skipped in 2.83s"},
+  {"text": "New tests: six new Category values, existing values unchanged, CREDIT_BUCKET maps every credit category to exactly one of 8 Buckets per the design table, cash_deposit is in REVENUE_CATEGORIES and REVENUE_CATEGORIES equals the trading-receipts bucket, Transaction new fields default to ('main', None, None), and a checkpoint with Transactions stripped to the old shape resumes via `cma resume`.",
+   "proof_cmd": "python -m pytest -q tests/test_models.py", "proof_output": "18 passed in 0.45s"},
+  {"text": "An actual checkpoint written by the pre-change code (git archive HEAD~1 src, Transaction without account_key) resumes under the new code and writes the approved memo.",
+   "proof_cmd": "git archive HEAD~1 src | tar -x -C oldck/old; PYTHONPATH=oldck/old/src python -I -c '...exec(make.py)' oldck; python oldck/resume.py oldck  (scripts in the run dir oldck/)",
+   "proof_output": "writer: .../oldck/old/src/cma/__init__.py has account_key: False\n['review id: old-1 (kept in ']\nreader: .../T02/src/cma/__init__.py has account_key: True\nexit 0\n['APPROVED by C. Later at 2026-11-16 18:03 UTC.']"},
+  {"text": "Lint clean.", "proof_cmd": "python -m ruff check src tests", "proof_output": "All checks passed!"},
+  {"text": "Evals unchanged: every synthetic memo still grounded (no categoriser produces the new values yet, so no figure moves).",
+   "proof_cmd": "python evals/run_evals.py", "proof_output": "9/9 memos fully grounded; model = fake"}
+ ],
+ "files_changed": ["src/cma/models.py", "tests/test_models.py"],
+ "notes": "Commit 3667577 on bridgie-task/statement-review/T02. Names chosen: Category.CASH_DEPOSIT/OWN_ACCOUNT_TRANSFER/DIRECTOR_FUNDING/REFUND_IN/HMRC_REPAYMENT/OTHER_EXPLAINED_IN; Bucket enum (8 members) and CREDIT_BUCKET dict in models.py; Transaction.account_key (default 'main'), rule_id, provider_hint (default None). Bucket is not in graph state, so CHECKPOINT_TYPES is unchanged as designed. Transactions are not dumped into evidence JSON, so evidence is unaffected. Debit-only categories are deliberately absent from CREDIT_BUCKET (a credit in one is an R3 reconciliation failure for C2 to raise); OWN_ACCOUNT_TRANSFER is used for both directions per the design. Tests were run in a venv outside the repo (uv pip install -e '.[dev,durable]'). The test's msgpack rewriter found that a stored Statement holds its lines as plain dicts, so it strips the new keys there."
+}
+```
