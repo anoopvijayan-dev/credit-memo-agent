@@ -5,7 +5,7 @@ lane: engineering
 risk: data
 owner: Anoop Vijayan
 status: evidence
-confidence: opinion
+confidence: anecdote
 appetite: { time: 2w, tokens_usd: 20 }
 kill_criteria: []
 non_goals: []
@@ -122,6 +122,7 @@ Every answer and decision, dated.
 - 2026-11-16 D21 (question): Don't know → evidence task E8 created [Anoop Vijayan]
 - 2026-11-16 D22 (question): Don't know → evidence task E9 created [Anoop Vijayan]
 - 2026-11-16 D13 (question): Don't know (timing not done yet) → evidence task E10 created [Anoop Vijayan]
+- 2026-11-16 D27 (confidence): accept anecdote → confidence set to anecdote [Anoop Vijayan]
 
 ## Idea
 
