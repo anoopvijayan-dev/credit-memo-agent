@@ -41,3 +41,8 @@ ignore = ["B008", "E501"]  # typer.Option defaults are the idiom; lines are wrap
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+    "contracts: interface and data-format contracts (Bridgie verify tier 'contracts')",
+    "invariants: correctness properties P1-Pn from the design (Bridgie verify tier 'invariants')",
+    "dual_run: old and new behaviour compared side by side, such as CMA_RULESET=v1 against v2 (Bridgie verify tier 'dual_run')",
+]

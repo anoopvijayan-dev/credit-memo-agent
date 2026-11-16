@@ -9,3 +9,14 @@ default_lane: engineering
 #     mechanical: ['npm run lint', 'npm run build']
 #     specified: ['npm test']
 #     contracts: ['npm run test:contracts']
+# Verification commands per tier (Python project; run inside each task's worktree).
+# The marker tiers pass when a change has no tests with that marker (pytest exit 5, "no tests
+# collected"), by the owner's choice (lenient, 2026-11-16); the reviewer still judges missing tests.
+verify:
+  commands:
+    mechanical: ['ruff check src tests evals', 'python -m compileall -q src']
+    specified: ['python -m pytest -q']
+    contracts: ['python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -q -m contracts']
+    invariants: ['python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -q -m invariants']
+    behavioural: ['python evals/run_evals.py']
+    dual_run: ['python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -q -m dual_run']
