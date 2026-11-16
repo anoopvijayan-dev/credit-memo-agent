@@ -124,6 +124,7 @@ Every answer and decision, dated.
 - 2026-11-16 D13 (question): Don't know (timing not done yet) → evidence task E10 created [Anoop Vijayan]
 - 2026-11-16 D27 (confidence): accept anecdote → confidence set to anecdote [Anoop Vijayan]
 - 2026-11-16 D25 (question): Ask the friend to pass three written questions to their head of credit or compliance → recorded [Anoop Vijayan]
+- 2026-11-16 D26 (question): E4: monthly application counts for the last 12 months → recorded [Anoop Vijayan]
 
 ## Idea
 
