@@ -1,0 +1,775 @@
+{
+  "bet": "statement-review",
+  "tasks": [
+    {
+      "id": "T01",
+      "title": "Move the built-in rule table into packaged YAML under src/cma/rules/ (v1 frozen, validated on load, with id and hash); CMA_RULESET chooses the table; test: P7 under v1 equals today's M1-M16 on every fixture and synthetic case",
+      "requirements": [
+        "R54",
+        "R10",
+        "P7"
+      ],
+      "depends_on": [],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T02",
+      "title": "Add the new Category values and their bucket map, add cash_deposit to REVENUE_CATEGORIES, and add optional Transaction fields (account key, rule id, provider hint) with defaults; test: existing tests pass and an old checkpoint resumes",
+      "requirements": [
+        "R53",
+        "R55"
+      ],
+      "depends_on": [],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T03",
+      "title": "Add v2 rule tables (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, pots, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance and an unexplained default; test: table-driven categorisation, and P7 lists the newly recognised lines",
+      "requirements": [
+        "R4",
+        "R7",
+        "R10",
+        "R55",
+        "P7"
+      ],
+      "depends_on": [
+        "T01",
+        "T02"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T04",
+      "title": "Figures layer in integer pence: money-in buckets M17-M26, M18 cash within trading receipts, M16 renamed with its shared denominator, and refusal with the difference in pence when buckets do not reconcile; test: P1, P2, P6 property tests",
+      "requirements": [
+        "R1",
+        "R2",
+        "R3",
+        "R7",
+        "R10",
+        "R55",
+        "P1",
+        "P2",
+        "P6"
+      ],
+      "depends_on": [
+        "T03"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T05",
+      "title": "Case profile model, and profile-driven categorisation: director and shareholder names become director_funding even with an invoice reference; named own accounts become own_account_transfer in both directions and leave trading receipts and M9; test: unit and property tests on generated profiles",
+      "requirements": [
+        "R5",
+        "R6"
+      ],
+      "depends_on": [
+        "T03",
+        "T04"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T06",
+      "title": "Monthly summary (part-month flag, money in, money out, trading receipts with cash, average and lowest end-of-day balance, days overdrawn), each cell with its evidence ids and total; test: P12, and P2 on monthly cells",
+      "requirements": [
+        "R11",
+        "R55",
+        "P2",
+        "P12"
+      ],
+      "depends_on": [
+        "T04"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T07",
+      "title": "M27 average end-of-day balance, citing the lines that set each day's closing balance, and M28 debt service cover including the proposed repayment, n/a with a reason when there is none; test: hand-computed fixtures",
+      "requirements": [
+        "R12",
+        "R13",
+        "R2"
+      ],
+      "depends_on": [
+        "T04",
+        "T05"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T08",
+      "title": "src/cma/indicators.py and a packaged, validated thresholds YAML: large credit, single cash deposit, cash-heavy month, cash round trip, gambling, returned DD, overdrawn runs, irregular acquirer credit; compared in pence, labelled illustrative at shipped values, malformed file refused naming the line; test: one fixture per kind",
+      "requirements": [
+        "R14",
+        "R2"
+      ],
+      "depends_on": [
+        "T04",
+        "T06"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T09",
+      "title": "Judgement queue as a pure function (unexplained lines, possible own-account transfers, indicator-flagged lines), largest amount first; test: P19",
+      "requirements": [
+        "R15",
+        "P19"
+      ],
+      "depends_on": [
+        "T08"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T10",
+      "title": "Opt-in single-account synth features (real acquirers, director funding, cash with a large deposit and a round trip, lenders), with truth for every bucket, line category and indicator, and evals extended; existing archetypes byte-identical; test: P17 and the byte-identity check",
+      "requirements": [
+        "R47",
+        "R10",
+        "P17"
+      ],
+      "depends_on": [
+        "T05",
+        "T08"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T11",
+      "title": "Make v2 the default ruleset: regenerate the committed examples, reword policy R9 and the FakeLLM M16 sentence, add M17-M28 to the appendix and MCP compute_metrics, and add the read-only buckets MCP tool; test: evals, full P7, test_cli and test_mcp_paths",
+      "requirements": [
+        "R10",
+        "R53",
+        "P7"
+      ],
+      "depends_on": [
+        "T07",
+        "T09",
+        "T10"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T12",
+      "title": "Hash-chained append-only case log with a single-writer lock, an expected-position conflict, and torn-last-entry detection that names the first bad entry; test: P15",
+      "requirements": [
+        "R42",
+        "R43",
+        "P15"
+      ],
+      "depends_on": [],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T13",
+      "title": "Case root (CMA_HOME, owner-only permissions, refused inside a git tree that does not ignore it) and cma case new with --demo and --label, profile edit, and import of csv or monzo into inputs/ by hash and statements/, each logged; test: permission and git-ignore tests, log entries",
+      "requirements": [
+        "R31",
+        "R42",
+        "R48"
+      ],
+      "depends_on": [
+        "T12",
+        "T05"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T14",
+      "title": "Warn before creating a case inside a OneDrive, Dropbox, Google Drive or iCloud Drive folder, and record the warning in the case log; test: path fixtures per client",
+      "requirements": [
+        "R32"
+      ],
+      "depends_on": [
+        "T13"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T15",
+      "title": "cma case purge: delete the case folder and append case id, time and who to purge_ledger.jsonl only; test: no case files left and a ledger line with no personal data",
+      "requirements": [
+        "R35"
+      ],
+      "depends_on": [
+        "T13"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T16",
+      "title": "Override log: categories only, valid for the line's direction, with reason, name, OS user and UTC time; stale overrides held until confirmed or dropped; recompute from statements plus the whole log, marking figures that rest on overridden lines; test: P3, P4",
+      "requirements": [
+        "R17",
+        "R18",
+        "R19",
+        "P3",
+        "P4"
+      ],
+      "depends_on": [
+        "T13",
+        "T04"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T17",
+      "title": "firm.yaml (offline_lock and show_policy_verdict default on, file paths); under the lock, refuse hosted clients and the MCP server before any network call; prompts carry only tables, the period and the placeholder name; test: P18, P5",
+      "requirements": [
+        "R29",
+        "R30",
+        "R34",
+        "P5",
+        "P18"
+      ],
+      "depends_on": [],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T18",
+      "title": "Loopback-only review server with cma review: per-launch random token, loopback Host check, bundled assets only, strict CSP with no inline script, no CORS, next free port, URL printed; test: requests without the token or with a bad Host are refused",
+      "requirements": [
+        "R33"
+      ],
+      "depends_on": [
+        "T13",
+        "T17"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T19",
+      "title": "Workspace case view: money-in breakdown, monthly summary, figures, indicators and the judgement queue first; payer text escaped; demo banner; nothing shown when reconciliation fails; test: P8 on workspace HTML, plus the queue order and banner",
+      "requirements": [
+        "R15",
+        "R3",
+        "R34",
+        "R48",
+        "P8"
+      ],
+      "depends_on": [
+        "T18",
+        "T06",
+        "T07",
+        "T09"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T20",
+      "title": "Workspace drill-down from any figure, bucket, monthly cell or indicator to exactly its lines (date, description, amount, balance, category, rule or override), with the total for sums and the inputs and method otherwise; test: the API returns the evidence set and total for each figure kind",
+      "requirements": [
+        "R16"
+      ],
+      "depends_on": [
+        "T19"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T21",
+      "title": "Workspace policy-check panel from policy.evaluate on the current figures, with the illustrative label in the panel and the recommendation blank, hidden when show_policy_verdict is off; action worded as signing off figures; test: P20 on the workspace",
+      "requirements": [
+        "R25",
+        "R56",
+        "R24",
+        "P20"
+      ],
+      "depends_on": [
+        "T19",
+        "T17"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T22",
+      "title": "Workspace override form (only categories valid for the direction, reason, name, expected log position with conflict and reload) and stale-override confirm or drop; recompute within 2 s at 10,000 lines; test: API tests, plus a timed test at 10k lines",
+      "requirements": [
+        "R17",
+        "R18",
+        "R19",
+        "R52"
+      ],
+      "depends_on": [
+        "T16",
+        "T20",
+        "T21"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T23",
+      "title": "Snapshot hash over statement hashes, ruleset, firm rules, profile, override log position, thresholds, field map, policy hash, show_policy_verdict and package version, plus a diff that names what changed; test: changing each input changes the hash and is named",
+      "requirements": [
+        "R22",
+        "R23"
+      ],
+      "depends_on": [
+        "T16",
+        "T17",
+        "T08",
+        "T13"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T24",
+      "title": "Memo field map YAML (13 default fields, M18 next to M2, empty fields marked for the underwriter), deterministic section text, the labelled policy-check section, the demo stamp, the grounding guard over the pack text, and cma case preview, which writes nothing; test: P14, and P20 on memo.md",
+      "requirements": [
+        "R24",
+        "R25",
+        "R26",
+        "R27",
+        "R28",
+        "R48",
+        "R56",
+        "P14",
+        "P20"
+      ],
+      "depends_on": [
+        "T23",
+        "T06",
+        "T07",
+        "T08"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T25",
+      "title": "Evidence JSON v1 (schema_version and additive keys: buckets, monthly, indicators, overrides, policy_check shown or hidden, egress or offline, hashes) and monthly.csv with formula characters neutralised; test: today's keys unchanged, and P8 on the CSV",
+      "requirements": [
+        "R53",
+        "R29",
+        "R56",
+        "R34",
+        "P8"
+      ],
+      "depends_on": [
+        "T23",
+        "T06",
+        "T08",
+        "T16"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T26",
+      "title": "Self-contained offline record.html with click-through from every figure to its lines, the label wherever an outcome appears, the sign-off, and the demo stamp; test: no external references, P8 on the record",
+      "requirements": [
+        "R26",
+        "R25",
+        "R34",
+        "R48",
+        "P8"
+      ],
+      "depends_on": [
+        "T24",
+        "T25"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T27",
+      "title": "Sign-off from the CLI (interactive, no --yes) and the workspace: typed name, OS user and UTC time bound to the preview snapshot; refused if the snapshot is stale or the log chain is broken; pack written once via temp folder and rename, never overwritten, sign-off logged after the rename; test: stale, broken-chain, second-sign-off and crash-leftover cases",
+      "requirements": [
+        "R22",
+        "R23",
+        "R24",
+        "R26",
+        "R43"
+      ],
+      "depends_on": [
+        "T26",
+        "T12",
+        "T21"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T28",
+      "title": "Importer contract and a shared balance-walk step extracted from monzo.py; output must pass ingest.load_csv; refusals give line numbers, never cell values; test: Monzo golden output unchanged",
+      "requirements": [
+        "R53"
+      ],
+      "depends_on": [
+        "T13"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T29",
+      "title": "OBIE v3.1 importer: booked GBP lines only, provider ids kept, balance rebuilt from per-line or supplied statement balance, broken chain refused, pending lines counted, paged duplicates handled; test: golden files and refusal fixtures",
+      "requirements": [
+        "R36"
+      ],
+      "depends_on": [
+        "T28"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T30",
+      "title": "TrueLayer Data API importer with the same checks as OBIE; provider categories kept as untrusted hints that no figure uses; test: golden files, and figures unchanged when hints change",
+      "requirements": [
+        "R37"
+      ],
+      "depends_on": [
+        "T28"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T31",
+      "title": "Bank CSV importer through named bank profiles or a custom mapping (paid-in and paid-out columns, non-ISO dates, newest first) with the five-column checks; test: golden file per profile",
+      "requirements": [
+        "R38"
+      ],
+      "depends_on": [
+        "T28"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T32",
+      "title": "Re-importing the same file leaves the case and log head unchanged; refuse an overlapping account that shares most (date, amount) pairs as probably the same account; test: P9, plus a duplicate-account fixture",
+      "requirements": [
+        "R39",
+        "R40",
+        "P9"
+      ],
+      "depends_on": [
+        "T13"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T33",
+      "title": "Multi-account cases: line ids prefixed with the account key, flow figures across accounts, balance figures on the combined end-of-day balance over shared dates, n/a with a reason when dates do not overlap; test: two-account fixtures with and without overlap",
+      "requirements": [
+        "R41"
+      ],
+      "depends_on": [
+        "T13",
+        "T04",
+        "T06",
+        "T07"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T34",
+      "title": "Own-account pairing across accounts within the configured days; a debit with more than one candidate is not paired and goes to the judgement queue with every candidate; test: P11",
+      "requirements": [
+        "R8",
+        "R9",
+        "P11"
+      ],
+      "depends_on": [
+        "T33",
+        "T09"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T35",
+      "title": "Two-account synth feature with own-account pair truth; test: P17 and P11 on generated two-account cases",
+      "requirements": [
+        "R47",
+        "P11",
+        "P17"
+      ],
+      "depends_on": [
+        "T34",
+        "T10"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T36",
+      "title": "firm_rules.yaml format, validation and categoriser precedence; protected built-in patterns (director, capital, shareholder, lender, HMRC, returned payment) never reclassified by a firm rule; test: P16",
+      "requirements": [
+        "R21",
+        "R20",
+        "P16"
+      ],
+      "depends_on": [
+        "T03",
+        "T13"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T37",
+      "title": "Promote an override to a firm rule from the workspace: preview the matching lines in the open case, then save pattern, direction, category, name, time and reason, and log it; test: the preview count matches, and later cases apply the rule",
+      "requirements": [
+        "R20"
+      ],
+      "depends_on": [
+        "T36",
+        "T22"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T38",
+      "title": "cma verify: recompute every figure, bucket and monthly cell from the recorded inputs and report mismatches; refuse a record from another ruleset, naming its version; v0 records checked for M1-M16 only; test: P13, P3",
+      "requirements": [
+        "R44",
+        "R45",
+        "P13",
+        "P3"
+      ],
+      "depends_on": [
+        "T27"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T39",
+      "title": "cma pseudonymise: consistent tokens for names and account numbers in the statement and profile, institutions and all amounts, dates and balances kept, output labelled as pseudonymised personal data; test: P10",
+      "requirements": [
+        "R46",
+        "P10"
+      ],
+      "depends_on": [
+        "T05",
+        "T06",
+        "T07",
+        "T08"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T40",
+      "title": "cma report: per case, the judgement queue size, indicator counts, overrides by old and new category, unexplained share, traced and signed flags, with no names, descriptions, amounts or durations, and a non-zero exit on untraced or unreconciled cases; test: the output contains no sentinel strings and no durations",
+      "requirements": [
+        "R50"
+      ],
+      "depends_on": [
+        "T16",
+        "T27",
+        "T09"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    },
+    {
+      "id": "T41",
+      "title": "Comparison entry: the underwriter's figure for a memo field or month shows the difference computed in the figures layer, plus that period's cash, unexplained, possible own-account and overridden lines, largest first; test: API fixtures",
+      "requirements": [
+        "R51"
+      ],
+      "depends_on": [
+        "T20"
+      ],
+      "status": "todo",
+      "attempts": 0,
+      "max_attempts": 3,
+      "branch": null,
+      "evidence": null,
+      "escalation": null
+    }
+  ]
+}

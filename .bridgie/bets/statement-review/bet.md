@@ -2,7 +2,7 @@
 id: statement-review
 title: "Small-business underwriters lose most of each application to reading bank statements, and would hand that part to an agent if it never invents a number"
 lane: engineering
-risk: data
+risk: money
 owner: Anoop Vijayan
 status: signed
 confidence: anecdote
@@ -148,3 +148,7 @@ Every answer and decision, dated.
 ## Idea
 
 An underwriter friend doing small-business loans cancelled a weekend road trip because he is buried in applications. Most of the time goes on reading months of bank statements line by line before the memo can be written. His firm will not let generic AI near it because a made-up number lands on the person who signs the file, and the tools built for this job are being phased out or cost too much. We want to test whether an agent that computes every figure in code, cites each one to the bank transactions behind it, and leaves the decision to a named human would be trusted to take the statement reading off them.
+
+## Risk log
+
+- 2026-11-16 risk data → money: requirement R1 is tagged risk: money
