@@ -91,6 +91,7 @@ Things that need real-world evidence before signing.
 - [ ] E6: The product the firm turned down (sharpens D11; raised by moat and offer). Moat's PASS rests partly on this. If the incumbent already links each figure to its transactions, this tool is a cheaper copy. Name the product, the quote and who turned it down. (from D19)
 - [ ] E7: The Open Banking provider (sharpens D12; raised by all three lenses). Which provider sends the feed, and what does its output already give the underwriter? Pull one sample. If it already categorises transactions with drill-down to the lines, little reading is left for the agent to take over. (from D20)
 - [ ] E8: The memo template (raised by product). Which fields does the friend's memo template ask for, and how many map to M1-M16? Get a redacted blank template. This decides whether the output saves copying or adds to it. (from D21)
+- [ ] E9: The friend's own success bar (extends D13 and D9; raised by offer and product). The owner set D9. After timing 3 real files, what does the friend say would make them use this on a live file? Count checking and copying time, not only reading. (from D22)
 
 ## Decision log
 
@@ -116,6 +117,7 @@ Every answer and decision, dated.
 - 2026-11-16 D19 (question): Don't know → evidence task E6 created [Anoop Vijayan]
 - 2026-11-16 D20 (question): Don't know → evidence task E7 created [Anoop Vijayan]
 - 2026-11-16 D21 (question): Don't know → evidence task E8 created [Anoop Vijayan]
+- 2026-11-16 D22 (question): Don't know → evidence task E9 created [Anoop Vijayan]
 
 ## Idea
 
