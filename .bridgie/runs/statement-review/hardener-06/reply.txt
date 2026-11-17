@@ -1,0 +1,29 @@
+T01 now holds up on every checklist line, and the claim file is written and passes the schema check. I made one change: the committed example evidence file was missing the new `ruleset` field, so I added it.
+
+**What I checked:**
+- **P7 under v1:** I rebuilt the baseline from the pre-change commit (fd7b64c) by running that commit's own test suite, and it matches the committed baseline on every key. It covers 13 synthetic cases, 1 example, 37 fixtures (including the VAT stagger-3 case) and 17 single lines.
+- **Tests:**
+  - The 53 P7 tests and 55 dual-run tests pass. The dual-run tests include over 20,000 random descriptions checked against the old rule list, with no differences.
+  - The full suite gives 334 passed and 4 skipped; with every optional extra installed, 338 passed with nothing skipped.
+  - Lint is clean and 9 of 9 eval memos are fully grounded.
+- **Example files:** rebuilt from the new code, `cafe_stretched.memo.md` is the same apart from the approval time. The evidence file differed only by the `ruleset` field, which I added; the committed review time is kept.
+- **Installed wheel:** the wheel includes `cma/rules/v1.yaml`, and a clean environment outside the repo loads v1 with the same hash. I ran this locally only, not on CI.
+- **Saved reviews:**
+  - A review saved by the old code and resumed by the new code writes evidence naming v1 and its hash, marked as inferred.
+  - A review saved by the new code and resumed after going back to the old version also completes (exit 0), so a downgrade needs no data repair.
+- **Bad input:** an unknown `CMA_RULESET` or a damaged table is refused with exit 2 ("Refused."), not reported as a model failure. A ruleset name can't be used as a file path, and the YAML is read with `safe_load`.
+- **Speed:** categorising 10,000 lines takes 24.5 ms, against 26.1 ms for the old code.
+
+This time nothing was written outside the worktree and the run directory, so the cache-file problem that failed the last attempt didn't recur.
+
+**Gaps for the owner** (also in `notes`):
+- The `CMA_RULESET` rollback flag doesn't do anything yet, because v1 is the only table. Until v2 lands, rollback means reinstalling the previous version, which I tested.
+- The repo has no changelog, so the README is the only user-facing note.
+- The baseline file's built-in description still says its tools are in the run directory. Changing it would break the exact match with the rebuild.
+- Rule patterns aren't checked for runaway regexes when they load. Firm-written rules (R20) need a design decision on this before they land.
+- **For whoever runs the next check:** plain `python` and `cma` here load the main checkout, not this worktree. Run the CLI with `PYTHONPATH=src`, or you'll be testing the old code.
+
+The example evidence change is uncommitted in the worktree, for the harness to commit.
+
+Files are in `/home/user/credit-memo-agent/.bridgie/runs/statement-review/hardener-06`:
+- claim.json
