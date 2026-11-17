@@ -10,12 +10,12 @@
         "P7"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T01",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-01/evidence.json",
-      "escalation": "attempt 2 of 3 failed: hardener run failed (see .bridgie/runs/statement-review)"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-05/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R54 not_proven (The ordered entries in src/cma/rules/v1.yaml:12 match fd7b64c, and src/cma/categorise.py:151 selects the table. src/cma/graph.py:213 carries the selected id and hash into evidence at line 186. specified:3 passed the source-tree checks. No runner result covers clean-wheel loading or a real SQLite resume across versions. The loader also accepts duplicate YAML keys, and a failed legacy ruleset lookup can leave a completed review without evidence. I traced repeat submission and concurrent review handling at src/cma/cli.py:139 and :224, and authorization and data scope at src/cma/categorise.py:140 and src/cma/mcp_server.py:74. The ruleset selection adds no caller-controlled file path, endpoint, or tenant query.); P7 not_proven (dual_run:7 ran all 55 selected cases. tests/test_rules.py:273–309 compares v1 with the committed golden and lines 348–383 compare the rule list and matcher. I inspected the golden and confirmed it contains 13 synthetic configurations, one example and 37 fixture records, including the VAT stagger-3 variant. No runner result independently rebuilds the historical golden, so the replay and complete fixture coverage claims remain unproven. The contracts and invariants logs each show zero tests ran.); major: The validation claim misses duplicate YAML mapping keys. safe_load keeps the last value, so the validator never sees the duplicate and can accept changed categorisation under the frozen v1 id. at src/cma/categorise.py:145; major: The partial-failure proof covers fresh runs only. On a legacy resume, the new v1 lookup in src/cma/graph.py:174 can fail after the review decision is committed and the memo is written. The review has no evidence and cannot be resumed through the CLI. at src/cma/cli.py:213; reviewer verdict not_proven"
     },
     {
       "id": "T02",

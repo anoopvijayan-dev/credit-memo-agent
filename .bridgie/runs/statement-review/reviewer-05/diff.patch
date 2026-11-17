@@ -1,0 +1,1090 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 2100f92..6e58b18 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -34,3 +34,4 @@ jobs:
+           python -m venv /tmp/wheelcheck
+           /tmp/wheelcheck/bin/pip install /tmp/dist/*.whl
+           cd /tmp && /tmp/wheelcheck/bin/python -c "from cma import policy; print(policy.load_policy()['name'])"
++          cd /tmp && /tmp/wheelcheck/bin/python -c "from cma import categorise as c; r = c.load_ruleset('v1'); print(r.id, r.sha256)"
+diff --git a/README.md b/README.md
+index 6c46894..dfe5756 100644
+--- a/README.md
++++ b/README.md
+@@ -50,6 +50,11 @@ cma resume case-7 --checkpoint-db private/reviews.sqlite
+ # (git-ignored, as are *.csv, memo files, evidence files and databases anywhere).
+ cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out private/mine.csv
+ 
++# Choose the categorisation table (src/cma/rules/<id>.yaml; default v1). v1 is the
++# original table, frozen; an unknown id is refused. The evidence file records the
++# table's id and hash.
++CMA_RULESET=v1 cma run examples/cafe_stretched.csv
++
+ # Use a real model instead of the offline one.
+ export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
+ cma run examples/cafe_stretched.csv --llm anthropic
+@@ -65,8 +70,8 @@ example.
+ | Synthetic data | `synth.py` | Three business archetypes (café, trades, e-commerce) × three risk profiles (good, stretched, poor). Seeded. Writes the ground truth next to each statement. |
+ | Ingest | `ingest.py` | CSV in: `id, date, description, amount, balance`. Refuses duplicate ids, non-ISO or future dates, out-of-order dates, loose amounts and a broken balance chain; reads newest-first files. |
+ | Import | `importers/monzo.py` | Monzo export → statement CSV, locally. Monzo Flex is read as a loan. |
+-| Categoriser | `categorise.py` | Ordered regex rules, direction-aware. A transfer in is revenue only with an invoice reference. Returned DDs are linked to the debit they undo. Unmatched lines are `OTHER`, never guessed. |
+-| Metrics | `metrics.py` | Sixteen figures (revenue, trend, lowest balance, days overdrawn, returned DDs, debt service cover after drawings, VAT timeliness by stagger group, unclassified inflows…). Each carries the transaction ids it came from; a figure that can't be computed is n/a with the reason, never a placeholder. |
++| Categoriser | `categorise.py` + `cma/rules/v1.yaml` | Ordered regex rules, direction-aware, kept as validated data and chosen by `CMA_RULESET`. A transfer in is revenue only with an invoice reference. Returned DDs are linked to the debit they undo. Unmatched lines are `OTHER`, never guessed. |
++| Metrics | `metrics.py` | Sixteen figures (revenue, trend, lowest balance, days overdrawn, returned DDs, debt service cover after drawings, VAT timeliness by stagger group, non-trading money in…). Each carries the transaction ids it came from; a figure that can't be computed is n/a with the reason, never a placeholder. |
+ | Policy | `cma/policies/uk_sme_default.yaml` | Nine illustrative rules with pass / refer / fail, and what a missing figure means. Validated on load. Edit the YAML, not the code. |
+ | Draft | `graph.py` + `llm.py` | The model gets the metrics table and the policy table, nothing else, and must tag every figure ([Mn]) and threshold ([Rn]). |
+ | Guard | `guard.py` | Reads every number in the memo, in digits or words, back against the table: value at the precision written, unit, sign, and the tag right after it. |
+@@ -115,13 +120,13 @@ tests named after each finding.
+ - The guard checks figures, not judgements: "no late VAT payments" when M13 is 2 has
+   no number in it. The reviewer reads the metrics table in the appendix for that.
+ - Revenue by bank transfer needs an invoice reference to count. Statements without
+-  references show it as unclassified inflows (M16), which refers the case.
++  references show it as non-trading money in (M16), which refers the case.
+ - Pending reviews live in memory unless you pass `--checkpoint-db`.
+ - The reviewer's name is asserted, not authenticated: anyone at the terminal can type
+   any name. A pilot inside a lender would put the CLI behind their own sign-in.
+ - Debt service cover (M10) is historical and covers existing debt only; it does not
+   include the facility being applied for. Money in that isn't explained as trading
+-  is left out of it, and shows as unclassified inflows (M16).
++  is left out of it, and shows as non-trading money in (M16).
+ - The categoriser knows the synthetic acquirer names. Card revenue from a real
+   acquirer it doesn't recognise lands in M16 and refers the case until a rule is added.
+ - Policy thresholds are illustrative. They are not any lender's real policy.
+diff --git a/examples/cafe_stretched.memo.evidence.json b/examples/cafe_stretched.memo.evidence.json
+index ef1737e..6c51a06 100644
+--- a/examples/cafe_stretched.memo.evidence.json
++++ b/examples/cafe_stretched.memo.evidence.json
+@@ -8,6 +8,10 @@
+   },
+   "model": "fake:offline-template",
+   "vat_stagger": 3,
++  "ruleset": {
++    "id": "v1",
++    "sha256": "7573366854a668793ca20b3ecfaad91d406ea3018a71d524ea3324cc4ff76630"
++  },
+   "metrics": [
+     {
+       "id": "M1",
+@@ -1729,7 +1733,7 @@
+     },
+     {
+       "id": "M16",
+-      "name": "Unclassified inflows",
++      "name": "Non-trading money in (share)",
+       "value": 2.49,
+       "unit": "pct",
+       "method": "Share of money in (excluding loan drawdowns and returned DDs) that is not revenue; it is left out of operating cash flow.",
+@@ -2104,7 +2108,7 @@
+         "description": "No more than 20% of money in left unexplained",
+         "metric_id": "M16",
+         "outcome": "pass",
+-        "detail": "Unclassified inflows is 2.5%; rule requires <= 20.",
++        "detail": "Non-trading money in (share) is 2.5%; rule requires <= 20.",
+         "op": "<=",
+         "threshold": 20.0,
+         "refer_below": null,
+diff --git a/examples/cafe_stretched.memo.md b/examples/cafe_stretched.memo.md
+index 13d7bee..dd23f35 100644
+--- a/examples/cafe_stretched.memo.md
++++ b/examples/cafe_stretched.memo.md
+@@ -41,7 +41,7 @@ Evidence: every transaction id behind each figure is in the .evidence.json file
+ | M13 | Late or missed VAT payments | 0 | VAT quarters in the business's stagger group with no payment that stuck (not returned unpaid) between the quarter end and the Direct Debit collection days after the due date. | 4 |
+ | M14 | PAYE paid | £19,114 | Payments to HMRC PAYE/NI, net of any returned unpaid. | 12 |
+ | M15 | Top customer share of transfer revenue | n/a | No customer transfers: revenue is card or gateway settled, which hides who the customers are. | 0 |
+-| M16 | Unclassified inflows | 2.5% | Share of money in (excluding loan drawdowns and returned DDs) that is not revenue; it is left out of operating cash flow. | 262 |
++| M16 | Non-trading money in (share) | 2.5% | Share of money in (excluding loan drawdowns and returned DDs) that is not revenue; it is left out of operating cash flow. | 262 |
+ 
+ | id | rule | metric | requirement | outcome | detail |
+ |---|---|---|---|---|---|
+@@ -53,4 +53,4 @@ Evidence: every transaction id behind each figure is in the .evidence.json file
+ | R6 | Revenue trend no worse than -15% | M4 | >= -15.0% | pass | Revenue trend is 10.8%; rule requires >= -15. |
+ | R7 | Top customer below 60% of transfer revenue | M15 | < 60.0% | pass | Top customer share of transfer revenue cannot be computed (No customer transfers: revenue is card or gateway settled, which hides who the customers are.); policy says pass when missing. |
+ | R8 | Positive net operating cash flow over the period | M9 | > £0 | pass | Net operating cash flow is £54,192; rule requires > 0. |
+-| R9 | No more than 20% of money in left unexplained | M16 | <= 20.0% | pass | Unclassified inflows is 2.5%; rule requires <= 20. |
+\ No newline at end of file
++| R9 | No more than 20% of money in left unexplained | M16 | <= 20.0% | pass | Non-trading money in (share) is 2.5%; rule requires <= 20. |
+\ No newline at end of file
+diff --git a/pyproject.toml b/pyproject.toml
+index 83fe1ac..dec3ed7 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -41,3 +41,6 @@ ignore = ["B008", "E501"]  # typer.Option defaults are the idiom; lines are wrap
+ [tool.pytest.ini_options]
+ pythonpath = ["src"]
+ testpaths = ["tests"]
++markers = [
++  "dual_run: compares behaviour before and after a change (P7: the rule table as code at fd7b64c vs v1.yaml)",
++]
+diff --git a/src/cma/categorise.py b/src/cma/categorise.py
+index a205908..5734871 100644
+--- a/src/cma/categorise.py
++++ b/src/cma/categorise.py
+@@ -5,11 +5,17 @@ matches wins. Direction matters: "HOLLOWAY BRIDGE FINANCE LOAN" is a repayment w
+ money leaves and a drawdown when it arrives, and a drawdown is financing, not revenue
+ or debt service. The model never overrides a rule match.
+ 
++The rule table is data, not code: src/cma/rules/<id>.yaml, validated on load like the
++policy, with an id and the hash of its file. CMA_RULESET chooses the table (default
++v1). v1 is the table as it was when it lived here, frozen, so CMA_RULESET=v1 always
++reproduces those categories. The matching passes below (reversals, round trips) stay
++in code.
++
+ Revenue is claimed narrowly. A card or gateway settlement is trading income. A bank
+ transfer in is only counted as a customer payment when it carries an invoice
+ reference (INV1234, INVOICE 1234); anything else that arrives by transfer (the owner
+ putting money back, a capital injection, a VAT repayment, a transfer from savings) is
+-OTHER and shows up in M16, unclassified inflows, for a person to look at. That costs
++OTHER and shows up in M16, non-trading money in, for a person to look at. That costs
+ some real revenue on statements without invoice references, but the alternative is
+ that money the owner moves in and out counts as trading income and lifts debt cover.
+ 
+@@ -20,34 +26,135 @@ from someone the applicant also pays by transfer is not revenue (round trip).
+ 
+ from __future__ import annotations
+ 
++import hashlib
++import os
+ import re
++from dataclasses import dataclass
++from functools import lru_cache
++from importlib import resources
+ from typing import Literal
+ 
++import yaml
++
+ from .models import Category, Statement, Transaction
+ 
+ Direction = Literal["in", "out", "any"]
+ 
+ INVOICE_REF = re.compile(r"\bINV(?:OICE)?\s*[-#:]?\s*\d+")
+-# Money in that is never trading income, whatever reference it carries.
+-NON_TRADING_IN = re.compile(
+-    r"\bDIRECTOR\b|\bOWNER\b|\bCAPITAL\b|\bSHAREHOLDER\b|\bHMRC\b|\bREFUND\b|\bREVERSAL\b"
+-    r"|\bSAVINGS\b|\bPOT TRANSFER\b|\bINTEREST\b|\bGRANT\b|\bINSURANCE CLAIM\b"
+-)
+ 
+-RULES: list[tuple[re.Pattern[str], Direction, Category]] = [
+-    (re.compile(r"^UNPAID DD\b"), "any", Category.RETURNED_DD),
+-    (re.compile(r"UNPAID ITEM FEE|ACCOUNT FEES|BANK CHARGES"), "out", Category.BANK_FEES),
+-    (re.compile(r"HMRC VAT"), "out", Category.HMRC_VAT),
+-    (re.compile(r"HMRC PAYE"), "out", Category.HMRC_PAYE),
+-    (re.compile(r"PAYROLL|SALARIES"), "out", Category.PAYROLL),
+-    (re.compile(r"\bRENT\b"), "out", Category.RENT),
+-    (re.compile(r"\bLOAN\b|FINANCE\b"), "out", Category.LOAN_REPAYMENT),
+-    (re.compile(r"\bLOAN\b|FINANCE\b"), "in", Category.LOAN_DRAWDOWN),
+-    (re.compile(r"OWNER DRAWINGS|DIRECTOR DRAWINGS|DIVIDEND"), "out", Category.OWNER_DRAWINGS),
+-    (NON_TRADING_IN, "in", Category.OTHER),
+-    (re.compile(r"ACQUIRER SETTLEMENT|PAYGATE PAYOUT|CARD SETTLEMENT"), "in", Category.REVENUE_CARD),
+-    (INVOICE_REF, "in", Category.REVENUE_TRANSFER),
+-]
++RULESET_ENV = "CMA_RULESET"
++RULESETS = ("v1",)
++DEFAULT_RULESET = "v1"
++DIRECTIONS = ("in", "out", "any")
++TABLE_KEYS = {"id", "frozen", "rules"}
++RULE_KEYS = {"id", "pattern", "direction", "category"}
++
++
++class RulesetError(ValueError):
++    """The rule table is unknown or malformed; nothing should be categorised with it."""
++
++
++@dataclass(frozen=True)
++class Rule:
++    id: str
++    pattern: re.Pattern[str]
++    direction: Direction
++    category: Category
++
++
++@dataclass(frozen=True)
++class Ruleset:
++    id: str
++    sha256: str
++    rules: tuple[Rule, ...]
++
++
++def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> None:
++    if not isinstance(data, dict):
++        raise RulesetError(f"{source}: not a mapping")
++    problems: list[str] = []
++    if "id" not in data:
++        problems.append("missing id")
++    elif data["id"] != expected_id:
++        problems.append(f"id {data['id']!r} does not match the file ({expected_id!r})")
++    if not isinstance(data.get("frozen"), bool):
++        problems.append("frozen must be true or false")
++    for key in sorted(set(data) - TABLE_KEYS, key=repr):
++        problems.append(f"unknown key {key!r}")
++    rules = data.get("rules")
++    if not isinstance(rules, list) or not rules:
++        raise RulesetError(f"{source}: " + "; ".join([*problems, "no rules"]))
++    categories = {c.value for c in Category}
++    seen: set[str] = set()
++    for i, r in enumerate(rules, start=1):
++        where = f"rule {i} ({r.get('id', '?') if isinstance(r, dict) else '?'})"
++        if not isinstance(r, dict):
++            problems.append(f"{where}: not a mapping")
++            continue
++        for key in sorted(RULE_KEYS - set(r)):
++            problems.append(f"{where}: missing {key}")
++        for key in sorted(set(r) - RULE_KEYS, key=repr):
++            problems.append(f"{where}: unknown key {key!r}")
++        # Every field is a string. Checking the type first means a list, a mapping, a
++        # number or null is reported here, not raised later as a TypeError.
++        for key in sorted(RULE_KEYS & set(r)):
++            if not isinstance(r[key], str) or not r[key]:
++                problems.append(f"{where}: {key} {r[key]!r} is not a non-empty string")
++        if isinstance(r.get("id"), str):
++            if r["id"] in seen:
++                problems.append(f"{where}: duplicate id")
++            seen.add(r["id"])
++        if isinstance(r.get("direction"), str) and r["direction"] not in DIRECTIONS:
++            problems.append(f"{where}: direction {r['direction']!r} is not one of {list(DIRECTIONS)}")
++        if isinstance(r.get("category"), str) and r["category"] not in categories:
++            problems.append(f"{where}: category {r['category']!r} is not a category")
++        if isinstance(r.get("pattern"), str) and r["pattern"]:
++            try:
++                re.compile(r["pattern"])
++            except re.error as e:
++                problems.append(f"{where}: pattern does not compile ({e})")
++    if problems:
++        raise RulesetError(f"{source}: " + "; ".join(problems))
++
++
++def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) -> Ruleset:
++    validate_ruleset(data, expected_id, source)
++    assert isinstance(data, dict)
++    return Ruleset(
++        id=data["id"],
++        sha256=sha256,
++        rules=tuple(
++            Rule(r["id"], re.compile(r["pattern"]), r["direction"], Category(r["category"]))
++            for r in data["rules"]
++        ),
++    )
++
++
++def _table_text(ruleset_id: str) -> str:
++    return resources.files("cma.rules").joinpath(f"{ruleset_id}.yaml").read_text()
++
++
++@lru_cache
++def load_ruleset(ruleset_id: str) -> Ruleset:
++    """A packaged table by id. Only ids in RULESETS load, so an id never names a path."""
++    if ruleset_id not in RULESETS:
++        raise RulesetError(f"unknown ruleset {ruleset_id!r}; known: {', '.join(RULESETS)}")
++    source = f"cma/rules/{ruleset_id}.yaml"
++    text = _table_text(ruleset_id)
++    try:
++        data = yaml.safe_load(text)
++    except yaml.YAMLError as e:
++        raise RulesetError(f"{source}: not valid YAML ({e.__class__.__name__})") from e
++    return ruleset_from_data(data, ruleset_id, source, hashlib.sha256(text.encode()).hexdigest())
++
++
++def active_ruleset() -> Ruleset:
++    """The table CMA_RULESET names, or the default when it is unset."""
++    chosen = os.environ.get(RULESET_ENV) or DEFAULT_RULESET
++    try:
++        return load_ruleset(chosen)
++    except RulesetError as e:
++        raise RulesetError(f"{RULESET_ENV}={chosen!r}: {e}") from e
+ 
+ 
+ def _direction_ok(direction: Direction, amount: float) -> bool:
+@@ -56,11 +163,11 @@ def _direction_ok(direction: Direction, amount: float) -> bool:
+     return amount > 0 if direction == "in" else amount < 0
+ 
+ 
+-def categorise_one(t: Transaction) -> Category:
++def categorise_one(t: Transaction, ruleset: Ruleset | None = None) -> Category:
+     desc = t.description.upper()
+-    for pattern, direction, cat in RULES:
+-        if pattern.search(desc) and _direction_ok(direction, t.amount):
+-            return cat
++    for rule in (ruleset or active_ruleset()).rules:
++        if rule.pattern.search(desc) and _direction_ok(rule.direction, t.amount):
++            return rule.category
+     if t.amount < 0:
+         return Category.SUPPLIER
+     return Category.OTHER
+@@ -128,8 +235,9 @@ def unmark_round_trips(statement: Statement) -> Statement:
+     return statement
+ 
+ 
+-def categorise(statement: Statement) -> Statement:
++def categorise(statement: Statement, ruleset: Ruleset | None = None) -> Statement:
++    ruleset = ruleset or active_ruleset()
+     for t in statement.transactions:
+-        t.category = categorise_one(t)
++        t.category = categorise_one(t, ruleset)
+         t.reverses = None
+     return link_reversals(unmark_round_trips(statement))
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index 671ee6d..c8614fe 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -16,6 +16,7 @@ from rich.table import Table
+ 
+ from . import guard as grd
+ from . import synth
++from .categorise import RulesetError
+ from .graph import build, evidence_record, sqlite_checkpointer
+ from .ingest import StatementError
+ from .llm import get_llm
+@@ -83,7 +84,7 @@ def run(
+                  "vat_stagger": vat_stagger},
+                 cfg,
+             )
+-        except (StatementError, PolicyError) as e:
++        except (StatementError, PolicyError, RulesetError) as e:
+             console.print(f"[red]Refused.[/red] {e}")
+             raise typer.Exit(code=2) from e
+         except Exception as e:  # the model provider: network, auth, cut-off reply
+diff --git a/src/cma/graph.py b/src/cma/graph.py
+index 75afc36..4be73c3 100644
+--- a/src/cma/graph.py
++++ b/src/cma/graph.py
+@@ -97,6 +97,7 @@ class MemoState(TypedDict, total=False):
+     model: str
+     statement_sha256: str
+     statement: Statement
++    ruleset: dict  # {"id", "sha256"} of the categorisation table used (CMA_RULESET)
+     metrics: list[Metric]
+     policy: PolicyResult
+     memo: str
+@@ -163,6 +164,17 @@ def appendix(s: MemoState) -> str:
+     return "\n".join(lines)
+ 
+ 
++def _ruleset_used(s: MemoState) -> dict:
++    """The categorisation table the memo's figures came from. A review drafted before the
++    table moved to data (a pending checkpoint from an older version) has none in its state;
++    its lines were categorised by the table now packaged as v1, frozen and proved identical
++    (tests/test_rules.py, P7), so it is named as v1 and marked as inferred, never null."""
++    if s.get("ruleset"):
++        return s["ruleset"]
++    v1 = cat.load_ruleset("v1")
++    return {"id": v1.id, "sha256": v1.sha256, "inferred": "pre-ruleset checkpoint"}
++
++
+ def evidence_record(s: MemoState) -> dict:
+     """Everything needed to audit the memo later, as plain JSON."""
+     return {
+@@ -171,6 +183,7 @@ def evidence_record(s: MemoState) -> dict:
+                       "transactions": len(s["statement"].transactions)},
+         "model": s.get("model"),
+         "vat_stagger": s.get("vat_stagger"),
++        "ruleset": _ruleset_used(s),
+         "metrics": [m.model_dump() for m in s["metrics"]],
+         "policy": s["policy"].model_dump(mode="json"),
+         "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
+@@ -198,7 +211,9 @@ def build(llm: LLM | None = None, checkpointer=None):
+         }
+ 
+     def categorise(s: MemoState) -> MemoState:
+-        return {"statement": cat.categorise(s["statement"])}
++        rules = cat.active_ruleset()
++        return {"statement": cat.categorise(s["statement"], rules),
++                "ruleset": {"id": rules.id, "sha256": rules.sha256}}
+ 
+     def metrics(s: MemoState) -> MemoState:
+         return {"metrics": met.compute(s["statement"], vat_stagger=s.get("vat_stagger"))}
+diff --git a/src/cma/metrics.py b/src/cma/metrics.py
+index 9d3c4f7..4d8951b 100644
+--- a/src/cma/metrics.py
++++ b/src/cma/metrics.py
+@@ -286,7 +286,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
+                method="Payments to HMRC PAYE/NI, net of any returned unpaid.", evidence=[t.id for t in paye]),
+         Metric(id="M15", name="Top customer share of transfer revenue", value=top_share, unit="pct",
+                method=top_note, evidence=[t.id for t in transfers]),
+-        Metric(id="M16", name="Unclassified inflows", value=unclassified_share, unit="pct",
++        Metric(id="M16", name="Non-trading money in (share)", value=unclassified_share, unit="pct",
+                method="Share of money in (excluding loan drawdowns and returned DDs) that is not revenue; it is left out of operating cash flow.",
+                evidence=[t.id for t in inflows]),
+     ]
+diff --git a/src/cma/rules/__init__.py b/src/cma/rules/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/src/cma/rules/v1.yaml b/src/cma/rules/v1.yaml
+new file mode 100644
+index 0000000..032cad2
+--- /dev/null
++++ b/src/cma/rules/v1.yaml
+@@ -0,0 +1,60 @@
++# Built-in categorisation table v1: the table as it was in src/cma/categorise.py before
++# it moved to data. Frozen: CMA_RULESET=v1 must reproduce today's categories and M1-M16
++# exactly (tests/test_rules.py, P7). Change a newer table, never this one.
++#
++# Rules are ordered; the first whose pattern matches the upper-cased description and
++# whose direction matches the sign of the amount wins. No match: a debit is supplier,
++# a credit is other. Patterns are Python regular expressions; direction is in, out or
++# any; category is a cma.models.Category value.
++id: v1
++frozen: true
++rules:
++  - id: returned_dd
++    pattern: '^UNPAID DD\b'
++    direction: any
++    category: returned_dd
++  - id: bank_fees
++    pattern: 'UNPAID ITEM FEE|ACCOUNT FEES|BANK CHARGES'
++    direction: out
++    category: bank_fees
++  - id: hmrc_vat
++    pattern: 'HMRC VAT'
++    direction: out
++    category: hmrc_vat
++  - id: hmrc_paye
++    pattern: 'HMRC PAYE'
++    direction: out
++    category: hmrc_paye
++  - id: payroll
++    pattern: 'PAYROLL|SALARIES'
++    direction: out
++    category: payroll
++  - id: rent
++    pattern: '\bRENT\b'
++    direction: out
++    category: rent
++  - id: loan_repayment
++    pattern: '\bLOAN\b|FINANCE\b'
++    direction: out
++    category: loan_repayment
++  - id: loan_drawdown
++    pattern: '\bLOAN\b|FINANCE\b'
++    direction: in
++    category: loan_drawdown
++  - id: owner_drawings
++    pattern: 'OWNER DRAWINGS|DIRECTOR DRAWINGS|DIVIDEND'
++    direction: out
++    category: owner_drawings
++  # Money in that is never trading income, whatever reference it carries.
++  - id: non_trading_in
++    pattern: '\bDIRECTOR\b|\bOWNER\b|\bCAPITAL\b|\bSHAREHOLDER\b|\bHMRC\b|\bREFUND\b|\bREVERSAL\b|\bSAVINGS\b|\bPOT TRANSFER\b|\bINTEREST\b|\bGRANT\b|\bINSURANCE CLAIM\b'
++    direction: in
++    category: other
++  - id: card_settlement
++    pattern: 'ACQUIRER SETTLEMENT|PAYGATE PAYOUT|CARD SETTLEMENT'
++    direction: in
++    category: revenue_card_settlement
++  - id: invoice_transfer
++    pattern: '\bINV(?:OICE)?\s*[-#:]?\s*\d+'
++    direction: in
++    category: revenue_transfer
+diff --git a/tests/golden/p7_tools/capture_plugin.py b/tests/golden/p7_tools/capture_plugin.py
+new file mode 100644
+index 0000000..3831416
+--- /dev/null
++++ b/tests/golden/p7_tools/capture_plugin.py
+@@ -0,0 +1,46 @@
++"""pytest plugin: record every statement the test suite computes metrics on, and every
++(description, amount) the categoriser sees, using the code as it is *before* T01.
++Output: $CAPTURE_OUT (JSON)."""
++
++import atexit
++import json
++import os
++
++from cma import categorise, metrics
++
++STATEMENTS: dict[str, dict] = {}
++LINES: dict[tuple[str, float], str] = {}
++
++_orig_compute = metrics.compute
++_orig_one = categorise.categorise_one
++
++
++def _one(t):
++    c = _orig_one(t)
++    LINES[(t.description, t.amount)] = c.value
++    return c
++
++
++def _compute(statement, vat_stagger=None):
++    out = _orig_compute(statement, vat_stagger=vat_stagger)
++    s = statement.model_dump(mode="json")
++    key = json.dumps([s, vat_stagger], sort_keys=True)
++    STATEMENTS[key] = {"statement": s, "vat_stagger": vat_stagger}
++    return out
++
++
++categorise.categorise_one = _one
++metrics.compute = _compute
++
++
++@atexit.register
++def _dump():
++    path = os.environ["CAPTURE_OUT"]
++    with open(path, "w") as f:
++        json.dump(
++            {
++                "statements": list(STATEMENTS.values()),
++                "lines": [{"description": d, "amount": a, "category": c} for (d, a), c in LINES.items()],
++            },
++            f,
++        )
+diff --git a/tests/golden/p7_tools/make_p7_baseline.py b/tests/golden/p7_tools/make_p7_baseline.py
+new file mode 100644
+index 0000000..c8d6999
+--- /dev/null
++++ b/tests/golden/p7_tools/make_p7_baseline.py
+@@ -0,0 +1,136 @@
++"""Build tests/golden/p7_v1_baseline.json from the code as it was BEFORE T01.
++
++Run from a checkout of the pre-change commit (fd7b64c), with the capture produced by
++capture_plugin.py (every statement the test suite computes metrics on, and every
++line the categoriser sees). Install the durable extra so no capturing test is skipped.
++From the worktree root, with S a scratch directory:
++
++    git archive fd7b64c | tar -x -C $S/old
++    cd $S/old && PYTHONDONTWRITEBYTECODE=1 CAPTURE_OUT=$S/capture.json \
++        PYTHONPATH=$S/old/src:<worktree>/tests/golden/p7_tools python -m pytest -q -p capture_plugin
++    MADE_AT=fd7b64c PYTHONPATH=$S/old/src python <worktree>/tests/golden/p7_tools/make_p7_baseline.py \
++        $S/capture.json $S/p7.json
++    # then compare $S/p7.json with gunzip < tests/golden/p7_v1_baseline.json.gz: every key equal
++
++The committed golden's "_about" text predates this folder and says the tools were in
++the T01 run directory; they are these files, unchanged apart from this docstring.
++"""
++
++import hashlib
++import json
++import os
++import re
++import subprocess
++import sys
++import tempfile
++from datetime import date
++from pathlib import Path
++
++from cma import categorise, ingest, metrics, synth
++from cma.models import Statement
++
++SYNTH_CASES = [
++    *[(a, p, 7, 12, "2026-09-30") for a in synth.ARCHETYPES for p in synth.PROFILES],
++    ("cafe", "stretched", 3, 12, "2026-09-30"),
++    ("cafe", "good", 7, 3, "2026-09-30"),
++    ("cafe", "poor", 7, 4, "2026-09-30"),
++    ("cafe", "poor", 7, 2, "2026-09-30"),
++]
++EXAMPLES = ["examples/cafe_stretched.csv"]
++
++
++def sha(text: str) -> str:
++    return hashlib.sha256(text.encode()).hexdigest()
++
++
++def categories_sha(s: Statement) -> str:
++    return sha("\n".join(f"{t.id}|{t.category.value}|{t.reverses or ''}" for t in s.transactions))
++
++
++def metric_rows(s: Statement, vat_stagger):
++    return [
++        {"id": m.id, "unit": m.unit, "value": m.value, "evidence_n": len(m.evidence),
++         "evidence_sha256": sha("\n".join(m.evidence))}
++        for m in metrics.compute(s, vat_stagger=vat_stagger)
++    ]
++
++
++def rows_key(s: dict, vat_stagger) -> str:
++    """A statement's lines AND the VAT stagger its figures were computed with: the same
++    lines under another stagger give another M13, so they are another case (verify-01
++    found the stagger-3 run of a fixture dropped because only its lines were compared)."""
++    return json.dumps([[[t["id"], t["date"], t["description"], t["amount"], t["balance"]]
++                        for t in s["transactions"]], vat_stagger])
++
++
++def main(capture_path: str, out_path: str) -> None:
++    cap = json.loads(Path(capture_path).read_text())
++    out: dict = {
++        "_about": (
++            "P7 baseline: M1-M16 (id, unit, value, evidence) and categories, computed by the "
++            "categoriser as it was before the rule table moved to src/cma/rules/ (T01). "
++            "Under CMA_RULESET=v1 every entry must be reproduced exactly. Built by "
++            "make_p7_baseline.py in the T01 run directory; do not regenerate from newer code."
++        ),
++        "made_at_commit": os.environ.get("MADE_AT") or subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip(),
++        "synthetic": [], "examples": [], "fixtures": [], "lines": [],
++    }
++    seen_rows: set[str] = set()
++    for archetype, profile, seed, months, end in SYNTH_CASES:
++        rows, truth = synth.generate(archetype, profile, seed=seed, months=months, end=date.fromisoformat(end))
++        with tempfile.TemporaryDirectory() as d:
++            csv_path, _ = synth.write(rows, truth, Path(d), stem="s")
++            raw = csv_path.read_bytes()
++            s = categorise.categorise(ingest.load_csv(csv_path))
++        for v in (None, truth.vat_stagger):
++            seen_rows.add(rows_key(s.model_dump(mode="json"), v))
++        out["synthetic"].append({
++            "archetype": archetype, "profile": profile, "seed": seed, "months": months, "end": end,
++            "csv_sha256": hashlib.sha256(raw).hexdigest(),
++            "categories_sha256": categories_sha(s),
++            "metrics": {str(v): metric_rows(s, v) for v in (None, truth.vat_stagger)},
++        })
++    for p in EXAMPLES:
++        s = categorise.categorise(ingest.load_csv(Path(p)))
++        for v in (None, 3):
++            seen_rows.add(rows_key(s.model_dump(mode="json"), v))
++        out["examples"].append({
++            "path": p, "file_sha256": hashlib.sha256(Path(p).read_bytes()).hexdigest(),
++            "categories_sha256": categories_sha(s),
++            "metrics": {"None": metric_rows(s, None), "3": metric_rows(s, 3)},
++        })
++    skipped = 0
++    for rec in cap["statements"]:
++        sd = rec["statement"]
++        if rows_key(sd, rec["vat_stagger"]) in seen_rows:
++            continue
++        given = Statement(**sd)
++        fresh = categorise.categorise(Statement(**sd))
++        if categories_sha(given) != categories_sha(fresh):
++            skipped += 1  # categories set by hand in the test; not the rule table's output
++            continue
++        seen_rows.add(rows_key(sd, rec["vat_stagger"]))
++        out["fixtures"].append({
++            "account_name": sd["account_name"],
++            "vat_stagger": rec["vat_stagger"],
++            "lines": [[t.id, str(t.date), t.description, t.amount, t.balance, t.category.value, t.reverses]
++                      for t in fresh.transactions],
++            "metrics": metric_rows(fresh, rec["vat_stagger"]),
++        })
++    # Lines the tests categorise one at a time, outside any statement above.
++    in_statements = {(t["description"], t["amount"]) for r in cap["statements"] for t in r["statement"]["transactions"]}
++    out["lines"] = sorted({(x["description"], x["amount"], x["category"]) for x in cap["lines"]
++                           if (x["description"], x["amount"]) not in in_statements})
++    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
++    # One fixture line, metric or synthetic case per text line: diffable, not bloated.
++    text = json.dumps(out, separators=(",", ":"))
++    text = re.sub(r'(\[\[|\},\{|\],\[|"(?:synthetic|examples|fixtures|lines)":)', lambda m: m.group(0)[:-1] + "\n" + m.group(0)[-1] if m.group(0)[-1] in "[{" else m.group(0) + "\n", text)
++    Path(out_path).write_text(text + "\n")
++    import cma
++    print(f"cma from {cma.__file__}")
++    print(f"synthetic={len(out['synthetic'])} examples={len(out['examples'])} "
++          f"fixtures={len(out['fixtures'])} hand_categorised_skipped={skipped} lines={len(out['lines'])}")
++
++
++if __name__ == "__main__":
++    main(sys.argv[1], sys.argv[2])
+diff --git a/tests/golden/p7_v1_baseline.json.gz b/tests/golden/p7_v1_baseline.json.gz
+new file mode 100644
+index 0000000..80a95a1
+Binary files /dev/null and b/tests/golden/p7_v1_baseline.json.gz differ
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index 39614cc..5664bba 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -49,6 +49,23 @@ def test_written_memo_carries_its_evidence(tmp_path):
+     assert record["vat_stagger"] == 3 and record["guard"]["grounded"] is True
+ 
+ 
++def test_unknown_cma_ruleset_is_refused_not_blamed_on_the_model(tmp_path, monkeypatch):
++    # T01: exit 4 means the model failed; a bad CMA_RULESET is a refusal (exit 2).
++    monkeypatch.setenv("CMA_RULESET", "v9")
++    r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A"])
++    assert r.exit_code == 2, r.output
++    assert "Refused." in r.output and "CMA_RULESET" in r.output and "model call failed" not in r.output
++
++
++def test_written_evidence_records_the_ruleset(tmp_path, monkeypatch):
++    monkeypatch.delenv("CMA_RULESET", raising=False)
++    out = tmp_path / "memo.md"
++    r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A", "--out", str(out)])
++    assert r.exit_code == 0, r.output
++    record = json.loads((tmp_path / "memo.evidence.json").read_text())
++    assert record["ruleset"]["id"] == "v1" and len(record["ruleset"]["sha256"]) == 64
++
++
+ def test_whitespace_reviewer_is_refused(tmp_path):
+     r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "   "])
+     assert r.exit_code == 2
+diff --git a/tests/test_rules.py b/tests/test_rules.py
+new file mode 100644
+index 0000000..5377aec
+--- /dev/null
++++ b/tests/test_rules.py
+@@ -0,0 +1,383 @@
++"""Rule tables as packaged data (R54, R10, P7).
++
++The built-in table lives in src/cma/rules/<id>.yaml, is validated on load like the
++policy, and carries an id and a hash. CMA_RULESET chooses the table. v1 is the table
++as it was before it moved out of code, frozen: tests/golden/p7_v1_baseline.json.gz holds
++M1-M16 and every category computed by that code on every committed synthetic case,
++example and test fixture, and v1 must reproduce all of it exactly.
++
++The baseline is rebuilt from the pre-change commit with the tools in
++tests/golden/p7_tools/ (commands in make_p7_baseline.py's docstring); a rebuild must
++equal the committed file on every key.
++"""
++
++import gzip
++import hashlib
++import json
++import random
++import re
++from datetime import date
++from importlib import resources
++from pathlib import Path
++
++import pytest
++import yaml
++
++from cma import categorise, ingest, metrics, synth
++from cma.categorise import RulesetError, active_ruleset, load_ruleset, validate_ruleset
++from cma.models import Category, Statement, Transaction
++
++GOLDEN = Path(__file__).parent / "golden" / "p7_v1_baseline.json.gz"
++
++
++def _sha(text: str) -> str:
++    return hashlib.sha256(text.encode()).hexdigest()
++
++
++# --- the table as data -------------------------------------------------------------
++
++
++def test_v1_is_packaged_with_an_id_and_the_hash_of_its_file():
++    text = resources.files("cma.rules").joinpath("v1.yaml").read_text()
++    rs = load_ruleset("v1")
++    assert rs.id == "v1"
++    assert rs.sha256 == _sha(text)
++    assert rs.rules and all(r.id for r in rs.rules)
++
++
++def test_v1_is_marked_frozen():
++    assert yaml.safe_load(resources.files("cma.rules").joinpath("v1.yaml").read_text())["frozen"] is True
++
++
++GOOD_RULE = {"id": "card", "pattern": "CARD SETTLEMENT", "direction": "in", "category": "revenue_card_settlement"}
++
++
++@pytest.mark.parametrize("bad, match", [
++    ("- a list", "not a mapping"),
++    ({"id": "v1", "frozen": True, "rules": []}, "no rules"),
++    ({"frozen": True, "rules": [GOOD_RULE]}, "missing id"),
++    ({"id": "v2", "frozen": True, "rules": [GOOD_RULE]}, "id 'v2' does not match"),
++    ({"id": "v1", "rules": [GOOD_RULE]}, "frozen"),
++    ({"id": "v1", "frozen": True, "rules": [{**GOOD_RULE, "direction": "sideways"}]}, "direction"),
++    ({"id": "v1", "frozen": True, "rules": [{**GOOD_RULE, "category": "lottery"}]}, "category 'lottery'"),
++    ({"id": "v1", "frozen": True, "rules": [{**GOOD_RULE, "pattern": "("}]}, "pattern does not compile"),
++    ({"id": "v1", "frozen": True, "rules": [GOOD_RULE, GOOD_RULE]}, "duplicate id"),
++    ({"id": "v1", "frozen": True, "rules": [{k: v for k, v in GOOD_RULE.items() if k != "pattern"}]}, "missing pattern"),
++    ({"id": "v1", "frozen": True, "rules": [{**GOOD_RULE, "colour": "red"}]}, "unknown key"),
++])
++def test_a_malformed_table_is_refused_naming_the_problem(bad, match):
++    with pytest.raises(RulesetError, match=match):
++        validate_ruleset(bad, expected_id="v1", source="v1.yaml")
++
++
++# A field of the wrong YAML type (a list, a mapping, a number, null) is refused as a
++# malformed table, never raised as a TypeError that the CLI would blame on the model.
++@pytest.mark.parametrize("field", ["id", "pattern", "direction", "category"])
++@pytest.mark.parametrize("value", [["returned_dd"], {"a": 1}, 7, None, True])
++def test_a_rule_field_of_the_wrong_type_is_refused(field, value):
++    bad = {"id": "v1", "frozen": True, "rules": [{**GOOD_RULE, field: value}, GOOD_RULE | {"id": "b"}]}
++    with pytest.raises(RulesetError, match=f"rule 1 .*{field}"):
++        validate_ruleset(bad, expected_id="v1", source="v1.yaml")
++
++
++@pytest.mark.parametrize("bad", [
++    {"id": ["v1"], "frozen": True, "rules": [GOOD_RULE]},
++    {"id": "v1", "frozen": True, "rules": [GOOD_RULE], ("a", "b"): 1},
++    {"id": "v1", "frozen": True, "rules": {"card": GOOD_RULE}},
++    {"id": "v1", "frozen": True, "rules": ["card"]},
++])
++def test_a_table_field_of_the_wrong_type_is_refused(bad):
++    with pytest.raises(RulesetError):
++        validate_ruleset(bad, expected_id="v1", source="v1.yaml")
++
++
++@pytest.fixture
++def packaged_table(monkeypatch):
++    """Replace the packaged v1.yaml text, as a damaged install would."""
++    def use(text: str):
++        monkeypatch.setattr(categorise, "_table_text", lambda ruleset_id: text)
++        load_ruleset.cache_clear()
++    yield use
++    load_ruleset.cache_clear()
++
++
++def test_a_damaged_packaged_table_is_refused_on_load(packaged_table):
++    text = resources.files("cma.rules").joinpath("v1.yaml").read_text()
++    packaged_table(text.replace("category: returned_dd", "category: [returned_dd]", 1))
++    with pytest.raises(RulesetError, match=r"cma/rules/v1.yaml: rule 1 \(returned_dd\): category"):
++        load_ruleset("v1")
++    packaged_table("id: v1\nrules: [\n")
++    with pytest.raises(RulesetError, match="not valid YAML"):
++        load_ruleset("v1")
++
++
++@pytest.mark.parametrize("old, new", [
++    ("category: returned_dd", "category: [returned_dd]"),
++    ("- id: returned_dd", "- id: [returned_dd]"),
++    ("direction: any", "direction: {any: 1}"),
++])
++def test_cma_run_refuses_a_damaged_table_rather_than_blaming_the_model(tmp_path, monkeypatch, packaged_table, old, new):
++    from typer.testing import CliRunner
++
++    from cma.cli import app
++
++    text = resources.files("cma.rules").joinpath("v1.yaml").read_text()
++    packaged_table(text.replace(old, new, 1))
++    monkeypatch.setenv("CMA_RULESET", "v1")
++    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
++    csv_path, _ = synth.write(rows, truth, tmp_path)
++    r = CliRunner().invoke(app, ["run", str(csv_path), "--yes", "--reviewer", "A"])
++    assert r.exit_code == 2, r.output
++    assert "Refused." in r.output and "rule 1" in r.output and "model call failed" not in r.output
++
++
++def test_an_unknown_ruleset_is_refused_naming_the_known_ones():
++    with pytest.raises(RulesetError, match=r"v9.*v1"):
++        load_ruleset("v9")
++
++
++def test_a_ruleset_id_cannot_name_a_path():
++    with pytest.raises(RulesetError):
++        load_ruleset("../policies/uk_sme_default")
++
++
++# --- CMA_RULESET chooses the table -----------------------------------------------------
++
++
++def test_cma_ruleset_chooses_the_table(monkeypatch):
++    monkeypatch.setenv("CMA_RULESET", "v1")
++    assert active_ruleset().id == "v1"
++    monkeypatch.setenv("CMA_RULESET", "v9")
++    with pytest.raises(RulesetError, match="CMA_RULESET"):
++        active_ruleset()
++    with pytest.raises(RulesetError):
++        categorise.categorise_one(Transaction(id="T", date=date(2026, 1, 1), description="X", amount=1.0, balance=1.0))
++
++
++def test_unset_cma_ruleset_uses_the_default(monkeypatch):
++    monkeypatch.delenv("CMA_RULESET", raising=False)
++    assert active_ruleset().id == categorise.DEFAULT_RULESET
++
++
++def test_the_categoriser_uses_the_table_it_is_given():
++    """A rule added to a table changes the category; the code holds no table of its own."""
++    v1 = load_ruleset("v1")
++    data = yaml.safe_load(resources.files("cma.rules").joinpath("v1.yaml").read_text())
++    data["rules"].insert(0, {"id": "test_cash", "pattern": "CASH PAID IN", "direction": "in", "category": "loan_drawdown"})
++    other = categorise.ruleset_from_data(data, expected_id="v1", source="test", sha256="x")
++    t = Transaction(id="T", date=date(2026, 1, 1), description="CASH PAID IN", amount=50.0, balance=50.0)
++    assert categorise.categorise_one(t, v1) == Category.OTHER
++    assert categorise.categorise_one(t, other) == Category.LOAN_DRAWDOWN
++
++
++# --- R54: the evidence records the ruleset --------------------------------------------------
++
++
++def test_evidence_records_the_ruleset(tmp_path, monkeypatch):
++    from langgraph.types import Command
++
++    from cma.graph import build, evidence_record
++    from cma.llm import FakeLLM
++
++    monkeypatch.setenv("CMA_RULESET", "v1")
++    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
++    csv_path, _ = synth.write(rows, truth, tmp_path)
++    graph = build(FakeLLM())
++    cfg = {"configurable": {"thread_id": "rules-evidence"}}
++    graph.invoke({"statement_path": str(csv_path)}, cfg)
++    graph.invoke(Command(resume={"approved": False, "reviewer": "A. Analyst", "notes": "test"}), cfg)
++    record = evidence_record(graph.get_state(cfg).values)
++    assert record["ruleset"] == {"id": "v1", "sha256": load_ruleset("v1").sha256}
++
++
++def test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1(tmp_path, monkeypatch):
++    """A review left pending in a checkpoint written before T01 has no ruleset in its state.
++    Its lines were categorised by the table that is now v1 (P7), so the evidence written on
++    resume names v1 and its hash, and says it was inferred, never null. CMA_RULESET at
++    resume time does not change it: the categories were fixed when the memo was drafted."""
++    from langgraph.types import Command
++
++    from cma.graph import build, evidence_record
++    from cma.llm import FakeLLM
++
++    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
++    csv_path, _ = synth.write(rows, truth, tmp_path)
++    graph = build(FakeLLM())
++    cfg = {"configurable": {"thread_id": "legacy"}}
++    graph.invoke({"statement_path": str(csv_path)}, cfg)
++    graph.invoke(Command(resume={"approved": True, "reviewer": "A. Analyst"}), cfg)
++    legacy = {k: v for k, v in graph.get_state(cfg).values.items() if k != "ruleset"}
++    monkeypatch.setenv("CMA_RULESET", "v9")
++    assert evidence_record(legacy)["ruleset"] == {
++        "id": "v1", "sha256": load_ruleset("v1").sha256, "inferred": "pre-ruleset checkpoint"}
++    assert evidence_record({**legacy, "ruleset": None})["ruleset"]["id"] == "v1"
++
++
++# --- R10: M16 keeps its id, unit and value, and its name says what it measures ------------
++
++
++def test_m16_is_named_as_non_trading_money_in(v1):
++    path = Path(__file__).parents[1] / "examples" / "cafe_stretched.csv"
++    m16 = next(m for m in metrics.compute(categorise.categorise(ingest.load_csv(path))) if m.id == "M16")
++    assert m16.name == "Non-trading money in (share)"
++    assert m16.unit == "pct"
++
++
++# --- P7 under v1: identical to the code before the move, no exceptions ---------------------
++
++
++def _golden() -> dict:
++    return json.loads(gzip.decompress(GOLDEN.read_bytes()))
++
++
++def _categories_sha(s: Statement) -> str:
++    return _sha("\n".join(f"{t.id}|{t.category.value}|{t.reverses or ''}" for t in s.transactions))
++
++
++def _metric_rows(s: Statement, vat_stagger):
++    return [
++        {"id": m.id, "unit": m.unit, "value": m.value, "evidence_n": len(m.evidence),
++         "evidence_sha256": _sha("\n".join(m.evidence))}
++        for m in metrics.compute(s, vat_stagger=vat_stagger)
++        if int(m.id[1:]) <= 16
++    ]
++
++
++def _stagger(key: str):
++    return None if key == "None" else int(key)
++
++
++@pytest.fixture
++def v1(monkeypatch):
++    monkeypatch.setenv("CMA_RULESET", "v1")
++
++
++@pytest.mark.dual_run
++def test_p7_golden_covers_every_case():
++    g = _golden()
++    combos = {(c["archetype"], c["profile"]) for c in g["synthetic"]}
++    assert combos >= {(a, p) for a in synth.ARCHETYPES for p in synth.PROFILES}
++    assert [e["path"] for e in g["examples"]] == ["examples/cafe_stretched.csv"]
++    assert len(g["fixtures"]) >= 37 and g["lines"]
++    # The same lines under another VAT stagger are another case (M13 differs); the
++    # stagger-3 run of the on-time stagger-1 VAT year is the regression case for that.
++    by_lines: dict[str, set] = {}
++    for f in g["fixtures"]:
++        by_lines.setdefault(json.dumps([line[:5] for line in f["lines"]]), set()).add(f["vat_stagger"])
++    assert any({1, 3} <= staggers for staggers in by_lines.values())
++
++
++@pytest.mark.dual_run
++@pytest.mark.parametrize("case", _golden()["synthetic"], ids=lambda c: f"{c['archetype']}-{c['profile']}-s{c['seed']}-m{c['months']}")
++def test_p7_v1_synthetic_cases_match_the_baseline(case, v1, tmp_path):
++    rows, truth = synth.generate(case["archetype"], case["profile"], seed=case["seed"], months=case["months"],
++                                 end=date.fromisoformat(case["end"]))
++    csv_path, _ = synth.write(rows, truth, tmp_path, stem="s")
++    assert hashlib.sha256(csv_path.read_bytes()).hexdigest() == case["csv_sha256"], "generator drifted"
++    s = categorise.categorise(ingest.load_csv(csv_path))
++    assert _categories_sha(s) == case["categories_sha256"]
++    for key, expected in case["metrics"].items():
++        assert _metric_rows(s, _stagger(key)) == expected
++
++
++@pytest.mark.dual_run
++@pytest.mark.parametrize("case", _golden()["examples"], ids=lambda c: c["path"])
++def test_p7_v1_committed_examples_match_the_baseline(case, v1):
++    path = Path(__file__).parents[1] / case["path"]
++    assert hashlib.sha256(path.read_bytes()).hexdigest() == case["file_sha256"]
++    s = categorise.categorise(ingest.load_csv(path))
++    assert _categories_sha(s) == case["categories_sha256"]
++    for key, expected in case["metrics"].items():
++        assert _metric_rows(s, _stagger(key)) == expected
++
++
++@pytest.mark.dual_run
++@pytest.mark.parametrize("case", _golden()["fixtures"], ids=lambda c: f"fixture-{len(c['lines'])}-lines")
++def test_p7_v1_test_fixtures_match_the_baseline(case, v1):
++    s = Statement(account_name=case["account_name"], transactions=[
++        Transaction(id=i, date=date.fromisoformat(d), description=desc, amount=a, balance=b)
++        for i, d, desc, a, b, _, _ in case["lines"]
++    ])
++    s = categorise.categorise(s)
++    assert [[t.category.value, t.reverses] for t in s.transactions] == [[c, r] for *_, c, r in case["lines"]]
++    assert _metric_rows(s, case["vat_stagger"]) == case["metrics"]
++
++
++@pytest.mark.dual_run
++def test_p7_v1_single_lines_match_the_baseline(v1):
++    got = [
++        [d, a, categorise.categorise_one(Transaction(id="T", date=date(2026, 1, 1), description=d, amount=a, balance=0.0)).value]
++        for d, a, _ in _golden()["lines"]
++    ]
++    assert got == _golden()["lines"]
++
++
++# --- Dual run: the table as code before the move vs v1.yaml ----------------------------
++# Copied verbatim from src/cma/categorise.py at fd7b64c (the last commit before T01) as an
++# independent oracle. Never edit it: it is the "before" side of P7.
++
++_OLD_NON_TRADING_IN = re.compile(
++    r"\bDIRECTOR\b|\bOWNER\b|\bCAPITAL\b|\bSHAREHOLDER\b|\bHMRC\b|\bREFUND\b|\bREVERSAL\b"
++    r"|\bSAVINGS\b|\bPOT TRANSFER\b|\bINTEREST\b|\bGRANT\b|\bINSURANCE CLAIM\b"
++)
++_OLD_RULES = [
++    (re.compile(r"^UNPAID DD\b"), "any", Category.RETURNED_DD),
++    (re.compile(r"UNPAID ITEM FEE|ACCOUNT FEES|BANK CHARGES"), "out", Category.BANK_FEES),
++    (re.compile(r"HMRC VAT"), "out", Category.HMRC_VAT),
++    (re.compile(r"HMRC PAYE"), "out", Category.HMRC_PAYE),
++    (re.compile(r"PAYROLL|SALARIES"), "out", Category.PAYROLL),
++    (re.compile(r"\bRENT\b"), "out", Category.RENT),
++    (re.compile(r"\bLOAN\b|FINANCE\b"), "out", Category.LOAN_REPAYMENT),
++    (re.compile(r"\bLOAN\b|FINANCE\b"), "in", Category.LOAN_DRAWDOWN),
++    (re.compile(r"OWNER DRAWINGS|DIRECTOR DRAWINGS|DIVIDEND"), "out", Category.OWNER_DRAWINGS),
++    (_OLD_NON_TRADING_IN, "in", Category.OTHER),
++    (re.compile(r"ACQUIRER SETTLEMENT|PAYGATE PAYOUT|CARD SETTLEMENT"), "in", Category.REVENUE_CARD),
++    (re.compile(r"\bINV(?:OICE)?\s*[-#:]?\s*\d+"), "in", Category.REVENUE_TRANSFER),
++]
++
++
++def _old_categorise_one(description: str, amount: float) -> Category:
++    desc = description.upper()
++    for pattern, direction, cat in _OLD_RULES:
++        ok = True if direction == "any" else (amount > 0 if direction == "in" else amount < 0)
++        if pattern.search(desc) and ok:
++            return cat
++    return Category.SUPPLIER if amount < 0 else Category.OTHER
++
++
++@pytest.mark.dual_run
++def test_dual_run_v1_yaml_is_the_old_rule_list():
++    v1 = load_ruleset("v1")
++    assert [(r.pattern.pattern, r.direction, r.category) for r in v1.rules] == \
++        [(p.pattern, d, c) for p, d, c in _OLD_RULES]
++
++
++def _descriptions() -> list[str]:
++    g = _golden()
++    out = {d for d, _, _ in g["lines"]}
++    out |= {line[2] for f in g["fixtures"] for line in f["lines"]}
++    examples = Path(__file__).parents[1] / "examples" / "cafe_stretched.csv"
++    out |= {t.description for t in ingest.load_csv(examples).transactions}
++    return sorted(out)
++
++
++@pytest.mark.dual_run
++def test_dual_run_every_known_and_fuzzed_description_categorises_the_same(v1):
++    """Every description in the baseline and the example, plus random descriptions built
++    from every word the rules mention (and near misses), in both directions and at zero."""
++    words = sorted({w for p, _, _ in _OLD_RULES for w in re.findall(r"[A-Z]{2,}", p.pattern)})
++    words += ["INV1234", "INVOICE 99", "INV-7", "INV#12", "UNPAID", "DD", "CO", "LTD", "PAYMENT",
++              "TFR", "FROM", "TO", "XFINANCE", "LOANS", "RENTAL", "INVOICES", "INV", "#", "-", ":"]
++    rng = random.Random(7)
++    samples = [(d, a) for d in _descriptions() for a in (-12.5, 0.0, 12.5)]
++    for _ in range(20_000):
++        d = " ".join(rng.choice(words) for _ in range(rng.randint(1, 5)))
++        samples.append((d.lower() if rng.random() < 0.1 else d, rng.choice((-1.0, 0.0, 1.0)) * rng.randint(1, 9999) / 100))
++    ruleset = load_ruleset("v1")
++    differ = [
++        (d, a) for d, a in samples
++        if categorise.categorise_one(Transaction(id="T", date=date(2026, 1, 1), description=d, amount=a, balance=0.0), ruleset)
++        != _old_categorise_one(d, a)
++    ]
++    assert not differ, differ[:5]
++    assert len(samples) > 20_000

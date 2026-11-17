@@ -1,0 +1,118 @@
+```json
+{
+  "criteria": [
+    {
+      "id": "R54",
+      "tier": "adversarial",
+      "check": "The ordered entries in src/cma/rules/v1.yaml:12 match fd7b64c, and src/cma/categorise.py:151 selects the table. src/cma/graph.py:213 carries the selected id and hash into evidence at line 186. specified:3 passed the source-tree checks. No runner result covers clean-wheel loading or a real SQLite resume across versions. The loader also accepts duplicate YAML keys, and a failed legacy ruleset lookup can leave a completed review without evidence. I traced repeat submission and concurrent review handling at src/cma/cli.py:139 and :224, and authorization and data scope at src/cma/categorise.py:140 and src/cma/mcp_server.py:74. The ruleset selection adds no caller-controlled file path, endpoint, or tenant query.",
+      "result": "not_proven",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R10",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:289 changes only the M16 name to Non-trading money in (share). The metric ids, units and calculations are unchanged. I compared the rule order, patterns, signs and fallback with fd7b64c and traced the unchanged reversal and round-trip passes at src/cma/categorise.py:238. The new path does no amount, currency, date or timezone conversion. dual_run:7 ran the metric comparisons at tests/test_rules.py:273–309 and the negative, zero and positive amount comparisons at line 362.",
+      "result": "pass",
+      "artifact": "dual_run-7.log"
+    },
+    {
+      "id": "P7",
+      "tier": "adversarial",
+      "check": "dual_run:7 ran all 55 selected cases. tests/test_rules.py:273–309 compares v1 with the committed golden and lines 348–383 compare the rule list and matcher. I inspected the golden and confirmed it contains 13 synthetic configurations, one example and 37 fixture records, including the VAT stagger-3 variant. No runner result independently rebuilds the historical golden, so the replay and complete fixture coverage claims remain unproven. The contracts and invariants logs each show zero tests ran.",
+      "result": "not_proven",
+      "artifact": "dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 145,
+      "criterion": "R54",
+      "claim": "The validation claim misses duplicate YAML mapping keys. safe_load keeps the last value, so the validator never sees the duplicate and can accept changed categorisation under the frozen v1 id.",
+      "repro": "In a scratch install, append an indented category: supplier directly after category: revenue_card_settlement in the card_settlement rule. Start a fresh process with CMA_RULESET=v1 and categorise a positive CARD SETTLEMENT line. The YAML loads and the line becomes supplier instead of revenue_card_settlement, with no RulesetError."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 213,
+      "criterion": "R54",
+      "claim": "The partial-failure proof covers fresh runs only. On a legacy resume, the new v1 lookup in src/cma/graph.py:174 can fail after the review decision is committed and the memo is written. The review has no evidence and cannot be resumed through the CLI.",
+      "repro": "Create a pending SQLite review under fd7b64c. In a scratch install of the new version, damage v1.yaml by changing the first rule's category to a YAML list. Approve the pending review with cma resume and --out. The markdown is written before RulesetError is raised. Restore the YAML and retry with a fresh --out. src/cma/cli.py:114 refuses because the review is no longer pending."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 143,
+      "criterion": "R54",
+      "claim": "A missing packaged table escapes as FileNotFoundError and is reported by cma run as a model failure with exit 4. The damaged-table tests cover malformed content and leave this resource-read path untested.",
+      "repro": "Remove cma/rules/v1.yaml from a scratch install and invoke CMA_RULESET=v1 cma run examples/cafe_stretched.csv --yes --reviewer A. The resource read occurs outside the exception handler and reaches src/cma/cli.py:90."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 148,
+      "criterion": "R54",
+      "claim": "The recorded digest hashes decoded, newline-normalized text. The test at tests/test_rules.py:38 repeats that operation and does not prove the claimed file-byte SHA-256.",
+      "repro": "In a scratch install, replace the YAML's LF line endings with CRLF and compare load_ruleset('v1').sha256 in a fresh process with sha256sum on that file. The loader reports the original LF digest."
+    },
+    {
+      "severity": "minor",
+      "file": ".github/workflows/ci.yml",
+      "line": 37,
+      "criterion": "R54",
+      "claim": "The claimed wheel proof command cannot produce its reported output. It imports categorise as c, then evaluates the unbound name cma in cma.__file__. No wheel result appears in the runner rows.",
+      "repro": "In a clean wheel venv outside the repo, run the claimed python -c snippet. Its print call raises NameError. To prove the claim, have the runner execute the CI wheel step with import cma added to the snippet and compare the installed YAML's digest with the source YAML's digest."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/golden/p7_tools/make_p7_baseline.py",
+      "line": 5,
+      "criterion": "P7",
+      "claim": "The historical replay claim has producer output only. The 55-case runner log proves comparison with the checked-in golden and does not prove an independent replay. A replay that skips the durable tests also cannot establish that those tests contribute no distinct cases.",
+      "repro": "Have the runner execute the documented fd7b64c capture with the durable and MCP extras installed, run make_p7_baseline.py against that capture, compare every key to the committed golden, and record both the capture and comparison logs."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_cli.py",
+      "line": 76,
+      "criterion": "R54",
+      "claim": "The no-skips suite and the forward and reverse SQLite migration claims lack runner results. The supplied suite reports four skips. The legacy test at tests/test_rules.py:193 strips a key from in-memory state and does not open a checkpoint from another version.",
+      "repro": "Have the runner execute python -m pytest -q -p no:cacheprovider -rs with .[dev,durable,mcp,llm] installed. Separately exercise both fd7b64c-to-current and current-to-fd7b64c cma run/cma resume pairs with real SQLite files and assert the written evidence in each direction."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 70,
+      "criterion": "R54",
+      "claim": "The additive migration claim describes the optional state and evidence keys accurately, but its stated reason for no backfill is false. The durable CLI opens an existing SQLite checkpoint database, and the diff stat cited as proof does not inspect that path.",
+      "repro": "Inspect src/cma/cli.py:64 and src/cma/graph.py:62–74. Run with --checkpoint-db in a scratch environment with the durable extra to exercise this database path."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 11,
+      "criterion": "R54",
+      "claim": "The committed id and digest match the source table. The stronger claim that the example memo and evidence regenerate exactly after review-time normalization has no runner result. The eval log establishes grounding and generator truth checks.",
+      "repro": "Have the runner execute PYTHONPATH=src python -m cma.cli run examples/cafe_stretched.csv --vat-stagger 3 --yes --reviewer 'A. Analyst' --out \"$S/memo.md\", normalize the review time, and record the memo and parsed JSON comparisons."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 240,
+      "criterion": "R54",
+      "claim": "The failure-mode claim calls categorise pure, but it updates each input transaction's category and reversal reference in place. That behavior predates T01. The benchmark claim also has no runnable script or runner timing result, and the cache can invoke the loader more than once on simultaneous cold calls.",
+      "repro": "Keep a reference to an uncategorised transaction and call categorise(statement); the referenced transaction's category changes. To prove the timings, have the runner use identical 10,000-line inputs, explicitly identify both imported source roots, and record five trials for both categorise_one and categorise in both versions."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/golden/p7_tools/make_p7_baseline.py",
+      "line": 125,
+      "criterion": "P7",
+      "claim": "The producer's run-directory timestamp listing does not establish its separate claim that all Python invocations disabled bytecode and pytest cache writes. The supplied runner results do not audit the producer's commands.",
+      "repro": "Compare a runner-owned before-and-after filesystem snapshot for the hardener invocation and inspect its command and environment log for PYTHONDONTWRITEBYTECODE=1 and -p no:cacheprovider on the applicable commands."
+    }
+  ],
+  "verdict": "not_proven"
+}
+```

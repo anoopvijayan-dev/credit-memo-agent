@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 38,
+  "next_id": 39,
   "decisions": [
     {
       "id": "D1",
@@ -830,6 +830,26 @@
       "decided_at": "2026-11-16T17:51:08.536Z",
       "effect": "risk paths acknowledged",
       "created_at": "2026-11-16T17:39:34.726Z"
+    },
+    {
+      "id": "D38",
+      "type": "unblock",
+      "task": "T01",
+      "raised_by": null,
+      "context": "Task T01 \"Move the built-in rule table into packaged YAML under src/cma/rules/ (v1 frozen, validated on load, with id and hash); CMA_RULESET chooses the table; test: P7 under v1 equals today's M1-M16 on every fixture and synthetic case\" is blocked after 3 attempts. Last verdict fail: R54 not_proven (The ordered entries in src/cma/rules/v1.yaml:12 match fd7b64c, and src/cma/categorise.py:151 selects the table. src/cma/graph.py:213 carries the selected id and hash into evidence at line 186. specified:3 passed the source-tree checks. No runner result covers clean-wheel loading or a real SQLite resume across versions. The loader also accepts duplicate YAML keys, and a failed legacy ruleset lookup can leave a completed review without evidence. I traced repeat submission and concurrent review handling at src/cma/cli.py:139 and :224, and authorization and data scope at src/cma/categorise.py:140 and src/cma/mcp_server.py:74. The ruleset selection adds no caller-controlled file path, endpoint, or tenant query.); P7 not_proven (dual_run:7 ran all 55 selected cases. tests/test_rules.py:273–309 compares v1 with the committed golden and lines 348–383 compare the rule list and matcher. I inspected the golden and confirmed it contains 13 synthetic configurations, one example and 37 fixture records, including the VAT stagger-3 variant. No runner result independently rebuilds the historical golden, so the replay and complete fixture coverage claims remain unproven. The contracts and invariants logs each show zero tests ran.); major: The validation claim misses duplicate YAML mapping keys. safe_load keeps the last value, so the validator never sees the duplicate and can accept changed categorisation under the frozen v1 id. at src/cma/categorise.py:145; major: The partial-failure proof covers fresh runs only. On a legacy resume, the new v1 lookup in src/cma/graph.py:174 can fail after the review decision is committed and the memo is written. The review has no evidence and cannot be resumed through the CLI. at src/cma/cli.py:213; reviewer verdict not_proven",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-17T21:23:17.398Z"
     }
   ]
 }
