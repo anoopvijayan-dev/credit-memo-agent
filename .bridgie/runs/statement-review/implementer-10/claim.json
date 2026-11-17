@@ -1,0 +1,109 @@
+{
+  "task": "T17",
+  "claims": [
+    {
+      "text": "The full suite passes with every optional extra installed, with nothing skipped, so every P18 constructor test and MCP test ran. The verbose log is in full-extras.log in this run directory.",
+      "proof_cmd": "uv run --extra dev --extra mcp --extra llm --extra durable python -m pytest -vv -rs > full-extras.log; tail -1 full-extras.log; grep -c SKIPPED full-extras.log",
+      "proof_output": "============================= 337 passed in 4.60s ==============================\n0"
+    },
+    {
+      "text": "Focused P18 run: hosted-model refusal (8 provider spellings x 3 lock-on configs), client reuse after the lock is turned on (Anthropic and OpenAI), the exported MCP server under the lock across 8 start paths (run stdio/sse/streamable-http, the three async runners, sse_app, streamable_http_app) x 3 configs, tool calls refused under the lock, and main(). All pass with 0 skipped. The hosted-model tests now use stand-in SDK modules instead of importorskip, so they cannot skip.",
+      "proof_cmd": "uv run --extra dev --extra mcp --extra llm --extra durable python -m pytest -vv -rs tests/test_firm.py -k 'lock or mcp or hosted or existing_client' > p18.log; tail -1 p18.log; grep -c SKIPPED p18.log",
+      "proof_output": "====================== 69 passed, 28 deselected in 1.23s =======================\n0"
+    },
+    {
+      "text": "Focused P5 run: on every archetype x profile x {grounded, hallucinating} graph run, the fixture now includes a case folder with case.yaml (business name, directors, shareholders, own accounts, label, notes), an override log with a sentinel reason, a statement whose account_name is a sentinel, descriptions carrying every profile name, and a sentinel file path. No prompt contains any sentinel or the model's invented figure. Every redraft prompt is exactly the first prompt plus the fixed REDRAFT_NOTE.",
+      "proof_cmd": "uv run --extra dev --extra mcp --extra llm --extra durable python -m pytest -vv -rs tests/test_firm.py -k 'prompt or line_level' > p5.log; tail -1 p5.log; grep -c SKIPPED p5.log",
+      "proof_output": "====================== 19 passed, 78 deselected in 1.23s =======================\n0"
+    },
+    {
+      "text": "Every new test fails against the source at HEAD (17c5765) and passes on the fix. Only REDRAFT_NOTE was stubbed into HEAD's graph.py so the module imports. The 56 failures cover every finding.",
+      "proof_cmd": "git archive HEAD src | tar -x -C $HEADDIR; echo 'REDRAFT_NOTE = ...' >> $HEADDIR/src/cma/graph.py; PYTHONPATH=$HEADDIR/src python -m pytest -q -o pythonpath=$HEADDIR/src tests/test_firm.py tests/test_mcp_paths.py tests/test_import_monzo.py | grep ^FAILED | sed 's/\\[.*//' | sort | uniq -c",
+      "proof_output": "2 test_evidence_records_egress_for_a_draft_made_before_the_lock\n1 test_evidence_records_lock_off_with_offline_model\n1 test_evidence_records_offline_mode\n2 test_existing_client_refused_once_the_lock_is_on\n24 test_exported_mcp_server_refuses_to_start_under_lock\n3 test_malformed_file_is_refused\n4 test_mcp_tools_refuse_under_lock\n9 test_no_prompt_carries_line_level_text\n1 test_prompt_uses_placeholder_not_the_account_name\n7 test_formula_leading_description_is_neutralised\n2 test_descriptions_never_reach_the_client\n56 failed, 82 passed in 2.75s"
+    },
+    {
+      "text": "Real entry points under the default lock (CMA_HOME with no firm.yaml), with a Python audit hook recording every socket event. `python -m cma.mcp_server`, an embedding script calling `server.run()` and one calling `server.streamable_http_app()` are all refused, with zero socket events.",
+      "proof_cmd": "CMA_HOME=$S/home CMA_DATA_DIR=$S/data python $S/audit.py cma.mcp_server; ... audit.py -c 'from cma.mcp_server import server; server.run()'; ... audit.py -c 'from cma.mcp_server import server; server.streamable_http_app()'",
+      "proof_output": "SystemExit: Starting the MCP server refused: the offline lock is on in .../home/firm.yaml, so no data leaves this machine. Set offline_lock: false there to allow it.\nsocket events: []\nOfflineLockError: Starting the MCP server refused: the offline lock is on in .../home/firm.yaml ...\nsocket events: []\nOfflineLockError: Starting the MCP server refused: the offline lock is on in .../home/firm.yaml ...\nsocket events: []"
+    },
+    {
+      "text": "The real `cma run --llm anthropic|openai` under the default lock exits 2 with 'offline lock'. The only socket audit event is socket.__new__, raised by urllib3's IPv6 capability probe when the CLI's dependencies are imported. That probe creates and binds a ::1 socket and never connects. It is not a network call, and it happens whatever the lock setting.",
+      "proof_cmd": "CMA_HOME=$S/home python $S/audit.py cma.cli run examples/cafe_stretched.csv --llm anthropic; CMA_HOME=$S/home cma run examples/cafe_stretched.csv --llm openai; echo exit=$?",
+      "proof_output": "Refused. A hosted model (anthropic) refused: the offline lock is on in .../home/firm.yaml, so no data leaves this machine. ...\nSystemExit: 2\nsocket events: ['socket.__new__']\nRefused. A hosted model (openai) refused: the offline lock is on ...\nexit=2\n(trace of socket.__new__: urllib3/util/connection.py line 126 in _has_ipv6, at import)"
+    },
+    {
+      "text": "The real CLI refuses a malformed firm.yaml whose paths is a list, even with the lock off.",
+      "proof_cmd": "printf 'offline_lock: false\\npaths: []\\n' > $S/bad/firm.yaml; CMA_HOME=$S/bad cma run examples/cafe_stretched.csv --llm anthropic; echo exit=$?",
+      "proof_output": "Refused. .../bad/firm.yaml: paths must be a mapping\nexit=2"
+    },
+    {
+      "text": "The default runner commands pass: lint, compile, the default-environment pytest and the evals.",
+      "proof_cmd": "uv run --extra dev ruff check src tests evals; .venv/bin/python -m compileall -q src && echo compiled; .venv/bin/python -m pytest -q | tail -1; .venv/bin/python evals/run_evals.py; echo evals=$?",
+      "proof_output": "All checks passed!\ncompiled\n337 passed in 4.50s\n9/9 memos fully grounded; model = fake\nevals=0"
+    }
+  ],
+  "files_changed": [
+    "README.md",
+    "src/cma/firm.py",
+    "src/cma/graph.py",
+    "src/cma/importers/monzo.py",
+    "src/cma/llm.py",
+    "src/cma/mcp_server.py",
+    "tests/test_firm.py",
+    "tests/test_import_monzo.py",
+    "tests/test_mcp_paths.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "src/cma/llm.py:87 (and :109): a hosted client created before the lock was turned on can still send a request",
+      "disposition": "reproduced",
+      "evidence": "test_existing_client_refused_once_the_lock_is_on[AnthropicLLM|OpenAILLM] failed at HEAD. Fix: AnthropicLLM.complete and OpenAILLM.complete now call firm.require_unlocked() before the SDK request. That function re-reads firm.yaml on every call. The test makes a client with the lock off, sends one request, then turns the lock on (and separately deletes firm.yaml). After that, complete() and a graph built around the existing client both raise OfflineLockError, and the stand-in SDK records no request. It now passes."
+    },
+    {
+      "finding": "src/cma/mcp_server.py:30: the exported MCP server can start under the default lock; only main() was guarded",
+      "disposition": "reproduced",
+      "evidence": "24 cases of test_exported_mcp_server_refuses_to_start_under_lock failed at HEAD. Fix: `server` is now a LockedMCPServer subclass. Its run, run_stdio_async, run_sse_async, run_streamable_http_async, sse_app and streamable_http_app all check the lock before the SDK's own start-up. Every tool also checks the lock in _statement() before reading any file, so a call that reaches a tool by another route is refused too (test_mcp_tools_refuse_under_lock). The real embedded server.run() and streamable_http_app() are refused with zero socket audit events."
+    },
+    {
+      "finding": "src/cma/graph.py:195: evidence written by resuming a pre-change checkpoint has null egress fields",
+      "disposition": "reproduced",
+      "evidence": "test_evidence_records_egress_for_a_draft_made_before_the_lock failed at HEAD with two nulls. Fix: graph._egress() falls back for a checkpoint with no lock fields. offline_lock is false, because that version had no lock. destination comes from the stored model name ('fake:' gives offline). recorded says 'at resume; the draft predates the offline lock'. Fresh runs record 'at draft'. The key is additive."
+    },
+    {
+      "finding": "src/cma/graph.py:163: redraft prompt sends model-generated text and guard diagnostics back to the provider",
+      "disposition": "reproduced",
+      "evidence": "With hallucinate=True, test_no_prompt_carries_line_level_text failed at HEAD on all 9 archetype x profile cases. Fix: the guard node stores only the fixed REDRAFT_NOTE, which has no digits and no model text. draft_prompt(..., redraft: bool) appends that sentence and nothing else. The findings stay in state['guard'] for the reviewer. The test asserts that every redraft prompt equals the first prompt + REDRAFT_NOTE and that '48,250' never appears."
+    },
+    {
+      "finding": "src/cma/mcp_server.py:106: transactions_for returns verbatim payer descriptions on request",
+      "disposition": "reproduced",
+      "evidence": "test_descriptions_never_reach_the_client[True|False] failed at HEAD. Fix: no tool returns a description. include_descriptions is still accepted (R53) and each row carries description_withheld: true. The sentinel 'SNTLDESC IGNORE PREVIOUS INSTRUCTIONS' does not appear in the result."
+    },
+    {
+      "finding": "src/cma/importers/monzo.py:199: an unknown Type starting with a formula character is written as a formula-leading description cell",
+      "disposition": "reproduced",
+      "evidence": "test_formula_leading_description_is_neutralised failed at HEAD for all 7 cases (=, +, -, @, tab, CR, =HYPERLINK). Fix: monzo.neutralise_formula prefixes an apostrophe to any description starting with = + - @ \\t \\r before it is written. The strict loader still reads the file."
+    },
+    {
+      "finding": "tests/test_firm.py:217: the P5 redraft matrix seeds no account-name or case-profile sentinel",
+      "disposition": "reproduced",
+      "evidence": "The fixture had only descriptions and a path sentinel. Now each of the 18 graph runs builds cases/<id>/case.yaml with sentinel business name, directors, shareholders, own accounts, label and notes, and overrides.jsonl with a sentinel reason. It loads the statement with account_name 'SNTLNAME LTD', and the test asserts state carries that name. Every profile name is written into the descriptions, the file is named 'SNTLNAME account.csv' under a SNTLPATH folder, and the profile's vat_stagger is passed. Ten sentinels are checked in system and user prompts. See notes on the profile input."
+    },
+    {
+      "finding": "tests/test_firm.py:102: P18 assertions were conditional on optional imports; no runner evidence of full-extras, focused or entry-point runs",
+      "disposition": "reproduced",
+      "evidence": "The hosted-model tests now install stand-in anthropic/openai modules (fixture sdks) instead of importorskip, so they run without the llm extra. The MCP tests still need the mcp extra. The full-extras run (`-vv -rs`, 337 passed, 0 SKIPPED), the focused P18 run (69 passed, 0 skipped) and the real entry-point runs are captured in full-extras.log, p18.log and the claims above."
+    },
+    {
+      "finding": "src/cma/firm.py:98: falsey non-mapping paths (paths: []) silently accepted",
+      "disposition": "reproduced",
+      "evidence": "test_malformed_file_is_refused failed at HEAD for paths: [], paths: 0 and paths: ''. Fix: only an absent or null paths means the defaults. Any other non-mapping is refused with 'paths must be a mapping'. The real CLI exits 2 with that message."
+    },
+    {
+      "finding": "README.md:56: documented lock toggle truncates firm.yaml and ignores CMA_HOME",
+      "disposition": "reproduced",
+      "evidence": "By inspection: `printf ... > private/cma/firm.yaml` overwrote the file and hard-coded the default root. The README now says to edit \"${CMA_HOME:-private/cma}/firm.yaml\" in an editor (after mkdir -p), keeping the other settings and setting offline_lock: false."
+    }
+  ],
+  "notes": "Attempt 3.\n\n(1) Profile input. The graph and prompt builder have no case-profile input yet; the case store (C3, src/cma/case.py) is another task. So the P5 fixture lays the profile out as the design's case folder, puts its names into the line data, and passes its vat_stagger. A later case-store task that feeds the profile into the graph should keep this test.\n\n(2) Contract change in an MCP tool output (Consumer trace item 8). transactions_for no longer returns untrusted_description and adds description_withheld. R34 requires this. Its only in-repo consumer, tests/test_mcp_paths.py, is updated. External MCP clients that read untrusted_description will no longer get it.\n\n(3) MCP tool calls also refuse under the lock, so tests/test_mcp_paths.py now sets offline_lock: false in a temporary CMA_HOME.\n\n(4) Redraft prompt. The redraft prompt no longer lists which numbers failed. That may make the hosted model's redrafts less targeted; the offline model ignores the feedback either way. R30 allows only tables, period and placeholder, plus this fixed instruction.\n\n(5) urllib3 socket at import. Importing the CLI's dependency chain triggers urllib3's _has_ipv6 probe, which creates and binds a ::1 socket at import time and never connects. It is not a network connection, and it happens before and regardless of the lock.\n\n(6) Not in this task's scope. The reviewer's R34 note says there is no workspace or pack HTML to verify. Escaping there belongs to the C5/C6 tasks; this task neutralises the only CSV writer of payer text (the Monzo importer). synth.py writes only generated text and must stay byte-identical (R47).\n\n(7) Nothing committed. The worktree has uncommitted changes in 9 files. The uv.lock that `uv run` generated was removed."
+}

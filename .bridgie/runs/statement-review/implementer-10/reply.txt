@@ -1,0 +1,23 @@
+I've fixed all ten findings from the last verification. The full test suite now passes with every optional extra installed: 337 passed, none skipped. Each new test failed against the code before the fix (56 failures in all) and passes now. Nothing is committed, and nothing is marked done.
+
+**Offline lock (R29, P18)**
+- **Clients made before the lock:** Anthropic and OpenAI clients now re-read `firm.yaml` before every request, not only when the client is created. A client made while the lock was off sends nothing once the firm turns it on.
+- **Starting the MCP server another way:** the exported `server` now checks the lock on every way of starting it, not just `main()`. Every tool also refuses before reading a file while the lock is on.
+- **Real entry points:** I ran `python -m cma.mcp_server` and scripts calling `server.run()` and `streamable_http_app()` with a hook that records socket activity. All three are refused with no socket activity at all.
+- **`cma run --llm anthropic|openai`:** exits 2 with the offline-lock message. The only socket event is a library probe at import time that creates a local IPv6 socket and never connects; it happens whatever the lock setting.
+- **Resumed old reviews:** evidence written when resuming a review drafted before the lock existed now records where the data went instead of two nulls. A new `recorded` field says the value was inferred at resume.
+- **Malformed `firm.yaml`:** `paths: []`, `paths: 0` and `paths: ''` are now refused, even with the lock off.
+- **README:** the instruction for turning the lock off no longer overwrites `firm.yaml` and now follows `CMA_HOME`.
+
+**What the model and MCP clients see (R30, R34, P5)**
+- **Redrafts:** a redraft prompt is now exactly the first prompt plus one fixed sentence with no digits. The rejected draft and the grounding check's findings no longer go back to the model; the findings stay with the reviewer.
+- **P5 test:** across all 18 graph runs, the test now seeds ten sentinels: a case profile file, an override log, the account's real name, the profile's names inside the descriptions, and the file path. None reaches any prompt, and the model's invented figure is never sent back.
+- **MCP descriptions:** `transactions_for` never returns payer-written descriptions. It still accepts `include_descriptions`, and each row says the text was withheld.
+- **Monzo import:** a description starting with `= + - @`, a tab or a carriage return gets a leading apostrophe, so a spreadsheet won't read it as a formula.
+
+**Things to know**
+- **MCP output change:** `transactions_for` no longer returns the `untrusted_description` field. R34 requires this. The only in-repo consumer, `tests/test_mcp_paths.py`, is updated, but outside MCP clients that read that field will stop getting it.
+- **No case profile in the graph yet:** the graph has no way to receive a case profile until the case store task lands. The P5 test therefore lays the profile out as a case folder and puts its values into the statement data. That task should keep this test.
+- **Redraft quality:** a hosted model is no longer told which numbers failed, so its redrafts may be less targeted.
+
+claim.json is written to `/home/user/credit-memo-agent/.bridgie/runs/statement-review/implementer-10/claim.json` and validates against the schema. It has a proof for every claim and a disposition for every finding: all ten were reproduced. The test logs (`full-extras.log`, `p18.log`, `p5.log`, `red-against-head.log`, `evals.log`) are in the same folder.

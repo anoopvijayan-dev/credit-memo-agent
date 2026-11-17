@@ -1,0 +1,29 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.18, pytest-9.2.0, pluggy-1.7.0 -- /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T17/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T17
+configfile: pyproject.toml
+plugins: langsmith-0.15.0, anyio-4.16.0
+collecting ... collected 97 items / 78 deselected / 19 selected
+
+tests/test_firm.py::test_no_prompt_carries_line_level_text[False-good-cafe] PASSED [  5%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[False-good-trades] PASSED [ 10%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[False-good-ecommerce] PASSED [ 15%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[False-stretched-cafe] PASSED [ 21%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[False-stretched-trades] PASSED [ 26%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[False-stretched-ecommerce] PASSED [ 31%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[False-poor-cafe] PASSED [ 36%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[False-poor-trades] PASSED [ 42%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[False-poor-ecommerce] PASSED [ 47%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[True-good-cafe] PASSED [ 52%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[True-good-trades] PASSED [ 57%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[True-good-ecommerce] PASSED [ 63%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[True-stretched-cafe] PASSED [ 68%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[True-stretched-trades] PASSED [ 73%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[True-stretched-ecommerce] PASSED [ 78%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[True-poor-cafe] PASSED [ 84%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[True-poor-trades] PASSED [ 89%]
+tests/test_firm.py::test_no_prompt_carries_line_level_text[True-poor-ecommerce] PASSED [ 94%]
+tests/test_firm.py::test_prompt_uses_placeholder_not_the_account_name PASSED [100%]
+
+====================== 19 passed, 78 deselected in 1.23s =======================
