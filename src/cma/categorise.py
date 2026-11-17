@@ -6,10 +6,10 @@ money leaves and a drawdown when it arrives, and a drawdown is financing, not re
 or debt service. The model never overrides a rule match.
 
 The rule table is data, not code: src/cma/rules/<id>.yaml, validated on load like the
-policy, with an id and the hash of its file. CMA_RULESET chooses the table (default
-v1). v1 is the table as it was when it lived here, frozen, so CMA_RULESET=v1 always
-reproduces those categories. The matching passes below (reversals, round trips) stay
-in code.
+policy (a key repeated in a mapping is refused), with an id and the SHA-256 of the
+file's bytes. CMA_RULESET chooses the table (default v1). v1 is the table as it was
+when it lived here, frozen, so CMA_RULESET=v1 always reproduces those categories. The
+matching passes below (reversals, round trips) stay in code.
 
 Revenue is claimed narrowly. A card or gateway settlement is trading income. A bank
 transfer in is only counted as a customer payment when it carries an invoice
@@ -130,8 +130,28 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) 
     )
 
 
-def _table_text(ruleset_id: str) -> str:
-    return resources.files("cma.rules").joinpath(f"{ruleset_id}.yaml").read_text()
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """safe_load keeps the last of two equal keys, so a second `category:` inside a rule
+    would silently change it with nothing left for the validator to see. Refuse instead."""
+
+    def construct_mapping(self, node, deep=False):
+        seen: set = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            try:
+                duplicate = key in seen
+            except TypeError:  # an unhashable key; the base class reports it
+                continue
+            if duplicate:
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a mapping", node.start_mark,
+                    f"found duplicate key {key!r}", key_node.start_mark)
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+def _table_bytes(ruleset_id: str) -> bytes:
+    return resources.files("cma.rules").joinpath(f"{ruleset_id}.yaml").read_bytes()
 
 
 @lru_cache
@@ -140,12 +160,19 @@ def load_ruleset(ruleset_id: str) -> Ruleset:
     if ruleset_id not in RULESETS:
         raise RulesetError(f"unknown ruleset {ruleset_id!r}; known: {', '.join(RULESETS)}")
     source = f"cma/rules/{ruleset_id}.yaml"
-    text = _table_text(ruleset_id)
     try:
-        data = yaml.safe_load(text)
+        raw = _table_bytes(ruleset_id)
+    except OSError as e:
+        raise RulesetError(f"{source}: cannot be read from the installed package ({e.__class__.__name__})") from e
+    try:
+        data = yaml.load(raw.decode("utf-8"), Loader=_UniqueKeyLoader)
+    except UnicodeDecodeError as e:
+        raise RulesetError(f"{source}: not UTF-8 text") from e
     except yaml.YAMLError as e:
-        raise RulesetError(f"{source}: not valid YAML ({e.__class__.__name__})") from e
-    return ruleset_from_data(data, ruleset_id, source, hashlib.sha256(text.encode()).hexdigest())
+        problem = getattr(e, "problem", None) or e.__class__.__name__
+        raise RulesetError(f"{source}: not valid YAML ({problem})") from e
+    # The hash is of the file's bytes as installed, so it matches sha256sum on that file.
+    return ruleset_from_data(data, ruleset_id, source, hashlib.sha256(raw).hexdigest())
 
 
 def active_ruleset() -> Ruleset:

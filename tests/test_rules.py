@@ -38,10 +38,10 @@ def _sha(text: str) -> str:
 
 
 def test_v1_is_packaged_with_an_id_and_the_hash_of_its_file():
-    text = resources.files("cma.rules").joinpath("v1.yaml").read_text()
+    raw = resources.files("cma.rules").joinpath("v1.yaml").read_bytes()
     rs = load_ruleset("v1")
     assert rs.id == "v1"
-    assert rs.sha256 == _sha(text)
+    assert rs.sha256 == hashlib.sha256(raw).hexdigest()
     assert rs.rules and all(r.id for r in rs.rules)
 
 
@@ -93,9 +93,10 @@ def test_a_table_field_of_the_wrong_type_is_refused(bad):
 
 @pytest.fixture
 def packaged_table(monkeypatch):
-    """Replace the packaged v1.yaml text, as a damaged install would."""
-    def use(text: str):
-        monkeypatch.setattr(categorise, "_table_text", lambda ruleset_id: text)
+    """Replace the packaged v1.yaml bytes, as a damaged install would."""
+    def use(text: str | bytes):
+        raw = text.encode() if isinstance(text, str) else text
+        monkeypatch.setattr(categorise, "_table_bytes", lambda ruleset_id: raw)
         load_ruleset.cache_clear()
     yield use
     load_ruleset.cache_clear()
@@ -109,6 +110,71 @@ def test_a_damaged_packaged_table_is_refused_on_load(packaged_table):
     packaged_table("id: v1\nrules: [\n")
     with pytest.raises(RulesetError, match="not valid YAML"):
         load_ruleset("v1")
+
+
+def _v1_text() -> str:
+    return resources.files("cma.rules").joinpath("v1.yaml").read_text()
+
+
+@pytest.mark.parametrize("old, new, key", [
+    # A second category inside a rule: safe_load would keep the last one.
+    ("    category: revenue_card_settlement\n",
+     "    category: revenue_card_settlement\n    category: supplier\n", "category"),
+    # A second rules list at the top level would replace the whole table.
+    ("frozen: true\n", "frozen: true\nrules: []\n", "rules"),
+])
+def test_a_repeated_key_in_the_table_is_refused(packaged_table, monkeypatch, old, new, key):
+    text = _v1_text()
+    assert old in text
+    packaged_table(text.replace(old, new, 1))
+    with pytest.raises(RulesetError, match=rf"cma/rules/v1\.yaml: not valid YAML .*duplicate key '{key}'"):
+        load_ruleset("v1")
+    monkeypatch.setenv("CMA_RULESET", "v1")
+    line = Transaction(id="T1", date=date(2026, 1, 5), description="CARD SETTLEMENT ACME", amount=120.0, balance=120.0)
+    with pytest.raises(RulesetError):
+        categorise.categorise_one(line)
+
+
+def test_a_missing_packaged_table_is_refused_not_raised_as_an_os_error(monkeypatch):
+    def missing(ruleset_id):
+        raise FileNotFoundError(f"cma/rules/{ruleset_id}.yaml")
+    monkeypatch.setattr(categorise, "_table_bytes", missing)
+    load_ruleset.cache_clear()
+    try:
+        with pytest.raises(RulesetError, match=r"cma/rules/v1\.yaml: cannot be read from the installed package"):
+            load_ruleset("v1")
+    finally:
+        load_ruleset.cache_clear()
+
+
+def test_cma_run_refuses_a_missing_table_rather_than_blaming_the_model(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from cma.cli import app
+
+    def missing(ruleset_id):
+        raise FileNotFoundError(ruleset_id)
+    monkeypatch.setattr(categorise, "_table_bytes", missing)
+    load_ruleset.cache_clear()
+    monkeypatch.setenv("CMA_RULESET", "v1")
+    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
+    csv_path, _ = synth.write(rows, truth, tmp_path)
+    try:
+        r = CliRunner().invoke(app, ["run", str(csv_path), "--yes", "--reviewer", "A"])
+    finally:
+        load_ruleset.cache_clear()
+    assert r.exit_code == 2, r.output
+    assert "Refused." in r.output and "cannot be read" in r.output and "model call failed" not in r.output
+
+
+def test_the_hash_is_of_the_file_bytes_not_of_normalised_text(packaged_table):
+    lf = _v1_text().encode()
+    crlf = lf.replace(b"\n", b"\r\n")
+    packaged_table(crlf)
+    rs = load_ruleset("v1")
+    assert rs.sha256 == hashlib.sha256(crlf).hexdigest() != hashlib.sha256(lf).hexdigest()
+    assert [r.id for r in rs.rules] == [r.id for r in categorise.ruleset_from_data(
+        yaml.safe_load(lf), expected_id="v1", source="t", sha256="x").rules]
 
 
 @pytest.mark.parametrize("old, new", [
@@ -381,3 +447,64 @@ def test_dual_run_every_known_and_fuzzed_description_categorises_the_same(v1):
     ]
     assert not differ, differ[:5]
     assert len(samples) > 20_000
+
+
+# --- a review drafted before T01, resumed with a damaged table -------------------------
+
+
+@pytest.fixture
+def legacy_pending(tmp_path, monkeypatch):
+    """A review waiting for a decision whose state has no ruleset, as a checkpoint written
+    before T01 has. `cma resume` is driven through one shared in-memory saver, standing in
+    for the --checkpoint-db file (the sqlite extra is optional)."""
+    from contextlib import contextmanager
+
+    from cma import cli
+    from cma.graph import build, default_checkpointer
+    from cma.llm import FakeLLM
+
+    saver = default_checkpointer()
+
+    @contextmanager
+    def shared(path):
+        yield saver
+    monkeypatch.setattr(cli, "_checkpointer", shared)
+    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
+    csv_path, _ = synth.write(rows, truth, tmp_path)
+    graph = build(FakeLLM(), checkpointer=saver)
+    cfg = {"configurable": {"thread_id": "legacy"}}
+    graph.invoke({"statement_path": str(csv_path)}, cfg)
+    graph.update_state(cfg, {"ruleset": None})
+    graph.invoke(None, cfg)  # back to the review interrupt, as the stored review would be
+    snap = graph.get_state(cfg)
+    assert snap.interrupts and not snap.values.get("ruleset")
+    db = tmp_path / "reviews.db"
+    db.touch()
+    return graph, cfg, db
+
+
+def test_a_legacy_resume_with_a_damaged_table_is_refused_before_anything_is_recorded(
+        tmp_path, legacy_pending, packaged_table):
+    from typer.testing import CliRunner
+
+    from cma.cli import app
+
+    graph, cfg, db = legacy_pending
+    packaged_table(_v1_text().replace("category: returned_dd", "category: [returned_dd]", 1))
+    out = tmp_path / "memo.md"
+    r = CliRunner().invoke(app, ["resume", "legacy", "--checkpoint-db", str(db), "--reviewer", "C", "--out", str(out)],
+                           input="y\n\n")
+    assert r.exit_code == 2, r.output
+    assert "Refused, nothing recorded." in r.output and "rule 1" in r.output
+    assert not out.exists() and not (tmp_path / "memo.evidence.json").exists()
+    snap = graph.get_state(cfg)
+    assert snap.interrupts and snap.values.get("review") is None, "the review must still be pending"
+
+    # With the table repaired the same review resumes and its evidence names v1, inferred.
+    packaged_table(_v1_text())
+    r = CliRunner().invoke(app, ["resume", "legacy", "--checkpoint-db", str(db), "--reviewer", "C", "--out", str(out)],
+                           input="y\n\n")
+    assert r.exit_code == 0, r.output
+    record = json.loads((tmp_path / "memo.evidence.json").read_text())
+    assert record["ruleset"] == {"id": "v1", "sha256": load_ruleset("v1").sha256, "inferred": "pre-ruleset checkpoint"}
+    assert "APPROVED by C" in out.read_text()
