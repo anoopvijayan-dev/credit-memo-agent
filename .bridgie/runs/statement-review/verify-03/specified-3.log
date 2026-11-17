@@ -1,0 +1,38 @@
+.....................................................................F.. [ 23%]
+............s....sss.................................................... [ 47%]
+........................................................................ [ 71%]
+........................................................................ [ 95%]
+..............                                                           [100%]
+=================================== FAILURES ===================================
+_________________ test_the_lock_holds_against_another_process __________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-63/test_the_lock_holds_against_an0')
+
+    def test_the_lock_holds_against_another_process(tmp_path):
+        import subprocess
+        import sys
+    
+        log = _log(tmp_path, 1)
+        script = (
+            "import sys; from cma import case\n"
+            "try:\n"
+            "    case.CaseLog(sys.argv[1]).append('override', {}, expected=1)\n"
+            "except case.CaseLocked:\n"
+            "    sys.exit(3)\n"
+        )
+        with log.writer():
+            held = subprocess.run([sys.executable, "-c", script, str(log.path)], check=False)
+>       assert held.returncode == 3
+E       assert 1 == 3
+E        +  where 1 = CompletedProcess(args=['/usr/local/bin/python', '-c', "import sys; from cma import case\ntry:\n    case.CaseLog(sys.ar...eLocked:\n    sys.exit(3)\n", '/tmp/pytest-of-root/pytest-63/test_the_lock_holds_against_an0/log.jsonl'], returncode=1).returncode
+
+tests/test_case_log.py:313: AssertionError
+----------------------------- Captured stderr call -----------------------------
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import sys; from cma import case
+                ^^^^^^^^^^^^^^^^^^^^
+ImportError: cannot import name 'case' from 'cma' (/home/user/credit-memo-agent/src/cma/__init__.py)
+=========================== short test summary info ============================
+FAILED tests/test_case_log.py::test_the_lock_holds_against_another_process - ...
+1 failed, 297 passed, 4 skipped in 3.43s

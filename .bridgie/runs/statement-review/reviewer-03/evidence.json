@@ -1,0 +1,90 @@
+{
+  "criteria": [
+    {
+      "id": "R42",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:265 chains each generic append to the previous hash. No production caller records the seven required case actions. The position check at src/cma/case.py:225 rejects a sequential retry, but the per-instance lock depth at line 195 lets concurrent threads sharing an instance bypass mutual exclusion. Cross-process locking remains unproven because the runner's child failed during import.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R43",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:162 detects a broken link and line 168 detects a torn tail. Line 180 normally turns those results into a numbered refusal, but no production sign-off path calls it, and malformed values accepted by the decoder can raise before an entry number is reported.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:137 checks the content hash and lines 139–142 check sequence and predecessor. The decoder at line 127 collapses duplicate keys, allowing a changed pre-head entry to pass. The runner supplied no passing pytest row that ran the P15 cases in tests/test_case_log.py:125–188. From an environment importing this checkout, python -m pytest tests/test_case_log.py -q -k p15 -v would prove the existing cases and identify them in the log.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 214,
+      "criterion": "R42",
+      "claim": "The append primitive is unused by production code. The claim that R42 holds conflicts with the confirmed absence of callers.",
+      "repro": "Search src for CaseLog imports and construction outside case.py. Follow the existing statement import command in src/cma/cli.py:283. No path reaches CaseLog.append, so the import produces no chained case event."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 195,
+      "criterion": "R42",
+      "claim": "Two threads sharing a CaseLog instance can both pass the expected-position check and append entries with the same sequence and predecessor.",
+      "repro": "Share one CaseLog at position 0 between two threads. Pause the first at _write after it checks expected=0. Have the second append with expected=0 before releasing the first. Both enter the writer context and append sequence 1. verify() then reports entry 2 as bad."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 175,
+      "criterion": "R43",
+      "claim": "The claimed sign-off refusal has no production integration.",
+      "repro": "Trace require_intact and CaseLog usages under src. The only require_intact caller is the generic append method. There is no case sign-off handler that loads a broken or torn log and returns the numbered refusal."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 137,
+      "criterion": "R43",
+      "claim": "The verifier can raise an unnumbered ValueError on a malformed complete entry.",
+      "repro": "Create a three-entry log. Replace entry 2's data with {\"x\": 1e999} and keep its newline and old hash. json.loads converts the numeric token to infinity. The strict serializer raises ValueError during entry_hash before verify can report first_bad=2 or require_intact can raise CaseLogBroken."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 127,
+      "criterion": "P15",
+      "claim": "Duplicate JSON members can change a pre-head entry without triggering detection.",
+      "repro": "Create three entries. In entry 2, prepend a second event member with a different value before the original event member, leaving the original hash and all later bytes intact. json.loads keeps the final event value, the hash still matches, and verify().ok remains true."
+    },
+    {
+      "severity": "major",
+      "file": "tests/test_case_log.py",
+      "line": 312,
+      "criterion": "R42",
+      "claim": "The runner contradicts the full-suite pass claim, and its cross-process test never exercised the lock. Ruff passed independently.",
+      "repro": "Run python -m pytest -q under the runner configuration. The child interpreter imports cma from the base checkout and exits 1 before attempting an append, while the test expects 3. To prove the lock in this checkout, the runner would need a passing PYTHONPATH=src python -m pytest tests/test_case_log.py -q -k another_process -v run from the review root."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 225,
+      "criterion": "R42",
+      "claim": "The claimed benchmark timings are unproven, and timing verification plus append does not measure R52's full override-to-display operation.",
+      "repro": "Check the runner rows for .venv/bin/python scratchpad/perf.py. No row ran it, and the script is absent from the review checkout. The benchmark claim needs a passing runner row for that command with the script supplied. An R52 timing would also need to include recomputing and displaying the figures, indicators and policy check."
+    }
+  ],
+  "verdict": "not_proven",
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

@@ -216,12 +216,12 @@
         "P15"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "failed",
       "attempts": 1,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T12",
-      "evidence": null,
-      "escalation": null
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-03/evidence.json",
+      "escalation": "attempt 1 of 3 fail: R42 fail (src/cma/case.py:265 chains each generic append to the previous hash. No production caller records the seven required case actions. The position check at src/cma/case.py:225 rejects a sequential retry, but the per-instance lock depth at line 195 lets concurrent threads sharing an instance bypass mutual exclusion. Cross-process locking remains unproven because the runner's child failed during import.); R43 fail (src/cma/case.py:162 detects a broken link and line 168 detects a torn tail. Line 180 normally turns those results into a numbered refusal, but no production sign-off path calls it, and malformed values accepted by the decoder can raise before an entry number is reported.); P15 fail (src/cma/case.py:137 checks the content hash and lines 139–142 check sequence and predecessor. The decoder at line 127 collapses duplicate keys, allowing a changed pre-head entry to pass. The runner supplied no passing pytest row that ran the P15 cases in tests/test_case_log.py:125–188. From an environment importing this checkout, python -m pytest tests/test_case_log.py -q -k p15 -v would prove the existing cases and identify them in the log.); specified:3 fail (python -m pytest -q); major: The append primitive is unused by production code. The claim that R42 holds conflicts with the confirmed absence of callers. at src/cma/case.py:214; major: Two threads sharing a CaseLog instance can both pass the expected-position check and append entries with the same sequence and predecessor. at src/cma/case.py:195; major: The claimed sign-off refusal has no production integration. at src/cma/case.py:175; major: The verifier can raise an unnumbered ValueError on a malformed complete entry. at src/cma/case.py:137; major: Duplicate JSON members can change a pre-head entry without triggering detection. at src/cma/case.py:127; major: The runner contradicts the full-suite pass claim, and its cross-process test never exercised the lock. Ruff passed independently. at tests/test_case_log.py:312; reviewer verdict not_proven"
     },
     {
       "id": "T13",
