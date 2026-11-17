@@ -41,3 +41,6 @@ ignore = ["B008", "E501"]  # typer.Option defaults are the idiom; lines are wrap
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+  "dual_run: compares behaviour before and after a change (P7: the rule table as code at fd7b64c vs v1.yaml)",
+]

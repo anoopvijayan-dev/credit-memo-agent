@@ -15,7 +15,7 @@ Revenue is claimed narrowly. A card or gateway settlement is trading income. A b
 transfer in is only counted as a customer payment when it carries an invoice
 reference (INV1234, INVOICE 1234); anything else that arrives by transfer (the owner
 putting money back, a capital injection, a VAT repayment, a transfer from savings) is
-OTHER and shows up in M16, unclassified inflows, for a person to look at. That costs
+OTHER and shows up in M16, non-trading money in, for a person to look at. That costs
 some real revenue on statements without invoice references, but the alternative is
 that money the owner moves in and out counts as trading income and lifts debt cover.
 
@@ -79,13 +79,13 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
         problems.append(f"id {data['id']!r} does not match the file ({expected_id!r})")
     if not isinstance(data.get("frozen"), bool):
         problems.append("frozen must be true or false")
-    for key in sorted(set(data) - TABLE_KEYS):
+    for key in sorted(set(data) - TABLE_KEYS, key=repr):
         problems.append(f"unknown key {key!r}")
     rules = data.get("rules")
     if not isinstance(rules, list) or not rules:
         raise RulesetError(f"{source}: " + "; ".join([*problems, "no rules"]))
     categories = {c.value for c in Category}
-    seen: set[object] = set()
+    seen: set[str] = set()
     for i, r in enumerate(rules, start=1):
         where = f"rule {i} ({r.get('id', '?') if isinstance(r, dict) else '?'})"
         if not isinstance(r, dict):
@@ -93,20 +93,23 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
             continue
         for key in sorted(RULE_KEYS - set(r)):
             problems.append(f"{where}: missing {key}")
-        for key in sorted(set(r) - RULE_KEYS):
+        for key in sorted(set(r) - RULE_KEYS, key=repr):
             problems.append(f"{where}: unknown key {key!r}")
-        if "id" in r:
+        # Every field is a string. Checking the type first means a list, a mapping, a
+        # number or null is reported here, not raised later as a TypeError.
+        for key in sorted(RULE_KEYS & set(r)):
+            if not isinstance(r[key], str) or not r[key]:
+                problems.append(f"{where}: {key} {r[key]!r} is not a non-empty string")
+        if isinstance(r.get("id"), str):
             if r["id"] in seen:
                 problems.append(f"{where}: duplicate id")
             seen.add(r["id"])
-        if "direction" in r and r["direction"] not in DIRECTIONS:
+        if isinstance(r.get("direction"), str) and r["direction"] not in DIRECTIONS:
             problems.append(f"{where}: direction {r['direction']!r} is not one of {list(DIRECTIONS)}")
-        if "category" in r and r["category"] not in categories:
+        if isinstance(r.get("category"), str) and r["category"] not in categories:
             problems.append(f"{where}: category {r['category']!r} is not a category")
-        if "pattern" in r:
+        if isinstance(r.get("pattern"), str) and r["pattern"]:
             try:
-                if not isinstance(r["pattern"], str) or not r["pattern"]:
-                    raise re.error("not a non-empty string")
                 re.compile(r["pattern"])
             except re.error as e:
                 problems.append(f"{where}: pattern does not compile ({e})")
@@ -127,13 +130,17 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) 
     )
 
 
+def _table_text(ruleset_id: str) -> str:
+    return resources.files("cma.rules").joinpath(f"{ruleset_id}.yaml").read_text()
+
+
 @lru_cache
 def load_ruleset(ruleset_id: str) -> Ruleset:
     """A packaged table by id. Only ids in RULESETS load, so an id never names a path."""
     if ruleset_id not in RULESETS:
         raise RulesetError(f"unknown ruleset {ruleset_id!r}; known: {', '.join(RULESETS)}")
     source = f"cma/rules/{ruleset_id}.yaml"
-    text = resources.files("cma.rules").joinpath(f"{ruleset_id}.yaml").read_text()
+    text = _table_text(ruleset_id)
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as e:

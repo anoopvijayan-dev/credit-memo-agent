@@ -164,6 +164,17 @@ def appendix(s: MemoState) -> str:
     return "\n".join(lines)
 
 
+def _ruleset_used(s: MemoState) -> dict:
+    """The categorisation table the memo's figures came from. A review drafted before the
+    table moved to data (a pending checkpoint from an older version) has none in its state;
+    its lines were categorised by the table now packaged as v1, frozen and proved identical
+    (tests/test_rules.py, P7), so it is named as v1 and marked as inferred, never null."""
+    if s.get("ruleset"):
+        return s["ruleset"]
+    v1 = cat.load_ruleset("v1")
+    return {"id": v1.id, "sha256": v1.sha256, "inferred": "pre-ruleset checkpoint"}
+
+
 def evidence_record(s: MemoState) -> dict:
     """Everything needed to audit the memo later, as plain JSON."""
     return {
@@ -172,7 +183,7 @@ def evidence_record(s: MemoState) -> dict:
                       "transactions": len(s["statement"].transactions)},
         "model": s.get("model"),
         "vat_stagger": s.get("vat_stagger"),
-        "ruleset": s.get("ruleset"),
+        "ruleset": _ruleset_used(s),
         "metrics": [m.model_dump() for m in s["metrics"]],
         "policy": s["policy"].model_dump(mode="json"),
         "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
