@@ -1,0 +1,78 @@
+```json
+{
+  "criteria": [
+    {
+      "id": "R54",
+      "tier": "adversarial",
+      "check": "The ordered table at src/cma/rules/v1.yaml:12 matches fd7b64c. The environment selection and byte hash are at src/cma/categorise.py:158–184. src/cma/graph.py:188 and :215–218 record the selected id and hash. The source hash matches the example evidence. specified:3 ran the source-tree tests, including duplicate-key rejection and the simulated legacy resume. The runner did not exercise a clean wheel or a real cross-version SQLite resume. I traced repeat and concurrent submissions at src/cma/cli.py:78, :114 and :233–246. The existing check-then-resume and separate memo and evidence writes at :221–222 still permit races and partial output. The legacy lookup now runs before the decision at :181. The ruleset allow-list precedes resource lookup, and both MCP consumers still validate statement paths through CMA_DATA_DIR at src/cma/mcp_server.py:30–57 and :77–84. Missing resource packages and overflowing regex bounds escape the CLI refusal path.",
+      "result": "not_proven",
+      "artifact": null
+    },
+    {
+      "id": "R10",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:289 renames M16 to Non-trading money in (share) and retains its id, pct unit and value expression. The example memo and evidence reflect the rename, and no in-repository consumer uses the old label as a key. dual_run:7 checked metric ids, units and values against the committed golden. The matcher still uses the same positive, negative and zero comparisons at src/cma/categorise.py:186–200. Date parsing at src/cma/ingest.py:100 and GBP calculations are unchanged. Preservation across every fixture depends on the historical coverage check in P7.",
+      "result": "not_proven",
+      "artifact": null
+    },
+    {
+      "id": "P7",
+      "tier": "adversarial",
+      "check": "dual_run:7 ran all 55 selected tests. tests/test_rules.py:338–380 compares the committed synthetic, example, fixture and single-line records, and :415–449 checks table identity and matcher equivalence, including zero and both signs. The coverage check at :322–333 checks fixture count and selected cases. The runner did not execute the historical capture and regeneration needed to establish that the golden covers every historical case. contracts:4 and invariants:5 each selected zero tests.",
+      "result": "not_proven",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 165,
+      "criterion": "R54",
+      "claim": "The missing-table refusal only handles a missing YAML file when the resource package is still importable. If the whole rules package is missing, ModuleNotFoundError escapes and a fresh run misreports it as a model failure.",
+      "repro": "In a disposable install, remove the entire cma/rules directory and run CMA_RULESET=v1 cma run examples/cafe_stretched.csv --yes --reviewer A. resources.files raises ModuleNotFoundError, which reaches src/cma/cli.py:90 and produces exit 4 instead of exit 2."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 114,
+      "criterion": "R54",
+      "claim": "The regex validator catches re.error only. An oversized repetition raises OverflowError and bypasses the claimed bad-table refusal.",
+      "repro": "In a disposable install, set a v1.yaml rule's pattern to 'A{4294967296}' and run CMA_RULESET=v1 cma run examples/cafe_stretched.csv --yes --reviewer A. The regex compiler raises OverflowError, and the CLI reports a model failure with exit 4."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/golden/p7_tools/make_p7_baseline.py",
+      "line": 4,
+      "criterion": "P7",
+      "claim": "The historical replay and complete fixture coverage claims have no runner result. The passing dual-run compares against the committed golden and never rebuilds it from the historical implementation.",
+      "repro": "With the durable extra installed, archive fd7b64c into a scratch checkout and run its suite with CAPTURE_OUT set and python -m pytest -q -p capture_plugin. Run make_p7_baseline.py against that capture with the old src on PYTHONPATH and MADE_AT=fd7b64c, then compare every key except _about with the committed gzip JSON. Record the capture, regeneration and comparison in a runner tier."
+    },
+    {
+      "severity": "minor",
+      "file": ".github/workflows/ci.yml",
+      "line": 33,
+      "criterion": "R54",
+      "claim": "The clean-wheel claim cites a manual result. The source-tree test does not establish what the built wheel contains.",
+      "repro": "Run the workflow commands at lines 32–40 as a runner tier. Build the wheel, install it in a fresh virtual environment, and load v1 from outside the checkout while checking its hash against sha256sum of the source file."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules.py",
+      "line": 456,
+      "criterion": "R54",
+      "claim": "The cross-version SQLite resume claim has no matching runner result. The legacy-resume test uses a current graph and an in-memory saver with the ruleset field cleared. The durable no-skip suite claim is also unproven because specified:3 logged four skips.",
+      "repro": "With the durable extra installed, run python -m pytest -q -rs in a runner tier. In a separate runner check, create a pending SQLite review with cma run --checkpoint-db under fd7b64c, resume it under HEAD with a damaged v1.yaml, and assert exit 2, a pending review and no output files. Restore the table, resume the same review and assert exit 0 and inferred v1 evidence."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules.py",
+      "line": 121,
+      "criterion": "R54",
+      "claim": "The runner tested the shipped code. It did not substantiate the two claimed mutation results or the before-and-after performance measurements.",
+      "repro": "In separate scratch copies, substitute safe_load and run python -m pytest tests/test_rules.py -k repeated_key -v, then remove pre-decision ruleset resolution and run python -m pytest tests/test_rules.py -k legacy_resume -v. Record both expected failures in runner logs. Run the same timeit benchmark with 5 repeats of 20 categorisations of the example statement under fd7b64c and HEAD to substantiate the performance claim."
+    }
+  ],
+  "verdict": "not_proven"
+}
+```

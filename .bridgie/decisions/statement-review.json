@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 39,
+  "next_id": 40,
   "decisions": [
     {
       "id": "D1",
@@ -850,6 +850,26 @@
       "decided_at": "2026-11-17T21:26:43.714Z",
       "effect": "task T01 gets one more attempt",
       "created_at": "2026-11-17T21:23:17.398Z"
+    },
+    {
+      "id": "D39",
+      "type": "unblock",
+      "task": "T01",
+      "raised_by": null,
+      "context": "Task T01 \"Move the built-in rule table into packaged YAML under src/cma/rules/ (v1 frozen, validated on load, with id and hash); CMA_RULESET chooses the table; test: P7 under v1 equals today's M1-M16 on every fixture and synthetic case\" is blocked after 4 attempts. Last verdict not_proven: R54 not_proven (The ordered table at src/cma/rules/v1.yaml:12 matches fd7b64c. The environment selection and byte hash are at src/cma/categorise.py:158–184. src/cma/graph.py:188 and :215–218 record the selected id and hash. The source hash matches the example evidence. specified:3 ran the source-tree tests, including duplicate-key rejection and the simulated legacy resume. The runner did not exercise a clean wheel or a real cross-version SQLite resume. I traced repeat and concurrent submissions at src/cma/cli.py:78, :114 and :233–246. The existing check-then-resume and separate memo and evidence writes at :221–222 still permit races and partial output. The legacy lookup now runs before the decision at :181. The ruleset allow-list precedes resource lookup, and both MCP consumers still validate statement paths through CMA_DATA_DIR at src/cma/mcp_server.py:30–57 and :77–84. Missing resource packages and overflowing regex bounds escape the CLI refusal path.); R10 not_proven (src/cma/metrics.py:289 renames M16 to Non-trading money in (share) and retains its id, pct unit and value expression. The example memo and evidence reflect the rename, and no in-repository consumer uses the old label as a key. dual_run:7 checked metric ids, units and values against the committed golden. The matcher still uses the same positive, negative and zero comparisons at src/cma/categorise.py:186–200. Date parsing at src/cma/ingest.py:100 and GBP calculations are unchanged. Preservation across every fixture depends on the historical coverage check in P7.); P7 not_proven (dual_run:7 ran all 55 selected tests. tests/test_rules.py:338–380 compares the committed synthetic, example, fixture and single-line records, and :415–449 checks table identity and matcher equivalence, including zero and both signs. The coverage check at :322–333 checks fixture count and selected cases. The runner did not execute the historical capture and regeneration needed to establish that the golden covers every historical case. contracts:4 and invariants:5 each selected zero tests.); reviewer verdict not_proven",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-17T21:35:30.419Z"
     }
   ]
 }
