@@ -1,0 +1,64 @@
+{
+  "task": "T02",
+  "claims": [
+    {
+      "text": "Main finding (R53): with the 'durable' extra installed, the full suite passes with 0 skips. Both old-checkpoint resume tests pass by name: the SQLite end-to-end test through `cma run` and `cma resume`, and the in-memory one. The reviewer saw 245 passed and 5 skipped because langgraph-checkpoint-sqlite was not installed. This run installed it (3.1.3, from the existing optional extra in pyproject.toml) into a venv in the run directory. The full log is in pytest-durable.log.",
+      "proof_cmd": "cd worktree && $RUN/venv/bin/python -m pytest -rA -p no:cacheprovider -q > $RUN/pytest-durable.log; tail -1 $RUN/pytest-durable.log; grep -E 'checkpoint|resum|SKIP' $RUN/pytest-durable.log",
+      "proof_output": "252 passed in 3.76s\nPASSED tests/test_cli.py::test_resume_refuses_a_changed_statement\nPASSED tests/test_graph.py::test_bare_boolean_resume_is_asked_again\nPASSED tests/test_models.py::test_a_pending_review_saved_before_the_new_fields_resumes\nPASSED tests/test_models.py::test_a_checkpoint_written_before_the_new_fields_resumes"
+    },
+    {
+      "text": "Without the extra (the system interpreter), 247 pass and the only skips are the 5 SQLite cases. The old-checkpoint resume is still covered there by test_a_pending_review_saved_before_the_new_fields_resumes. That test uses the same _serde() allow-list over InMemorySaver, rewrites the stored blobs to the pre-change shape, and asserts that more than 0 Transactions were stripped.",
+      "proof_cmd": "python -m pytest -rs -p no:cacheprovider -q | tail -6",
+      "proof_output": "SKIPPED [1] tests/test_cli.py:59: could not import 'langgraph.checkpoint.sqlite'\nSKIPPED [3] tests/test_cli.py:112: could not import 'langgraph.checkpoint.sqlite'\nSKIPPED [1] tests/test_models.py:193: could not import 'langgraph.checkpoint.sqlite'\n247 passed, 5 skipped in 2.81s"
+    },
+    {
+      "text": "Data checklist, 'reversible': rollback was tried. The new code wrote a SQLite checkpoint for a pending review, and its blobs contain the new account_key field 2334 times. The pre-change package then resumed and approved that review. The old package is the base commit f74eaac, from git archive into $RUN/base, which has neither account_key nor CASH_DEPOSIT. Old code ignores the extra fields.",
+      "proof_cmd": "bash $RUN/probe/probe.sh $WORKTREE/src $RUN/base/src (log: $RUN/probe/rollback.log); PYTHONPATH=$RUN/base/src python -c \"import cma.models as m; print(m.__file__, 'account_key' in m.Transaction.model_fields, hasattr(m.Category,'CASH_DEPOSIT'))\"",
+      "proof_output": "review id: fwd (kept in reviews.sqlite; `cma resume fwd` picks it up)\n--- resume with OLD code (rollback) ---\nAll figures trace to the metrics table or the policy.\nApprove this memo for the credit file? [y/N]: Notes (optional): wrote memo.md and memo.evidence.json\nrc=0\nAPPROVED by C. Rollback\n.../hardener-08/base/src/cma/models.py False False\n2334"
+    },
+    {
+      "text": "Data checklist, 'additive first': the change only adds things. No Category value is renamed or removed. The three new Transaction fields have defaults. pyproject.toml and the lockfile are untouched. Nothing other than models.py reads the new categories or fields, so CHECKPOINT_TYPES, the evidence record (explicit fields, graph.py:166) and the MCP transactions_for row (explicit dict, mcp_server.py:90+) do not change.",
+      "proof_cmd": "git diff f74eaac --stat; git diff f74eaac -- pyproject.toml uv.lock | wc -l; grep -n 'CASH_DEPOSIT\\|OWN_ACCOUNT\\|DIRECTOR_FUNDING\\|account_key\\|provider_hint\\|rule_id' src/cma/*.py | grep -v models.py",
+      "proof_output": "examples/cafe_stretched.memo.evidence.json | 2 +-\nexamples/cafe_stretched.memo.md | 2 +-\nsrc/cma/metrics.py | 2 +-\nsrc/cma/models.py | 52 ++++++-\ntests/test_models.py | 234 +++++\n5 files changed, 285 insertions(+), 7 deletions(-)\n0\n(the only grep hits are the unrelated policy RuleResult.rule_id in cli.py:278, graph.py:142, guard.py:163 and policy.py:110)"
+    },
+    {
+      "text": "Data checklist, backfill and PII: there is no database and nothing to backfill, and the checkpoint test shows old rows load with defaults. PII: provider_hint is untrusted provider text, and account_key is a label. Neither reaches the evidence record or the MCP output (see the previous claim), so what is exposed does not change.",
+      "proof_cmd": "sed -n 166,180p src/cma/graph.py; sed -n 86,100p src/cma/mcp_server.py",
+      "proof_output": "evidence_record builds statement{path,sha256,start,end,transactions(count)}, metrics, policy, guard, review and memo, and has no per-line fields; transactions_for builds row = {id, date, amount, balance, ...} explicitly"
+    },
+    {
+      "text": "R55: cash_deposit is in REVENUE_CATEGORIES and maps to TRADING_RECEIPTS. The bucket map covers exactly the 11 credit-capable categories across 8 buckets. M2 includes a cash line and cites its id, and M2's method names cash paid in. The committed example is updated to that method text. Lint and evals pass.",
+      "proof_cmd": "pytest tests/test_models.py -q (included in the 252 above); ruff check src tests; python evals/run_evals.py | tail -1",
+      "proof_output": "All checks passed!\n9/9 memos fully grounded; model = fake"
+    },
+    {
+      "text": "Failure-modes checklist: not applicable. The diff adds no external call, mutation, retry or queue. It changes an enum, a constant map, three defaulted model fields and one method string, and the diff stat in the earlier claim shows nothing else changed.",
+      "proof_cmd": "git diff f74eaac -- src | grep '^[+-]' | grep -v '^+++\\|^---' | grep -Ei 'open\\(|request|http|write|retry|sqlite' | wc -l",
+      "proof_output": "0"
+    },
+    {
+      "text": "Security checklist: there is no new entry point, so no authz to add. The CLI and MCP surfaces are unchanged and no new dependency is declared (pyproject diff is 0 lines). There are no secrets, and the test fixtures are synthetic. Input validation is unchanged: Category is still a closed enum, so an unknown category value from a checkpoint or CSV is still rejected by pydantic.",
+      "proof_cmd": "git diff f74eaac -- pyproject.toml | wc -l; git diff f74eaac -- src/cma/cli.py src/cma/mcp_server.py | wc -l",
+      "proof_output": "0\n0"
+    },
+    {
+      "text": "Performance checklist: not applicable. There are no queries or endpoints. Three defaulted fields add a negligible constant to each Transaction. The suite runs in 3.76s with the extra and 2.81s without.",
+      "proof_cmd": "see the pytest timing in the first two claims",
+      "proof_output": "252 passed in 3.76s / 247 passed, 5 skipped in 2.81s"
+    },
+    {
+      "text": "Observability and operability checklists: no new runtime behaviour is added. No categoriser rule produces the new categories yet, so there is nothing to log, flag or alert on in T02. The design puts log lines in the case log (C3) and the CMA_RULESET flag in later tasks. The rollback path was tried, as in the third claim.",
+      "proof_cmd": "grep -rn 'CASH_DEPOSIT\\|DIRECTOR_FUNDING' src/cma/categorise.py | wc -l",
+      "proof_output": "0"
+    }
+  ],
+  "files_changed": [],
+  "dispositions": [
+    {
+      "finding": "major: runner evidence does not substantiate the 250-pass suite or the old-checkpoint resume; the checkpoint test can skip (tests/test_models.py:141)",
+      "disposition": "reproduced",
+      "evidence": "Without the durable extra, test_a_checkpoint_written_before_the_new_fields_resumes skips (tests/test_models.py:193 at HEAD 413c277). With langgraph-checkpoint-sqlite 3.1.3 installed from the existing optional extra, the suite is 252 passed with 0 skipped, and both resume tests are named PASSED in $RUN/pytest-durable.log. Since attempt 1, commit 413c277 has added test_a_pending_review_saved_before_the_new_fields_resumes, which needs no extra and passes in the base environment. Rollback (new checkpoint, old code) is proven in $RUN/probe/rollback.log."
+    }
+  ],
+  "notes": "No code changed in this pass. Evidence: $RUN=/home/user/credit-memo-agent/.bridgie/runs/statement-review/hardener-08 (pytest-durable.log, pytest-base-env.log, probe/rollback.log, venv/ with the durable extra, base/ = git archive of f74eaac). Gaps for the owner: (1) CI/runner: the verify runner's environment lacks the 'durable' extra, so the 5 SQLite tests always skip there. Install `.[durable]` in the runner or the old-checkpoint claim stays unproven by the runner. (2) Rollback limit for later tasks: the old enum rejects any persisted Transaction whose category is a new value (cash_deposit and the rest). T02 never assigns them, so rollback is clean now. Once the v2 categoriser (C1) lands, a pending review whose checkpoint holds v2 categories cannot be resumed by an older package. The design's rollback (CMA_RULESET=v1) covers new runs, not pending checkpoints, so this needs a decision or a documented repair before v2 becomes the default. (3) Docs: the repo has no CHANGELOG. The release-note line ('M2 now counts cash paid in; new money-in categories') and the README wording for M16 belong to the task that renames M16 and turns v2 on, not T02."
+}

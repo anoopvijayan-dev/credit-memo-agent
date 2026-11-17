@@ -1,0 +1,44 @@
+{
+  "task": "T02",
+  "claims": [
+    {
+      "text": "R53: a pending review saved before the new Transaction fields existed resumes to an approved memo. The test runs with no optional extra. It uses the graph's own serializer and allow-list (graph._serde, the same one sqlite_checkpointer passes to SqliteSaver) over InMemorySaver. It rewrites every stored msgpack blob without account_key, rule_id and provider_hint and asserts that more than zero were stripped. It then loads the rewritten stores into a fresh saver and graph, as a restart would, checks that every stored line loads as a Transaction with the defaults, and resumes to 'APPROVED by C. Later'. The test is named in the runner's own environment, where langgraph.checkpoint.sqlite is absent.",
+      "proof_cmd": "python -m pytest -vv -rs tests/test_models.py",
+      "proof_output": "tests/test_models.py::test_a_pending_review_saved_before_the_new_fields_resumes PASSED [ 90%]\ntests/test_models.py::test_a_checkpoint_written_before_the_new_fields_resumes SKIPPED (could not import 'langgraph.checkpoint.sqlite') [ 95%]\ntests/test_models.py::test_m2_counts_and_names_cash_deposits PASSED [100%]\n19 passed, 1 skipped in 0.43s"
+    },
+    {
+      "text": "The new resume test fails when the default it guards is removed (mutation check, reverted). I removed account_key's default and made ingest pass account_key='main', so loading still worked. The stored old-shape Statement then did not load as a model, and the test failed.",
+      "proof_cmd": "(mutation: models.py account_key without default; ingest.py:138 passes account_key=\"main\") python -m pytest -q tests/test_models.py -k pending",
+      "proof_output": "E   AttributeError: 'dict' object has no attribute 'account_key'\n1 failed, 18 deselected in 0.49s"
+    },
+    {
+      "text": "R55: a credit categorised cash_deposit is in M2 and cited by id. M2's method now says cash paid in counts. The committed examples carry the same method sentence.",
+      "proof_cmd": "python -m pytest -q tests/test_models.py -k m2",
+      "proof_output": "before the fix: AssertionError: assert 'cash paid in' in 'card and gateway settlements, plus transfers in that carry an invoice reference.' (1 failed); after: test_m2_counts_and_names_cash_deposits PASSED"
+    },
+    {
+      "text": "Full suite, lint, compile and evals in this environment. The 5 skips are the 4 durable CLI cases already there and the SQLite twin of the resume test. All five need the optional 'durable' extra (langgraph-checkpoint-sqlite), which is not installed here. The resume behaviour is proven without it by the first claim.",
+      "proof_cmd": "python -m pytest -q -rs; ruff check src tests evals; python -m compileall -q src; python evals/run_evals.py",
+      "proof_output": "SKIPPED [1] tests/test_cli.py:59: could not import 'langgraph.checkpoint.sqlite'\nSKIPPED [3] tests/test_cli.py:112: could not import 'langgraph.checkpoint.sqlite'\nSKIPPED [1] tests/test_models.py:193: could not import 'langgraph.checkpoint.sqlite'\n247 passed, 5 skipped in 2.73s\nAll checks passed!\n9/9 memos fully grounded; model = fake"
+    }
+  ],
+  "files_changed": [
+    "tests/test_models.py",
+    "src/cma/metrics.py",
+    "examples/cafe_stretched.memo.md",
+    "examples/cafe_stretched.memo.evidence.json"
+  ],
+  "dispositions": [
+    {
+      "finding": "major tests/test_models.py:141 (R53): the runner evidence does not show the old-checkpoint resume passing, because the test skips without langgraph.checkpoint.sqlite.",
+      "disposition": "reproduced",
+      "evidence": "Reproduced: in this environment, `pytest -rs` shows the test skipped (tests/test_models.py:193 after the edit). Also, the earlier claim of 250 passes was not reproducible here; the runner's 245 passed and 5 skipped is correct. Fix: test_a_pending_review_saved_before_the_new_fields_resumes needs no extra, runs under plain `python -m pytest -q`, and is reported PASSED by name. The suite is now 247 passed and 5 skipped. The SQLite end-to-end twin is kept for environments with the extra. Commit 413c277."
+    },
+    {
+      "finding": "minor src/cma/metrics.py:253 (R55): M2's method omits cash paid in although M2 includes cash deposits.",
+      "disposition": "reproduced",
+      "evidence": "test_m2_counts_and_names_cash_deposits failed on the old method text and passes after the rewording. The sentence is now 'Card and gateway settlements, transfers in that carry an invoice reference, and cash paid in.' It is updated in metrics.py and in both committed examples. It contains no digits, so the guard is unaffected, and the evals are 9/9 grounded."
+    }
+  ],
+  "notes": "I did not install the 'durable' extra. The runner's environment is outside my worktree, and the design says the SQLite saver uses the same serializer as the in-memory one (graph._serde). The new test therefore proves the serde, allow-list and default-field compatibility without the extra. If the runner wants the end-to-end CLI twin and the 4 durable CLI tests to run too, it should run `pip install -e '.[dev,mcp,durable]'` first. Evidence schema_version is out of scope here; it belongs to T25 in tasks.json."
+}
