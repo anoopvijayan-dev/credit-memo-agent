@@ -1,0 +1,108 @@
+```json
+{
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "Both flags default on and the three file paths resolve in src/cma/firm.py:39–55. Hosted constructors and public MCP startup methods check the lock in src/cma/llm.py:82–114 and src/cma/mcp_server.py:36–58. SDK retries and previously constructed MCP ASGI apps can still initiate network activity after the lock is enabled. Evidence records the lock at statement load while labeling it as captured at draft in src/cma/graph.py:199–203 and :227–255.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:161–172 substitutes Applicant and renders the period and tables. src/cma/metrics.py:295–299 omits evidence IDs. src/cma/graph.py:253–260 keeps the rejected draft and guard details out of redrafts. The user prompt still includes a standalone policy name, overall outcome and a redraft note outside the allowed tables, period and placeholder.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R34",
+      "tier": "adversarial",
+      "check": "src/cma/mcp_server.py:125–139 withholds descriptions even when requested. src/cma/importers/monzo.py:156–160 and :201–208 leave the provider ID cell formula-leading. Repository searches found no workspace or pack HTML renderer whose escaping could be verified.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "tests/test_firm.py:357–407 puts sentinels in descriptions, the account name, the path, case.yaml and the override file. The graph invocation supplies only a statement path and a numeric VAT stagger, so the profile and override sentinels never reach the graph. The runner supplied an aggregate pytest result without the claimed focused result. Exercise a path that loads the case profile and run uv run --extra dev python -m pytest -vv tests/test_firm.py -k 'prompt or line_level'.",
+      "result": "not_proven",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "tests/test_firm.py:101–161 stubs SDK construction and completion. The MCP tests at :184–249 check the exported start methods with parent methods stubbed. They omit serving a previously constructed ASGI app after the lock changes and retries inside a hosted completion. The runner reported 334 passed and 4 skipped without test names. Add coverage for those paths and run uv run --extra dev --extra mcp --extra llm --extra durable python -m pytest -vv -rs tests/test_firm.py.",
+      "result": "not_proven",
+      "artifact": "specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/llm.py",
+      "line": 90,
+      "criterion": "R29",
+      "claim": "The lock check covers entry into completion, while the SDK owns up to two retries inside that completion. The producer's claim that retries cannot bypass the lock is unsupported by the check placement. OpenAI has the same gap at lines 109–114.",
+      "repro": "Start a hosted completion with the lock off. Have a controlled endpoint return a retryable 503 and request a short retry delay. Enable the lock before that delay expires. The next SDK attempt has no intervening call to firm.require_unlocked."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/mcp_server.py",
+      "line": 56,
+      "criterion": "R29",
+      "claim": "The exported ASGI factory checks the lock when it returns an app. Starting that app later bypasses the startup check. The statement-tool guard at line 87 does not protect the listener or the MCP handshake.",
+      "repro": "With the lock off, obtain app = server.streamable_http_app(). Enable the lock, then give the saved app to an ASGI server. The server can bind and accept MCP transport traffic without calling the factory again."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 234,
+      "criterion": "R29",
+      "claim": "Evidence labels the lock value as recorded at draft, although it is captured earlier during statement load. A concurrent configuration change can make evidence contradict the hosted dispatch check.",
+      "repro": "Construct a hosted client with the lock off. Enable the lock before the graph load node runs, then disable it after load and before draft. Let the hosted completion succeed and write evidence. It reports offline_lock=true and recorded='at draft' alongside the hosted destination."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 167,
+      "criterion": "R30",
+      "claim": "The user payload exceeds the specified content allowlist. The policy name and overall outcome appear outside the rule table, and redrafts append prose about the prior draft.",
+      "repro": "Inspect draft_prompt output for the same statement with redraft=False and redraft=True. Both have standalone Policy and Overall policy outcome lines, and the latter appends REDRAFT_NOTE."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 201,
+      "criterion": "R34",
+      "claim": "Formula neutralisation covers only the description. The provider transaction ID accepts a leading minus and is written verbatim into a CSV text cell.",
+      "repro": "Convert a valid one-row GBP Monzo export with Transaction ID '-2-3' and a supplied opening balance. SAFE_ID at line 40 accepts it. Read the resulting CSV with csv.DictReader and observe that the id cell starts with '-'."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/firm.py",
+      "line": 88,
+      "criterion": "R29",
+      "claim": "The producer's claim that malformed firm.yaml always maps to a named FirmConfigError and CLI exit 2 misses file decoding failures and duplicate keys. Duplicate flags are silently resolved by the YAML loader.",
+      "repro": "Put invalid UTF-8 in firm.yaml and invoke cma run with a hosted model to reach path.read_text(). The resulting UnicodeDecodeError bypasses the refusal handler. Separately, put offline_lock: true followed by offline_lock: false in the file. The effective setting is false without a configuration error."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_firm.py",
+      "line": 323,
+      "criterion": "R29",
+      "claim": "The cited migration test proves evidence formatting for a modified current state. It never deserializes or resumes a pre-change checkpoint, so it does not prove the claimed resume compatibility.",
+      "repro": "Read the test body through line 340. It builds a current in-memory graph, deletes keys from a copied state and calls evidence_record directly. Prove the migration claim with a pre-T17 SQLite checkpoint fixture and a runner-recorded pytest case that invokes cma resume."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_firm.py",
+      "line": 227,
+      "criterion": "P18",
+      "claim": "The runner evidence does not substantiate the claimed 338-pass, zero-skip full-extras run, the focused P18 and P5 counts, the real CLI and MCP invocations, the focused Monzo and MCP suite, or the hosted-eval refusal. It does substantiate lint and the nine grounded offline evals. The runtime comparison and dependency-lockfile comparison also lack matching runner proof.",
+      "repro": "Compare the claim commands with specified-3.log and behavioural-6.log. The runner executed plain pytest and offline evals. Record the claimed focused test commands and real entry-point invocations, plus uv run --extra dev --extra mcp --extra llm --extra durable python -m pytest -vv -rs for named test outcomes."
+    }
+  ],
+  "verdict": "not_proven"
+}
+```
