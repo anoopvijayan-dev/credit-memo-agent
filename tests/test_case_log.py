@@ -433,3 +433,22 @@ def test_an_entry_not_in_canonical_form_is_named(tmp_path):
     _write(log, lines)
     check = log.verify()
     assert not check.ok and not check.torn and check.first_bad == 2
+
+
+# --- hardener round 9 ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", [{"a": (1, 2)}, {"m": {1: "z"}}, {"m": {True: "z"}}, {"m": {None: 1}}])
+def test_data_that_would_not_read_back_unchanged_is_refused(tmp_path, bad):
+    # json.dumps quietly turns tuples into lists and 1/True/None keys into strings, so the
+    # Entry append returned would not be the entry every later reader sees.
+    log = case.CaseLog(tmp_path / "log.jsonl")
+    with pytest.raises(ValueError):
+        log.append("override", bad, expected=0)
+    assert not log.path.exists()
+
+
+def test_the_entry_append_returns_is_the_entry_read_back(tmp_path):
+    log = case.CaseLog(tmp_path / "log.jsonl")
+    written = log.append("override", {"a": [1, 2.5, None, True], "m": {"k": "v"}, "s": "é"}, expected=0)
+    assert log.entries() == [written]

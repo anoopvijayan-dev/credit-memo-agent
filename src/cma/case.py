@@ -260,9 +260,15 @@ class CaseLog:
         if not isinstance(data, dict):
             raise ValueError("data must be a mapping")
         try:
-            _canonical(data)
-        except (TypeError, ValueError) as e:
+            # Plain JSON only: json.dumps would quietly turn a tuple into a list and a 1,
+            # True or None key into a string, so the Entry returned here would differ from
+            # the one every later reader sees.
+            same = json.loads(_canonical(data)) == data
+        except (TypeError, ValueError, RecursionError) as e:
             raise ValueError(f"data is not plain JSON: {e}") from e
+        if not same:
+            raise ValueError("data is not plain JSON: it would not read back unchanged "
+                             "(use lists, not tuples, and string keys)")
         with self.writer():
             head = self.require_intact()
             if head.position != expected:
