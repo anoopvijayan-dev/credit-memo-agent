@@ -843,12 +843,12 @@
         "kill task"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "retry with guidance",
+      "free_text": "Fix the 2 majors: reject duplicate YAML keys when loading a rule table; make the legacy-resume ruleset lookup fail before the review is recorded, or fall back to v1. Test the missing-table path and hash the file bytes. Remove claims the runner cannot prove (wheel install, historical replay, no-skip suite) from the claim instead of asserting them.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-17T21:26:43.714Z",
+      "effect": "task T01 gets one more attempt",
       "created_at": "2026-11-17T21:23:17.398Z"
     }
   ]
