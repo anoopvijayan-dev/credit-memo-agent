@@ -11,14 +11,18 @@ head breaks the chain on the next load, and `verify` names the first entry that 
 hold. A last line without its newline is a torn entry (the process or the power stopped
 mid-write); it is reported as incomplete, not as tampering, and stays in the way of
 appends and sign-off until someone confirms dropping it (`drop_torn_entry`), which is
-itself logged. Removing the head itself cannot be seen from the file alone: whoever
-needs to pin the head (a sign-off, a pack) records its position and hash.
+itself logged. A line is read strictly: it must be exactly the canonical bytes the
+writer produces, so a repeated member, a number no float can hold, or reformatting is
+named as a bad entry rather than reinterpreted or raised. Removing the head itself
+cannot be seen from the file alone: whoever needs to pin the head (a sign-off, a pack)
+records its position and hash.
 
 One writer at a time: every append takes an exclusive, non-blocking lock on a sibling
 lock file and re-reads the log under it, and the caller states the position it last
 saw. A second tab or terminal that read an older position gets LogConflict and reloads;
-one that tries while another holds the lock gets CaseLocked. The operating system drops
-the lock when its holder dies, so a crash never leaves the case locked.
+one that tries while another holds the lock gets CaseLocked, including another thread
+using the same CaseLog object. The operating system drops the lock when its holder
+dies, so a crash never leaves the case locked.
 
 Messages name entries by number only and never quote their content: data holds case
 details, and errors end up in terminals and logs.
@@ -29,6 +33,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -121,12 +126,35 @@ def _utc_now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+def _unique_members(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    obj = dict(pairs)
+    if len(obj) != len(pairs):
+        raise ValueError("duplicate member")
+    return obj
+
+
+def _no_constant(token: str) -> Any:
+    raise ValueError(f"{token} is not JSON")
+
+
+def _decode(line: bytes) -> Any:
+    """The entry a line holds, read strictly: no duplicate members, no NaN or Infinity,
+    and the line must be exactly the canonical bytes the writer produces. Anything a
+    lenient decoder would quietly reinterpret (a repeated member, 1e999 read as
+    infinity, other spacing or key order) is therefore not the entry that was hashed."""
+    obj = json.loads(line.decode("utf-8"), object_pairs_hook=_unique_members,
+                     parse_constant=_no_constant)
+    if _canonical(obj) != line:
+        raise ValueError("not in canonical form")
+    return obj
+
+
 def _parse(line: bytes, n: int, prev: str) -> tuple[Entry | None, str]:
     """Check one complete line as entry number `n` following hash `prev`."""
     try:
-        obj = json.loads(line.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
-        return None, "is not a readable entry"
+        obj = _decode(line)
+    except (UnicodeDecodeError, ValueError, TypeError, RecursionError):
+        return None, "is not a readable entry: it is not exactly what the log writes"
     if not isinstance(obj, dict) or set(obj) != ENTRY_FIELDS:
         return None, "has missing or extra fields"
     seq, hsh = obj["seq"], obj["hash"]
@@ -147,7 +175,9 @@ class CaseLog:
     def __init__(self, path: Path | str):
         self.path = Path(path)
         self.lock_path = self.path.with_name(self.path.name + ".lock")
+        self._state = threading.Lock()  # guards the three fields below, never held long
         self._lock_fd: int | None = None
+        self._owner: int | None = None  # thread ident of the holder
         self._lock_depth = 0
 
     # --- reading -----------------------------------------------------------------------
@@ -173,8 +203,8 @@ class CaseLog:
         return LogCheck(Head(len(entries), prev), entries, intact_bytes=offset)
 
     def require_intact(self) -> Head:
-        """The head of an intact log, or CaseLogBroken naming the first bad entry. Sign-off
-        calls this and refuses on the exception (R43)."""
+        """The head of an intact log, or CaseLogBroken naming the first bad entry. Every
+        append goes through it; sign-off (T27) must call it and refuse on the exception (R43)."""
         check = self.verify()
         if not check.ok:
             raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
@@ -191,25 +221,37 @@ class CaseLog:
 
     @contextmanager
     def writer(self) -> Iterator[CaseLog]:
-        """Hold the case's single-writer lock; refuses at once if another writer has it."""
-        if self._lock_depth == 0:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
-            try:
-                _lock(fd)
-            except OSError as e:
-                os.close(fd)
-                raise CaseLocked(f"{self.path}: another window or command is writing to this case") from e
-            self._lock_fd = fd
-        self._lock_depth += 1
+        """Hold the case's single-writer lock; refuses at once if another writer has it.
+
+        The thread that holds it may nest (a sign-off holds the lock across its checks and
+        its append). Any other writer is refused, whether it is another process, another
+        CaseLog on the same file, or another thread using this same instance: the lock
+        belongs to a thread, not to the object."""
+        me = threading.get_ident()
+        with self._state:
+            if self._owner == me:
+                self._lock_depth += 1
+            elif self._owner is not None:
+                raise CaseLocked(f"{self.path}: another window or command is writing to this case")
+            else:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+                try:
+                    _lock(fd)
+                except OSError as e:
+                    os.close(fd)
+                    raise CaseLocked(f"{self.path}: another window or command is writing to this case") from e
+                self._lock_fd, self._owner, self._lock_depth = fd, me, 1
         try:
             yield self
         finally:
-            self._lock_depth -= 1
-            if self._lock_depth == 0 and self._lock_fd is not None:
-                _unlock(self._lock_fd)
-                os.close(self._lock_fd)
-                self._lock_fd = None
+            with self._state:
+                self._lock_depth -= 1
+                if self._lock_depth == 0:
+                    fd, self._lock_fd, self._owner = self._lock_fd, None, None
+                    if fd is not None:
+                        _unlock(fd)
+                        os.close(fd)
 
     def append(self, event: str, data: dict[str, Any], *, expected: int) -> Entry:
         """Append one entry if the log is intact and still at `expected` entries."""

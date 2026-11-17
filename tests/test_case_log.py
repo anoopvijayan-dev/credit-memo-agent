@@ -6,6 +6,7 @@ kind of tamper exhaustively, which is the property over all logs of those sizes.
 """
 
 import json
+import os
 
 import pytest
 
@@ -279,7 +280,6 @@ def test_data_that_is_not_strict_json_is_refused(tmp_path):
 
 
 def test_new_log_and_lock_files_are_private_to_their_owner(tmp_path):
-    import os
     import stat
 
     if os.name == "nt":
@@ -308,9 +308,128 @@ def test_the_lock_holds_against_another_process(tmp_path):
         "except case.CaseLocked:\n"
         "    sys.exit(3)\n"
     )
+    # The child must import this checkout's cma, not whatever is installed: put the
+    # directory that holds the imported package first on its path.
+    from pathlib import Path
+
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(
+        [str(Path(case.__file__).resolve().parents[1]), os.environ.get("PYTHONPATH", "")])}
+    run = [sys.executable, "-c", script, str(log.path)]
     with log.writer():
-        held = subprocess.run([sys.executable, "-c", script, str(log.path)], check=False)
-    assert held.returncode == 3
-    free = subprocess.run([sys.executable, "-c", script, str(log.path)], check=False)
-    assert free.returncode == 0
+        held = subprocess.run(run, check=False, env=env, capture_output=True, text=True)
+    assert held.returncode == 3, held.stderr
+    free = subprocess.run(run, check=False, env=env, capture_output=True, text=True)
+    assert free.returncode == 0, free.stderr
     assert log.require_intact().position == 2
+
+
+# --- findings from verification round 3 ------------------------------------------------
+
+
+def _sharing_threads_race(log, gate_name):
+    """Two threads share one CaseLog at position 1; the first pauses inside the lock."""
+    import threading
+
+    inside, release = threading.Event(), threading.Event()
+    real = getattr(log, gate_name)
+
+    def paused(*a, **k):
+        if threading.current_thread().name == "first":
+            inside.set()
+            release.wait(5)
+        return real(*a, **k)
+
+    setattr(log, gate_name, paused)
+    results = {}
+
+    def go(name):
+        try:
+            results[name] = log.append("override", {"by": name}, expected=1)
+        except case.CaseLogError as e:
+            results[name] = e
+
+    first = threading.Thread(target=go, args=("first",), name="first")
+    first.start()
+    assert inside.wait(5)
+    second = threading.Thread(target=go, args=("second",), name="second")
+    second.start()
+    second.join(5)
+    release.set()
+    first.join(5)
+    return results
+
+
+def test_threads_sharing_one_instance_do_not_share_the_lock(tmp_path):
+    log = _log(tmp_path, 1)
+    results = _sharing_threads_race(log, "_write")
+    assert isinstance(results["first"], case.Entry)
+    assert isinstance(results["second"], case.CaseLocked)
+    check = log.verify()
+    assert check.ok and check.head.position == 2
+
+
+def test_a_lock_held_by_one_thread_is_not_reentered_by_another(tmp_path):
+    import threading
+
+    log = _log(tmp_path, 1)
+    got = {}
+    with log.writer():
+        t = threading.Thread(target=lambda: got.setdefault("r", _try_append(log)))
+        t.start()
+        t.join(5)
+        log.append("override", {}, expected=1)  # the holder may still nest
+    assert isinstance(got["r"], case.CaseLocked)
+    assert log.require_intact().position == 2
+
+
+def _try_append(log):
+    try:
+        return log.append("override", {}, expected=1)
+    except case.CaseLogError as e:
+        return e
+
+
+def test_p15_a_duplicate_member_hiding_a_change_before_the_head_is_detected(tmp_path):
+    log = _log(tmp_path, 3)
+    lines = _lines(log)
+    # A second "event" member placed before the real one: a lenient decoder keeps the
+    # last value, so the hash still matches, but the bytes say something else first.
+    lines[1] = lines[1].replace('"event":', '"event":"sign_off","event":', 1)
+    _write(log, lines)
+    check = log.verify()
+    assert not check.ok and not check.torn and check.first_bad == 2
+
+
+@pytest.mark.parametrize("token", ["1e999", "-1e999", "NaN", "Infinity", "-Infinity"])
+def test_a_non_finite_number_in_a_complete_entry_is_named_not_raised(tmp_path, token):
+    log = _log(tmp_path, 3)
+    lines = _lines(log)
+    e = json.loads(lines[1])
+    lines[1] = _dump({**e, "data": {"x": 0}}).replace('{"x":0}', '{"x":' + token + "}")
+    _write(log, lines)
+    check = log.verify()
+    assert not check.ok and not check.torn and check.first_bad == 2
+    with pytest.raises(case.CaseLogBroken) as err:
+        log.require_intact()
+    assert err.value.first_bad == 2
+
+
+def test_deeply_nested_data_in_a_complete_entry_is_named_not_raised(tmp_path):
+    log = _log(tmp_path, 3)
+    lines = _lines(log)
+    e = json.loads(lines[1])
+    deep = "[" * 100_000 + "]" * 100_000
+    lines[1] = _dump({**e, "data": {"x": 0}}).replace('{"x":0}', '{"x":' + deep + "}")
+    _write(log, lines)
+    check = log.verify()
+    assert not check.ok and check.first_bad == 2
+
+
+def test_an_entry_not_in_canonical_form_is_named(tmp_path):
+    log = _log(tmp_path, 3)
+    lines = _lines(log)
+    e = json.loads(lines[1])
+    lines[1] = json.dumps(e, sort_keys=True) + "\n"  # same members, other spacing
+    _write(log, lines)
+    check = log.verify()
+    assert not check.ok and not check.torn and check.first_bad == 2
