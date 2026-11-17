@@ -25,12 +25,12 @@
         "R55"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "failed",
       "attempts": 2,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T02",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-02/evidence.json",
-      "escalation": "attempt 1 of 3 fail: R53 not_proven (The existing category values are preserved at src/cma/models.py:17 and the three fields default at src/cma/models.py:86. The SQLite checkpoint still uses the same allow-listed model types at src/cma/graph.py:44 and :72. Evidence uses an explicit field list at src/cma/graph.py:166, and MCP builds transaction responses explicitly at src/cma/mcp_server.py:90, so neither exposes the new fields. Evidence schema versioning is assigned to T25 at .bridgie/specs/statement-review/tasks.json:461. No changed production path introduces writes, retries, permission checks, or tenant queries. The runner recorded 245 passes and five skips. The old-checkpoint case at tests/test_models.py:140 guards on the same SQLite dependency as the skipped durable CLI cases, and no runner log records it passing. The deselected tiers add no coverage. The producer's rollback probe covers a model payload with legacy category values. A pre-change enum rejects the new values if they are persisted. Ruff passed and the nine fake-model evals were grounded, which does not establish full-suite, checkpoint, or rollback compatibility.); major: The runner evidence does not substantiate the claimed 250-pass suite or the claimed successful old-checkpoint resume. The checkpoint test can skip before creating the database, and the supplied runner log contains no named pass for it. at tests/test_models.py:141; reviewer verdict not_proven"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-07/evidence.json",
+      "escalation": "attempt 2 of 3 fail: R53 not_proven (Legacy category values and transaction defaults are preserved at src/cma/models.py:17 and src/cma/models.py:86. The memory and SQLite checkpoint savers share the serializer at src/cma/graph.py:53 and src/cma/graph.py:72. The existing CLI entry points remain compatible by inspection at src/cma/cli.py:31, src/cma/cli.py:45, src/cma/cli.py:98 and src/cma/cli.py:282. Evidence and MCP retain their explicit output fields at src/cma/graph.py:166 and src/cma/mcp_server.py:100. Evidence schema versioning is assigned to T25 at .bridgie/specs/statement-review/tasks.json:462. The runner recorded 247 passes and five skips. The in-memory legacy-resume test at tests/test_models.py:153 has no optional dependency. The durable legacy-resume test at tests/test_models.py:191 is among the skipped SQLite cases. The producer's separate log names both tests as passed, but the runner did not produce the required durable result.); major: The claimed zero-skip full suite and SQLite legacy-checkpoint resume have producer evidence only. The configured runner skipped the durable path before creating a checkpoint. at tests/test_models.py:193; reviewer verdict not_proven"
     },
     {
       "id": "T03",

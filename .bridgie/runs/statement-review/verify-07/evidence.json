@@ -1,0 +1,84 @@
+{
+  "task": "T02",
+  "criteria": [
+    {
+      "id": "R53",
+      "tier": "adversarial",
+      "check": "Legacy category values and transaction defaults are preserved at src/cma/models.py:17 and src/cma/models.py:86. The memory and SQLite checkpoint savers share the serializer at src/cma/graph.py:53 and src/cma/graph.py:72. The existing CLI entry points remain compatible by inspection at src/cma/cli.py:31, src/cma/cli.py:45, src/cma/cli.py:98 and src/cma/cli.py:282. Evidence and MCP retain their explicit output fields at src/cma/graph.py:166 and src/cma/mcp_server.py:100. Evidence schema versioning is assigned to T25 at .bridgie/specs/statement-review/tasks.json:462. The runner recorded 247 passes and five skips. The in-memory legacy-resume test at tests/test_models.py:153 has no optional dependency. The durable legacy-resume test at tests/test_models.py:191 is among the skipped SQLite cases. The producer's separate log names both tests as passed, but the runner did not produce the required durable result.",
+      "result": "not_proven",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R55",
+      "tier": "adversarial",
+      "check": "For T02, cash deposits map to trading receipts at src/cma/models.py:57 and enter the shared revenue set at src/cma/models.py:68. The figures layer uses that set for M2, monthly revenue inputs and operating cash flow at src/cma/metrics.py:121 and src/cma/metrics.py:172. M2 cites the included lines at src/cma/metrics.py:252. The bucket, membership and positive deposit amount and evidence assertions are in tests/test_models.py:35, tests/test_models.py:64 and tests/test_models.py:220 and are covered by the passing runner suite. The separate cash-deposit figure and monthly summary belong to T04 and T06 at .bridgie/specs/statement-review/tasks.json:58 and .bridgie/specs/statement-review/tasks.json:100. The production diff adds no request handler, write, retry, permission check or tenant query, so it introduces no new double-submit, concurrent-writer, partial-write, authorization or tenant-isolation path. The category map does not convert currencies or timestamps.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-07/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-07/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -q",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-07/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -q -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-07/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -q -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-07/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-07/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -q -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-07/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "tests/test_models.py",
+      "line": 193,
+      "criterion": "R53",
+      "claim": "The claimed zero-skip full suite and SQLite legacy-checkpoint resume have producer evidence only. The configured runner skipped the durable path before creating a checkpoint.",
+      "repro": "With the configured runner environment, python -m pytest -q produces 247 passes and five skips, and the import guard skips this case. To prove the claim, the runner needs the existing durable extra from pyproject.toml:20 and must run python -m pytest -q -rA, with a passing result row and a log naming tests/test_models.py::test_a_checkpoint_written_before_the_new_fields_resumes as PASSED."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
