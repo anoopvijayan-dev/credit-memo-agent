@@ -1,0 +1,43 @@
+{
+  "criteria": [
+    {
+      "id": "R53",
+      "tier": "adversarial",
+      "check": "The existing category values are preserved at src/cma/models.py:17 and the three fields default at src/cma/models.py:86. The SQLite checkpoint still uses the same allow-listed model types at src/cma/graph.py:44 and :72. Evidence uses an explicit field list at src/cma/graph.py:166, and MCP builds transaction responses explicitly at src/cma/mcp_server.py:90, so neither exposes the new fields. Evidence schema versioning is assigned to T25 at .bridgie/specs/statement-review/tasks.json:461. No changed production path introduces writes, retries, permission checks, or tenant queries. The runner recorded 245 passes and five skips. The old-checkpoint case at tests/test_models.py:140 guards on the same SQLite dependency as the skipped durable CLI cases, and no runner log records it passing. The deselected tiers add no coverage. The producer's rollback probe covers a model payload with legacy category values. A pre-change enum rejects the new values if they are persisted. Ruff passed and the nine fake-model evals were grounded, which does not establish full-suite, checkpoint, or rollback compatibility.",
+      "result": "not_proven",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R55",
+      "tier": "adversarial",
+      "check": "For T02's scope, the map at src/cma/models.py:39 and :54 has eight buckets and assigns each credit category once. Cash deposits map to trading receipts at :57 and join REVENUE_CATEGORIES at :68. src/cma/metrics.py:121 uses that set for revenue and its monthly accumulation, and :252 emits M2 with the deposit IDs. The map and revenue membership assertions at tests/test_models.py:37–67 ran in the specified suite. A positive cash deposit flows into M2 without any currency or timezone conversion from this change. The current categoriser at src/cma/categorise.py:37–66 emits no cash deposits. T03 owns that recognition, T04 owns the separate cash-deposit figure, and T06 owns the monthly summary, as recorded at .bridgie/specs/statement-review/tasks.json:37, :58, and :100.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "tests/test_models.py",
+      "line": 141,
+      "criterion": "R53",
+      "claim": "The runner evidence does not substantiate the claimed 250-pass suite or the claimed successful old-checkpoint resume. The checkpoint test can skip before creating the database, and the supplied runner log contains no named pass for it.",
+      "repro": "Compare specified-3.log with the claim's 250-pass output. In the runner environment, run python -m pytest -vv -rs tests/test_models.py::test_a_checkpoint_written_before_the_new_fields_resumes to identify the skip. To prove both claims, install the CI extras with python -m pip install -e '.[dev,mcp,durable]' and have the runner run python -m pytest -vv -rs, recording a named pass for the checkpoint test and zero skips."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 253,
+      "criterion": "R55",
+      "claim": "M2's method still describes only card and gateway settlements and invoice-referenced transfers, even though M2 now includes classified cash deposits.",
+      "repro": "Call metrics.compute on a classified Statement containing one GBP 100 credit with category Category.CASH_DEPOSIT and ID T1. M2 includes GBP 100 and cites T1, but its method omits cash paid in. The mismatch is also present in the metric serialized by evidence_record."
+    }
+  ],
+  "verdict": "not_proven",
+  "task": "T02",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
