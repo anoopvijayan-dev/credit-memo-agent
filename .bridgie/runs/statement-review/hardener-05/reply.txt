@@ -1,0 +1,20 @@
+All five review findings on T01 are fixed in the current code, and P7 now holds against an independent replay of the code before the change. The claim is at `/home/user/credit-memo-agent/.bridgie/runs/statement-review/hardener-05/claim.json` and passes the schema check.
+
+**Checks run:**
+- **P7 replay:** I checked out the pre-change commit (fd7b64c) fresh and rebuilt the baseline from its own test run. The result matches the committed baseline exactly: 13 synthetic cases, 1 example, 37 fixtures (including the VAT stagger-3 case that was missing) and 17 single lines.
+- **P7 under v1:** the command the escalation asked for (`CMA_RULESET=v1 python -m pytest -vv tests/test_rules.py -k p7`) gives 53 passed.
+- **Dual-run tier:** it now selects 55 tests, which all pass, where the runner's last run selected none. When I swapped two rules in a scratch copy of the table, 2 of them failed.
+- **Full suite:** 334 passed and 4 skipped in the base environment; the skipped tests need the optional SQLite checkpoint package. With every optional extra installed: 338 passed, nothing skipped. Lint is clean.
+- **Installed wheel:** the wheel ships `cma/rules/v1.yaml`, and from a clean venv outside the repo it loads v1 with the same id and hash. I ran this locally; it hasn't run on a CI runner.
+- **Saved reviews:** a review saved by the pre-change version and resumed by the new code writes evidence naming v1 and its hash, marked as inferred, not null.
+- **Damaged table:** a field of the wrong type in the rule table is refused with exit 2 ("Refused."), not reported as a model failure.
+- **Speed:** categorising 10,000 lines takes 36.4 ms, against 27.6 ms before the change, well inside the design's 2-second target.
+
+**My one change:** the two scripts that build the P7 baseline lived only in the run directory, which review packets exclude, so nobody could re-run the replay from the repo. I copied them unchanged into `tests/golden/p7_tools/` and added the exact replay commands to their docstring. The `tests/test_rules.py` docstring now points to them. Pytest doesn't collect them as tests. These changes are uncommitted in the worktree.
+
+**Gaps, listed in `notes`:**
+- The repo has no changelog, so the README text is the only user-facing note.
+- The committed baseline file still says its tools are "in the T01 run directory". Changing that text would mean rebuilding the baseline, which must stay identical to the replay.
+- The verifier's runner should record the replay and the dual-run tier itself; the escalation said no runner row had executed the replay.
+- Rule patterns aren't checked for slow, runaway regexes when the table loads. That's acceptable while every table ships in the package. Firm-written rules (R20, Tier 2) will need a design decision before they land.
+- Rollback was tried only locally, because there's no non-production environment for a local tool.

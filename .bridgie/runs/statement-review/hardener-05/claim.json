@@ -1,0 +1,103 @@
+{
+  "task": "T01",
+  "claims": [
+    {
+      "text": "[P7, independent pre-change replay; escalation item] The baseline was replayed from a fresh `git archive fd7b64c`, with cma imported from the old tree and the durable extra installed so no capture test was skipped. The result equals the committed tests/golden/p7_v1_baseline.json.gz on every key: 13 synthetic cases, 1 example, 37 fixtures (including _vat_year(7) under stagger 3) and 17 single lines. The replay was run twice: once with the implementer's run-dir tools and once with the copies now committed under tests/golden/p7_tools/.",
+      "proof_cmd": "git archive fd7b64c | tar -x -C $S/oldtree && cd $S/oldtree && CAPTURE_OUT=$S/capture2.json PYTHONPATH=$S/oldtree/src:$W/tests/golden/p7_tools $S/full/bin/python -m pytest -q -p capture_plugin && MADE_AT=fd7b64c PYTHONPATH=$S/oldtree/src $S/full/bin/python $W/tests/golden/p7_tools/make_p7_baseline.py $S/capture2.json $S/p7_2.json && python -c '<compare every key with gunzipped tests/golden/p7_v1_baseline.json.gz>'",
+      "proof_output": "232 passed in 3.16s\ncma from .../scratchpad/oldtree/src/cma/__init__.py\nsynthetic=13 examples=1 fixtures=37 hand_categorised_skipped=0 lines=17\nequal to committed golden: True {'synthetic': 13, 'examples': 1, 'fixtures': 37, 'lines': 17}"
+    },
+    {
+      "text": "[P7 under CMA_RULESET=v1, the command the escalation asked for] Against that baseline, every synthetic case, the example, all 37 fixtures and all single lines reproduce the pre-change categories and M1-M16 (id, unit, value, evidence) exactly.",
+      "proof_cmd": "CMA_RULESET=v1 python -m pytest -vv tests/test_rules.py -k p7",
+      "proof_output": "tests/test_rules.py::test_p7_v1_single_lines_match_the_baseline PASSED [100%]\n====================== 53 passed, 51 deselected in 0.45s ======================="
+    },
+    {
+      "text": "[P7 dual-run tier; the runner's dual_run row previously deselected everything] `-m dual_run` now selects 55 tests. These include the code-as-oracle comparison with fd7b64c's RULES list and more than 20,000 fuzzed descriptions. A mutation that moves non_trading_in after card_settlement in v1.yaml, on a scratch copy, makes the tier fail.",
+      "proof_cmd": "CMA_RULESET=v1 python -m pytest -q -m dual_run ; (scratch copy, rules reordered in src/cma/rules/v1.yaml) CMA_RULESET=v1 python -m pytest -q -m dual_run",
+      "proof_output": "55 passed, 283 deselected in 1.52s\nmutated: 2 failed, 53 passed, 283 deselected in 1.56s"
+    },
+    {
+      "text": "[Full suite, lint] The suite passes in the worktree (pytest pythonpath resolves cma to the worktree src). With every extra installed (dev, mcp, durable, llm), nothing is skipped. Lint is clean.",
+      "proof_cmd": "python -m pytest -q ; uv pip install -e '.[dev,mcp,durable,llm]' into $S/full && $S/full/bin/python -m pytest -q -rs ; ruff check src tests evals",
+      "proof_output": "334 passed, 4 skipped in 3.80s (skips: langgraph.checkpoint.sqlite not installed in the base env)\n338 passed in 6.12s\nAll checks passed!"
+    },
+    {
+      "text": "[R54, installed wheel; the escalation said the CI step had no runner result] The wheel was built from the worktree and installed into a clean venv. From outside the repo, it ships cma/rules/v1.yaml and loads it with the same id and hash as the source tree. The packaged policy also still loads.",
+      "proof_cmd": "uv build --wheel --out-dir $S/dist && unzip -l $S/dist/*.whl | grep rules/ && uv venv $S/wheelcheck && uv pip install --python $S/wheelcheck/bin/python $S/dist/*.whl && cd $S && $S/wheelcheck/bin/python -c \"from cma import categorise as c, policy; print(policy.load_policy()['name']); r=c.load_ruleset('v1'); print(r.id, r.sha256, len(r.rules), c.__file__)\"",
+      "proof_output": "cma/rules/__init__.py\ncma/rules/v1.yaml\nuk_sme_default\nv1 7573366854a668793ca20b3ecfaad91d406ea3018a71d524ea3324cc4ff76630 12 .../wheelcheck/lib/python3.13/site-packages/cma/categorise.py"
+    },
+    {
+      "text": "[Data / migration: reversible, additive; escalation finding 'legacy resume writes ruleset=null'] Pending reviews written by the old version still resume on the new one. A real SQLite checkpoint written by the fd7b64c code was resumed by the worktree code. The evidence names v1 and its hash, plus an additive 'inferred' key, never null. The change adds only the optional MemoState key 'ruleset' and the evidence key 'ruleset'; CHECKPOINT_TYPES is unchanged. Nothing needs backfilling.",
+      "proof_cmd": "cd $S/legacy && PYTHONPATH=$S/oldtree/src python -m cma.cli run examples/cafe_stretched.csv --checkpoint-db reviews.sqlite --thread case-7 </dev/null ; printf 'y\\nlegacy resume check\\n\\n' | PYTHONPATH=$W/src CMA_RULESET=v1 python -m cma.cli resume case-7 --checkpoint-db reviews.sqlite --reviewer Analyst --out memo.md ; read memo.evidence.json ruleset",
+      "proof_output": "wrote memo.md and memo.evidence.json\n{'id': 'v1', 'sha256': '7573366854a668793ca20b3ecfaad91d406ea3018a71d524ea3324cc4ff76630', 'inferred': 'pre-ruleset checkpoint'}"
+    },
+    {
+      "text": "[Failure modes: partial failure / input validated at the boundary; escalation finding 'malformed category bypasses RulesetError'] A damaged or unknown table is refused before any line is categorised. A wrong-typed field (list, mapping, number, bool or null) in id, pattern, direction or category is a RulesetError naming the rule and the field. `cma run` exits 2 with 'Refused.', never 4 (model failure), and writes no memo. Covered by test_a_rule_field_of_the_wrong_type_is_refused (20 cases), test_a_table_field_of_the_wrong_type_is_refused, test_a_damaged_packaged_table_is_refused_on_load, test_cma_run_refuses_a_damaged_table_rather_than_blaming_the_model and test_unknown_cma_ruleset_is_refused_not_blamed_on_the_model, all inside the passing suite.",
+      "proof_cmd": "python -m pytest -q tests/test_rules.py tests/test_cli.py (inside the full run above)",
+      "proof_output": "334 passed, 4 skipped (base env); 338 passed (all extras)"
+    },
+    {
+      "text": "[Security: new entry point CMA_RULESET; input validated; no raw interpolation into paths] The env value is checked against the allow-list RULESETS before any resource lookup, so an id can never name a path (test_a_ruleset_id_cannot_name_a_path). YAML is read with yaml.safe_load. No secrets appear anywhere. No new dependency: pyyaml is already in [project].dependencies, and importlib.resources, hashlib and functools are stdlib. There is no authorization layer to apply, because this is a local CLI and library with no network entry point; the only caller is the OS user who sets the env var.",
+      "proof_cmd": "grep -n 'RULESETS\\|safe_load' src/cma/categorise.py ; grep -n pyyaml pyproject.toml ; python -m pytest -q tests/test_rules.py -k 'path or unknown'",
+      "proof_output": "load_ruleset: `if ruleset_id not in RULESETS: raise RulesetError(...)` precedes `_table_text(ruleset_id)`; data = yaml.safe_load(text); pyproject dependencies: \"pyyaml>=6\"; tests pass within the suite runs above"
+    },
+    {
+      "text": "[Performance: hot path measured before and after] categorise() on 10,000 lines: 27.6 ms with the fd7b64c code and 36.4 ms with the YAML table (best of 5). The table is parsed and compiled once (lru_cache) and passed through categorise(). The extra cost is per-rule dataclass attribute access, far inside the design's 2 s recompute target at 10,000 lines. No queries, list endpoints or payloads are involved: N+1 queries, indexes and pagination are not applicable.",
+      "proof_cmd": "PYTHONPATH=$S/oldtree/src python $S/bench.py before ; PYTHONPATH=$W/src python $S/bench.py after",
+      "proof_output": "before 27.6 ms for 10,000 lines\nafter 36.4 ms for 10,000 lines"
+    },
+    {
+      "text": "[Observability] Every evidence record now carries ruleset {id, sha256}, or the inferred v1 marker for legacy resumes. That is the trace that proves which table produced the figures (test_written_evidence_records_the_ruleset, test_evidence_records_the_ruleset). The design rules out remote alerting. The failure that matters most, a bad or unknown table, surfaces as a non-zero refusal (exit 2) naming CMA_RULESET and the problem. No dashboards exist, so nothing to update.",
+      "proof_cmd": "python -m pytest -q tests/test_cli.py -k ruleset",
+      "proof_output": "passes within the suite runs above (334 passed / 338 passed)"
+    },
+    {
+      "text": "[Operability: flag, rollback, config] The rollback flag is CMA_RULESET, default v1 (the only table), with no data repair. Rollback to the previous wheel was tried locally: the pre-change code wrote the checkpoint used above, and older readers ignore the additive evidence key. There is no non-production deploy environment, since this is a local tool. The deploy needs no config or secret change: CMA_RULESET is optional. README documents the flag.",
+      "proof_cmd": "python -m pytest -q tests/test_rules.py -k 'unset or chooses' ; git diff fd7b64c -- README.md | grep CMA_RULESET",
+      "proof_output": "tests pass within the suite runs above; README: 'CMA_RULESET=v1 cma run examples/cafe_stretched.csv' with the note 'v1 is the original table, frozen; an unknown id is refused. The evidence file records the table's id and hash.'"
+    },
+    {
+      "text": "[Reproducibility of the P7 evidence; hardener change] The baseline tools (capture_plugin.py, make_p7_baseline.py) existed only in the run directory, which review packets exclude. They are now committed unchanged under tests/golden/p7_tools/, apart from a docstring giving the exact replay commands. tests/test_rules.py's docstring points to them. pytest does not collect them (not test_*.py), and ruff is clean.",
+      "proof_cmd": "git status --short ; ruff check src tests evals ; python -m pytest -q",
+      "proof_output": " M tests/test_rules.py\n?? tests/golden/p7_tools/\nAll checks passed!\n334 passed, 4 skipped in 3.80s"
+    },
+    {
+      "text": "[R10, M16; escalation finding 'M16 retains its old name'] M16 is named 'Non-trading money in (share)' at src/cma/metrics.py:289. Its id, unit and value are unchanged; P7 checks the value and evidence. The README and the committed example memo and evidence were reworded to match (test_m16_is_named_as_non_trading_money_in).",
+      "proof_cmd": "grep -n 'id=\"M16\"' src/cma/metrics.py ; python -m pytest -q tests/test_rules.py -k m16",
+      "proof_output": "Metric(id=\"M16\", name=\"Non-trading money in (share)\", value=unclassified_share, unit=\"pct\", ...; passes within the suite runs above"
+    }
+  ],
+  "files_changed": [
+    "tests/test_rules.py",
+    "tests/golden/p7_tools/capture_plugin.py",
+    "tests/golden/p7_tools/make_p7_baseline.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "Legacy resume can write ruleset=null (src/cma/graph.py:175)",
+      "disposition": "not_reproduced",
+      "evidence": "A real fd7b64c checkpoint resumed by the worktree code produced ruleset {'id': 'v1', 'sha256': '7573…6630', 'inferred': 'pre-ruleset checkpoint'}."
+    },
+    {
+      "finding": "M16 retains its old name (src/cma/metrics.py:289)",
+      "disposition": "not_reproduced",
+      "evidence": "metrics.py:289 now reads name=\"Non-trading money in (share)\"; test_m16_is_named_as_non_trading_money_in passes."
+    },
+    {
+      "finding": "Baseline omits the _vat_year(7) stagger-3 fixture",
+      "disposition": "not_reproduced",
+      "evidence": "The independent replay at fd7b64c yields 37 fixtures and equals the committed golden. test_p7_golden_covers_every_case asserts that some fixture's lines appear under both stagger 1 and stagger 3."
+    },
+    {
+      "finding": "Malformed category bypasses RulesetError and is reported as a model failure",
+      "disposition": "not_reproduced",
+      "evidence": "validate_ruleset type-checks every field first. The wrong-type tests and the damaged-table cma run test (exit 2, 'Refused.') pass in the 334/338 runs."
+    },
+    {
+      "finding": "P7 not proven: no runner row executed the pre-change replay; dual_run deselected all items",
+      "disposition": "not_reproduced",
+      "evidence": "Replay at fd7b64c equals the golden. `-m dual_run` selects 55 and passes, and fails 2 when the table is mutated. `CMA_RULESET=v1 pytest -vv tests/test_rules.py -k p7`: 53 passed. The verifier's runner still needs to record these rows itself."
+    }
+  ],
+  "notes": "Gaps for the owner: (1) There is no changelog in the repo; the README text is the user-facing note for the docs checklist's changelog line. (2) The golden's embedded '_about' string still says the tools live 'in the T01 run directory'. It cannot change without regenerating the golden, which must equal the fd7b64c replay; the test docstring and the tools' own docstring now give the in-repo location. (3) The CI wheel-check step (.github/workflows/ci.yml) was reproduced locally (build, clean venv, load v1 from outside the repo) but has not run on a CI runner from here. (4) The verifier should add runner rows for the fd7b64c replay (the commands are in tests/golden/p7_tools/make_p7_baseline.py) and for `-m dual_run`, so P7 is proven by the runner rather than by this claim. (5) Catastrophic-backtracking regexes are not checked at load. That is acceptable while tables are packaged and reviewed. Firm rules (R20, Tier 2) will take user-written patterns and need a design decision (timeout, or a restricted pattern syntax) before they land. (6) Rollback was tried only locally (an old-code checkpoint resumed by new code, and v1 as default); there is no non-production deploy environment for a local tool. Hardener changes are uncommitted in the worktree for the harness to commit."
+}
