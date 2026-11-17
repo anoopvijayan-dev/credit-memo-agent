@@ -66,6 +66,14 @@ class FirmConfig:
             )
 
 
+def require_unlocked(what: str) -> None:
+    """Refuse `what` unless firm.yaml, read now, has the offline lock off.
+
+    Read on every call, not once: a client or server made while the lock was off must
+    stop sending as soon as the firm turns it back on."""
+    load().require_offline_off(what)
+
+
 def case_root() -> Path:
     raw = os.environ.get("CMA_HOME")
     return Path(raw).resolve() if raw else (Path.cwd() / "private" / "cma").resolve()
@@ -95,7 +103,9 @@ def load(root: Path | None = None) -> FirmConfig:
             else:
                 problems.append(f"{key} must be true or false")
     paths = dict(DEFAULT_PATHS)
-    raw_paths = data.get("paths", {}) or {}
+    raw_paths = data.get("paths")
+    if raw_paths is None:  # absent, or `paths:` with nothing under it
+        raw_paths = {}
     if not isinstance(raw_paths, dict):
         problems.append("paths must be a mapping")
         raw_paths = {}

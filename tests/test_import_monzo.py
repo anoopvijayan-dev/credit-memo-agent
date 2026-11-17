@@ -164,3 +164,16 @@ def test_monzo_amounts_must_be_plain(tmp_path, amount):
     row[7] = amount
     with pytest.raises(monzo.MonzoImportError, match="plain amount"):
         monzo.convert(_write(tmp_path, [row]), tmp_path / "o.csv", opening_balance=0)
+
+
+@pytest.mark.parametrize("kind", ["=1+1", "+cmd", "-2+3", "@SUM(A1)", "\t=1", "\r=1", "=HYPERLINK(x)"])
+def test_formula_leading_description_is_neutralised(tmp_path, kind):
+    # R34: an unknown provider Type becomes the description's prefix; it must not start a formula.
+    out = tmp_path / "mine.csv"
+    rows = [_row("tx_001", "05/01/2026", "12:00:00", kind, "Merchant", -10.00)]
+    monzo.convert(_write(tmp_path, rows), out, opening_balance=100.00)
+    with out.open(newline="") as f:
+        cells = [r["description"] for r in csv.DictReader(f)]
+    assert cells and all(c[0] not in "=+-@\t\r" for c in cells)
+    assert "MERCHANT" in cells[0]
+    assert ingest.load_csv(out).transactions[0].description == cells[0]

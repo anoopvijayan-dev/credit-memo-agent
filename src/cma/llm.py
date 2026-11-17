@@ -7,6 +7,8 @@ that invents a number.
 
 The hosted providers check the firm's offline lock (firm.yaml, on by default) before
 anything else, so under the lock no client is created and no connection is attempted.
+They check it again before every request, so a client made while the lock was off sends
+nothing once the firm turns it on.
 """
 
 from __future__ import annotations
@@ -78,13 +80,14 @@ class AnthropicLLM:
     name = "anthropic"
 
     def __init__(self, model: str | None = None):
-        firm.load().require_offline_off("A hosted model (anthropic)")
+        firm.require_unlocked("A hosted model (anthropic)")
         import anthropic
 
         self.client = anthropic.Anthropic(timeout=120.0, max_retries=2)
         self.model = model or os.getenv("CMA_ANTHROPIC_MODEL", "claude-sonnet-5-5")
 
     def complete(self, system: str, user: str) -> str:
+        firm.require_unlocked("A request to a hosted model (anthropic)")
         msg = self.client.messages.create(
             model=self.model,
             max_tokens=2000,
@@ -100,13 +103,14 @@ class OpenAILLM:
     name = "openai"
 
     def __init__(self, model: str | None = None):
-        firm.load().require_offline_off("A hosted model (openai)")
+        firm.require_unlocked("A hosted model (openai)")
         from openai import OpenAI
 
         self.client = OpenAI(timeout=120.0, max_retries=2)
         self.model = model or os.getenv("CMA_OPENAI_MODEL", "gpt-4.1")
 
     def complete(self, system: str, user: str) -> str:
+        firm.require_unlocked("A request to a hosted model (openai)")
         r = self.client.chat.completions.create(
             model=self.model,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],

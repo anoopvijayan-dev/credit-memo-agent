@@ -13,7 +13,8 @@ so the written memo can answer "where did this figure come from" on its own.
 
 Prompts: `draft_prompt` is the only thing that reaches the model. It carries the metric
 and rule tables, the period and a placeholder account name, never a description, a
-payer, the account's real name or a file path (ADR 001, R30).
+payer, the account's real name, a case profile field or a file path (ADR 001, R30). A
+redraft adds one fixed sentence, never the rejected draft or the guard's findings.
 
 Checkpoints: the default MemorySaver lives in memory, so a pending review is lost when
 the process exits. Pass a durable checkpointer (`sqlite_checkpointer(path)`, needs the
@@ -43,6 +44,13 @@ from .models import GuardResult, Metric, PolicyResult, ReviewDecision, Statement
 
 MAX_REDRAFTS = 2
 PROMPT_ACCOUNT_NAME = "Applicant"
+# The only addition a redraft prompt gets: one fixed sentence. The guard's findings quote
+# the model's own output, so they stay out of the prompt (R30); they go to the reviewer.
+REDRAFT_NOTE = (
+    "\nYour previous draft was rejected by the grounding check: it quoted a number that is not in "
+    "the tables, or a figure without its tag. Rewrite it using only figures from the tables, each "
+    "followed by its tag.\n"
+)
 
 # Our pydantic models travel through the checkpointer between the review interrupt and
 # the resume, so they must be on the allow-list.
@@ -150,7 +158,7 @@ def rules_table(p: PolicyResult) -> str:
     return "\n".join(lines)
 
 
-def draft_prompt(statement: Statement, metrics: list[Metric], policy: PolicyResult, feedback: str) -> str:
+def draft_prompt(statement: Statement, metrics: list[Metric], policy: PolicyResult, redraft: bool = False) -> str:
     """The user prompt: the tables, the period and the placeholder name, nothing else."""
     user = (
         f"Account: {PROMPT_ACCOUNT_NAME}\n"
@@ -159,8 +167,8 @@ def draft_prompt(statement: Statement, metrics: list[Metric], policy: PolicyResu
         f"Policy: {policy.policy_name}\nOverall policy outcome: {policy.overall.value}\n"
         f"Policy table:\n{rules_table(policy)}\n"
     )
-    if feedback:
-        user += f"\nYour previous draft was rejected by the grounding check:\n{feedback}\nRewrite it using only figures from the table, each with its tag.\n"
+    if redraft:
+        user += REDRAFT_NOTE
     return user
 
 
@@ -184,6 +192,17 @@ def appendix(s: MemoState) -> str:
     return "\n".join(lines)
 
 
+def _egress(s: MemoState) -> dict:
+    """Where the draft's data went. A review drafted by the version before the offline lock
+    resumes with no lock fields in its checkpoint; that version had no lock, and its model
+    name says whether the draft left the machine."""
+    if s.get("egress") is not None and s.get("offline_lock") is not None:
+        return {"offline_lock": s["offline_lock"], "destination": s["egress"], "recorded": "at draft"}
+    model = s.get("model") or "-"
+    return {"offline_lock": False, "destination": "offline" if model.startswith("fake:") else model,
+            "recorded": "at resume; the draft predates the offline lock"}
+
+
 def evidence_record(s: MemoState) -> dict:
     """Everything needed to audit the memo later, as plain JSON."""
     return {
@@ -191,8 +210,7 @@ def evidence_record(s: MemoState) -> dict:
                       "start": str(s["statement"].start), "end": str(s["statement"].end),
                       "transactions": len(s["statement"].transactions)},
         "model": s.get("model"),
-        # Where data went. Records made before the offline lock existed have no lock flag.
-        "egress": {"offline_lock": s.get("offline_lock"), "destination": s.get("egress")},
+        "egress": _egress(s),
         "vat_stagger": s.get("vat_stagger"),
         "metrics": [m.model_dump() for m in s["metrics"]],
         "policy": s["policy"].model_dump(mode="json"),
@@ -233,17 +251,13 @@ def build(llm: LLM | None = None, checkpointer=None):
         return {"policy": pol.evaluate(s["metrics"], p)}
 
     def draft(s: MemoState) -> MemoState:
-        user = draft_prompt(s["statement"], s["metrics"], s["policy"], s.get("guard_feedback", ""))
+        user = draft_prompt(s["statement"], s["metrics"], s["policy"], redraft=bool(s.get("guard_feedback")))
         return {"memo": llm.complete(SYSTEM_PROMPT, user), "redrafts": s.get("redrafts", 0)}
 
     def guard(s: MemoState) -> MemoState:
         g = grd.check(s["memo"], s["metrics"], s["policy"], required_headings=grd.REQUIRED_HEADINGS)
-        feedback = ""
-        if not g.grounded:
-            parts = [f"- {f.number_text}: {f.reason}" for f in g.unmatched]
-            parts += [f"- {mid} quoted without its tag" for mid in g.missing_citations]
-            feedback = "\n".join(parts)
-        return {"guard": g, "guard_feedback": feedback}
+        # The findings stay in `guard` for the reviewer; the model is told only that it failed.
+        return {"guard": g, "guard_feedback": "" if g.grounded else REDRAFT_NOTE}
 
     def route_after_guard(s: MemoState) -> str:
         if s["guard"].grounded or s.get("redrafts", 0) >= MAX_REDRAFTS:

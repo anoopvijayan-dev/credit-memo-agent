@@ -11,11 +11,13 @@ start servers with the working directory at / or ~, so there is no default), and
 number only; cell values are never echoed to the client.
 
 Descriptions: statement descriptions are text the payer chose ("IGNORE PREVIOUS
-INSTRUCTIONS..."). `transactions_for` leaves them out unless the caller asks, and then
-returns them marked as untrusted data.
+INSTRUCTIONS..."), and an MCP client is a model, so no tool ever returns one (R34).
+`transactions_for` still accepts include_descriptions, and says the text was withheld.
 
-Offline lock: the server is a way for data to reach a model, so it refuses to start
-while offline_lock is on in firm.yaml (the default).
+Offline lock: the server is a way for data to reach a model, so while offline_lock is on
+in firm.yaml (the default) it refuses to start, however it is started (main(), or an
+embedding script calling `server.run()`, an async runner or an ASGI app), and every tool
+refuses before reading a file. firm.yaml is read on each start and each call.
 """
 
 from __future__ import annotations
@@ -27,7 +29,36 @@ from mcp.server.mcpserver import MCPServer
 
 from . import categorise, firm, ingest, metrics, policy
 
-server = MCPServer("credit-memo-agent")
+
+class LockedMCPServer(MCPServer):
+    """An MCPServer whose every way of starting checks the offline lock first."""
+
+    def run(self, *args, **kwargs):
+        firm.require_unlocked("Starting the MCP server")
+        return super().run(*args, **kwargs)
+
+    async def run_stdio_async(self, *args, **kwargs):
+        firm.require_unlocked("Starting the MCP server")
+        return await super().run_stdio_async(*args, **kwargs)
+
+    async def run_sse_async(self, *args, **kwargs):
+        firm.require_unlocked("Starting the MCP server")
+        return await super().run_sse_async(*args, **kwargs)
+
+    async def run_streamable_http_async(self, *args, **kwargs):
+        firm.require_unlocked("Starting the MCP server")
+        return await super().run_streamable_http_async(*args, **kwargs)
+
+    def sse_app(self, *args, **kwargs):
+        firm.require_unlocked("Starting the MCP server")
+        return super().sse_app(*args, **kwargs)
+
+    def streamable_http_app(self, *args, **kwargs):
+        firm.require_unlocked("Starting the MCP server")
+        return super().streamable_http_app(*args, **kwargs)
+
+
+server = LockedMCPServer("credit-memo-agent")
 
 
 def data_dir() -> Path:
@@ -52,6 +83,8 @@ def safe_path(raw: str, suffixes: tuple[str, ...]) -> Path:
 
 
 def _statement(path: str):
+    # Every tool starts here, so none reads a file while the lock is on.
+    firm.require_unlocked("An MCP tool call")
     p = safe_path(path, (".csv",))
     try:
         return ingest.load_csv(p)
@@ -92,8 +125,8 @@ def check_policy(path: str, policy_path: str | None = None, vat_stagger: int | N
 @server.tool()
 def transactions_for(path: str, ids: list[str], include_descriptions: bool = False) -> list[dict]:
     """Return the statement lines behind a metric's evidence ids, so a reviewer can check a
-    figure. Descriptions are payer-written text; they are only included when asked for,
-    and then under `untrusted_description`."""
+    figure. Descriptions are payer-written text and are never returned, even when
+    include_descriptions is true; each row says so with description_withheld."""
     by_id = _statement(path).by_id()
     out = []
     for i in ids:
@@ -101,9 +134,7 @@ def transactions_for(path: str, ids: list[str], include_descriptions: bool = Fal
             continue
         t = by_id[i]
         row = {"id": t.id, "date": t.date.isoformat(), "amount": t.amount, "balance": t.balance,
-               "category": t.category.value if t.category else None}
-        if include_descriptions:
-            row["untrusted_description"] = t.description
+               "category": t.category.value if t.category else None, "description_withheld": True}
         out.append(row)
     return out
 

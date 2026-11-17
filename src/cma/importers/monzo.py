@@ -89,6 +89,15 @@ def references(*fields: str | None) -> str:
     return " ".join(found)
 
 
+FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def neutralise_formula(text: str) -> str:
+    """A text cell a spreadsheet would read as a formula gets a leading apostrophe (R34).
+    Monzo's Type is provider-written; an unknown one becomes the description's prefix."""
+    return "'" + text if text.startswith(FORMULA_START) else text
+
+
 def describe(kind: str, name: str, amount: float, extra: str = "") -> str:
     """A bank-statement style description from Monzo's Type, Name and direction."""
     k = kind.strip().lower()
@@ -189,7 +198,7 @@ def convert(src: Path, dst: Path, opening_balance: float | None = None) -> Impor
                 f"{tid}: walked balance {bal:.2f} disagrees with Monzo's {monzo_bal:.2f}; "
                 "the export may be missing transactions"
             )
-        out_rows.append({"id": tid, "date": d.isoformat(), "description": desc,
+        out_rows.append({"id": tid, "date": d.isoformat(), "description": neutralise_formula(desc),
                          "amount": f"{amount:.2f}", "balance": f"{bal:.2f}"})
 
     Path(dst).parent.mkdir(parents=True, exist_ok=True)

@@ -53,7 +53,10 @@ cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out 
 # Use a real model instead of the offline one. The offline lock in firm.yaml (under
 # CMA_HOME, default private/cma) is on by default and refuses hosted models and the MCP
 # server; turn it off on purpose first. The prompt still carries only the tables.
-mkdir -p private/cma && printf 'offline_lock: false\n' > private/cma/firm.yaml
+# Edit the file the tool reads, keeping its other settings: open it in an editor and set
+#   offline_lock: false
+# (create it with just that line if it does not exist yet).
+mkdir -p "${CMA_HOME:-private/cma}" && ${EDITOR:-nano} "${CMA_HOME:-private/cma}/firm.yaml"
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
 cma run examples/cafe_stretched.csv --llm anthropic
 ```
