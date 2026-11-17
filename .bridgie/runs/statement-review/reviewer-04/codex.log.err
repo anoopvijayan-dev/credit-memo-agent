@@ -1,0 +1,2287 @@
+Reading prompt from stdin...
+OpenAI Codex v0.169.0
+--------
+workdir: /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T17-review
+model: gpt-6.2-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 01a1eb4c-cc35-7e03-b77c-6baf6a6f74a4
+--------
+user
+# Seat: reviewer (verify)
+
+## Role
+You get credit for real defects found. You have read-only access to the whole repository; read whatever you need to judge the diff in context. You never edit, and you do not run tests, builds or anything that writes: the runner has already run the configured test tiers in the task's worktree, and their results and logs are in your inputs. To read code you may use read-only commands where your tools read through a shell (`cat`, `sed -n`, `rg`, `grep`, `ls`, `git diff`, `git show`, `git log`); your workspace is read-only and the runner fails the review if anything in it changes.
+
+## Judgment criteria
+- Walk every requirement ID on the task: point at the exact code that satisfies it or the gap; unmapped means `not_proven`.
+- Check every claim against its proof; a claim whose proof does not cover it is a finding.
+- A claim that tests pass is proven only by a runner result row that passed and whose log shows those tests ran. A test the claim cites that the runner did not run is `not_proven`, not `pass`; say which command would prove it.
+- Run the lane attack list: double submit, concurrent update, boundary values, currency and timezone, partial failure, authz bypass, tenant isolation, changed-contract consumers.
+- Cite file and line for every finding, with a concrete repro; "consider edge cases" is not a finding.
+- Default verdict is `not_proven`; move to `pass` only when every criterion row passes and no blocker or major finding remains.
+- Treat "zero issues" from the producer as a prompt to look harder, not as a signal.
+
+## Gotchas
+- A review from the packet alone, without reading the repository, has invented findings before; abort instead.
+- Do not report style.
+
+## Output contract
+`evidence.json`, exactly this shape (the runner fills `task` and `verifier`; use these field names):
+
+```json
+{
+  "criteria": [
+    { "id": "R4", "tier": "adversarial", "check": "what you checked, citing file:line", "result": "pass", "artifact": null }
+  ],
+  "findings": [
+    { "severity": "major", "file": "src/x.py", "line": 42, "criterion": "R4", "claim": "the defect", "repro": "how to reproduce it" }
+  ],
+  "verdict": "not_proven"
+}
+```
+
+One `criteria` row per requirement ID on the task, `tier` always `adversarial`, `result` one of `pass`, `fail`, `not_proven`. `severity` is `blocker`, `major` or `minor`. `verdict` is `pass`, `fail` or `not_proven`.
+
+## Stop conditions
+Stop with `not_proven` and a reason when a criterion depends on a test result the runner did not produce.
+
+# Inputs
+
+## task — task T17
+
+```json
+{
+  "id": "T17",
+  "title": "firm.yaml (offline_lock and show_policy_verdict default on, file paths); under the lock, refuse hosted clients and the MCP server before any network call; prompts carry only tables, the period and the placeholder name; test: P18, P5",
+  "requirements": [
+    "R29",
+    "R30",
+    "R34",
+    "P5",
+    "P18"
+  ],
+  "depends_on": [],
+  "status": "verify",
+  "attempts": 1,
+  "max_attempts": 3,
+  "branch": "bridgie-task/statement-review/T17",
+  "evidence": null,
+  "escalation": null
+}
+```
+
+## requirements — .bridgie/specs/statement-review/requirements.md
+
+# Requirements — Statement review: every figure traced, the unclear lines first
+
+Bet: statement-review, signed 2026-11-16. Scope is a showcase for one firm (D15, D24): a working model the underwriter can try, after which the firm's approver decides on a pilot (D14, D25). Forms and risk tags follow the template.
+
+Revision 2, after D34 (changes requested). Ids from revision 1 are kept and never reused. Changed: R1 and R14 (cash deposits are trading receipts and the large ones are flagged, D31); R15 (judgement queue); R22, R23, R26 and R28 (the pack is written once, at sign-off, and carries the policy check); R25 (pass/refer/fail shown with the illustrative label, D28); R47 (synthetic cash); R50 (no durations, D32); P1 and P17. New: R55, R56, P19, P20. Withdrawn: R49 (timing the underwriter, D32). Confirmed as designed: local-first (D29), OBIE v3.1 and TrueLayer first (D30), Tier 1 only by 2026-11-29 (D33).
+
+Terms. *The system*: the cma package running on the underwriter's machine. *Figures layer*: src/cma/metrics.py and a new indicators module, the only code that does arithmetic on money (ADR 001). *Case*: one application, holding one or more of the applicant's accounts, a profile, an override log and a case log. *The reply*: the underwriter's written answers of 2026-11-16 (one anecdotal source; see evidence-synthesis.md). *Judgement queue*: the lines the workspace lists first because a person has to decide what they are. *Policy check*: the pass, refer or fail outcome and the rule results from the packaged policy (src/cma/policies/uk_sme_default.yaml). Its rule ids (R1 to R9, cited as [R1] to [R9] in a pack) are not the requirement ids in this file. *Illustrative label*: the sentence shown with every policy outcome, saying that the thresholds ship with the tool, are not the firm's lending policy, and do not make the lending decision. *Preview*: the pack's content and its snapshot hash, shown before sign-off; nothing is written until sign-off.
+
+## R1 · ubiquitous · risk: money
+THE SYSTEM SHALL place every credit in a case in exactly one money-in bucket (trading receipts, own-account transfers in, director and shareholder funding, lending drawdowns, refunds and returned payments, HMRC repayments, other explained money in, unexplained), and SHALL report total money in and each bucket as a GBP figure with the ids of the lines behind it.
+Source: the reply, 'if a tool could reliably tell me that £80k entered the business account but only £55k represented genuine trading receipts, explain the remaining £25k'; D31 (cash deposits sit inside trading receipts, R55).
+
+## R2 · ubiquitous · risk: money
+THE SYSTEM SHALL compute every money figure, bucket, monthly cell, indicator comparison and comparison difference in integer pence from GBP amounts, in the figures layer only, and never in the review workspace, the pack renderer or a model.
+
+## R3 · unwanted · risk: money
+IF the money-in buckets do not sum to total money in to the penny, or any credit is in no bucket or in more than one, THEN THE SYSTEM SHALL NOT show or export figures for the case, and SHALL report the difference in pence and the lines involved.
+
+## R4 · ubiquitous · risk: money
+THE SYSTEM SHALL recognise, from maintained lists shipped as data: credits from UK card acquirers, payment gateways, marketplaces and delivery platforms as trading receipts; lines naming UK business lenders and merchant cash advance providers as lending drawdowns (money in) or debt service (money out); moves between the applicant's own pots or savings as own-account transfers; HMRC credits as HMRC repayments; refund and reversal credits as refunds; and cash paid in at a counter or machine as cash deposits.
+Source: README known limits (unknown acquirers land in M16); the reply (Stripe, SumUp, merchant cash advances).
+
+## R5 · conditional · risk: money
+IF the case profile names a director or shareholder, THEN THE SYSTEM SHALL put each credit whose counterparty matches that name in director and shareholder funding, even when the credit carries an invoice reference.
+
+## R6 · conditional · risk: money
+IF the case profile names the applicant's other accounts, THEN THE SYSTEM SHALL classify lines in either direction whose counterparty matches one of them as own-account transfers, and SHALL leave them out of trading receipts and out of operating cash flow (M9).
+
+## R7 · unwanted · risk: money
+IF no built-in rule, firm rule or override explains a credit, THEN THE SYSTEM SHALL NOT count it as trading receipts; it stays in unexplained money in.
+
+## R8 · conditional · risk: money
+IF a case holds more than one of the applicant's accounts, THEN THE SYSTEM SHALL pair each debit in one account with the single credit of the same amount in another account of the case within the configured number of days, and SHALL classify both lines as own-account transfers.
+Source: the reply, 'transfers between business accounts can inflate turnover if counted twice'.
+
+## R9 · unwanted · risk: money
+IF a debit has more than one candidate credit for an own-account pairing, THEN THE SYSTEM SHALL NOT pair it, and SHALL list the debit and every candidate in the judgement queue as a possible own-account transfer.
+
+## R10 · ubiquitous · risk: money
+THE SYSTEM SHALL keep the ids, units and values of M1 to M16 unchanged on every committed synthetic case and test fixture, except for lines that a new rule now recognises, which the change SHALL list; M16 SHALL be renamed so that its name says it measures money in that is not trading receipts.
+
+## R11 · ubiquitous · risk: money
+THE SYSTEM SHALL produce a monthly summary with one row per calendar month in the period, part months marked as part, giving money in, money out, trading receipts, average end-of-day balance, lowest end-of-day balance and days overdrawn, each cell with the ids of the lines behind it.
+Source: the reply, 'calculating monthly credits, debits, average balances and existing repayments'.
+
+## R12 · ubiquitous · risk: money
+THE SYSTEM SHALL report the average end-of-day balance over the period as a figure, citing the lines that set each day's closing balance.
+
+## R13 · conditional · risk: money
+IF the case profile gives the proposed facility's monthly repayment, THEN THE SYSTEM SHALL report debt service cover including that repayment; otherwise THE SYSTEM SHALL show that figure as n/a with the reason.
+
+## R14 · ubiquitous · risk: data
+THE SYSTEM SHALL raise risk indicators from thresholds in an editable file (a single credit that is large against typical trading receipts; each cash deposit at or above the single-deposit limit; a calendar month in which cash deposits exceed a set share of that month's trading receipts; a cash deposit made within a set number of days after a cash withdrawal of an amount within a set tolerance; payments to gambling operators; returned direct debits; runs of consecutive overdrawn days; irregular credits from a named acquirer), each listing its lines and the threshold that fired, and SHALL label any threshold still at its shipped value as illustrative.
+Source: the reply, 'Highlight director loans, unusual credits and large cash deposits'; 'Flag returned direct debits, persistent overdraft usage'; D31, 'with deposits above a threshold flagged'.
+
+## R15 · event · risk: ux
+WHEN the underwriter opens a case, THE SYSTEM SHALL show the money-in breakdown, the monthly summary, the figures, the indicators and, while R25 applies, the policy check, with the judgement queue (unexplained lines, possible own-account transfers, and every line an indicator flagged, which includes cash deposits at or above the single-deposit limit) listed first, largest amount first.
+
+## R16 · event · risk: ux
+WHEN the underwriter selects a figure, a bucket or a monthly cell, THE SYSTEM SHALL list exactly the lines behind it, each with date, description, amount, balance, category and the rule or override that set the category; for a sum it SHALL show the lines' total next to the figure, and for an average, share, ratio or count it SHALL show the inputs and the method.
+Source: the reply, 'I'd want to click any number in the report and see exactly which transactions make up that figure'.
+
+## R17 · event · risk: money
+WHEN the underwriter changes a line's category and gives a reason, THE SYSTEM SHALL append the change (line, old and new category, reason, typed name, operating-system user, UTC time) to the case's override log, recompute every figure from the statements and the whole override log, and mark each figure that now rests on an overridden line.
+Source: the reply, 'Allow me to manually correct categories'.
+
+## R18 · unwanted · risk: money
+IF a requested change would alter a line's amount, date, balance or description, add or remove a line, or give a line a category not valid for its direction, THEN THE SYSTEM SHALL NOT accept it; overrides change categories only.
+
+## R19 · conditional · risk: data
+IF an override names a line that is not in the case, or was recorded against a statement file whose hash no longer matches, THEN THE SYSTEM SHALL NOT apply it, and SHALL show it as stale until the underwriter confirms or drops it.
+
+## R20 · event · risk: data
+WHEN the underwriter promotes an override to a firm rule, THE SYSTEM SHALL show the lines the rule would match in the open case before saving, then save the counterparty pattern, direction, category, name, time and reason to the firm rules file, and apply the rule to every case categorised afterwards.
+
+## R21 · unwanted · risk: money
+IF a firm rule would reclassify a line matched by a built-in director, capital, shareholder, lender, HMRC or returned-payment pattern, THEN THE SYSTEM SHALL NOT apply the firm rule to that line; only a per-line override with a reason can change it.
+
+## R22 · event · risk: data
+WHEN the underwriter signs off a case's figures, THE SYSTEM SHALL require a typed name, record it with the operating-system user and UTC time, and bind it to the snapshot of the preview the underwriter signed: statement hashes, ruleset, firm rules, profile, override log position, thresholds, memo field map, policy hash, the show_policy_verdict setting and package version.
+
+## R23 · unwanted · risk: data
+IF anything in the snapshot has changed since the preview was built, THEN THE SYSTEM SHALL NOT accept the sign-off, and SHALL say what changed.
+
+## R24 · ubiquitous · risk: ux
+THE SYSTEM SHALL word the underwriter's action as signing off the figures, never as approving the loan, and SHALL leave the recommendation and every judgement field blank for the underwriter.
+Source: the reply, 'I wouldn't want AI making the final lending decision. I'd want it assisting the underwriter.'
+
+## R25 · state · risk: ux
+WHILE show_policy_verdict is on in the firm configuration (the default), THE SYSTEM SHALL show in the review workspace and the pack the overall pass, refer or fail outcome and each rule's result from the packaged policy, computed from the current figures, and SHALL put the illustrative label in the same workspace panel and the same pack section as the outcome.
+Source: D28, 'Show it, labelled as illustrative thresholds, not the firm's policy'; README:127, 'Policy thresholds are illustrative. They are not any lender's real policy.'
+
+## R26 · event · risk: data
+WHEN a case is signed off, THE SYSTEM SHALL write the review pack once, from the signed preview, containing: memo-ready sections ordered by an editable memo field map (by default the 13 fields listed in the reply), each figure followed by its id; while R25 applies, a policy-check section after the memo fields that no memo field maps to; a self-contained HTML record that works offline, with click-through from every figure to its lines and the sign-off; the evidence JSON; and the monthly summary as CSV. THE SYSTEM SHALL NOT overwrite an existing pack.
+Source: the reply, 'Produce a summary I can use directly in my credit memo'.
+
+## R27 · conditional · risk: data
+IF a memo field has no figure mapped to it, THEN THE SYSTEM SHALL mark it as for the underwriter and leave it empty.
+
+## R28 · unwanted · risk: data
+IF the pack's text fails the grounding guard (a number that is not a figure or a policy threshold at the precision shown, a figure without its id, or a threshold without its rule id and a limit word), THEN THE SYSTEM SHALL NOT write the pack.
+
+## R29 · state · risk: security
+WHILE offline lock is on in the firm configuration (the default), THE SYSTEM SHALL refuse to create a hosted model client, SHALL refuse to start the MCP server, SHALL open no network connection other than the loopback workspace, and SHALL record offline mode in every evidence record.
+Source: the reply, 'A tool that operates entirely on our own machine or within our own environment, without transmitting customer data externally, could be attractive.'
+
+## R30 · unwanted · risk: security
+IF a hosted model is used, THEN THE SYSTEM SHALL NOT put transaction descriptions, counterparty names, case profile fields or any line-level data in a prompt; a prompt carries only the metric and rule tables, the period and the placeholder account name.
+
+## R31 · ubiquitous · risk: security
+THE SYSTEM SHALL keep each case's statements, profile, logs and outputs under one case root readable only by the operating-system user who created it, and SHALL refuse to create a case root inside a git working tree that does not ignore it.
+
+## R32 · conditional · risk: security
+IF the case root lies inside a folder that a known cloud-sync client uploads (OneDrive, Dropbox, Google Drive, iCloud Drive), THEN THE SYSTEM SHALL warn before creating a case, and SHALL record the warning in the case log.
+
+## R33 · event · risk: security
+WHEN the review workspace starts, THE SYSTEM SHALL listen on the loopback interface only, issue a new random session token, refuse any request that lacks the token or carries a Host header other than the loopback address and port, and serve only assets bundled in the package.
+
+## R34 · ubiquitous · risk: security
+THE SYSTEM SHALL treat all payer-written and provider-written text (descriptions, references, merchant names, provider categories) as untrusted: escape it in HTML, neutralise leading formula characters in text cells of CSV exports, never send it to a model, and never act on it.
+
+## R35 · event · risk: data
+WHEN the underwriter purges a case, THE SYSTEM SHALL delete all the case's files, and SHALL record in a firm-level ledger only the case id, the purge time and who purged it.
+
+## R36 · event · risk: data
+WHEN a UK Open Banking (OBIE Account and Transaction API v3.1) transactions file is imported, THE SYSTEM SHALL keep only booked GBP transactions, keep the provider's transaction ids, rebuild the running balance from per-line balances or from a supplied statement balance, and refuse the file if the balance chain breaks anywhere.
+Source: D5; D30; E3 and E7 (provider unknown); the reply names TrueLayer, Yapily and Plaid as common.
+
+## R37 · event · risk: data
+WHEN a TrueLayer Data API transactions export is imported, THE SYSTEM SHALL apply the same checks as R36, and SHALL keep the provider's own categories only as untrusted hints that no figure uses.
+Source: D30.
+
+## R38 · event · risk: data
+WHEN a bank CSV with separate paid-in and paid-out columns, a non-ISO date format or newest-first order is imported, THE SYSTEM SHALL convert it through a named bank profile or a custom column mapping, and SHALL apply the same checks as the five-column loader.
+
+## R39 · conditional · risk: data
+IF a file already imported into the case is imported again, THEN THE SYSTEM SHALL leave the case unchanged.
+
+## R40 · unwanted · risk: data
+IF a new account overlaps an existing account of the case in period and shares most of its (date, amount) pairs, THEN THE SYSTEM SHALL NOT add it, and SHALL say it is probably the same account imported twice.
+
+## R41 · ubiquitous · risk: money
+THE SYSTEM SHALL keep line ids unique within a case by prefixing them with the account key when the case holds more than one account, compute flow figures across all the case's accounts after removing paired own-account transfers, and compute balance figures on the combined end-of-day balance over the dates every account covers, showing n/a with the reason when those dates do not overlap.
+
+## R42 · ubiquitous · risk: data
+THE SYSTEM SHALL append every import, profile change, override, firm-rule promotion, preview, pack write and sign-off to the case log, each entry carrying the hash of the entry before it.
+Source: the reply, 'The firm would need confidence that data is secure, access is controlled and there's an audit trail.'
+
+## R43 · unwanted · risk: data
+IF the case log's hash chain is broken or its last entry is incomplete, THEN THE SYSTEM SHALL NOT accept a sign-off, and SHALL name the first bad entry.
+
+## R44 · event · risk: data
+WHEN asked to verify an evidence record, THE SYSTEM SHALL recompute every figure, bucket and monthly cell from the recorded inputs and report each mismatch, or confirm that there is none.
+
+## R45 · conditional · risk: data
+IF the evidence record was made with a ruleset other than the one installed, THEN THE SYSTEM SHALL refuse to verify it, and SHALL name the package version and ruleset that made it.
+
+## R46 · event · risk: data
+WHEN asked to pseudonymise a statement, THE SYSTEM SHALL write a copy in which personal and business names and account numbers are replaced by consistent tokens while recognised institutions (acquirers, lenders, HMRC) and all amounts, dates and balances are kept, SHALL tokenise the case profile the same way, and SHALL label the output as pseudonymised personal data, not anonymous data.
+Source: the reply, 'I'd start with synthetic or properly anonymised sample statements and compare the results with our existing process'.
+
+## R47 · ubiquitous · risk: none
+THE SYSTEM SHALL generate synthetic business cases that include real acquirer names, director funding, own-account transfers across two accounts, cash deposits (at least one at or above the single-deposit limit, and one paid in after a similar cash withdrawal) and lender lines, with ground truth for every bucket, line and indicator, while every existing archetype and profile still produces a byte-identical statement.
+
+## R48 · state · risk: ux
+WHILE a case is marked as a demo (synthetic data, or the owner's own statements per D23), THE SYSTEM SHALL show a banner in the workspace and stamp the pack, saying it demonstrates the mechanism and is not an applicant file.
+
+## R50 · event · risk: ux
+WHEN asked for a report, THE SYSTEM SHALL summarise for each case the lines in the judgement queue, the lines each indicator flagged, overrides by old and new category, unexplained share of money in, whether every figure was traced, and whether the case was signed off, with no applicant names, descriptions or amounts and no duration derived from the case log's timestamps.
+Source: D32 (files are timed with a stopwatch, outside the tool).
+
+## R51 · event · risk: ux
+WHEN the underwriter enters their own figure for a memo field or a month, THE SYSTEM SHALL show the difference from its own figure and list, largest first, the lines in that period whose bucket a person might read differently: cash deposits, unexplained lines, possible own-account transfers and overridden lines.
+Source: the reply, 'compare the results with our existing process'.
+
+## R52 · event · risk: ux
+WHEN the underwriter saves an override on a case of up to 10,000 lines, THE SYSTEM SHALL show the recomputed figures, indicators and policy check within 2 seconds on a typical office laptop.
+
+## R53 · ubiquitous · risk: data
+THE SYSTEM SHALL keep cma run, cma resume, cma import monzo, cma generate, the MCP tools and the evidence JSON working with their current options and fields; new evidence fields SHALL be additive, and every new evidence record SHALL carry a schema version.
+
+## R54 · conditional · risk: data
+IF CMA_RULESET is set to v1, THEN THE SYSTEM SHALL categorise with the built-in rule table as it was before this change, and SHALL record v1 as the ruleset in every evidence record.
+
+## R55 · ubiquitous · risk: money
+THE SYSTEM SHALL count every credit categorised as a cash deposit as trading receipts, in M2 and in every figure and monthly cell built on trading receipts, and SHALL report the cash deposits within trading receipts as a separate GBP figure with the ids of the deposits behind it.
+Source: D31, 'Counted as trading receipts, with deposits above a threshold flagged'; the reply, 'Highlight ... large cash deposits'.
+
+## R56 · state · risk: ux
+WHILE show_policy_verdict is off in the firm configuration, THE SYSTEM SHALL NOT show an overall outcome or any rule result in the review workspace or the pack, and SHALL record in the evidence that the policy check was hidden.
+Source: D28 (the setting is the rollback path for showing the outcome).
+
+## P1 · property
+For any case, trading receipts and the other seven money-in buckets SHALL sum to total money in to the penny, and every credit's id SHALL appear in exactly one bucket's evidence; the cash-deposits figure is not a bucket and is not added.
+Validates: R1, R2, R3, R7
+
+## P2 · property
+For any sum figure, bucket or monthly cell, the signed amounts of its evidence lines SHALL total the figure to the penny.
+Validates: R1, R11, R16, R55
+
+## P3 · property
+For any statements, profile and override log, computing the figures twice SHALL give identical results, and the figures after applying overrides one at a time SHALL equal a fresh computation with all of them applied.
+Validates: R17, R44
+
+## P4 · property
+For any override log, the set of (id, date, amount, balance, description) across the case's lines SHALL be the same before and after the overrides are applied.
+Validates: R18
+
+## P5 · property
+For any case whose descriptions and profile contain sentinel strings, no prompt built for a model SHALL contain any sentinel.
+Validates: R30, R34
+
+## P6 · property
+For any credit that no built-in rule, firm rule or override matches, its id SHALL be in the evidence of unexplained money in and not in the evidence of M2.
+Validates: R7
+
+## P7 · property
+For any committed synthetic case and test fixture, M1 to M16 under the new ruleset SHALL equal their values before this change, except on lines the change lists as newly recognised; under CMA_RULESET=v1 they SHALL equal them with no exceptions.
+Validates: R10, R53, R54
+
+## P8 · property
+For any description text, the workspace HTML and the pack HTML SHALL contain it only in escaped form, and no text cell in an exported CSV SHALL begin with =, +, -, @, a tab or a carriage return.
+Validates: R34
+
+## P9 · property
+For any import file, importing it twice SHALL leave the same case state and the same case log head as importing it once.
+Validates: R39
+
+## P10 · property
+For any statement and profile, the pseudonymised statement and profile SHALL give identical figures, buckets, monthly cells and indicators.
+Validates: R46
+
+## P11 · property
+For any multi-account case, each own-account pair SHALL be one debit and one credit of equal amount in different accounts, no line SHALL be in two pairs, and total money in less own-account transfers in SHALL equal the generator's credits from outside the applicant's accounts.
+Validates: R6, R8, R9, R41
+
+## P12 · property
+For any case, monthly trading receipts SHALL sum to M2 and monthly money in SHALL sum to total money in, to the penny.
+Validates: R11, R55
+
+## P13 · property
+For any signed pack, verifying its evidence record against its case SHALL reproduce every figure, bucket and monthly cell exactly.
+Validates: R22, R44
+
+## P14 · property
+For any case, the pack's text SHALL pass the grounding guard with no unmatched numbers and no missing citations.
+Validates: R26, R28
+
+## P15 · property
+For any case log, changing, removing or reordering any entry before the head SHALL be detected on the next load.
+Validates: R42, R43
+
+## P16 · property
+For any firm rules file, no line matched by a protected built-in pattern SHALL change category through a firm rule.
+Validates: R21
+
+## P17 · property
+For any synthetic case generated with the new features, every bucket, every line's category and every indicator flag SHALL equal the generator's ground truth.
+Validates: R1, R4, R5, R8, R14, R47, R55
+
+## P18 · property
+For any run while offline lock is on, asking for a hosted model or starting the MCP server SHALL fail before any network call is attempted.
+Validates: R29
+
+## P19 · property
+For any case, the evidence of the cash-deposits figure SHALL be exactly the credits categorised as cash deposits, each of them SHALL also be in M2's evidence, the figure SHALL not exceed M2, and every cash deposit at or above the single-deposit limit SHALL be in the judgement queue with the indicator that flagged it.
+Validates: R14, R15, R55
+
+## P20 · property
+For any case, with show_policy_verdict on, every workspace panel and pack section that shows a pass, refer or fail outcome SHALL contain the illustrative label and the recommendation field SHALL be empty; with it off, neither the workspace nor the pack SHALL contain an outcome or a rule result.
+Validates: R24, R25, R56
+
+## diff — diff.patch
+
+diff --git a/.github/workflows/evals.yml b/.github/workflows/evals.yml
+index 4b9d5ff..60814c0 100644
+--- a/.github/workflows/evals.yml
++++ b/.github/workflows/evals.yml
+@@ -60,6 +60,12 @@ jobs:
+           curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+             | jq -r .value > "$ANTHROPIC_IDENTITY_TOKEN_FILE"
++      # The offline lock is on by default. Synthetic statements only, so turn it off on purpose here;
++      # the case root private/cma is git-ignored and exists only on the runner.
++      - name: Turn off the offline lock for synthetic data
++        run: |
++          mkdir -p private/cma
++          printf 'offline_lock: false\n' > private/cma/firm.yaml
+       - name: Run evals against Claude
+         run: python evals/run_evals.py --llm anthropic | tee evals-output.txt
+       - name: Summary
+diff --git a/README.md b/README.md
+index 6c46894..b442168 100644
+--- a/README.md
++++ b/README.md
+@@ -50,7 +50,10 @@ cma resume case-7 --checkpoint-db private/reviews.sqlite
+ # (git-ignored, as are *.csv, memo files, evidence files and databases anywhere).
+ cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out private/mine.csv
+ 
+-# Use a real model instead of the offline one.
++# Use a real model instead of the offline one. The offline lock in firm.yaml (under
++# CMA_HOME, default private/cma) is on by default and refuses hosted models and the MCP
++# server; turn it off on purpose first. The prompt still carries only the tables.
++mkdir -p private/cma && printf 'offline_lock: false\n' > private/cma/firm.yaml
+ export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
+ cma run examples/cafe_stretched.csv --llm anthropic
+ ```
+@@ -71,7 +74,7 @@ example.
+ | Draft | `graph.py` + `llm.py` | The model gets the metrics table and the policy table, nothing else, and must tag every figure ([Mn]) and threshold ([Rn]). |
+ | Guard | `guard.py` | Reads every number in the memo, in digits or words, back against the table: value at the precision written, unit, sign, and the tag right after it. |
+ | Review | `graph.py` | LangGraph `interrupt()`; resumes only with a named reviewer's decision. The final memo carries an appendix of every figure, rule, the model and file hashes. |
+-| MCP server | `mcp_server.py` | Exposes metrics, policy and evidence lookup as tools for any MCP client; reads only .csv/.yaml under `CMA_DATA_DIR`. |
++| MCP server | `mcp_server.py` | Exposes metrics, policy and evidence lookup as tools for any MCP client; reads only .csv/.yaml under `CMA_DATA_DIR`; refuses to start while the offline lock is on. |
+ | Evals | `evals/run_evals.py` | Runs all nine cases, reports grounding rate, redrafts and agreement with ground truth on nine metrics. Fails CI if any metric disagrees with truth or the offline memo is ungrounded. |
+ 
+ ## Evaluation
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index 671ee6d..d6bc552 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -16,6 +16,7 @@ from rich.table import Table
+ 
+ from . import guard as grd
+ from . import synth
++from .firm import FirmConfigError, OfflineLockError
+ from .graph import build, evidence_record, sqlite_checkpointer
+ from .ingest import StatementError
+ from .llm import get_llm
+@@ -70,9 +71,14 @@ def run(
+         console.print("[red]--yes needs --reviewer NAME: an approval must say who approved.[/red]")
+         raise typer.Exit(code=2)
+     _refuse_to_overwrite(out)
++    try:
++        model = get_llm(llm)  # under the offline lock a hosted model is refused here, before any call
++    except (OfflineLockError, FirmConfigError) as e:
++        console.print(f"[red]Refused.[/red] {e}")
++        raise typer.Exit(code=2) from e
+     thread_id = thread or str(uuid.uuid4())
+     with _checkpointer(checkpoint_db) as saver:
+-        graph = build(get_llm(llm), checkpointer=saver)
++        graph = build(model, checkpointer=saver)
+         cfg = {"configurable": {"thread_id": thread_id}}
+         if graph.get_state(cfg).values:
+             console.print(f"[red]Review id {thread_id} is already used in {checkpoint_db}. Pick a new --thread.[/red]")
+@@ -83,7 +89,7 @@ def run(
+                  "vat_stagger": vat_stagger},
+                 cfg,
+             )
+-        except (StatementError, PolicyError) as e:
++        except (StatementError, PolicyError, FirmConfigError) as e:
+             console.print(f"[red]Refused.[/red] {e}")
+             raise typer.Exit(code=2) from e
+         except Exception as e:  # the model provider: network, auth, cut-off reply
+diff --git a/src/cma/firm.py b/src/cma/firm.py
+new file mode 100644
+index 0000000..7b0fbdc
+--- /dev/null
++++ b/src/cma/firm.py
+@@ -0,0 +1,111 @@
++"""Firm configuration: firm.yaml at the case root.
++
++    offline_lock: true          # default; no hosted model, no MCP server
++    show_policy_verdict: true   # default; show the illustrative pass/refer/fail
++    paths:                      # optional; relative paths are under the case root
++      firm_rules: firm_rules.yaml
++      thresholds: indicators.yaml
++      memo_fields: memo_fields.yaml
++
++The case root is CMA_HOME, or private/cma under the working directory. A missing file
++means the defaults. A malformed file is refused, never read as something else: a lock
++that silently falls back is no lock.
++
++The offline lock is checked before a hosted model client is created and before the MCP
++server starts, so under the lock neither gets as far as a network call.
++"""
++
++from __future__ import annotations
++
++import os
++from dataclasses import dataclass
++from pathlib import Path
++
++import yaml
++
++FILE_NAME = "firm.yaml"
++FLAGS = ("offline_lock", "show_policy_verdict")
++DEFAULT_PATHS = {"firm_rules": "firm_rules.yaml", "thresholds": "indicators.yaml", "memo_fields": "memo_fields.yaml"}
++
++
++class FirmConfigError(ValueError):
++    """firm.yaml is malformed; nothing should run under a setting nobody chose."""
++
++
++class OfflineLockError(RuntimeError):
++    """Something that would send data off this machine was asked for under the offline lock."""
++
++
++@dataclass(frozen=True)
++class FirmConfig:
++    root: Path
++    offline_lock: bool = True
++    show_policy_verdict: bool = True
++    paths: tuple[tuple[str, str], ...] = tuple(DEFAULT_PATHS.items())
++
++    def _path(self, key: str) -> Path:
++        return self.root / dict(self.paths)[key]  # an absolute path replaces the root
++
++    @property
++    def firm_rules_path(self) -> Path:
++        return self._path("firm_rules")
++
++    @property
++    def thresholds_path(self) -> Path:
++        return self._path("thresholds")
++
++    @property
++    def memo_fields_path(self) -> Path:
++        return self._path("memo_fields")
++
++    def require_offline_off(self, what: str) -> None:
++        if self.offline_lock:
++            raise OfflineLockError(
++                f"{what} refused: the offline lock is on in {self.root / FILE_NAME}, so no data leaves this "
++                "machine. Set offline_lock: false there to allow it."
++            )
++
++
++def case_root() -> Path:
++    raw = os.environ.get("CMA_HOME")
++    return Path(raw).resolve() if raw else (Path.cwd() / "private" / "cma").resolve()
++
++
++def load(root: Path | None = None) -> FirmConfig:
++    root = root or case_root()
++    path = root / FILE_NAME
++    if not path.is_file():
++        return FirmConfig(root=root)
++    try:
++        data = yaml.safe_load(path.read_text())
++    except yaml.YAMLError as e:
++        raise FirmConfigError(f"{path}: not valid YAML ({e.__class__.__name__})") from e
++    if data is None:
++        return FirmConfig(root=root)
++    if not isinstance(data, dict):
++        raise FirmConfigError(f"{path}: not a mapping")
++
++    problems: list[str] = []
++    problems += [f"unknown key {k!r}" for k in data if k not in (*FLAGS, "paths")]
++    flags = {}
++    for key in FLAGS:
++        if key in data:
++            if isinstance(data[key], bool):
++                flags[key] = data[key]
++            else:
++                problems.append(f"{key} must be true or false")
++    paths = dict(DEFAULT_PATHS)
++    raw_paths = data.get("paths", {}) or {}
++    if not isinstance(raw_paths, dict):
++        problems.append("paths must be a mapping")
++        raw_paths = {}
++    for key, value in raw_paths.items():
++        if key not in DEFAULT_PATHS:
++            problems.append(f"unknown path {key!r}")
++        elif not isinstance(value, str) or not value.strip():
++            problems.append(f"paths.{key} must be a file path")
++        else:
++            paths[key] = value
++    if problems:
++        raise FirmConfigError(f"{path}: " + "; ".join(problems))
++    return FirmConfig(root=root, paths=tuple(paths.items()), **flags)
+diff --git a/src/cma/graph.py b/src/cma/graph.py
+index 75afc36..7dfe5f9 100644
+--- a/src/cma/graph.py
++++ b/src/cma/graph.py
+@@ -11,6 +11,10 @@ and waits for a named person; nothing is final until they say so. `finalise` sta
+ the decision and appends the figures, rules, model and file hashes the memo rests on,
+ so the written memo can answer "where did this figure come from" on its own.
+ 
++Prompts: `draft_prompt` is the only thing that reaches the model. It carries the metric
++and rule tables, the period and a placeholder account name, never a description, a
++payer, the account's real name or a file path (ADR 001, R30).
++
+ Checkpoints: the default MemorySaver lives in memory, so a pending review is lost when
+ the process exits. Pass a durable checkpointer (`sqlite_checkpointer(path)`, needs the
+ `durable` extra) to keep pending reviews across restarts.
+@@ -30,14 +34,15 @@ from langgraph.types import interrupt
+ from pydantic import ValidationError
+ 
+ from . import categorise as cat
++from . import firm, ingest
+ from . import guard as grd
+-from . import ingest
+ from . import metrics as met
+ from . import policy as pol
+-from .llm import LLM, get_llm
++from .llm import LLM, FakeLLM, get_llm
+ from .models import GuardResult, Metric, PolicyResult, ReviewDecision, Statement, format_value
+ 
+ MAX_REDRAFTS = 2
++PROMPT_ACCOUNT_NAME = "Applicant"
+ 
+ # Our pydantic models travel through the checkpointer between the review interrupt and
+ # the resume, so they must be on the allow-list.
+@@ -95,6 +100,8 @@ class MemoState(TypedDict, total=False):
+     policy_path: str | None
+     vat_stagger: int | None
+     model: str
++    offline_lock: bool
++    egress: str
+     statement_sha256: str
+     statement: Statement
+     metrics: list[Metric]
+@@ -143,6 +150,20 @@ def rules_table(p: PolicyResult) -> str:
+     return "\n".join(lines)
+ 
+ 
++def draft_prompt(statement: Statement, metrics: list[Metric], policy: PolicyResult, feedback: str) -> str:
++    """The user prompt: the tables, the period and the placeholder name, nothing else."""
++    user = (
++        f"Account: {PROMPT_ACCOUNT_NAME}\n"
++        f"Period: {statement.start} to {statement.end}\n\n"
++        f"Metrics table:\n{met.as_table(metrics)}\n\n"
++        f"Policy: {policy.policy_name}\nOverall policy outcome: {policy.overall.value}\n"
++        f"Policy table:\n{rules_table(policy)}\n"
++    )
++    if feedback:
++        user += f"\nYour previous draft was rejected by the grounding check:\n{feedback}\nRewrite it using only figures from the table, each with its tag.\n"
++    return user
++
++
+ def appendix(s: MemoState) -> str:
+     """What the memo rests on, printed under it, so the file stands on its own."""
+     st, p = s["statement"], s["policy"]
+@@ -170,6 +191,8 @@ def evidence_record(s: MemoState) -> dict:
+                       "start": str(s["statement"].start), "end": str(s["statement"].end),
+                       "transactions": len(s["statement"].transactions)},
+         "model": s.get("model"),
++        # Where data went. Records made before the offline lock existed have no lock flag.
++        "egress": {"offline_lock": s.get("offline_lock"), "destination": s.get("egress")},
+         "vat_stagger": s.get("vat_stagger"),
+         "metrics": [m.model_dump() for m in s["metrics"]],
+         "policy": s["policy"].model_dump(mode="json"),
+@@ -190,6 +213,8 @@ def build(llm: LLM | None = None, checkpointer=None):
+             "statement": statement,
+             "statement_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+             "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
++            "offline_lock": firm.load().offline_lock,
++            "egress": "offline" if isinstance(llm, FakeLLM) else f"{llm.name}:{getattr(llm, 'model', '-')}",
+             # A run starts clean, even on a thread that has run before.
+             "redrafts": 0,
+             "guard_feedback": "",
+@@ -208,16 +233,7 @@ def build(llm: LLM | None = None, checkpointer=None):
+         return {"policy": pol.evaluate(s["metrics"], p)}
+ 
+     def draft(s: MemoState) -> MemoState:
+-        table = met.as_table(s["metrics"])
+-        user = (
+-            f"Account: {s['statement'].account_name}\n"
+-            f"Period: {s['statement'].start} to {s['statement'].end}\n\n"
+-            f"Metrics table:\n{table}\n\n"
+-            f"Policy: {s['policy'].policy_name}\nOverall policy outcome: {s['policy'].overall.value}\n"
+-            f"Policy table:\n{rules_table(s['policy'])}\n"
+-        )
+-        if s.get("guard_feedback"):
+-            user += f"\nYour previous draft was rejected by the grounding check:\n{s['guard_feedback']}\nRewrite it using only figures from the table, each with its tag.\n"
++        user = draft_prompt(s["statement"], s["metrics"], s["policy"], s.get("guard_feedback", ""))
+         return {"memo": llm.complete(SYSTEM_PROMPT, user), "redrafts": s.get("redrafts", 0)}
+ 
+     def guard(s: MemoState) -> MemoState:
+diff --git a/src/cma/llm.py b/src/cma/llm.py
+index 5d59d38..9bc1d7f 100644
+--- a/src/cma/llm.py
++++ b/src/cma/llm.py
+@@ -4,6 +4,9 @@ The memo graph only needs `complete(system, user) -> str`. `FakeLLM` writes a me
+ from the metrics table with no network call, so tests and CI run without keys. It
+ also has a `hallucinate` switch so the grounding guard can be tested against a memo
+ that invents a number.
++
++The hosted providers check the firm's offline lock (firm.yaml, on by default) before
++anything else, so under the lock no client is created and no connection is attempted.
+ """
+ 
+ from __future__ import annotations
+@@ -12,6 +15,8 @@ import os
+ import re
+ from typing import Protocol
+ 
++from . import firm
++
+ 
+ class LLMError(RuntimeError):
+     """The model call failed or came back unusable (cut off, empty)."""
+@@ -73,6 +78,7 @@ class AnthropicLLM:
+     name = "anthropic"
+ 
+     def __init__(self, model: str | None = None):
++        firm.load().require_offline_off("A hosted model (anthropic)")
+         import anthropic
+ 
+         self.client = anthropic.Anthropic(timeout=120.0, max_retries=2)
+@@ -94,6 +100,7 @@ class OpenAILLM:
+     name = "openai"
+ 
+     def __init__(self, model: str | None = None):
++        firm.load().require_offline_off("A hosted model (openai)")
+         from openai import OpenAI
+ 
+         self.client = OpenAI(timeout=120.0, max_retries=2)
+diff --git a/src/cma/mcp_server.py b/src/cma/mcp_server.py
+index e115450..79761fe 100644
+--- a/src/cma/mcp_server.py
++++ b/src/cma/mcp_server.py
+@@ -13,6 +13,9 @@ number only; cell values are never echoed to the client.
+ Descriptions: statement descriptions are text the payer chose ("IGNORE PREVIOUS
+ INSTRUCTIONS..."). `transactions_for` leaves them out unless the caller asks, and then
+ returns them marked as untrusted data.
++
++Offline lock: the server is a way for data to reach a model, so it refuses to start
++while offline_lock is on in firm.yaml (the default).
+ """
+ 
+ from __future__ import annotations
+@@ -22,7 +25,7 @@ from pathlib import Path
+ 
+ from mcp.server.mcpserver import MCPServer
+ 
+-from . import categorise, ingest, metrics, policy
++from . import categorise, firm, ingest, metrics, policy
+ 
+ server = MCPServer("credit-memo-agent")
+ 
+@@ -106,6 +109,10 @@ def transactions_for(path: str, ids: list[str], include_descriptions: bool = Fal
+ 
+ 
+ def main() -> None:
++    try:
++        firm.load().require_offline_off("Starting the MCP server")
++    except (firm.OfflineLockError, firm.FirmConfigError) as e:
++        raise SystemExit(str(e)) from None
+     data_dir()  # refuse to start without CMA_DATA_DIR
+     server.run()
+ 
+diff --git a/tests/test_firm.py b/tests/test_firm.py
+new file mode 100644
+index 0000000..1d43dff
+--- /dev/null
++++ b/tests/test_firm.py
+@@ -0,0 +1,250 @@
++"""Firm configuration and the offline lock (R29, R30, R34; properties P18 and P5)."""
++
++import json
++import socket
++from datetime import date
++
++import pytest
++from typer.testing import CliRunner
++
++from cma import firm, llm, synth
++from cma.cli import app
++from cma.graph import build, draft_prompt
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "home"
++    root.mkdir()
++    monkeypatch.setenv("CMA_HOME", str(root))
++    return root
++
++
++@pytest.fixture
++def no_network(monkeypatch):
++    """Any attempt to open a socket is recorded and fails."""
++    attempts = []
++
++    def refuse(*args, **kwargs):
++        attempts.append(args)
++        raise AssertionError("network call attempted")
++
++    monkeypatch.setattr(socket.socket, "connect", refuse)
++    monkeypatch.setattr(socket.socket, "connect_ex", refuse)
++    monkeypatch.setattr(socket, "create_connection", refuse)
++    monkeypatch.setattr(socket, "getaddrinfo", refuse)
++    return attempts
++
++
++# --- firm.yaml -------------------------------------------------------------------
++
++def test_defaults_without_a_file(home):
++    cfg = firm.load()
++    assert cfg.offline_lock is True and cfg.show_policy_verdict is True
++    assert cfg.root == home
++    assert cfg.firm_rules_path == home / "firm_rules.yaml"
++    assert cfg.thresholds_path == home / "indicators.yaml"
++    assert cfg.memo_fields_path == home / "memo_fields.yaml"
++
++
++def test_root_defaults_to_private_cma(tmp_path, monkeypatch):
++    monkeypatch.delenv("CMA_HOME", raising=False)
++    monkeypatch.chdir(tmp_path)
++    assert firm.load().root == (tmp_path / "private" / "cma").resolve()
++
++
++def test_file_sets_flags_and_paths(home):
++    (home / "firm.yaml").write_text(
++        "offline_lock: false\nshow_policy_verdict: false\n"
++        "paths:\n  firm_rules: rules/mine.yaml\n  thresholds: /abs/ind.yaml\n"
++    )
++    cfg = firm.load()
++    assert cfg.offline_lock is False and cfg.show_policy_verdict is False
++    assert cfg.firm_rules_path == home / "rules" / "mine.yaml"
++    assert str(cfg.thresholds_path) == "/abs/ind.yaml"
++    assert cfg.memo_fields_path == home / "memo_fields.yaml"
++
++
++@pytest.mark.parametrize("text, problem", [
++    ("offline_lock: 0\n", "offline_lock must be true or false"),
++    ("offline_lock: 'no'\n", "offline_lock must be true or false"),
++    ("show_policy_verdict: maybe\n", "show_policy_verdict must be true or false"),
++    ("timing: true\n", "unknown key 'timing'"),
++    ("paths:\n  memo: x.yaml\n", "unknown path 'memo'"),
++    ("paths:\n  thresholds: 3\n", "paths.thresholds must be a file path"),
++    ("- offline_lock\n", "not a mapping"),
++    ("offline_lock: [\n", "not valid YAML"),
++])
++def test_malformed_file_is_refused(home, text, problem):
++    # A malformed lock must never fall back silently to some other setting.
++    (home / "firm.yaml").write_text(text)
++    with pytest.raises(firm.FirmConfigError, match=r"firm\.yaml") as e:
++        firm.load()
++    assert problem in str(e.value)
++
++
++def test_empty_file_means_defaults(home):
++    (home / "firm.yaml").write_text("")
++    assert firm.load().offline_lock is True
++
++
++# --- P18: under the lock, hosted models and the MCP server fail before any network call
++
++LOCK_ON = [None, "offline_lock: true\n", "show_policy_verdict: false\n"]
++
++
++@pytest.mark.parametrize("firm_yaml", LOCK_ON)
++@pytest.mark.parametrize("provider", ["anthropic", "openai", "Anthropic", "OPENAI"])
++def test_hosted_model_refused_under_lock(home, no_network, monkeypatch, firm_yaml, provider):
++    if firm_yaml is not None:
++        (home / "firm.yaml").write_text(firm_yaml)
++    created = []
++    anthropic = pytest.importorskip("anthropic")
++    openai = pytest.importorskip("openai")
++    monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: created.append("anthropic"))
++    monkeypatch.setattr(openai, "OpenAI", lambda *a, **k: created.append("openai"))
++
++    with pytest.raises(firm.OfflineLockError, match="offline lock"):
++        llm.get_llm(provider)
++    monkeypatch.setenv("CMA_LLM", provider)
++    with pytest.raises(firm.OfflineLockError):
++        llm.get_llm()
++    for cls in (llm.AnthropicLLM, llm.OpenAILLM):
++        with pytest.raises(firm.OfflineLockError):
++            cls()
++    assert created == [] and no_network == []
++
++
++def test_offline_model_is_allowed_under_lock(home, no_network):
++    assert llm.get_llm("fake").name == "fake"
++    assert no_network == []
++
++
++def test_hosted_model_allowed_when_lock_is_off(home, no_network, monkeypatch):
++    pytest.importorskip("anthropic")
++    (home / "firm.yaml").write_text("offline_lock: false\n")
++    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
++    assert llm.get_llm("anthropic").name == "anthropic"  # creating the client opens no connection
++    assert no_network == []
++
++
++def test_malformed_firm_file_refuses_hosted_model(home, no_network):
++    (home / "firm.yaml").write_text("offline_lock: off-ish\n")
++    with pytest.raises(firm.FirmConfigError):
++        llm.get_llm("anthropic")
++    assert no_network == []
++
++
++@pytest.mark.parametrize("firm_yaml", LOCK_ON)
++def test_mcp_server_refuses_to_start_under_lock(home, no_network, monkeypatch, tmp_path, firm_yaml):
++    mcp_server = pytest.importorskip("cma.mcp_server")
++    if firm_yaml is not None:
++        (home / "firm.yaml").write_text(firm_yaml)
++    monkeypatch.setenv("CMA_DATA_DIR", str(tmp_path))
++    started = []
++    monkeypatch.setattr(mcp_server.server, "run", lambda *a, **k: started.append(True))
++    with pytest.raises(SystemExit) as e:
++        mcp_server.main()
++    assert "offline lock" in str(e.value.code)
++    assert started == [] and no_network == []
++
++
++def test_mcp_server_starts_when_lock_is_off(home, monkeypatch, tmp_path):
++    mcp_server = pytest.importorskip("cma.mcp_server")
++    (home / "firm.yaml").write_text("offline_lock: false\n")
++    monkeypatch.setenv("CMA_DATA_DIR", str(tmp_path))
++    started = []
++    monkeypatch.setattr(mcp_server.server, "run", lambda *a, **k: started.append(True))
++    mcp_server.main()
++    assert started == [True]
++
++
++def _statement(tmp_path, profile="stretched"):
++    rows, truth = synth.generate("cafe", profile, end=date(2026, 9, 30))
++    csv_path, _ = synth.write(rows, truth, tmp_path)
++    return csv_path
++
++
++def test_cli_refuses_hosted_model_under_lock(home, no_network, tmp_path):
++    r = CliRunner().invoke(app, ["run", str(_statement(tmp_path)), "--llm", "anthropic"])
++    assert r.exit_code == 2, r.output
++    assert "offline lock" in r.output
++    assert no_network == []
++
++
++def test_evidence_records_offline_mode(home, tmp_path):
++    out = tmp_path / "memo.md"
++    r = CliRunner().invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A", "--out", str(out)])
++    assert r.exit_code == 0, r.output
++    record = json.loads((tmp_path / "memo.evidence.json").read_text())
++    assert record["egress"] == {"offline_lock": True, "destination": "offline"}
++
++
++def test_evidence_records_lock_off_with_offline_model(home, tmp_path):
++    (home / "firm.yaml").write_text("offline_lock: false\n")
++    out = tmp_path / "memo.md"
++    r = CliRunner().invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A", "--out", str(out)])
++    assert r.exit_code == 0, r.output
++    record = json.loads((tmp_path / "memo.evidence.json").read_text())
++    assert record["egress"] == {"offline_lock": False, "destination": "offline"}
++
++
++# --- P5: a prompt carries only the tables, the period and the placeholder name ----
++
++SENTINELS = ["SNTLDESC", "SNTLNAME", "SNTLPATH"]
++
++
++class RecordingLLM(llm.FakeLLM):
++    """The offline model, keeping every prompt it is given."""
++
++    def __init__(self, hallucinate=False):
++        super().__init__(hallucinate=hallucinate)
++        self.prompts = []
++
++    def complete(self, system, user):
++        self.prompts.append(system + "\n" + user)
++        return super().complete(system, user)
++
++
++def _sentinel_statement(tmp_path, profile, archetype):
++    """A real statement in which every description carries a sentinel, under a path that does too."""
++    rows, truth = synth.generate(archetype, profile, end=date(2026, 9, 30))
++    for i, row in enumerate(rows):
++        # Prefix and suffix, so rules that read either end still see payer text around the sentinel.
++        row["description"] = f"{row['description']} SNTLDESC{i:05d}" if i % 2 else f"SNTLDESC{i:05d} {row['description']}"
++    csv_path, _ = synth.write(rows, truth, tmp_path / "SNTLPATH")
++    return csv_path
++
++
++@pytest.mark.parametrize("archetype", list(synth.ARCHETYPES))
++@pytest.mark.parametrize("profile", list(synth.PROFILES))
++@pytest.mark.parametrize("hallucinate", [False, True])
++def test_no_prompt_carries_line_level_text(home, tmp_path, archetype, profile, hallucinate):
++    model = RecordingLLM(hallucinate=hallucinate)
++    graph = build(model)
++    cfg = {"configurable": {"thread_id": f"{archetype}-{profile}-{hallucinate}"}}
++    graph.invoke({"statement_path": str(_sentinel_statement(tmp_path, profile, archetype))}, cfg)
++    assert model.prompts  # a redraft adds prompts that carry the guard's feedback
++    if hallucinate:
++        assert len(model.prompts) > 1
++    for prompt in model.prompts:
++        for s in SENTINELS:
++            assert s not in prompt
++        assert "Account: Applicant\n" in prompt
++
++
++def test_prompt_uses_placeholder_not_the_account_name(home, tmp_path):
++    from cma import categorise, ingest, metrics, policy
++
++    st = ingest.load_csv(_statement(tmp_path), account_name="SNTLNAME HOLDINGS LTD")
++    st = categorise.categorise(st)
++    ms = metrics.compute(st)
++    user = draft_prompt(st, ms, policy.evaluate(ms), feedback="")
++    assert "SNTLNAME" not in user
++    assert "Account: Applicant\n" in user
++    assert f"Period: {st.start} to {st.end}\n" in user
++    assert "Metrics table:" in user and "Policy table:" in user
++    # Nothing but the tables, the period, the placeholder and the outcome line.
++    for line in user.splitlines():
++        assert (not line or line.startswith(("Account: ", "Period: ", "Metrics table:", "Policy table:",
++                                               "Policy: ", "Overall policy outcome: ", "|")))
+
+## claim — latest claim.json
+
+{
+  "task": "T17",
+  "claims": [
+    {
+      "text": "Full suite passes with every extra installed (llm, mcp, durable), so no P18/P5 test is skipped; lint is clean.",
+      "proof_cmd": "uv run --extra dev --extra mcp --extra llm --extra durable python -m pytest -q && uv run --extra dev ruff check src tests evals",
+      "proof_output": "285 passed in 6.01s; All checks passed!"
+    },
+    {
+      "text": "P18 / R29 (failure-modes: external call defined on failure): under the lock (no file, explicit true, or a file that only sets show_policy_verdict) both hosted providers, by name, by CMA_LLM and by direct class construction, raise OfflineLockError before the SDK client is created, with sockets patched to record any connect/getaddrinfo; MCP main() exits before server.run.",
+      "proof_cmd": "uv run --extra dev --extra mcp --extra llm python -m pytest -q tests/test_firm.py -k 'refuse or lock'",
+      "proof_output": "29 passed, 24 deselected in 1.87s"
+    },
+    {
+      "text": "P18 end-to-end through real entry points: `python -m cma.mcp_server` refuses under the lock; `mcp run src/cma/mcp_server.py` cannot load the module at all (relative imports), so it is not a bypass; evals/run_evals.py --llm anthropic refuses.",
+      "proof_cmd": "CMA_HOME=$(mktemp -d) CMA_DATA_DIR=/tmp uv run --extra mcp python -m cma.mcp_server </dev/null; CMA_HOME=$(mktemp -d) CMA_DATA_DIR=/tmp uv run --extra mcp mcp run src/cma/mcp_server.py </dev/null; CMA_HOME=$(mktemp -d) uv run --extra llm python evals/run_evals.py --llm anthropic",
+      "proof_output": "Starting the MCP server refused: the offline lock is on in /tmp/tmp.fh6wLrm0dF/firm.yaml ...; ImportError: attempted relative import with no known parent package; cma.firm.OfflineLockError: A hosted model (anthropic) refused: the offline lock is on ... (exit=1)"
+    },
+    {
+      "text": "Input validated at the boundary: a malformed firm.yaml is refused, never read as a different setting; through the CLI it exits 2 with the file and the problem named, and no memo is written.",
+      "proof_cmd": "printf 'offline_lock: nope\\n' > $H/firm.yaml && CMA_HOME=$H uv run --extra llm cma run examples/cafe_stretched.csv --yes --reviewer A --out $O/m.md; ls $O",
+      "proof_output": "Refused. /tmp/tmp.iKMCVugeIK/firm.yaml: offline_lock must be true or false; exit=2; output dir empty. Unit cases: tests/test_firm.py::test_malformed_file_is_refused (8 parametrised cases)"
+    },
+    {
+      "text": "P5 / R30 / R34 (prompt side): every prompt (first draft and guard-driven redrafts) built for all archetypes x profiles, with a sentinel in every description, the statement path and the account name, contains no sentinel and carries the placeholder 'Account: Applicant'; draft_prompt emits only account/period/table/policy lines.",
+      "proof_cmd": "uv run --extra dev --extra mcp --extra llm python -m pytest -q tests/test_firm.py -k 'prompt or line_level'",
+      "proof_output": "19 passed, 34 deselected in 0.90s"
+    },
+    {
+      "text": "R29 'record offline mode in every evidence record' (observability: the behaviour leaves a trace): evidence.json gains egress {offline_lock, destination}; asserted for lock on + offline model and lock off + offline model. Pre-change records simply lack the key (additive).",
+      "proof_cmd": "uv run --extra dev --extra mcp --extra llm python -m pytest -q tests/test_firm.py -k evidence",
+      "proof_output": "covered in the 285-pass run: test_evidence_records_offline_mode, test_evidence_records_lock_off_with_offline_model"
+    },
+    {
+      "text": "Data/migration: additive only. New MemoState keys are optional (s.get), evidence gains one key, CHECKPOINT_TYPES unchanged; a pending review from an old checkpoint resumes (resume builds with the fake model, which never checks the lock) and records egress as nulls. Rollback = set offline_lock: false or revert the commit; no data to repair. firm.yaml lives under private/ which is git-ignored.",
+      "proof_cmd": "git diff HEAD~1 -- src/cma/graph.py | grep -n CHECKPOINT_TYPES; git check-ignore -v private/cma/firm.yaml",
+      "proof_output": "(no CHECKPOINT_TYPES change); .gitignore:16:private/\tprivate/cma/firm.yaml"
+    },
+    {
+      "text": "Operability / config for deploy: the flag defaults on with no file; CI evals turn it off on purpose for synthetic data in .github/workflows/evals.yml before the Anthropic step; README documents how to turn it off. No secrets added; no new dependency (yaml already used by policy.py).",
+      "proof_cmd": "git diff HEAD~1 --stat; git diff HEAD~1 -- pyproject.toml",
+      "proof_output": "8 files changed, 423 insertions(+), 17 deletions(-); pyproject.toml unchanged"
+    },
+    {
+      "text": "Not applicable with reason: N+1 queries/indexes/pagination (no database, no list endpoints); retries/backoff/dead letter (no new external call; the change only prevents calls); idempotency key (firm.load is a read; no mutation); dashboards/remote alerts (design: nothing leaves the machine; the alert is the non-zero exit with a 'Refused' message, proved above). Hot path cost: one small YAML read per model construction and per run, not per line.",
+      "proof_cmd": "grep -n 'firm.load' src/cma/*.py",
+      "proof_output": "llm.py (AnthropicLLM.__init__, OpenAILLM.__init__), mcp_server.py main(), graph.py load node: one read each"
+    }
+  ],
+  "files_changed": [
+    ".github/workflows/evals.yml",
+    "README.md",
+    "src/cma/cli.py",
+    "src/cma/firm.py",
+    "src/cma/graph.py",
+    "src/cma/llm.py",
+    "src/cma/mcp_server.py",
+    "tests/test_firm.py"
+  ],
+  "notes": "Hardener made no code changes (worktree clean after removing a uv.lock the test run generated). Gaps for the owner: (1) P5 says 'descriptions and profile'; the case profile does not exist until C3 lands, so only descriptions, path and account name are sentinel-tested. Extend test_no_prompt_carries_line_level_text when case.yaml exists. (2) R29 'open no network connection other than the loopback workspace' is enforced for the two hosted clients and the MCP server only. Nothing yet guards later network code, such as a future importer fetching a feed. A process-wide guard is a design call. (3) Library callers can still do `from cma.mcp_server import server; server.run()` and skip main(). Supported launches (python -m, the mcp CLI) cannot. Moving the check into server start-up (a lifespan hook) would close it. (4) R34's escaping and CSV-formula parts belong to C5/C6, not this task; only the 'never send it to a model' part is covered here. (5) Turning the lock off is recorded per evidence record (egress), not as its own event. The case log that would record it is C3. (6) Changelog line: the repo has no CHANGELOG. The README text is the user-facing note. (7) The rollback (offline_lock: false) was tried only in tests and the CI step, not in a non-production deploy, because there is none."
+}
+
+## mechanical_results — test results (runner-run, read-only)
+
+### mechanical:1 · mechanical · pass
+Command: ruff check src tests evals
+
+```
+All checks passed!
+```
+
+### mechanical:2 · mechanical · pass
+Command: python -m compileall -q src
+
+```
+(empty log)
+```
+
+### specified:3 · specified · pass
+Command: python -m pytest -q
+
+```
+..............s....sss...............ssssssssssss.s..................... [ 25%]
+........................................................................ [ 50%]
+........................................................................ [ 75%]
+.....................................................................    [100%]
+268 passed, 17 skipped in 3.98s
+```
+
+### contracts:4 · contracts · pass
+Command: python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -q -m contracts
+
+```
+285 deselected in 0.98s
+```
+
+### invariants:5 · invariants · pass
+Command: python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -q -m invariants
+
+```
+285 deselected in 0.94s
+```
+
+### behavioural:6 · behavioural · pass
+Command: python evals/run_evals.py
+
+```
+case                   policy  grounded  rate   redrafts truth              s
+cafe/good              pass    True      1.0    0        ok              0.04
+cafe/stretched         refer   True      1.0    0        ok              0.04
+cafe/poor              fail    True      1.0    0        ok              0.05
+trades/good            refer   True      1.0    0        ok              0.03
+trades/stretched       refer   True      1.0    0        ok              0.03
+trades/poor            fail    True      1.0    0        ok              0.03
+ecommerce/good         refer   True      1.0    0        ok              0.03
+ecommerce/stretched    refer   True      1.0    0        ok              0.04
+ecommerce/poor         fail    True      1.0    0        ok              0.04
+
+9/9 memos fully grounded; model = fake
+```
+
+### dual_run:7 · dual_run · pass
+Command: python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -q -m dual_run
+
+```
+285 deselected in 0.97s
+```
+
+## repo_readonly — repository
+
+Repository root (read-only): /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T17-review
+Read any file you need to judge the work in context. Do not modify anything.
+
+## lane_attacks — lanes/engineering/attacks.md
+
+# Engineering attack list (reviewer)
+- Double submit: the same request or event arrives twice. Side effects once?
+- Concurrent update: two writers race on the same row or aggregate.
+- Boundary values: zero, negative, max, empty, null, unicode, very long.
+- Currency and timezone: minor units, zero-decimal currencies, DST, UTC vs local.
+- Partial failure: the first write succeeds and the second fails; the worker dies mid-batch.
+- Authz bypass: new endpoint or handler missing the scope or permission check.
+- Tenant isolation: a query without the tenant filter.
+- Changed contract consumers: every consumer of a changed DTO, field or event, including web, mobile, PDF, email.
+- Migration safety: reversible, additive first, backfill size.
+- Error paths: exceptions swallowed, retries without backoff, logs with secrets.
+
+## gotchas — gotchas (project, then lane)
+
+# Gotchas
+
+Dated one-line corrections learned in this project.
+
+
+# Engineering lane gotchas
+- 2026-08: a shared-contract field change ran seven review rounds without the web consumer ever appearing in the packet; always trace consumers with a command, not memory.
+- 2026-09: a diff packet that included the run directory grew to 3.1M characters and the reviewer refused it; packets exclude `.bridgie/runs/**`.
+- 2026-08: a QA seat without repository access invented a finding with a line number that did not exist; verifiers must read the repo or abort.
+
+# Output contract
+
+End your reply with exactly one fenced ```json block containing your evidence.json (or write it to /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-04/evidence.json).
+It must validate against /home/user/bridgie/schemas/evidence.json.
+Write nothing anywhere else except the run directory.
+
+# Run directory
+
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-04
+
+warning: Codex could not find bubblewrap on PATH. Install bubblewrap with your OS package manager. See the sandbox prerequisites: https://developers.openai.com/codex/concepts/sandboxing#prerequisites. Codex will use the bundled bubblewrap in the meantime.
+codex
+I’ll trace the five requirements through the repository and check the producer’s claims against the runner logs. I’ll use read-only commands and won’t rerun tests.
+exec
+/bin/bash -lc "rg -n 'evidence_record|\\.evidence\\.json|server\\.run|streamable_http|\\.complete\\(|firm\\.load|guard_feedback|def resume|def as_table|def rules_table|writerow|write_text|html\\.escape|LANGSMITH|def load|raw_paths|importorskip|SNTL' src tests/test_firm.py evals README.md
+rg --files -g AGENTS.md -g '*.py' src
+cat /home/user/bridgie/schemas/evidence.json" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T17-review
+ succeeded in 0ms:
+README.md:38:# "automated, no interactive review". --out also writes memo.evidence.json
+tests/test_firm.py:42:    cfg = firm.load()
+tests/test_firm.py:53:    assert firm.load().root == (tmp_path / "private" / "cma").resolve()
+tests/test_firm.py:57:    (home / "firm.yaml").write_text(
+tests/test_firm.py:61:    cfg = firm.load()
+tests/test_firm.py:80:    (home / "firm.yaml").write_text(text)
+tests/test_firm.py:82:        firm.load()
+tests/test_firm.py:87:    (home / "firm.yaml").write_text("")
+tests/test_firm.py:88:    assert firm.load().offline_lock is True
+tests/test_firm.py:100:        (home / "firm.yaml").write_text(firm_yaml)
+tests/test_firm.py:102:    anthropic = pytest.importorskip("anthropic")
+tests/test_firm.py:103:    openai = pytest.importorskip("openai")
+tests/test_firm.py:124:    pytest.importorskip("anthropic")
+tests/test_firm.py:125:    (home / "firm.yaml").write_text("offline_lock: false\n")
+tests/test_firm.py:132:    (home / "firm.yaml").write_text("offline_lock: off-ish\n")
+tests/test_firm.py:140:    mcp_server = pytest.importorskip("cma.mcp_server")
+tests/test_firm.py:142:        (home / "firm.yaml").write_text(firm_yaml)
+tests/test_firm.py:153:    mcp_server = pytest.importorskip("cma.mcp_server")
+tests/test_firm.py:154:    (home / "firm.yaml").write_text("offline_lock: false\n")
+tests/test_firm.py:175:def test_evidence_records_offline_mode(home, tmp_path):
+tests/test_firm.py:179:    record = json.loads((tmp_path / "memo.evidence.json").read_text())
+tests/test_firm.py:183:def test_evidence_records_lock_off_with_offline_model(home, tmp_path):
+tests/test_firm.py:184:    (home / "firm.yaml").write_text("offline_lock: false\n")
+tests/test_firm.py:188:    record = json.loads((tmp_path / "memo.evidence.json").read_text())
+tests/test_firm.py:194:SENTINELS = ["SNTLDESC", "SNTLNAME", "SNTLPATH"]
+tests/test_firm.py:206:        return super().complete(system, user)
+tests/test_firm.py:214:        row["description"] = f"{row['description']} SNTLDESC{i:05d}" if i % 2 else f"SNTLDESC{i:05d} {row['description']}"
+tests/test_firm.py:215:    csv_path, _ = synth.write(rows, truth, tmp_path / "SNTLPATH")
+tests/test_firm.py:239:    st = ingest.load_csv(_statement(tmp_path), account_name="SNTLNAME HOLDINGS LTD")
+tests/test_firm.py:243:    assert "SNTLNAME" not in user
+evals/run_evals.py:70:    (out_dir / f"{args.llm}.json").write_text(json.dumps(results, indent=2))
+src/cma/synth.py:319:        w.writerows(rows)
+src/cma/synth.py:320:    truth_path.write_text(json.dumps(truth.__dict__, indent=2, default=str))
+src/cma/graph.py:111:    guard_feedback: str
+src/cma/graph.py:141:def rules_table(p: PolicyResult) -> str:
+src/cma/graph.py:177:        "Evidence: every transaction id behind each figure is in the .evidence.json file written beside this memo.",
+src/cma/graph.py:187:def evidence_record(s: MemoState) -> dict:
+src/cma/graph.py:209:    def load(s: MemoState) -> MemoState:
+src/cma/graph.py:216:            "offline_lock": firm.load().offline_lock,
+src/cma/graph.py:220:            "guard_feedback": "",
+src/cma/graph.py:236:        user = draft_prompt(s["statement"], s["metrics"], s["policy"], s.get("guard_feedback", ""))
+src/cma/graph.py:237:        return {"memo": llm.complete(SYSTEM_PROMPT, user), "redrafts": s.get("redrafts", 0)}
+src/cma/graph.py:246:        return {"guard": g, "guard_feedback": feedback}
+src/cma/firm.py:74:def load(root: Path | None = None) -> FirmConfig:
+src/cma/firm.py:98:    raw_paths = data.get("paths", {}) or {}
+src/cma/firm.py:99:    if not isinstance(raw_paths, dict):
+src/cma/firm.py:101:        raw_paths = {}
+src/cma/firm.py:102:    for key, value in raw_paths.items():
+src/cma/policy.py:33:def load_policy(path: Path | None = None) -> dict:
+src/cma/importers/monzo.py:199:        w.writerows(out_rows)
+src/cma/ingest.py:57:def load_csv(path: Path, account_name: str | None = None, today: date | None = None) -> Statement:
+src/cma/metrics.py:295:def as_table(metrics: list[Metric]) -> str:
+src/cma/llm.py:81:        firm.load().require_offline_off("A hosted model (anthropic)")
+src/cma/llm.py:103:        firm.load().require_offline_off("A hosted model (openai)")
+src/cma/mcp_server.py:113:        firm.load().require_offline_off("Starting the MCP server")
+src/cma/mcp_server.py:117:    server.run()
+src/cma/cli.py:20:from .graph import build, evidence_record, sqlite_checkpointer
+src/cma/cli.py:61:        None, help="Write the approved memo here, with NAME.evidence.json beside it. A rejected memo goes to "
+src/cma/cli.py:104:def resume(
+src/cma/cli.py:160:    return memo.with_name(memo.stem + ".evidence.json")
+src/cma/cli.py:217:        target.write_text(final["final_memo"])
+src/cma/cli.py:218:        evidence.write_text(json.dumps(evidence_record(final), indent=2, default=str))
+src/cma/synth.py
+src/cma/models.py
+src/cma/graph.py
+src/cma/firm.py
+src/cma/policy.py
+src/cma/importers/monzo.py
+src/cma/importers/__init__.py
+src/cma/guard.py
+src/cma/ingest.py
+src/cma/policies/__init__.py
+src/cma/metrics.py
+src/cma/__init__.py
+src/cma/llm.py
+src/cma/mcp_server.py
+src/cma/categorise.py
+src/cma/cli.py
+{
+  "type": "object",
+  "required": ["task", "criteria", "findings", "verdict", "verifier"],
+  "properties": {
+    "task": { "type": "string" },
+    "criteria": { "type": "array", "items": { "type": "object", "required": ["id", "tier", "check", "result"], "properties": { "id": { "type": "string" }, "tier": { "type": "string", "enum": ["mechanical", "specified", "contracts", "invariants", "adversarial", "behavioural", "dual_run", "human"] }, "check": { "type": "string" }, "result": { "type": "string", "enum": ["pass", "fail", "not_proven"] }, "artifact": { "type": ["string", "null"] } } } },
+    "findings": { "type": "array", "items": { "type": "object", "required": ["severity", "claim", "repro"], "properties": { "severity": { "type": "string", "enum": ["blocker", "major", "minor"] }, "file": { "type": ["string", "null"] }, "line": { "type": ["integer", "null"] }, "criterion": { "type": ["string", "null"] }, "claim": { "type": "string" }, "repro": { "type": "string" }, "disposition": { "type": ["string", "null"] } } } },
+    "verdict": { "type": "string", "enum": ["pass", "fail", "not_proven"] },
+    "verifier": { "type": "object", "required": ["seat", "adapter", "model"], "properties": { "seat": { "type": "string" }, "adapter": { "type": "string" }, "model": { "type": "string" } } }
+  }
+}
+
+exec
+/bin/bash -lc "nl -ba src/cma/graph.py | sed -n '135,285p'
+nl -ba src/cma/mcp_server.py
+nl -ba src/cma/llm.py | sed -n '75,140p'
+nl -ba src/cma/importers/monzo.py | sed -n '165,210p'
+rg -n 'langsmith|mcp|evidence|.html' pyproject.toml tests evals README.md
+nl -ba src/cma/policy.py | sed -n '25,140p'
+nl -ba src/cma/guard.py | sed -n '225,380p'" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T17-review
+ succeeded in 0ms:
+   135	
+   136	
+   137	def _threshold(value: float | None, unit: str) -> str:
+   138	    return "" if value is None else format_value(value, unit)
+   139	
+   140	
+   141	def rules_table(p: PolicyResult) -> str:
+   142	    lines = ["| id | rule | metric | requirement | outcome | detail |", "|---|---|---|---|---|---|"]
+   143	    for r in p.rules:
+   144	        req = f"{r.op} {_threshold(r.threshold, r.unit)}"
+   145	        if r.refer_below is not None:
+   146	            req += f"; referred below {_threshold(r.refer_below, r.unit)}"
+   147	        if r.refer_above is not None:
+   148	            req += f"; referred above {_threshold(r.refer_above, r.unit)}"
+   149	        lines.append(f"| {r.rule_id} | {r.description} | {r.metric_id} | {req} | {r.outcome.value} | {r.detail} |")
+   150	    return "\n".join(lines)
+   151	
+   152	
+   153	def draft_prompt(statement: Statement, metrics: list[Metric], policy: PolicyResult, feedback: str) -> str:
+   154	    """The user prompt: the tables, the period and the placeholder name, nothing else."""
+   155	    user = (
+   156	        f"Account: {PROMPT_ACCOUNT_NAME}\n"
+   157	        f"Period: {statement.start} to {statement.end}\n\n"
+   158	        f"Metrics table:\n{met.as_table(metrics)}\n\n"
+   159	        f"Policy: {policy.policy_name}\nOverall policy outcome: {policy.overall.value}\n"
+   160	        f"Policy table:\n{rules_table(policy)}\n"
+   161	    )
+   162	    if feedback:
+   163	        user += f"\nYour previous draft was rejected by the grounding check:\n{feedback}\nRewrite it using only figures from the table, each with its tag.\n"
+   164	    return user
+   165	
+   166	
+   167	def appendix(s: MemoState) -> str:
+   168	    """What the memo rests on, printed under it, so the file stands on its own."""
+   169	    st, p = s["statement"], s["policy"]
+   170	    lines = [
+   171	        "## Appendix: the figures behind this memo",
+   172	        "",
+   173	        f"Statement: {Path(s['statement_path']).name}, {len(st.transactions)} transactions, "
+   174	        f"{st.start} to {st.end}, sha256 {s.get('statement_sha256', '')[:16]}",
+   175	        f"Model: {s.get('model', '-')}. Policy: {p.policy_name}, sha256 {p.policy_sha256[:16]}, "
+   176	        f"overall {p.overall.value}. VAT stagger: {s.get('vat_stagger') or 'not given'}.",
+   177	        "Evidence: every transaction id behind each figure is in the .evidence.json file written beside this memo.",
+   178	        "",
+   179	        "| id | metric | value | method | lines |",
+   180	        "|---|---|---|---|---|",
+   181	    ]
+   182	    lines += [f"| {m.id} | {m.name} | {m.display()} | {m.method} | {len(m.evidence)} |" for m in s["metrics"]]
+   183	    lines += ["", rules_table(p)]
+   184	    return "\n".join(lines)
+   185	
+   186	
+   187	def evidence_record(s: MemoState) -> dict:
+   188	    """Everything needed to audit the memo later, as plain JSON."""
+   189	    return {
+   190	        "statement": {"path": s["statement_path"], "sha256": s.get("statement_sha256"),
+   191	                      "start": str(s["statement"].start), "end": str(s["statement"].end),
+   192	                      "transactions": len(s["statement"].transactions)},
+   193	        "model": s.get("model"),
+   194	        # Where data went. Records made before the offline lock existed have no lock flag.
+   195	        "egress": {"offline_lock": s.get("offline_lock"), "destination": s.get("egress")},
+   196	        "vat_stagger": s.get("vat_stagger"),
+   197	        "metrics": [m.model_dump() for m in s["metrics"]],
+   198	        "policy": s["policy"].model_dump(mode="json"),
+   199	        "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
+   200	        "redrafts": s.get("redrafts", 0),
+   201	        "review": s["review"].model_dump(mode="json") if s.get("review") else None,
+   202	        "memo": s.get("memo"),
+   203	    }
+   204	
+   205	
+   206	def build(llm: LLM | None = None, checkpointer=None):
+   207	    llm = llm or get_llm()
+   208	
+   209	    def load(s: MemoState) -> MemoState:
+   210	        path = Path(s["statement_path"])
+   211	        statement = ingest.load_csv(path)
+   212	        return {
+   213	            "statement": statement,
+   214	            "statement_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+   215	            "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
+   216	            "offline_lock": firm.load().offline_lock,
+   217	            "egress": "offline" if isinstance(llm, FakeLLM) else f"{llm.name}:{getattr(llm, 'model', '-')}",
+   218	            # A run starts clean, even on a thread that has run before.
+   219	            "redrafts": 0,
+   220	            "guard_feedback": "",
+   221	            "review": None,
+   222	            "final_memo": None,
+   223	        }
+   224	
+   225	    def categorise(s: MemoState) -> MemoState:
+   226	        return {"statement": cat.categorise(s["statement"])}
+   227	
+   228	    def metrics(s: MemoState) -> MemoState:
+   229	        return {"metrics": met.compute(s["statement"], vat_stagger=s.get("vat_stagger"))}
+   230	
+   231	    def policy(s: MemoState) -> MemoState:
+   232	        p = pol.load_policy(Path(s["policy_path"])) if s.get("policy_path") else None
+   233	        return {"policy": pol.evaluate(s["metrics"], p)}
+   234	
+   235	    def draft(s: MemoState) -> MemoState:
+   236	        user = draft_prompt(s["statement"], s["metrics"], s["policy"], s.get("guard_feedback", ""))
+   237	        return {"memo": llm.complete(SYSTEM_PROMPT, user), "redrafts": s.get("redrafts", 0)}
+   238	
+   239	    def guard(s: MemoState) -> MemoState:
+   240	        g = grd.check(s["memo"], s["metrics"], s["policy"], required_headings=grd.REQUIRED_HEADINGS)
+   241	        feedback = ""
+   242	        if not g.grounded:
+   243	            parts = [f"- {f.number_text}: {f.reason}" for f in g.unmatched]
+   244	            parts += [f"- {mid} quoted without its tag" for mid in g.missing_citations]
+   245	            feedback = "\n".join(parts)
+   246	        return {"guard": g, "guard_feedback": feedback}
+   247	
+   248	    def route_after_guard(s: MemoState) -> str:
+   249	        if s["guard"].grounded or s.get("redrafts", 0) >= MAX_REDRAFTS:
+   250	            return "review"
+   251	        return "redraft"
+   252	
+   253	    def redraft(s: MemoState) -> MemoState:
+   254	        return {"redrafts": s.get("redrafts", 0) + 1}
+   255	
+   256	    def review(s: MemoState) -> MemoState:
+   257	        """Stop for a named human. An invalid decision is not an error: ask again, saying why.
+   258	
+   259	        Each refusal is a fresh interrupt, so LangGraph replays earlier answers in order
+   260	        and the reviewer can always correct theirs.
+   261	        """
+   262	        payload = {
+   263	            "memo": s["memo"],
+   264	            "policy_outcome": s["policy"].overall.value,
+   265	            "guard_grounded": s["guard"].grounded,
+   266	            "guard_unmatched": [f.number_text or f.reason for f in s["guard"].unmatched],
+   267	            "guard_missing_citations": s["guard"].missing_citations,
+   268	            "question": "Approve this memo for the credit file?",
+   269	            "error": None,
+   270	        }
+   271	        while True:
+   272	            decision = interrupt(payload)
+   273	            problem = _review_problem(decision, s["guard"].grounded)
+   274	            if problem is None:
+   275	                return {"review": ReviewDecision(**decision)}
+   276	            payload = {**payload, "error": problem}
+   277	
+   278	    def finalise(s: MemoState) -> MemoState:
+   279	        r, g = s["review"], s["guard"]
+   280	        if g.grounded:
+   281	            grounding = "passed"
+   282	        elif r.approved:
+   283	            grounding = "overridden by reviewer"
+   284	        else:
+   285	            grounding = "failed"
+     1	"""MCP server exposing the deterministic layers as tools.
+     2	
+     3	Lets any MCP client (Claude Desktop, an n8n agent node, another LangGraph graph) ask
+     4	for metrics or a policy result without ever touching the arithmetic itself.
+     5	
+     6	Run:  python -m cma.mcp_server
+     7	
+     8	Files: tools only read files under CMA_DATA_DIR, which must be set (MCP hosts often
+     9	start servers with the working directory at / or ~, so there is no default), and only
+    10	.csv statements and .yaml/.yml policies. A refused statement is reported by line
+    11	number only; cell values are never echoed to the client.
+    12	
+    13	Descriptions: statement descriptions are text the payer chose ("IGNORE PREVIOUS
+    14	INSTRUCTIONS..."). `transactions_for` leaves them out unless the caller asks, and then
+    15	returns them marked as untrusted data.
+    16	
+    17	Offline lock: the server is a way for data to reach a model, so it refuses to start
+    18	while offline_lock is on in firm.yaml (the default).
+    19	"""
+    20	
+    21	from __future__ import annotations
+    22	
+    23	import os
+    24	from pathlib import Path
+    25	
+    26	from mcp.server.mcpserver import MCPServer
+    27	
+    28	from . import categorise, firm, ingest, metrics, policy
+    29	
+    30	server = MCPServer("credit-memo-agent")
+    31	
+    32	
+    33	def data_dir() -> Path:
+    34	    raw = os.environ.get("CMA_DATA_DIR")
+    35	    if not raw:
+    36	        raise ValueError("CMA_DATA_DIR is not set; set it to the folder of statements this server may read")
+    37	    return Path(raw).resolve()
+    38	
+    39	
+    40	def safe_path(raw: str, suffixes: tuple[str, ...]) -> Path:
+    41	    """Resolve `raw` inside the data directory, or refuse."""
+    42	    root = data_dir()
+    43	    p = Path(raw)
+    44	    p = (p if p.is_absolute() else root / p).resolve()
+    45	    if not p.is_relative_to(root):
+    46	        raise ValueError(f"{raw}: outside the data directory {root} (set CMA_DATA_DIR)")
+    47	    if p.suffix.lower() not in suffixes:
+    48	        raise ValueError(f"{raw}: only {', '.join(suffixes)} files can be read")
+    49	    if not p.is_file():
+    50	        raise ValueError(f"{raw}: no such file")
+    51	    return p
+    52	
+    53	
+    54	def _statement(path: str):
+    55	    p = safe_path(path, (".csv",))
+    56	    try:
+    57	        return ingest.load_csv(p)
+    58	    except ingest.StatementError as e:
+    59	        lines = sorted({x.split(":", 1)[0] for x in e.problems})
+    60	        raise ValueError(f"{path}: statement refused, {len(e.problems)} problem(s) on {', '.join(lines[:10])}; "
+    61	                         "run `cma run` locally to see them") from None
+    62	
+    63	
+    64	@server.tool()
+    65	def statement_summary(path: str) -> dict:
+    66	    """Load a statement CSV and return account name, period and transaction count."""
+    67	    s = _statement(path)
+    68	    return {
+    69	        "account_name": s.account_name,
+    70	        "start": s.start.isoformat(),
+    71	        "end": s.end.isoformat(),
+    72	        "transactions": len(s.transactions),
+    73	    }
+    74	
+    75	
+    76	@server.tool()
+    77	def compute_metrics(path: str, vat_stagger: int | None = None) -> list[dict]:
+    78	    """Categorise a statement and compute the cited metrics table (M1..M16).
+    79	    vat_stagger is the HMRC stagger group (1, 2 or 3); without it M13 is n/a."""
+    80	    s = categorise.categorise(_statement(path))
+    81	    return [m.model_dump() for m in metrics.compute(s, vat_stagger=vat_stagger)]
+    82	
+    83	
+    84	@server.tool()
+    85	def check_policy(path: str, policy_path: str | None = None, vat_stagger: int | None = None) -> dict:
+    86	    """Run the lending policy against a statement and return pass/refer/fail per rule."""
+    87	    s = categorise.categorise(_statement(path))
+    88	    p = policy.load_policy(safe_path(policy_path, (".yaml", ".yml"))) if policy_path else None
+    89	    return policy.evaluate(metrics.compute(s, vat_stagger=vat_stagger), p).model_dump()
+    90	
+    91	
+    92	@server.tool()
+    93	def transactions_for(path: str, ids: list[str], include_descriptions: bool = False) -> list[dict]:
+    94	    """Return the statement lines behind a metric's evidence ids, so a reviewer can check a
+    95	    figure. Descriptions are payer-written text; they are only included when asked for,
+    96	    and then under `untrusted_description`."""
+    97	    by_id = _statement(path).by_id()
+    98	    out = []
+    99	    for i in ids:
+   100	        if i not in by_id:
+   101	            continue
+   102	        t = by_id[i]
+   103	        row = {"id": t.id, "date": t.date.isoformat(), "amount": t.amount, "balance": t.balance,
+   104	               "category": t.category.value if t.category else None}
+   105	        if include_descriptions:
+   106	            row["untrusted_description"] = t.description
+   107	        out.append(row)
+   108	    return out
+   109	
+   110	
+   111	def main() -> None:
+   112	    try:
+   113	        firm.load().require_offline_off("Starting the MCP server")
+   114	    except (firm.OfflineLockError, firm.FirmConfigError) as e:
+   115	        raise SystemExit(str(e)) from None
+   116	    data_dir()  # refuse to start without CMA_DATA_DIR
+   117	    server.run()
+   118	
+   119	
+   120	if __name__ == "__main__":
+   121	    main()
+    75	
+    76	
+    77	class AnthropicLLM:
+    78	    name = "anthropic"
+    79	
+    80	    def __init__(self, model: str | None = None):
+    81	        firm.load().require_offline_off("A hosted model (anthropic)")
+    82	        import anthropic
+    83	
+    84	        self.client = anthropic.Anthropic(timeout=120.0, max_retries=2)
+    85	        self.model = model or os.getenv("CMA_ANTHROPIC_MODEL", "claude-sonnet-5-5")
+    86	
+    87	    def complete(self, system: str, user: str) -> str:
+    88	        msg = self.client.messages.create(
+    89	            model=self.model,
+    90	            max_tokens=2000,
+    91	            system=system,
+    92	            messages=[{"role": "user", "content": user}],
+    93	        )
+    94	        if msg.stop_reason == "max_tokens":
+    95	            raise LLMError("the model's reply was cut off at the token limit")
+    96	        return "".join(block.text for block in msg.content if getattr(block, "type", "") == "text")
+    97	
+    98	
+    99	class OpenAILLM:
+   100	    name = "openai"
+   101	
+   102	    def __init__(self, model: str | None = None):
+   103	        firm.load().require_offline_off("A hosted model (openai)")
+   104	        from openai import OpenAI
+   105	
+   106	        self.client = OpenAI(timeout=120.0, max_retries=2)
+   107	        self.model = model or os.getenv("CMA_OPENAI_MODEL", "gpt-4.1")
+   108	
+   109	    def complete(self, system: str, user: str) -> str:
+   110	        r = self.client.chat.completions.create(
+   111	            model=self.model,
+   112	            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+   113	        )
+   114	        if r.choices[0].finish_reason == "length":
+   115	            raise LLMError("the model's reply was cut off at the token limit")
+   116	        return r.choices[0].message.content or ""
+   117	
+   118	
+   119	def get_llm(name: str | None = None) -> LLM:
+   120	    name = (name or os.getenv("CMA_LLM", "fake")).lower()
+   121	    if name == "fake":
+   122	        return FakeLLM()
+   123	    if name == "anthropic":
+   124	        return AnthropicLLM()
+   125	    if name == "openai":
+   126	        return OpenAILLM()
+   127	    raise ValueError(f"unknown LLM provider {name!r}")
+   165	        parsed.append((d, t, tid, desc, amount, bal))
+   166	
+   167	    parsed.sort(key=lambda x: (x[0], x[1], x[2]))
+   168	    first = parsed[0]
+   169	    implied = round(first[5] - first[4], 2) if first[5] is not None else None
+   170	    if opening_balance is None:
+   171	        if implied is None:
+   172	            raise MonzoImportError("first row has no Balance; pass --opening-balance")
+   173	        opening_balance = implied
+   174	        source = "Monzo Balance column"
+   175	    else:
+   176	        if implied is not None and abs(implied - opening_balance) > 0.005:
+   177	            raise MonzoImportError(
+   178	                f"--opening-balance {opening_balance:.2f} disagrees with Monzo's Balance column, "
+   179	                f"which implies {implied:.2f}; leave --opening-balance out to use Monzo's"
+   180	            )
+   181	        source = "opening balance supplied"
+   182	
+   183	    out_rows = []
+   184	    bal = opening_balance
+   185	    for d, _t, tid, desc, amount, monzo_bal in parsed:
+   186	        bal = round(bal + amount, 2)
+   187	        if monzo_bal is not None and abs(monzo_bal - bal) > 0.005:
+   188	            raise MonzoImportError(
+   189	                f"{tid}: walked balance {bal:.2f} disagrees with Monzo's {monzo_bal:.2f}; "
+   190	                "the export may be missing transactions"
+   191	            )
+   192	        out_rows.append({"id": tid, "date": d.isoformat(), "description": desc,
+   193	                         "amount": f"{amount:.2f}", "balance": f"{bal:.2f}"})
+   194	
+   195	    Path(dst).parent.mkdir(parents=True, exist_ok=True)
+   196	    with Path(dst).open("w", newline="") as f:
+   197	        w = csv.DictWriter(f, fieldnames=["id", "date", "description", "amount", "balance"])
+   198	        w.writeheader()
+   199	        w.writerows(out_rows)
+   200	    return ImportResult(
+   201	        rows=len(out_rows), start=parsed[0][0], end=parsed[-1][0],
+   202	        opening_balance=opening_balance, closing_balance=bal,
+   203	        balance_source=source, skipped_non_gbp=skipped,
+   204	    )
+README.md:38:# "automated, no interactive review". --out also writes memo.evidence.json
+README.md:50:# (git-ignored, as are *.csv, memo files, evidence files and databases anywhere).
+README.md:77:| MCP server | `mcp_server.py` | Exposes metrics, policy and evidence lookup as tools for any MCP client; reads only .csv/.yaml under `CMA_DATA_DIR`; refuses to start while the offline lock is on. |
+pyproject.toml:19:mcp = ["mcp>=2.0"]
+tests/test_panel_run03.py:133:    assert m.value == 10.0 and set(m.evidence) == {"T001", "T002"}
+tests/test_firm.py:139:def test_mcp_server_refuses_to_start_under_lock(home, no_network, monkeypatch, tmp_path, firm_yaml):
+tests/test_firm.py:140:    mcp_server = pytest.importorskip("cma.mcp_server")
+tests/test_firm.py:145:    monkeypatch.setattr(mcp_server.server, "run", lambda *a, **k: started.append(True))
+tests/test_firm.py:147:        mcp_server.main()
+tests/test_firm.py:152:def test_mcp_server_starts_when_lock_is_off(home, monkeypatch, tmp_path):
+tests/test_firm.py:153:    mcp_server = pytest.importorskip("cma.mcp_server")
+tests/test_firm.py:157:    monkeypatch.setattr(mcp_server.server, "run", lambda *a, **k: started.append(True))
+tests/test_firm.py:158:    mcp_server.main()
+tests/test_firm.py:175:def test_evidence_records_offline_mode(home, tmp_path):
+tests/test_firm.py:179:    record = json.loads((tmp_path / "memo.evidence.json").read_text())
+tests/test_firm.py:183:def test_evidence_records_lock_off_with_offline_model(home, tmp_path):
+tests/test_firm.py:188:    record = json.loads((tmp_path / "memo.evidence.json").read_text())
+tests/test_metrics.py:57:def test_every_metric_cites_evidence(statement_for, archetype, profile):
+tests/test_metrics.py:61:        for tid in m.evidence:
+tests/test_metrics.py:75:# --- C4: evidence is complete enough to recompute the figure (panel run 01, 6/6 seats)
+tests/test_metrics.py:78:def test_evidence_reproduces_each_figure(statement_for, archetype, profile):
+tests/test_metrics.py:84:        return round(sum(by_id[t].amount for t in m[mid].evidence), 2)
+tests/test_metrics.py:87:    assert by_id[m["M5"].evidence[0]].balance == pytest.approx(m["M5"].value, abs=0.01)
+tests/test_metrics.py:88:    assert all(by_id[t].balance < 0 for t in m["M6"].evidence)
+tests/test_metrics.py:89:    assert len(m["M7"].evidence) == m["M7"].value
+tests/test_metrics.py:96:    assert set(m["M8"].evidence) <= set(m["M10"].evidence)
+tests/test_metrics.py:97:    assert set(m["M9"].evidence) <= set(m["M10"].evidence)
+tests/test_metrics.py:98:    assert set(m["M11"].evidence) <= set(m["M10"].evidence)
+tests/test_mcp_paths.py:7:pytest.importorskip("mcp")
+tests/test_mcp_paths.py:9:from cma import mcp_server, synth
+tests/test_mcp_paths.py:21:    assert mcp_server.statement_summary("cafe.csv")["transactions"] > 100
+tests/test_mcp_paths.py:22:    assert any(m["id"] == "M16" for m in mcp_server.compute_metrics("cafe.csv", vat_stagger=3))
+tests/test_mcp_paths.py:29:        mcp_server.statement_summary(path)
+tests/test_mcp_paths.py:34:        mcp_server.check_policy("cafe.csv", policy_path="/etc/hosts")
+tests/test_mcp_paths.py:45:        mcp_server.statement_summary("x.csv")
+tests/test_mcp_paths.py:51:        mcp_server.statement_summary("bad.csv")
+tests/test_mcp_paths.py:56:    rows = mcp_server.transactions_for("cafe.csv", ["T00001"])
+tests/test_mcp_paths.py:58:    rows = mcp_server.transactions_for("cafe.csv", ["T00001"], include_descriptions=True)
+tests/test_cli.py:36:def test_written_memo_carries_its_evidence(tmp_path):
+tests/test_cli.py:46:    record = json.loads((tmp_path / "memo.evidence.json").read_text())
+tests/test_cli.py:48:    assert m2["evidence"] and record["policy"]["policy_sha256"]
+tests/test_cli.py:85:    record = json.loads((tmp_path / "memo.rejected.evidence.json").read_text())
+tests/test_cli.py:87:    assert not (tmp_path / "memo.evidence.json").exists()
+tests/test_cli.py:100:def test_an_earlier_memo_and_its_evidence_are_never_overwritten(tmp_path):
+tests/test_cli.py:101:    # E5: a rejected re-run replaced the approved memo's evidence.
+tests/test_cli.py:105:    before = (tmp_path / "memo.evidence.json").read_text()
+tests/test_cli.py:108:    assert (tmp_path / "memo.evidence.json").read_text() == before
+    25	class PolicyError(ValueError):
+    26	    """The policy file is malformed; no decision should be made from it."""
+    27	
+    28	
+    29	def default_policy_text() -> str:
+    30	    return resources.files("cma.policies").joinpath(DEFAULT_POLICY_NAME).read_text()
+    31	
+    32	
+    33	def load_policy(path: Path | None = None) -> dict:
+    34	    source = str(path or f"cma/policies/{DEFAULT_POLICY_NAME}")
+    35	    try:
+    36	        text = Path(path).read_text() if path else default_policy_text()
+    37	        policy = yaml.safe_load(text)
+    38	    except FileNotFoundError as e:
+    39	        raise PolicyError(f"{source}: no such file") from e
+    40	    except yaml.YAMLError as e:
+    41	        raise PolicyError(f"{source}: not valid YAML ({e.__class__.__name__})") from e
+    42	    validate(policy, source=source)
+    43	    policy["_sha256"] = hashlib.sha256(text.encode()).hexdigest()
+    44	    return policy
+    45	
+    46	
+    47	def validate(policy: object, source: str = "policy", metric_ids: set[str] | None = None) -> None:
+    48	    problems: list[str] = []
+    49	    if not isinstance(policy, dict):
+    50	        raise PolicyError(f"{source}: not a mapping")
+    51	    if not isinstance(policy.get("name"), str) or not policy["name"].strip():
+    52	        problems.append("missing name")
+    53	    rules = policy.get("rules")
+    54	    if not isinstance(rules, list) or not rules:
+    55	        raise PolicyError(f"{source}: no rules")
+    56	    seen: set[str] = set()
+    57	    for i, r in enumerate(rules, start=1):
+    58	        where = f"rule {i} ({r.get('id', '?') if isinstance(r, dict) else '?'})"
+    59	        if not isinstance(r, dict):
+    60	            problems.append(f"{where}: not a mapping")
+    61	            continue
+    62	        for key in ("id", "description", "metric", "op", "threshold", "on_fail"):
+    63	            if key not in r:
+    64	                problems.append(f"{where}: missing {key}")
+    65	        if r.get("id") in seen:
+    66	            problems.append(f"{where}: duplicate id")
+    67	        seen.add(r.get("id"))
+    68	        if r.get("op") not in OPS:
+    69	            problems.append(f"{where}: op {r.get('op')!r} is not one of {sorted(OPS)}")
+    70	        if r.get("on_fail") not in ON_FAIL:
+    71	            problems.append(f"{where}: on_fail {r.get('on_fail')!r} must be refer or fail")
+    72	        if r.get("when_missing", "refer") not in WHEN_MISSING:
+    73	            problems.append(f"{where}: when_missing must be pass, refer or fail")
+    74	        for key in ("threshold", "refer_below", "refer_above"):
+    75	            if key in r and (isinstance(r[key], bool) or not isinstance(r[key], int | float)):
+    76	                problems.append(f"{where}: {key} must be a number")
+    77	        if metric_ids is not None and r.get("metric") not in metric_ids:
+    78	            problems.append(f"{where}: unknown metric {r.get('metric')!r}")
+    79	    if problems:
+    80	        raise PolicyError(f"{source}: " + "; ".join(problems))
+    81	
+    82	
+    83	def evaluate(metrics: list[Metric], policy: dict | None = None) -> PolicyResult:
+    84	    policy = policy or load_policy()
+    85	    by_id = {m.id: m for m in metrics}
+    86	    validate(policy, metric_ids=set(by_id))
+    87	    results: list[RuleResult] = []
+    88	    for rule in policy["rules"]:
+    89	        m = by_id[rule["metric"]]
+    90	        req = f"rule requires {rule['op']} {rule['threshold']}"
+    91	        if m.value is None:
+    92	            outcome = RuleOutcome(rule.get("when_missing", "refer"))
+    93	            detail = f"{m.name} cannot be computed ({m.method}); policy says {outcome.value} when missing."
+    94	        else:
+    95	            passed = OPS[rule["op"]](m.value, rule["threshold"])
+    96	            if passed:
+    97	                outcome = RuleOutcome.PASS
+    98	                # Soft bands: close to the threshold still gets a human look.
+    99	                if "refer_below" in rule and m.value < rule["refer_below"]:
+   100	                    outcome = RuleOutcome.REFER
+   101	                    req += f", referred below {rule['refer_below']}"
+   102	                if "refer_above" in rule and m.value > rule["refer_above"]:
+   103	                    outcome = RuleOutcome.REFER
+   104	                    req += f", referred above {rule['refer_above']}"
+   105	            else:
+   106	                outcome = RuleOutcome(rule["on_fail"])
+   107	            detail = f"{m.name} is {m.display()}; {req}."
+   108	        results.append(
+   109	            RuleResult(
+   110	                rule_id=rule["id"], description=rule["description"], metric_id=m.id,
+   111	                outcome=outcome, detail=detail, op=rule["op"], threshold=float(rule["threshold"]),
+   112	                refer_below=rule.get("refer_below"), refer_above=rule.get("refer_above"), unit=m.unit,
+   113	            )
+   114	        )
+   115	    if any(r.outcome == RuleOutcome.FAIL for r in results):
+   116	        overall = RuleOutcome.FAIL
+   117	    elif any(r.outcome == RuleOutcome.REFER for r in results):
+   118	        overall = RuleOutcome.REFER
+   119	    else:
+   120	        overall = RuleOutcome.PASS
+   121	    return PolicyResult(
+   122	        policy_name=policy["name"], overall=overall, rules=results, policy_sha256=policy.get("_sha256", "")
+   123	    )
+
+exec
+/bin/bash -lc "nl -ba src/cma/importers/monzo.py | sed -n '92,166p'
+nl -ba src/cma/cli.py | sed -n '103,154p;194,224p'
+nl -ba src/cma/metrics.py | sed -n '286,320p'
+rg -n 'def check|number_text=|description|method=' src/cma/guard.py src/cma/metrics.py
+rg --files --hidden -g AGENTS.md -g '"'!**/.git/**'"'
+git status --short --untracked-files=no
+git log -3 --oneline" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T17-review
+ succeeded in 0ms:
+    92	def describe(kind: str, name: str, amount: float, extra: str = "") -> str:
+    93	    """A bank-statement style description from Monzo's Type, Name and direction."""
+    94	    k = kind.strip().lower()
+    95	    who = " ".join(f"{name} {extra}".split()).upper() or "UNKNOWN"
+    96	    incoming = amount > 0
+    97	    if "flex" in k or "MONZO FLEX" in who:
+    98	        # Monzo Flex is credit: money in is a drawdown, money out is a repayment.
+    99	        prefix = "LOAN DRAWDOWN" if incoming else "LOAN REPAYMENT"
+   100	        if "FLEX" not in who:
+   101	            who = f"MONZO FLEX {who}"
+   102	    elif ("faster payment" in k or "monzo-to-monzo" in k or k == "p2p_payment"
+   103	          or "bank transfer" in k):
+   104	        prefix = "FPS CREDIT" if incoming else "FPS DEBIT"
+   105	    elif "bacs" in k:
+   106	        prefix = "BACS CREDIT" if incoming else "BACS DEBIT"
+   107	    elif "direct debit" in k:
+   108	        prefix = "DD REFUND" if incoming else "DD"
+   109	    elif "standing order" in k:
+   110	        prefix = "SO"
+   111	    elif "card" in k:
+   112	        prefix = "CARD REFUND" if incoming else "CARD"
+   113	    elif "pot" in k:
+   114	        prefix = "POT TRANSFER IN" if incoming else "POT TRANSFER OUT"
+   115	    elif "interest" in k:
+   116	        prefix = "INTEREST"
+   117	    else:
+   118	        prefix = k.upper() or "OTHER"
+   119	    return f"{prefix} {who}".strip()
+   120	
+   121	
+   122	def convert(src: Path, dst: Path, opening_balance: float | None = None) -> ImportResult:
+   123	    with Path(src).open(newline="", encoding="utf-8-sig") as f:
+   124	        reader = csv.DictReader(f)
+   125	        header = [h.strip() for h in (reader.fieldnames or [])]
+   126	        reader.fieldnames = header
+   127	        missing = [c for c in REQUIRED if c not in header]
+   128	        if missing:
+   129	            raise MonzoImportError(
+   130	                f"{src}: not a Monzo export; missing column(s): {', '.join(missing)}"
+   131	            )
+   132	        raw_rows = list(reader)
+   133	    if not raw_rows:
+   134	        raise MonzoImportError(f"{src}: no transactions")
+   135	
+   136	    has_balance = "Balance" in header
+   137	    if opening_balance is None and not has_balance:
+   138	        raise MonzoImportError(
+   139	            "this export has no Balance column; pass --opening-balance (the balance just "
+   140	            "before the first transaction, from your Monzo statement)"
+   141	        )
+   142	
+   143	    parsed = []
+   144	    skipped = 0
+   145	    seen: set[str] = set()
+   146	    for i, r in enumerate(raw_rows, start=2):
+   147	        tid = (r.get("Transaction ID") or "").strip()
+   148	        if not tid:
+   149	            raise MonzoImportError(f"line {i}: empty Transaction ID")
+   150	        if not SAFE_ID.match(tid):
+   151	            raise MonzoImportError(f"line {i}: unexpected characters in Transaction ID {tid!r}")
+   152	        if tid in seen:
+   153	            raise MonzoImportError(f"line {i}: duplicate Transaction ID {tid}")
+   154	        seen.add(tid)
+   155	        currency = (r.get("Currency") or "GBP").strip().upper()
+   156	        if currency and currency != "GBP":
+   157	            skipped += 1
+   158	            continue
+   159	        d = _parse_date(r["Date"])
+   160	        t = (r.get("Time") or "00:00:00").strip()
+   161	        amount = _money(r["Amount"], "Amount", i)
+   162	        bal = _money(r["Balance"], "Balance", i) if has_balance and (r.get("Balance") or "").strip() else None
+   163	        refs = references(r.get("Notes and #tags"), r.get("Description"))
+   164	        desc = describe(r.get("Type", ""), r.get("Name", ""), amount, refs)
+   165	        parsed.append((d, t, tid, desc, amount, bal))
+   166	
+   103	@app.command()
+   104	def resume(
+   105	    thread: str = typer.Argument(..., help="The review id printed by `cma run --checkpoint-db`."),
+   106	    checkpoint_db: Path = typer.Option(..., help="The SQLite file the review was kept in."),
+   107	    reviewer: str | None = typer.Option(None, help="Your name, recorded on the memo."),
+   108	    out: Path | None = typer.Option(None, help="As for `cma run`."),
+   109	):
+   110	    """Pick up a memo that is waiting for review, after a restart."""
+   111	    if not checkpoint_db.exists():
+   112	        console.print(f"[red]{checkpoint_db} does not exist.[/red]")
+   113	        raise typer.Exit(code=2)
+   114	    _refuse_to_overwrite(out)
+   115	    with _checkpointer(checkpoint_db) as saver:
+   116	        graph = build(get_llm("fake"), checkpointer=saver)  # the draft is already made; no model call
+   117	        cfg = {"configurable": {"thread_id": thread}}
+   118	        snap = graph.get_state(cfg)
+   119	        if not snap.interrupts:
+   120	            console.print(f"[red]Nothing is waiting for review under {thread}.[/red]")
+   121	            raise typer.Exit(code=1)
+   122	        problem = _stored_state_problem(snap.values)
+   123	        if problem:
+   124	            console.print(f"[red]Not resuming {thread}:[/red] {problem}")
+   125	            raise typer.Exit(code=2)
+   126	        state = {**snap.values, "__interrupt__": snap.interrupts}
+   127	        _review(graph, cfg, state, reviewer, False, out)
+   128	
+   129	
+   130	def _stored_state_problem(values: dict) -> str | None:
+   131	    """A stored review is only resumed if it still says what it said: the statement file
+   132	    is unchanged and the stored memo still passes (or fails) the guard the same way."""
+   133	    path = Path(values["statement_path"])
+   134	    if not path.is_file():
+   135	        return f"the statement {path} is no longer there"
+   136	    if hashlib.sha256(path.read_bytes()).hexdigest() != values.get("statement_sha256"):
+   137	        return f"the statement {path} has changed since the memo was drafted"
+   138	    again = grd.check(values["memo"], values["metrics"], values["policy"], required_headings=grd.REQUIRED_HEADINGS)
+   139	    if again.grounded != values["guard"].grounded:
+   140	        return "the stored grounding result does not match the stored memo"
+   141	    return None
+   142	
+   143	
+   144	def _refuse_to_overwrite(out: Path | None) -> None:
+   145	    """Never replace an earlier memo or its evidence: the pair is the audit record."""
+   146	    if out is None:
+   147	        return
+   148	    taken = [p for p in _outputs(out) if p.exists()]
+   149	    if taken:
+   150	        console.print(f"[red]Refusing to overwrite {', '.join(map(str, taken))}. Choose another --out.[/red]")
+   151	        raise typer.Exit(code=2)
+   152	
+   153	
+   154	def _outputs(out: Path) -> list[Path]:
+   194	
+   195	    if yes:
+   196	        if not grounded:
+   197	            console.print("[red]--yes will not approve a memo that failed the grounding check. Review it interactively.[/red]")
+   198	            raise typer.Exit(code=3)
+   199	        decision = {"approved": True, "reviewer": reviewer, "mode": "automated",
+   200	                    "notes": "Approved by script (--yes); the draft was not reviewed interactively."}
+   201	    else:
+   202	        decision = _ask(payload, grounded, reviewer)
+   203	
+   204	    final = _decide(graph, cfg, decision)
+   205	    while "__interrupt__" in final:
+   206	        payload = final["__interrupt__"][0].value
+   207	        console.print(f"[red]Not accepted:[/red] {payload['error']}")
+   208	        if yes:
+   209	            raise typer.Exit(code=3)
+   210	        decision = _ask(payload, grounded, reviewer)
+   211	        final = _decide(graph, cfg, decision)
+   212	
+   213	    approved = final["review"].approved
+   214	    if out:
+   215	        target = out if approved else out.with_name(out.stem + ".rejected.md")
+   216	        evidence = _evidence_path(target)
+   217	        target.write_text(final["final_memo"])
+   218	        evidence.write_text(json.dumps(evidence_record(final), indent=2, default=str))
+   219	        console.print(f"wrote {target} and {evidence}")
+   220	    if not approved:
+   221	        console.rule("Not approved")
+   222	        console.print(Markdown(final["final_memo"]))
+   223	        raise typer.Exit(code=1)
+   224	    if not out:
+   286	               method="Payments to HMRC PAYE/NI, net of any returned unpaid.", evidence=[t.id for t in paye]),
+   287	        Metric(id="M15", name="Top customer share of transfer revenue", value=top_share, unit="pct",
+   288	               method=top_note, evidence=[t.id for t in transfers]),
+   289	        Metric(id="M16", name="Unclassified inflows", value=unclassified_share, unit="pct",
+   290	               method="Share of money in (excluding loan drawdowns and returned DDs) that is not revenue; it is left out of operating cash flow.",
+   291	               evidence=[t.id for t in inflows]),
+   292	    ]
+   293	
+   294	
+   295	def as_table(metrics: list[Metric]) -> str:
+   296	    lines = ["| id | metric | value | method |", "|---|---|---|---|"]
+   297	    for m in metrics:
+   298	        lines.append(f"| {m.id} | {m.name} | {m.display()} | {m.method} |")
+   299	    return "\n".join(lines)
+src/cma/metrics.py:180:        if t.amount < 0 and eff(t) not in FINANCING and OUTGOING_TRANSFER.search(t.description.upper()):
+src/cma/metrics.py:181:            sent[counterparty(t.description)] += -t.amount
+src/cma/metrics.py:184:        if t.amount > 0 and t.category == Category.OTHER and counterparty(t.description) in sent:
+src/cma/metrics.py:185:            back[counterparty(t.description)].append(t)
+src/cma/metrics.py:203:        by_payer[counterparty(t.description)] += t.amount
+src/cma/metrics.py:250:               method="Days from the first transaction to the last, in months, to the nearest month.",
+src/cma/metrics.py:253:               method="Card and gateway settlements, plus transfers in that carry an invoice reference.",
+src/cma/metrics.py:257:               method="Total revenue divided by the exact length of the period in months (quiet months still count).",
+src/cma/metrics.py:259:        Metric(id="M4", name="Revenue trend", value=trend, unit="pct", method=trend_note,
+src/cma/metrics.py:262:               method="Lowest running balance after any transaction in the period.", evidence=[lowest.id]),
+src/cma/metrics.py:264:               method="Calendar days that closed overdrawn, carrying the balance over days with no transactions.",
+src/cma/metrics.py:267:               method="Lines marked as unpaid direct debits.",
+src/cma/metrics.py:270:               method="Loan and finance repayments, net of any that were returned unpaid.",
+src/cma/metrics.py:273:               method=("Revenue in, minus all money out, excluding loans and drawings. Money in that is not "
+src/cma/metrics.py:277:        Metric(id="M10", name="Debt service cover", value=dscr, unit="ratio", method=dscr_note,
+src/cma/metrics.py:280:               method="Transfers to the owner or directors and dividends.", evidence=[t.id for t in drawings]),
+src/cma/metrics.py:282:               method="Payments to HMRC VAT, net of any returned unpaid.", evidence=[t.id for t in vat]),
+src/cma/metrics.py:284:               method=vat_note, evidence=[t.id for t in vat] if late_vat is not None else []),
+src/cma/metrics.py:286:               method="Payments to HMRC PAYE/NI, net of any returned unpaid.", evidence=[t.id for t in paye]),
+src/cma/metrics.py:288:               method=top_note, evidence=[t.id for t in transfers]),
+src/cma/metrics.py:290:               method="Share of money in (excluding loan drawdowns and returned DDs) that is not revenue; it is left out of operating cash flow.",
+src/cma/guard.py:144:def check(
+src/cma/guard.py:155:        return GuardResult(numbers_checked=0, unmatched=[GuardFinding(number_text="", reason="memo is empty")])
+src/cma/guard.py:157:        findings.append(GuardFinding(number_text="", reason="memo cites no metrics"))
+src/cma/guard.py:160:            findings.append(GuardFinding(number_text="", reason=f"missing heading: {heading} (truncated or off-format)"))
+src/cma/guard.py:183:                    findings.append(GuardFinding(number_text=w.text, reason=f"tagged {tag_id}, which is not in the metrics table"))
+src/cma/guard.py:185:                    findings.append(GuardFinding(number_text=w.text, reason=f"{tag_id} has no value (shown as n/a)"))
+src/cma/guard.py:187:                    findings.append(GuardFinding(number_text=w.text, reason=_why(w, mt.value, mt.unit, tag_id, mt.display())))
+src/cma/guard.py:192:                    findings.append(GuardFinding(number_text=w.text, reason=f"tagged {tag_id}, which is not a policy rule"))
+src/cma/guard.py:195:                    findings.append(GuardFinding(number_text=w.text, reason=f"does not match {tag_id}'s threshold ({shown}, {r.unit})"))
+src/cma/guard.py:198:                        number_text=w.text,
+src/cma/guard.py:208:                findings.append(GuardFinding(number_text=w.text, reason="not in the metrics table or the policy"))
+src/cma/guard.py:213:            findings.append(GuardFinding(number_text=word.group(0), reason="number written in words; write figures in digits with their tag"))
+17c5765 bridgie: T17 implementer (run implementer-04)
+eab1124 bridgie: build statement-review T12
+d207199 bridgie: build statement-review T02
+
+exec
+/bin/bash -lc "nl -ba src/cma/metrics.py | sed -n '196,248p'
+nl -ba src/cma/guard.py | sed -n '165,218p'
+rg -n 'SAFE_ID|langgraph|LANGCHAIN|LANGSMITH|HTTP|socket|requests' src pyproject.toml .github
+nl -ba README.md | sed -n '49,60p'
+nl -ba src/cma/firm.py | sed -n '74,111p'" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T17-review
+ succeeded in 0ms:
+   196	    else:
+   197	        dscr_note = "No loan or finance repayments in the statement, so there is no existing debt to cover."
+   198	
+   199	    # Concentration: only knowable for customers who pay by named transfer.
+   200	    transfers = [t for t in txns if t.category == Category.REVENUE_TRANSFER]
+   201	    by_payer: dict[str, float] = defaultdict(float)
+   202	    for t in transfers:
+   203	        by_payer[counterparty(t.description)] += t.amount
+   204	    top_share: float | None = None
+   205	    top_note = "Largest payer's share of customer transfer revenue, payers named after removing invoice references."
+   206	    if by_payer and sum(by_payer.values()) > 0:
+   207	        top_share = round(max(by_payer.values()) / sum(by_payer.values()) * 100, 2)
+   208	    else:
+   209	        top_note = "No customer transfers: revenue is card or gateway settled, which hides who the customers are."
+   210	
+   211	    # VAT timeliness against the business's own stagger group.
+   212	    late_vat: int | None = None
+   213	    vat_note = (
+   214	        "VAT quarters in the business's stagger group with no payment that stuck (not returned "
+   215	        "unpaid) between the quarter end and the Direct Debit collection days after the due date."
+   216	    )
+   217	    if vat_stagger is None:
+   218	        vat_note = "VAT stagger group not given (it is on the VAT certificate), so due dates are unknown."
+   219	    else:
+   220	        due = vat_due_dates(vat_stagger, start, end)
+   221	        if not due:
+   222	            vat_note = "No VAT quarter falls wholly inside the statement period."
+   223	        else:
+   224	            used: set[str] = set()
+   225	            late_vat = 0
+   226	            for q_end, d in due:
+   227	                window_end = _add_working_days(d, VAT_DD_WORKING_DAYS)
+   228	                paid = next(
+   229	                    (t for t in vat if t.id not in used and t.id not in reversed_ids and t.amount < 0
+   230	                     and q_end < t.date <= window_end),
+   231	                    None,
+   232	                )
+   233	                if paid:
+   234	                    used.add(paid.id)
+   235	                else:
+   236	                    late_vat += 1
+   237	
+   238	    # Inflows nobody has explained.
+   239	    inflows = [t for t in txns if t.amount > 0 and eff(t) not in (Category.LOAN_DRAWDOWN,)
+   240	               and t.category != Category.RETURNED_DD]
+   241	    unclassified = [t for t in inflows if t.category == Category.OTHER]
+   242	    total_in = sum(t.amount for t in inflows)
+   243	    unclassified_share = round(sum(t.amount for t in unclassified) / total_in * 100, 2) if total_in else None
+   244	
+   245	    def g(x: float | None) -> float | None:
+   246	        return None if x is None else round(x, 2)
+   247	
+   248	    return [
+   165	    text = _blank(memo, ISO_DATE)
+   166	    for sentence in SENTENCE.split(text):
+   167	        scan = _blank(sentence, TAG)  # tags contain digits; never read them as figures
+   168	        for match in NUMBER.finditer(scan):
+   169	            w = _parse(match)
+   170	            if w is None:
+   171	                continue
+   172	            bare_int = w.unit is None and w.scale == 1.0 and not match.group("cur") and "," not in match.group("num") \
+   173	                and "." not in match.group("num") and not (match.group("neg") or match.group("neg2"))
+   174	            if bare_int and 1990 <= w.value <= 2099:
+   175	                continue
+   176	            checked += 1
+   177	            tag = TAG_AFTER.match(sentence, w.end)
+   178	            tag_id = tag.group(1) if tag else None
+   179	
+   180	            if tag_id and tag_id.startswith("M"):
+   181	                mt = by_id.get(tag_id)
+   182	                if mt is None:
+   183	                    findings.append(GuardFinding(number_text=w.text, reason=f"tagged {tag_id}, which is not in the metrics table"))
+   184	                elif mt.value is None:
+   185	                    findings.append(GuardFinding(number_text=w.text, reason=f"{tag_id} has no value (shown as n/a)"))
+   186	                elif not _fits(w, mt.value, mt.unit):
+   187	                    findings.append(GuardFinding(number_text=w.text, reason=_why(w, mt.value, mt.unit, tag_id, mt.display())))
+   188	                continue
+   189	            if tag_id and tag_id.startswith("R"):
+   190	                r = rules.get(tag_id)
+   191	                if r is None:
+   192	                    findings.append(GuardFinding(number_text=w.text, reason=f"tagged {tag_id}, which is not a policy rule"))
+   193	                elif not any(_fits(w, v, r.unit) for v in r.citable_values()):
+   194	                    shown = ", ".join(f"{v:g}" for v in r.citable_values())
+   195	                    findings.append(GuardFinding(number_text=w.text, reason=f"does not match {tag_id}'s threshold ({shown}, {r.unit})"))
+   196	                elif not LIMIT_WORDS.search(sentence[: w.end - len(w.text)]):
+   197	                    findings.append(GuardFinding(
+   198	                        number_text=w.text,
+   199	                        reason=f"{tag_id} is a policy limit; introduce it as one ('at least', 'limit', 'below')",
+   200	                    ))
+   201	                continue
+   202	
+   203	            owners = sorted(m.id for m in metrics if m.value is not None and _fits(w, m.value, m.unit))
+   204	            if owners:
+   205	                # A real figure without its tag right after it: reported as a missing citation.
+   206	                missing |= set(owners)
+   207	            else:
+   208	                findings.append(GuardFinding(number_text=w.text, reason="not in the metrics table or the policy"))
+   209	
+   210	        rest = _blank(scan, NUMBER)
+   211	        for word in NUMBER_WORDS.finditer(rest):
+   212	            checked += 1
+   213	            findings.append(GuardFinding(number_text=word.group(0), reason="number written in words; write figures in digits with their tag"))
+   214	
+   215	    return GuardResult(numbers_checked=checked, unmatched=findings, missing_citations=sorted(missing))
+   216	
+   217	
+   218	def _why(w: Written, target: float, unit: str, tag_id: str, shown: str) -> str:
+pyproject.toml:10:  "langgraph>=1.0",
+pyproject.toml:20:durable = ["langgraph-checkpoint-sqlite>=3.0"]
+src/cma/graph.py:30:from langgraph.checkpoint.memory import MemorySaver
+src/cma/graph.py:31:from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+src/cma/graph.py:32:from langgraph.graph import END, START, StateGraph
+src/cma/graph.py:33:from langgraph.types import interrupt
+src/cma/graph.py:72:        from langgraph.checkpoint.sqlite import SqliteSaver
+src/cma/importers/monzo.py:40:SAFE_ID = re.compile(r"^[A-Za-z0-9_.:-]+$")
+src/cma/importers/monzo.py:150:        if not SAFE_ID.match(tid):
+src/cma/cli.py:12:from langgraph.types import Command
+    49	# A real statement: keep the export and everything made from it under private/
+    50	# (git-ignored, as are *.csv, memo files, evidence files and databases anywhere).
+    51	cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out private/mine.csv
+    52	
+    53	# Use a real model instead of the offline one. The offline lock in firm.yaml (under
+    54	# CMA_HOME, default private/cma) is on by default and refuses hosted models and the MCP
+    55	# server; turn it off on purpose first. The prompt still carries only the tables.
+    56	mkdir -p private/cma && printf 'offline_lock: false\n' > private/cma/firm.yaml
+    57	export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
+    58	cma run examples/cafe_stretched.csv --llm anthropic
+    59	```
+    60	
+    74	def load(root: Path | None = None) -> FirmConfig:
+    75	    root = root or case_root()
+    76	    path = root / FILE_NAME
+    77	    if not path.is_file():
+    78	        return FirmConfig(root=root)
+    79	    try:
+    80	        data = yaml.safe_load(path.read_text())
+    81	    except yaml.YAMLError as e:
+    82	        raise FirmConfigError(f"{path}: not valid YAML ({e.__class__.__name__})") from e
+    83	    if data is None:
+    84	        return FirmConfig(root=root)
+    85	    if not isinstance(data, dict):
+    86	        raise FirmConfigError(f"{path}: not a mapping")
+    87	
+    88	    problems: list[str] = []
+    89	    problems += [f"unknown key {k!r}" for k in data if k not in (*FLAGS, "paths")]
+    90	    flags = {}
+    91	    for key in FLAGS:
+    92	        if key in data:
+    93	            if isinstance(data[key], bool):
+    94	                flags[key] = data[key]
+    95	            else:
+    96	                problems.append(f"{key} must be true or false")
+    97	    paths = dict(DEFAULT_PATHS)
+    98	    raw_paths = data.get("paths", {}) or {}
+    99	    if not isinstance(raw_paths, dict):
+   100	        problems.append("paths must be a mapping")
+   101	        raw_paths = {}
+   102	    for key, value in raw_paths.items():
+   103	        if key not in DEFAULT_PATHS:
+   104	            problems.append(f"unknown path {key!r}")
+   105	        elif not isinstance(value, str) or not value.strip():
+   106	            problems.append(f"paths.{key} must be a file path")
+   107	        else:
+   108	            paths[key] = value
+   109	    if problems:
+   110	        raise FirmConfigError(f"{path}: " + "; ".join(problems))
+   111	    return FirmConfig(root=root, paths=tuple(paths.items()), **flags)
+
+codex
+```json
+{
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "src/cma/firm.py:37 defaults the lock on, and src/cma/llm.py:81 and :103 check it before constructing either SDK client. The checks do not cover reuse of a client after the lock changes or startup through the exported MCP server. src/cma/graph.py:195 records the new fields for fresh runs but emits two nulls for evidence written by resuming a pre-change checkpoint.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:153-161 substitutes Applicant for the account name and builds the period and tables. src/cma/metrics.py:295-299 omits evidence IDs. Redrafts also transmit excerpts of the previous model output and grounding diagnostics via src/cma/graph.py:162-163 and :239-246, which exceeds the allowed prompt contents.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R34",
+      "tier": "adversarial",
+      "check": "src/cma/mcp_server.py:92-108 returns raw payer descriptions to MCP clients on request. src/cma/importers/monzo.py:118-119 and :192-199 allow a leading formula character in an exported description. The repository has no workspace or pack HTML rendering path to verify.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "tests/test_firm.py:209-233 exercises description and path sentinels across first drafts and redrafts. The account-name sentinel is exercised separately in a direct first-prompt test at :235-250. There is no case-profile sentinel in the graph fixture. Extend the fixture to include a real case profile, then run uv run --extra dev python -m pytest -vv tests/test_firm.py -k 'prompt or line_level'.",
+      "result": "not_proven",
+      "artifact": null
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "tests/test_firm.py:97-117 and :139-149 make the constructor and MCP assertions conditional on optional imports. Runner row specified:3 reports 268 passed and 17 skipped without identifying the individual outcomes. No runner row records the claimed full-extras, focused P18, or real-entry-point runs. Run uv run --extra dev --extra mcp --extra llm --extra durable python -m pytest -vv -rs to prove the suite execution claim. The P18 tests also need to exercise exported MCP startup and hosted client reuse after the lock is enabled.",
+      "result": "not_proven",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/llm.py",
+      "line": 87,
+      "criterion": "R29",
+      "claim": "A previously created hosted client can still send a request after the firm enables the offline lock. The OpenAI completion path has the same gap at line 109.",
+      "repro": "Set offline_lock: false and construct AnthropicLLM. Replace messages.create with a recording stub, change firm.yaml to offline_lock: true, and call complete or pass the existing client to build and invoke it. The SDK stub is reached. The graph also records offline_lock as true in this run."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/mcp_server.py",
+      "line": 30,
+      "criterion": "R29",
+      "claim": "The exported MCP server can start under the default lock. The check at line 113 only guards main().",
+      "repro": "With the MCP extra installed, set CMA_DATA_DIR to a local fixture directory and leave firm.yaml absent. In an embedding script, import cma.mcp_server.server and call its run method directly. Startup proceeds without reading the firm configuration."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 195,
+      "criterion": "R29",
+      "claim": "A newly written evidence record can have no recorded offline mode when a pre-change pending review is resumed.",
+      "repro": "Create a pending durable checkpoint with the old version, upgrade, and resume it with --out and a named reviewer. src/cma/cli.py:115-127 resumes directly at review, leaving both egress fields null in the newly written evidence."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 163,
+      "criterion": "R30",
+      "claim": "The redraft prompt sends model-generated text back to the provider outside the allowed tables, period and placeholder.",
+      "repro": "Use a recording model stub whose first completion includes an unsupported amount such as £987654321. The guard puts that literal in its findings and the next request includes it under the prior-draft feedback."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/mcp_server.py",
+      "line": 106,
+      "criterion": "R34",
+      "claim": "A model-backed MCP client can receive verbatim payer-written descriptions. The untrusted_description key labels the content but still delivers it.",
+      "repro": "With the lock intentionally off, start MCP against a fixture containing a sentinel description and request that line through transactions_for with include_descriptions=true. The tool result contains the sentinel verbatim."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 199,
+      "criterion": "R34",
+      "claim": "The Monzo CSV conversion writes a formula-leading description when the provider Type starts with a formula character and matches no known type.",
+      "repro": "Convert a valid Monzo fixture whose Type is =1+1 and Name is Merchant. The fallback at lines 118-119 produces a description beginning with =, which is written to the output CSV unchanged."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_firm.py",
+      "line": 217,
+      "criterion": "P5",
+      "claim": "The claimed archetype-by-profile redraft matrix does not seed an account-name sentinel or a case-profile sentinel.",
+      "repro": "Trace the fixture input at lines 209-225. It seeds descriptions and the path and supplies only statement_path to the graph. The single account-name sentinel is supplied at line 239 to a separate direct call with empty feedback."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_firm.py",
+      "line": 102,
+      "criterion": "P18",
+      "claim": "The claim that every P18 test ran with all extras has no matching runner evidence. The malformed-config CLI invocation and the three real-entry-point invocations also have no matching runner rows.",
+      "repro": "Compare the producer's 285-pass and focused-run outputs with runner row specified:3 and its 268-pass, 17-skip log. To verify the individual outcomes, use uv run --extra dev --extra mcp --extra llm --extra durable python -m pytest -vv -rs and capture separate runner rows for the claimed CLI and entry-point commands."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/firm.py",
+      "line": 98,
+      "criterion": "R29",
+      "claim": "Falsey non-mappings in paths are silently accepted, contrary to the malformed-configuration claim.",
+      "repro": "Put offline_lock: false and paths: [] in firm.yaml. load() turns the list into an empty mapping and accepts the lock-off configuration instead of raising FirmConfigError."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 56,
+      "criterion": "R29",
+      "claim": "The documented lock toggle truncates an existing firm configuration and targets the default home even when CMA_HOME is set.",
+      "repro": "Create private/cma/firm.yaml with show_policy_verdict: false and a custom thresholds path, then follow the README command. Both settings are lost. With CMA_HOME pointing elsewhere, the command writes a different configuration from the one cma run reads."
+    }
+  ],
+  "verdict": "not_proven"
+}
+```
+tokens used
+36,867

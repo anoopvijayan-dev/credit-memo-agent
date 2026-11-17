@@ -1,0 +1,177 @@
+{
+  "task": "T17",
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "src/cma/firm.py:37 defaults the lock on, and src/cma/llm.py:81 and :103 check it before constructing either SDK client. The checks do not cover reuse of a client after the lock changes or startup through the exported MCP server. src/cma/graph.py:195 records the new fields for fresh runs but emits two nulls for evidence written by resuming a pre-change checkpoint.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:153-161 substitutes Applicant for the account name and builds the period and tables. src/cma/metrics.py:295-299 omits evidence IDs. Redrafts also transmit excerpts of the previous model output and grounding diagnostics via src/cma/graph.py:162-163 and :239-246, which exceeds the allowed prompt contents.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R34",
+      "tier": "adversarial",
+      "check": "src/cma/mcp_server.py:92-108 returns raw payer descriptions to MCP clients on request. src/cma/importers/monzo.py:118-119 and :192-199 allow a leading formula character in an exported description. The repository has no workspace or pack HTML rendering path to verify.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "tests/test_firm.py:209-233 exercises description and path sentinels across first drafts and redrafts. The account-name sentinel is exercised separately in a direct first-prompt test at :235-250. There is no case-profile sentinel in the graph fixture. Extend the fixture to include a real case profile, then run uv run --extra dev python -m pytest -vv tests/test_firm.py -k 'prompt or line_level'.",
+      "result": "not_proven",
+      "artifact": null
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "tests/test_firm.py:97-117 and :139-149 make the constructor and MCP assertions conditional on optional imports. Runner row specified:3 reports 268 passed and 17 skipped without identifying the individual outcomes. No runner row records the claimed full-extras, focused P18, or real-entry-point runs. Run uv run --extra dev --extra mcp --extra llm --extra durable python -m pytest -vv -rs to prove the suite execution claim. The P18 tests also need to exercise exported MCP startup and hosted client reuse after the lock is enabled.",
+      "result": "not_proven",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-04/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-04/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -q",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-04/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -q -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-04/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -q -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-04/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-04/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -q -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-04/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/llm.py",
+      "line": 87,
+      "criterion": "R29",
+      "claim": "A previously created hosted client can still send a request after the firm enables the offline lock. The OpenAI completion path has the same gap at line 109.",
+      "repro": "Set offline_lock: false and construct AnthropicLLM. Replace messages.create with a recording stub, change firm.yaml to offline_lock: true, and call complete or pass the existing client to build and invoke it. The SDK stub is reached. The graph also records offline_lock as true in this run."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/mcp_server.py",
+      "line": 30,
+      "criterion": "R29",
+      "claim": "The exported MCP server can start under the default lock. The check at line 113 only guards main().",
+      "repro": "With the MCP extra installed, set CMA_DATA_DIR to a local fixture directory and leave firm.yaml absent. In an embedding script, import cma.mcp_server.server and call its run method directly. Startup proceeds without reading the firm configuration."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 195,
+      "criterion": "R29",
+      "claim": "A newly written evidence record can have no recorded offline mode when a pre-change pending review is resumed.",
+      "repro": "Create a pending durable checkpoint with the old version, upgrade, and resume it with --out and a named reviewer. src/cma/cli.py:115-127 resumes directly at review, leaving both egress fields null in the newly written evidence."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 163,
+      "criterion": "R30",
+      "claim": "The redraft prompt sends model-generated text back to the provider outside the allowed tables, period and placeholder.",
+      "repro": "Use a recording model stub whose first completion includes an unsupported amount such as £987654321. The guard puts that literal in its findings and the next request includes it under the prior-draft feedback."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/mcp_server.py",
+      "line": 106,
+      "criterion": "R34",
+      "claim": "A model-backed MCP client can receive verbatim payer-written descriptions. The untrusted_description key labels the content but still delivers it.",
+      "repro": "With the lock intentionally off, start MCP against a fixture containing a sentinel description and request that line through transactions_for with include_descriptions=true. The tool result contains the sentinel verbatim."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 199,
+      "criterion": "R34",
+      "claim": "The Monzo CSV conversion writes a formula-leading description when the provider Type starts with a formula character and matches no known type.",
+      "repro": "Convert a valid Monzo fixture whose Type is =1+1 and Name is Merchant. The fallback at lines 118-119 produces a description beginning with =, which is written to the output CSV unchanged."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_firm.py",
+      "line": 217,
+      "criterion": "P5",
+      "claim": "The claimed archetype-by-profile redraft matrix does not seed an account-name sentinel or a case-profile sentinel.",
+      "repro": "Trace the fixture input at lines 209-225. It seeds descriptions and the path and supplies only statement_path to the graph. The single account-name sentinel is supplied at line 239 to a separate direct call with empty feedback."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_firm.py",
+      "line": 102,
+      "criterion": "P18",
+      "claim": "The claim that every P18 test ran with all extras has no matching runner evidence. The malformed-config CLI invocation and the three real-entry-point invocations also have no matching runner rows.",
+      "repro": "Compare the producer's 285-pass and focused-run outputs with runner row specified:3 and its 268-pass, 17-skip log. To verify the individual outcomes, use uv run --extra dev --extra mcp --extra llm --extra durable python -m pytest -vv -rs and capture separate runner rows for the claimed CLI and entry-point commands."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/firm.py",
+      "line": 98,
+      "criterion": "R29",
+      "claim": "Falsey non-mappings in paths are silently accepted, contrary to the malformed-configuration claim.",
+      "repro": "Put offline_lock: false and paths: [] in firm.yaml. load() turns the list into an empty mapping and accepts the lock-off configuration instead of raising FirmConfigError."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 56,
+      "criterion": "R29",
+      "claim": "The documented lock toggle truncates an existing firm configuration and targets the default home even when CMA_HOME is set.",
+      "repro": "Create private/cma/firm.yaml with show_policy_verdict: false and a custom thresholds path, then follow the README command. Both settings are lost. With CMA_HOME pointing elsewhere, the command writes a different configuration from the one cma run reads."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
