@@ -5,6 +5,10 @@ policy, and carries an id and a hash. CMA_RULESET chooses the table. v1 is the t
 as it was before it moved out of code, frozen: tests/golden/p7_v1_baseline.json.gz holds
 M1-M16 and every category computed by that code on every committed synthetic case,
 example and test fixture, and v1 must reproduce all of it exactly.
+
+The baseline is rebuilt from the pre-change commit with the tools in
+tests/golden/p7_tools/ (commands in make_p7_baseline.py's docstring); a rebuild must
+equal the committed file on every key.
 """
 
 import gzip
