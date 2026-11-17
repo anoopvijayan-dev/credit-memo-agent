@@ -27,7 +27,7 @@ Evidence: every transaction id behind each figure is in the .evidence.json file 
 | id | metric | value | method | lines |
 |---|---|---|---|---|
 | M1 | Months covered | 12 | Days from the first transaction to the last, in months, to the nearest month. | 2 |
-| M2 | Total revenue | £313,135 | Card and gateway settlements, plus transfers in that carry an invoice reference. | 261 |
+| M2 | Total revenue | £313,135 | Card and gateway settlements, transfers in that carry an invoice reference, and cash paid in. | 261 |
 | M3 | Average monthly revenue | £26,112 | Total revenue divided by the exact length of the period in months (quiet months still count). | 261 |
 | M4 | Revenue trend | 10.8% | Average revenue of the latest quarter of whole calendar months against the earliest quarter, as a percentage change. On a year-long statement these are opposite seasons. | 132 |
 | M5 | Lowest balance | -£19,760 | Lowest running balance after any transaction in the period. | 1 |

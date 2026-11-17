@@ -137,7 +137,59 @@ def _strip_new_fields(blob: bytes) -> tuple[bytes, int]:
     return ormsgpack.packb(tree, default=default, option=opt), stripped
 
 
+def _strip_saved(o, counter: list[int]):
+    """Walk an InMemorySaver's stores and rewrite every msgpack blob in the old shape."""
+    if isinstance(o, tuple) and len(o) == 2 and o[0] == "msgpack" and isinstance(o[1], bytes):
+        new, n = _strip_new_fields(o[1])
+        counter[0] += n
+        return ("msgpack", new)
+    if isinstance(o, tuple):
+        return tuple(_strip_saved(v, counter) for v in o)
+    if isinstance(o, dict):
+        return {k: _strip_saved(v, counter) for k, v in o.items()}
+    return o
+
+
+def test_a_pending_review_saved_before_the_new_fields_resumes(tmp_path):
+    # Needs no optional extra: the same serializer and allow-list the SQLite saver uses,
+    # over the in-memory saver. The stored state is rewritten as the old version wrote it,
+    # handed to a fresh saver and graph (a restart), and the review is resumed to the end.
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
+
+    from cma.graph import _serde, build
+    from cma.llm import get_llm
+
+    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
+    csv, _ = synth.write(rows, truth, tmp_path)
+    cfg = {"configurable": {"thread_id": "case-old"}}
+    before = InMemorySaver(serde=_serde())
+    state = build(get_llm("fake"), checkpointer=before).invoke(
+        {"statement_path": str(csv), "policy_path": None, "vat_stagger": None}, cfg)
+    assert state["__interrupt__"]
+
+    counter = [0]
+    after = InMemorySaver(serde=_serde())
+    for name in ("storage", "writes", "blobs"):
+        old = _strip_saved(dict(getattr(before, name)), counter)
+        store = getattr(after, name)
+        for k, v in old.items():
+            store[k] = {ns: dict(c) for ns, c in v.items()} if name == "storage" else v
+    assert counter[0] > 0  # the stored state really held Transactions, now in the old shape
+
+    graph = build(get_llm("fake"), checkpointer=after)
+    snap = graph.get_state(cfg)
+    assert snap.interrupts
+    lines = snap.values["statement"].transactions
+    assert lines and all((t.account_key, t.rule_id, t.provider_hint) == ("main", None, None)
+                         for t in lines)
+    final = graph.invoke(Command(resume={"approved": True, "reviewer": "C. Later", "notes": "",
+                                         "override_grounding": False}), cfg)
+    assert "APPROVED by C. Later" in final["final_memo"]
+
+
 def test_a_checkpoint_written_before_the_new_fields_resumes(tmp_path):
+    # The same, end to end through `cma run` and `cma resume` (needs the 'durable' extra).
     pytest.importorskip("langgraph.checkpoint.sqlite")
     runner = CliRunner()
     rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
@@ -163,3 +215,20 @@ def test_a_checkpoint_written_before_the_new_fields_resumes(tmp_path):
                             "--out", str(out)], input="y\n\n")
     assert r.exit_code == 0, r.output
     assert "APPROVED by C. Later" in out.read_text()
+
+
+def test_m2_counts_and_names_cash_deposits():
+    # R55: a cash deposit is in M2, cited by id, and M2's method says cash paid in counts.
+    from cma import metrics
+    from cma.models import Statement
+
+    lines = [
+        Transaction(id="T0", date=date(2026, 1, 2), description="Opening", amount=10.0,
+                    balance=10.0, category=Category.REVENUE_CARD),
+        Transaction(id="T1", date=date(2026, 3, 30), description="Cash paid in", amount=100.0,
+                    balance=110.0, category=Category.CASH_DEPOSIT),
+    ]
+    m2 = next(m for m in metrics.compute(Statement(account_name="A", transactions=lines))
+              if m.id == "M2")
+    assert m2.value == 110.0 and "T1" in m2.evidence
+    assert "cash paid in" in m2.method.lower()
