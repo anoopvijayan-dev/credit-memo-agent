@@ -1,0 +1,29 @@
+Both majors from verify-05 are fixed at `bb0040d`, and I could not reproduce either failure. I also ran the three checks the last verdict said nothing had covered, and all three passed. I changed no code; my only write is `claim.json` in the run directory, which validates against the schema.
+
+**The two majors**
+- **Repeated keys in a rule table:** a rule table with a repeated key (a second `category:` inside a rule, or a second `rules:`) is now refused on load. To check the test catches it, I swapped the stricter loader back for plain `safe_load` in a scratch copy, and both tests failed.
+- **Legacy resume:** the ruleset lookup now happens before the review decision is recorded. If it fails, nothing is written and the review stays pending. I removed that step in a scratch copy and the test failed.
+
+**The checks the last verdict said were unproven**
+- **Real SQLite resume across versions:** I used the pre-change code (fd7b64c) to leave a review pending in a `--checkpoint-db` file. The new code resumed it (exit 0), and the evidence names the v1 table with its hash, marked as inferred. When I resumed with a damaged v1 table, it was refused (exit 2) with no memo written; once the table was repaired, the same review resumed.
+- **Historical golden rebuilt:** I reran the old test suite at fd7b64c with the capture tools and rebuilt the baseline. It matches the committed golden on every key except its description text (13 synthetic cases, 1 example, 37 fixtures, 17 single lines).
+- **Clean wheel install:** a wheel built from HEAD includes `cma/rules/v1.yaml`. In a fresh venv it loads from the installed package, and its hash equals `sha256sum` of the source file.
+
+**Suite results**
+- **Full suite:** with the optional SQLite extra installed, as CI installs it, 344 tests pass and none are skipped. Without it, 340 pass and the 4 SQLite tests skip.
+- **P7 comparison against the golden:** 55 passed.
+- **Lint:** ruff is clean.
+- **Speed:** categorising a 389-line statement takes 1.47 ms against 1.45 ms before.
+
+I installed the SQLite extra into a scratch venv only. It is already declared in `pyproject.toml`, so no project dependency changed.
+
+**Gaps for the owner** (listed in `notes`, not fixed in code):
+- The repo has no changelog, so there is no release-note line.
+- The MCP tools' outputs don't say which ruleset they used. That needs a design decision.
+- Because v1 is the only table, setting `CMA_RULESET` can't roll anything back yet; rollback today means reinstalling the previous wheel. The flag becomes a real rollback once v2 lands.
+- The golden rebuild is still a manual step documented in `make_p7_baseline.py`; CI doesn't run it.
+
+Nothing on the checklist needed a new dependency or service.
+
+Files are in `/home/user/credit-memo-agent/.bridgie/runs/statement-review/hardener-07`:
+- claim.json

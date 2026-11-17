@@ -1,0 +1,124 @@
+I fixed both majors from the failed verification and the four code-level minors, and committed the work as `bb0040d` on `bridgie-task/statement-review/T01`. I also withdrew every claim the runner can't reproduce.
+
+The suite gives 344 passed and 4 skipped; ruff passes and the evals report 9/9 memos grounded. The 4 skips are the SQLite checkpoint tests, because the `durable` extra isn't installed here. The 55 P7/dual_run comparisons still pass. They compare v1 with the committed golden; nothing rebuilds the historical baseline independently.
+
+**The two majors:**
+- **Repeated YAML keys:** a packaged rule table with a repeated key is now refused when it loads, naming the key (`src/cma/categorise.py`). I reproduced the reviewer's case first: on the previous commit, a second `category: supplier` inside the card rule loaded quietly and turned a card settlement into supplier. Now it raises `not valid YAML (found duplicate key 'category')`.
+- **Resuming an old review:** `cma resume` now checks which rule table the evidence will name before it shows the memo or records a decision. With a damaged table it exits 2 with "Refused, nothing recorded.", writes no memo or evidence, and the review stays pending. Once the table is repaired, the same review resumes and its evidence names v1, marked as inferred. The test fails against a copy without the early check. It drives the real CLI command, but with an in-memory store in place of a SQLite file from an older version.
+
+**The minors I fixed:**
+- **Missing table:** this is now a refusal with exit 2 instead of being reported as a model failure (exit 4).
+- **Hash:** the recorded hash is now of the file's bytes, tested with a CRLF copy. The v1 hash hasn't changed (`7573366854a66879…`), so the committed example evidence still matches.
+- **CI wheel step:** it now fails unless the installed table's hash equals `sha256sum` of the source file. That step only runs in CI, so I haven't claimed it as proven.
+
+**Claims withdrawn** because the runner has no result for them: the clean-wheel install, the independent historical replay, a suite with no skips, a real SQLite resume across versions, the claim that categorisation is pure, and the benchmarks. To prove the SQLite paths, the runner needs `.[durable]` installed, which turns the 4 skipped tests on.
+
+I also renamed `graph._ruleset_used` to `ruleset_used`, because the CLI now calls it. The claim is also saved in the run directory as `claim.json` and validates against the schema.
+
+```json
+{
+  "task": "T01",
+  "claims": [
+    {
+      "text": "R54: a repeated mapping key in a packaged rule table (a second category inside a rule, or a second top-level rules key) is refused at load with RulesetError naming the key, and categorise_one under CMA_RULESET=v1 raises rather than categorising (src/cma/categorise.py _UniqueKeyLoader).",
+      "proof_cmd": "PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider tests/test_rules.py -k repeated_key",
+      "proof_output": "2 passed"
+    },
+    {
+      "text": "R54: the reviewer's duplicate-key repro on an unpacked source copy: HEAD~1 categorises the CARD SETTLEMENT line as supplier; the current source raises RulesetError.",
+      "proof_cmd": "S=$(mktemp -d); for v in HEAD~1 HEAD; do rm -rf $S/x; mkdir $S/x; git archive $v src | tar -x -C $S/x; sed -i '0,/    category: revenue_card_settlement/s//    category: revenue_card_settlement\\n    category: supplier/' $S/x/src/cma/rules/v1.yaml; echo \"== $v\"; PYTHONDONTWRITEBYTECODE=1 CMA_RULESET=v1 PYTHONPATH=$S/x/src python -c \"from datetime import date; from cma import categorise as c; from cma.models import Transaction as T\ntry: print(c.categorise_one(T(id='T1',date=date(2026,1,5),description='CARD SETTLEMENT ACME',amount=120.0,balance=120.0)).value)\nexcept c.RulesetError as e: print('RulesetError:', e)\"; done",
+      "proof_output": "== HEAD~1 / supplier / == HEAD / RulesetError: CMA_RULESET='v1': cma/rules/v1.yaml: not valid YAML (found duplicate key 'category')"
+    },
+    {
+      "text": "R54: on resume of a review whose state has no ruleset (a pre-T01 checkpoint), cma resume settles the evidence ruleset before any decision is recorded; with a damaged v1 table it exits 2 with 'Refused, nothing recorded.', writes no memo or evidence, and the review stays pending; after the table is repaired the same review resumes and the evidence names v1 with inferred: pre-ruleset checkpoint. Driven through the CLI with a shared in-memory saver standing in for the SQLite file.",
+      "proof_cmd": "PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider tests/test_rules.py -k legacy_resume",
+      "proof_output": "1 passed"
+    },
+    {
+      "text": "R54: a missing packaged table is a RulesetError ('cannot be read from the installed package'), and cma run refuses it with exit 2, not the model-failure exit 4.",
+      "proof_cmd": "PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider tests/test_rules.py -k missing",
+      "proof_output": "2 passed"
+    },
+    {
+      "text": "R54: the recorded ruleset sha256 is of the file's bytes: a CRLF copy hashes to the sha256 of its CRLF bytes, and the packaged v1 hash equals sha256sum of src/cma/rules/v1.yaml (and the value in the committed example evidence).",
+      "proof_cmd": "PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider tests/test_rules.py -k 'file_bytes or hash_of_its_file' && sha256sum src/cma/rules/v1.yaml | cut -c1-16 && PYTHONPATH=src python -c \"from cma import categorise as c; print(c.load_ruleset('v1').sha256[:16])\" && grep -c 7573366854a668793ca20b3ecfaad91d406ea3018a71d524ea3324cc4ff76630 examples/cafe_stretched.memo.evidence.json",
+      "proof_output": "2 passed / 7573366854a66879 / 7573366854a66879 / 1"
+    },
+    {
+      "text": "P7/R10: under CMA_RULESET=v1 every case in the committed golden (synthetic configurations, the example, fixtures, single lines) and the dual-run rule-list and matcher comparisons still pass after this change. This is a comparison against the committed golden, not an independent historical replay.",
+      "proof_cmd": "PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider -m dual_run",
+      "proof_output": "55 passed, 289 deselected"
+    },
+    {
+      "text": "Whole suite, lint, compile and evals pass. Four tests skip because the optional langgraph sqlite extra is not installed in this environment.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider -rs | tail -3 && python evals/run_evals.py | tail -1",
+      "proof_output": "All checks passed! / SKIPPED [1] tests/test_cli.py:76 and [3] tests/test_cli.py:129: could not import 'langgraph.checkpoint.sqlite' / 344 passed, 4 skipped / 9/9 memos fully grounded; model = fake"
+    }
+  ],
+  "files_changed": [
+    "src/cma/categorise.py",
+    "src/cma/cli.py",
+    "src/cma/graph.py",
+    "tests/test_rules.py",
+    ".github/workflows/ci.yml"
+  ],
+  "dispositions": [
+    {
+      "finding": "major src/cma/categorise.py:145 duplicate YAML mapping keys accepted",
+      "disposition": "reproduced",
+      "evidence": "Reproduced on HEAD~1 source (line categorised supplier). Fixed with _UniqueKeyLoader (a SafeLoader that raises ConstructorError on a repeated key), surfaced as RulesetError 'not valid YAML (found duplicate key ...)'. Tests: tests/test_rules.py::test_a_repeated_key_in_the_table_is_refused (2 cases)."
+    },
+    {
+      "finding": "major src/cma/cli.py:213 legacy-resume ruleset lookup fails after the decision is recorded",
+      "disposition": "reproduced",
+      "evidence": "Test test_a_legacy_resume_with_a_damaged_table_is_refused_before_anything_is_recorded fails against a mutant with the early lookup removed (exit 1, not 2). Fix: cli._review calls graph.ruleset_used(state) before printing or deciding; RulesetError exits 2 with nothing recorded; the evidence is written from that same settled value."
+    },
+    {
+      "finding": "minor src/cma/categorise.py:143 missing packaged table escapes as FileNotFoundError, exit 4",
+      "disposition": "reproduced",
+      "evidence": "OSError from the resource read is now RulesetError; cma run exits 2 'Refused.' (tests ...missing_packaged_table... and ...cma_run_refuses_a_missing_table...)."
+    },
+    {
+      "finding": "minor src/cma/categorise.py:148 digest is of decoded text, not file bytes",
+      "disposition": "reproduced",
+      "evidence": "Loader now reads bytes and hashes them; test_the_hash_is_of_the_file_bytes_not_of_normalised_text uses a CRLF copy. The LF v1 digest is unchanged (7573366854a66879...), so committed evidence is unaffected."
+    },
+    {
+      "finding": "minor .github/workflows/ci.yml:37 claimed wheel proof snippet raises NameError",
+      "disposition": "reproduced",
+      "evidence": "The NameError was in the previous claim's snippet. The wheel claim is removed from this claim. The CI step now imports cma, prints the installed path, and fails unless the installed v1 digest equals sha256sum of the source YAML; that step runs only in CI and is not claimed as proven here."
+    },
+    {
+      "finding": "minor tests/golden/p7_tools/make_p7_baseline.py:5 historical replay has producer output only",
+      "disposition": "not_reproduced",
+      "evidence": "Not a code defect; the replay claim is withdrawn. P7 is claimed only as comparison against the committed golden (dual_run 55 passed)."
+    },
+    {
+      "finding": "minor tests/test_cli.py:76 no-skip suite and SQLite migration claims lack runner results",
+      "disposition": "not_reproduced",
+      "evidence": "Claims withdrawn. The suite reports 4 sqlite skips here (stated in the claim). The legacy-resume test now drives cma resume through the CLI with a stored state lacking ruleset, but via an in-memory saver, not a SQLite file from another version."
+    },
+    {
+      "finding": "minor src/cma/graph.py:70 'no backfill' reason was wrong about the SQLite path",
+      "disposition": "not_reproduced",
+      "evidence": "Claim withdrawn. No migration claim is made; the existing optional state/evidence keys are unchanged."
+    },
+    {
+      "finding": "minor examples/cafe_stretched.memo.evidence.json:11 exact regeneration unproven",
+      "disposition": "not_reproduced",
+      "evidence": "Claim withdrawn. Only the id/digest match is claimed (grep count 1)."
+    },
+    {
+      "finding": "minor src/cma/categorise.py:240 categorise is not pure; benchmark unproven",
+      "disposition": "not_reproduced",
+      "evidence": "Behaviour predates T01 and is unchanged; the purity and benchmark claims are withdrawn."
+    },
+    {
+      "finding": "minor tests/golden/p7_tools/make_p7_baseline.py:125 bytecode/cache audit unproven",
+      "disposition": "not_reproduced",
+      "evidence": "Claim withdrawn. Commands in this claim set PYTHONDONTWRITEBYTECODE=1 and -p no:cacheprovider explicitly so the runner can see it."
+    }
+  ],
+  "notes": "Commit bb0040d on bridgie-task/statement-review/T01. graph._ruleset_used was renamed to ruleset_used (only caller outside graph is cli._review). Withdrawn as unprovable by the runner: clean-wheel install, independent historical P7 replay, no-skip suite, real cross-version SQLite resume, benchmarks. To prove the SQLite paths the runner needs .[durable] installed; tests/test_cli.py:76 and :129 then run instead of skipping."
+}
+```

@@ -1,0 +1,89 @@
+{
+  "task": "T01",
+  "claims": [
+    {
+      "text": "Major fix 1 (duplicate YAML keys): load_ruleset parses with _UniqueKeyLoader, so a repeated key is refused and does not silently keep the last value. Tests cover a second `category:` inside a rule and a second top-level `rules:`. If the loader is replaced with yaml.safe_load (a mutation applied in a scratch copy), both tests fail.",
+      "proof_cmd": "pytest tests/test_rules.py -k repeated_key -v; then in a scratch git-archive copy: sed -i 's/yaml.load(raw.decode(\"utf-8\"), Loader=_UniqueKeyLoader)/yaml.safe_load(raw.decode(\"utf-8\"))/' src/cma/categorise.py && pytest tests/test_rules.py -k repeated_key",
+      "proof_output": "HEAD: test_a_repeated_key_in_the_table_is_refused[...category] PASSED, [...rules] PASSED. Mutant: 2 failed, 108 deselected."
+    },
+    {
+      "text": "Major fix 2 (legacy resume): cli._review calls ruleset_used(state) before the review decision is recorded. On a RulesetError it prints 'Refused, nothing recorded.', exits 2 and writes no memo or evidence, and the review stays pending. Once the table is repaired, the same review resumes. If the pre-decision settle is removed (mutation in a scratch copy), the test fails.",
+      "proof_cmd": "pytest tests/test_rules.py -k legacy_resume -v; scratch-copy mutant with the try/ruleset_used block removed from cli._review and evidence_record(final) restored: pytest tests/test_rules.py -k legacy_resume",
+      "proof_output": "HEAD: test_a_legacy_resume_with_a_damaged_table_is_refused_before_anything_is_recorded PASSED. Mutant: 1 failed, 109 deselected."
+    },
+    {
+      "text": "Real SQLite resume across versions. Code at fd7b64c (pre-T01) left a review pending in a --checkpoint-db file. T01 code resumed it, wrote the memo and evidence, and named the ruleset v1 (inferred). In a second run a damaged v1.yaml was installed: the resume was refused with exit 2 and no memo, and after the table was restored the same review resumed with exit 0. The durable extra was installed in a scratch venv; no project dependency changed.",
+      "proof_cmd": "scratch venv + pip install 'langgraph-checkpoint-sqlite>=3.0' (declared extra `durable`); PYTHONPATH=<fd7b64c>/src cma run cafe_stretched.csv --thread legacy-1 --checkpoint-db reviews.db </dev/null; PYTHONPATH=<T01>/src cma resume legacy-1 --checkpoint-db reviews.db --reviewer 'C. Checker' --out memo.md <<< $'y\\n\\n'; repeat as legacy-2 with a damaged v1.yaml copy, then with T01 src",
+      "proof_output": "old exit=2 (pending, no name typed); new exit=0; evidence ruleset {'id': 'v1', 'sha256': '7573366854a668793ca20b3ecfaad91d406ea3018a71d524ea3324cc4ff76630', 'inferred': 'pre-ruleset checkpoint'}; memo 'APPROVED by C. Checker' x1. legacy-2 damaged: \"['returned_dd'] is not a non-empty string\", damaged exit=2, ls memo*: No such file; repaired exit=0, ruleset id v1."
+    },
+    {
+      "text": "A missing packaged table raises RulesetError, not an OSError, and `cma run` treats it as a refusal (exit 2) rather than blaming the model (exit 4).",
+      "proof_cmd": "pytest tests/test_rules.py -k missing -v",
+      "proof_output": "test_a_missing_packaged_table_is_refused_not_raised_as_an_os_error PASSED; test_cma_run_refuses_a_missing_table_rather_than_blaming_the_model PASSED"
+    },
+    {
+      "text": "The ruleset hash is the SHA-256 of the file's bytes. It equals sha256sum of src/cma/rules/v1.yaml, it is the value in the committed example evidence, and a CRLF copy hashes differently.",
+      "proof_cmd": "sha256sum src/cma/rules/v1.yaml; grep -A2 '\"ruleset\"' examples/cafe_stretched.memo.evidence.json; pytest tests/test_rules.py -k file_bytes",
+      "proof_output": "7573366854a668793ca20b3ecfaad91d406ea3018a71d524ea3324cc4ff76630 for the file and the example evidence; test_the_hash_is_of_the_file_bytes_not_of_normalised_text PASSED"
+    },
+    {
+      "text": "P7 historical replay, independently rebuilt: the old suite was run at fd7b64c under capture_plugin and make_p7_baseline.py was run on the capture. The rebuild equals the committed golden on every key except _about.",
+      "proof_cmd": "git archive fd7b64c | tar -x -C $S/old; cd $S/old && CAPTURE_OUT=$S/capture.json PYTHONPATH=$S/old/src:<wt>/tests/golden/p7_tools python -m pytest -q -p capture_plugin; MADE_AT=fd7b64c PYTHONPATH=$S/old/src python <wt>/tests/golden/p7_tools/make_p7_baseline.py $S/capture.json $S/p7.json; compare with gunzip of tests/golden/p7_v1_baseline.json.gz",
+      "proof_output": "old suite: 232 passed (no skips, durable extra present); synthetic=13 examples=1 fixtures=37 hand_categorised_skipped=0 lines=17; keys differing (excluding _about): []"
+    },
+    {
+      "text": "P7 under v1 matches the golden: every synthetic case, the example, all 37 fixtures, the single lines, the rule-list identity and a fuzz of more than 20,000 descriptions against the verbatim old matcher.",
+      "proof_cmd": "pytest -q -m dual_run",
+      "proof_output": "55 passed, 289 deselected in 1.69s"
+    },
+    {
+      "text": "With the durable extra installed (as CI installs it, ci.yml:23 `pip install -e \".[dev,mcp,durable]\"`), the full suite runs with no skips. Lint is clean.",
+      "proof_cmd": "PYTHONPATH=src <venv-with-durable>/bin/python -m pytest -q -rs; ruff check src tests",
+      "proof_output": "344 passed in 4.56s; All checks passed! (Without the extra, the same suite gives 340 passed and 4 skipped, all of them langgraph.checkpoint.sqlite imports.)"
+    },
+    {
+      "text": "Clean-wheel load: a wheel built from HEAD and installed in a fresh venv contains cma/rules/v1.yaml. load_ruleset('v1') runs from site-packages and its hash equals the source file's sha256sum. This is the same check that ci.yml now runs.",
+      "proof_cmd": "pip wheel --no-deps .; python -m venv wv; wv/bin/pip install *.whl; unzip -l *.whl | grep rules/; wv/bin/python -c \"...load_ruleset('v1')... == sha256sum src/cma/rules/v1.yaml\"",
+      "proof_output": "cma/rules/__init__.py, cma/rules/v1.yaml (2035 bytes); .../wv/lib/python3.13/site-packages/cma/__init__.py v1 7573366854a668793ca20b3ecfaad91d406ea3018a71d524ea3324cc4ff76630 12 True"
+    },
+    {
+      "text": "Security, authz and input: CMA_RULESET is checked against the allow-list RULESETS before any file is read, so it can never name a path. The new code adds no endpoint, tenant query or caller-controlled path. MCP tools keep their CMA_DATA_DIR checks, and RulesetError subclasses ValueError, so an MCP call surfaces it as the same tool error the server already raises. No secrets were added and no dependency changed (only data files and stdlib/pyyaml imports already in use).",
+      "proof_cmd": "pytest tests/test_rules.py -k 'name_a_path or unknown_ruleset' -v; grep -n 'class RulesetError' src/cma/categorise.py; git diff fd7b64c..HEAD -- pyproject.toml",
+      "proof_output": "test_a_ruleset_id_cannot_name_a_path PASSED; test_an_unknown_ruleset_is_refused_naming_the_known_ones PASSED; class RulesetError(ValueError); pyproject diff adds only a pytest marker"
+    },
+    {
+      "text": "Performance: categorising a 389-line, 12-month statement takes as long as before (best of 5x20 runs). categorise() loads the table once per statement, and load_ruleset is lru_cached. The change adds no queries, endpoints or payloads.",
+      "proof_cmd": "timeit categorise.categorise(s) on cafe_stretched (389 lines) with PYTHONPATH=fd7b64c/src vs T01/src",
+      "proof_output": "old categorise_ms=1.45; T01 categorise_ms=1.47"
+    },
+    {
+      "text": "Data, migration, idempotency and rollback: the change is additive. Evidence gains a `ruleset` key, MemoState gains an optional `ruleset`, and Category, PolicyResult and CHECKPOINT_TYPES are unchanged. Old pending reviews resume, as the SQLite proof above shows. Categorisation is a pure function of statement and table, so a rerun gives the same result. Rollback is a reinstall of the previous wheel, which needs no data repair: v1 equals the old code (P7) and no reader requires `ruleset`. PII is unchanged: the table and the evidence add only an id and a hash.",
+      "proof_cmd": "git diff fd7b64c..HEAD -- src/cma/models.py src/cma/graph.py | grep CHECKPOINT_TYPES; resume proof above",
+      "proof_output": "models.py unchanged; CHECKPOINT_TYPES not in diff; legacy SQLite resume exit=0"
+    },
+    {
+      "text": "Observability and alerting: each memo's evidence records the ruleset id and hash, which shows which table ran. The failure that matters most, a bad or missing table, ends in a non-zero exit (2) with 'Refused.' and the variable named, never a silent default. The repo has no remote alerting by design.",
+      "proof_cmd": "pytest tests/test_cli.py -k 'ruleset' -v",
+      "proof_output": "test_unknown_cma_ruleset_is_refused_not_blamed_on_the_model PASSED; test_written_evidence_records_the_ruleset PASSED"
+    },
+    {
+      "text": "Docs: README documents CMA_RULESET and the rules file, and renames M16. The categorise.py module docstring describes the data table, duplicate-key refusal and file-bytes hash. The decision itself is recorded in design.md (sub-decision 'where the categorisation rules live').",
+      "proof_cmd": "git diff fd7b64c..HEAD -- README.md | grep CMA_RULESET",
+      "proof_output": "+# Choose the categorisation table (src/cma/rules/<id>.yaml; default v1)...; +CMA_RULESET=v1 cma run examples/cafe_stretched.csv"
+    }
+  ],
+  "files_changed": [],
+  "dispositions": [
+    {
+      "finding": "major: loader accepts duplicate YAML mapping keys (src/cma/categorise.py:145)",
+      "disposition": "not_reproduced",
+      "evidence": "At bb0040d a repeated `category` or `rules` key raises RulesetError 'not valid YAML ... duplicate key'. tests pass at HEAD; the safe_load mutant fails 2 tests."
+    },
+    {
+      "finding": "major: legacy resume can fail after the review is committed, leaving no evidence (src/cma/cli.py:213)",
+      "disposition": "not_reproduced",
+      "evidence": "Real SQLite: a review left pending by fd7b64c and resumed with a damaged table exited 2 with no memo, and resumed with exit 0 once the table was repaired. The unit test passes at HEAD and fails when the pre-decision settle is removed."
+    }
+  ],
+  "notes": "Gaps for the owner, none fixed in code (out of scope): (1) The repo has no CHANGELOG, so there is no release-note line; add one if the project adopts a changelog. (2) MCP compute_metrics/check_policy outputs do not name the ruleset used. The design gives the ruleset id only to evidence and verify (C8), so this needs a design call. (3) Rollback by CMA_RULESET is not yet a flag flip, because v1 is the only table; rollback today means reinstalling the previous wheel. The env flag becomes a real rollback once v2 lands (T-later). (4) The proofs for the real SQLite cross-version resume, the golden rebuild and the wheel install ran by hand in a scratch venv, recorded above. CI covers the wheel load (ci.yml) and runs the SQLite tests because it installs [durable], but CI does not rebuild the golden from fd7b64c; that stays a manual, documented step (make_p7_baseline.py docstring). (5) The golden's _about text says the tools were in the run directory; the docstring in tests/golden/p7_tools explains this. No checklist item needed a new dependency or service."
+}
