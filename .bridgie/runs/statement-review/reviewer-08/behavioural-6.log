@@ -1,0 +1,12 @@
+case                   policy  grounded  rate   redrafts truth              s
+cafe/good              pass    True      1.0    0        ok              0.04
+cafe/stretched         refer   True      1.0    0        ok              0.03
+cafe/poor              fail    True      1.0    0        ok              0.03
+trades/good            refer   True      1.0    0        ok              0.03
+trades/stretched       refer   True      1.0    0        ok              0.03
+trades/poor            fail    True      1.0    0        ok              0.02
+ecommerce/good         refer   True      1.0    0        ok              0.02
+ecommerce/stretched    refer   True      1.0    0        ok              0.02
+ecommerce/poor         fail    True      1.0    0        ok              0.03
+
+9/9 memos fully grounded; model = fake

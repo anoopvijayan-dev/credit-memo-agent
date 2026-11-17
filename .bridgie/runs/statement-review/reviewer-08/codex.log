@@ -1,0 +1,70 @@
+```json
+{
+  "criteria": [
+    {
+      "id": "R42",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:313–316 links each append to the previous hash. The owner check at lines 230–244 and position check at lines 272–276 guard competing writers and stale retries. No production caller records imports, profile changes, overrides, firm-rule promotions, previews, pack writes or sign-offs. The producer's notes substitute purge for firm-rule promotion.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R43",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:192–210 identifies the first broken entry or incomplete tail and raises a numbered refusal. The only production call to require_intact is from append at line 273. There is no production sign-off path that invokes the check.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:129–170 rejects duplicate members, noncanonical bytes, invalid hashes, sequence gaps and broken predecessor links. The runner's specified:3 row reports 313 passed and 4 skipped, but its quiet log does not identify the 51 P15 cases at tests/test_case_log.py:126–189 and :392–400. The marked tiers deselected all 317 tests. A passing runner row for python -m pytest tests/test_case_log.py -v -k p15 would establish execution of the cited cases. Those cases also leave a fully rebuilt chain untested.",
+      "result": "not_proven",
+      "artifact": "specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 256,
+      "criterion": "R42",
+      "claim": "The append primitive has no production callers, so the seven required case actions have no audit integration.",
+      "repro": "Search src for CaseLog outside src/cma/case.py. The existing Monzo import at src/cma/cli.py:282–303 converts and reports the output without recording an audit entry. The checkout has no case-scoped caller for any of the seven actions."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 205,
+      "criterion": "R43",
+      "claim": "The numbered integrity check is available to library callers, but the required sign-off refusal is absent from the application.",
+      "repro": "Search src for require_intact and sign-off entry points. The only production invocation is append at src/cma/case.py:273. Given a log whose second entry lacks its final newline, the library can report entry 2, but there is no application sign-off operation that returns that refusal."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 315,
+      "criterion": "R42",
+      "claim": "The writer hashes caller-owned mutable data and serializes it separately. A concurrent change between the two operations can leave a broken entry even though append returns successfully.",
+      "repro": "Append a dictionary shared with a second thread. Pause _encode immediately after entry_hash returns, change a value in that dictionary from the second thread, and resume serialization. Append returns, then require_intact reports a hash mismatch at the newly written entry."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 187,
+      "criterion": "P15",
+      "claim": "The verifier reads its entire trust chain from the file it is checking. A changed pre-head entry survives verification if the stored hashes and predecessor links are rebuilt through the head.",
+      "repro": "Construct a three-entry log, change entry 1's data, and rebuild the canonical lines with updated hashes and predecessor links through entry 3. A fresh CaseLog.verify() accepts the rewritten history. The test at tests/test_case_log.py:139 updates only the edited entry's hash, leaving the next link stale."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 126,
+      "criterion": "P15",
+      "claim": "The producer reports a named 51-case P15 run, but the supplied runner logs do not show those named cases. The runner independently confirms a full-suite pass with 313 passed and 4 skipped, a different count from the producer's 304 passed and 5 skipped.",
+      "repro": "Compare specified-3.log and the three marker-tier logs with the producer's proof. A passing runner result for python -m pytest tests/test_case_log.py -v -k p15 would identify each selected case and its outcome."
+    }
+  ],
+  "verdict": "not_proven"
+}
+```

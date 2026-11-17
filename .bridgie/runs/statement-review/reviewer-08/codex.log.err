@@ -1,0 +1,1862 @@
+Reading prompt from stdin...
+OpenAI Codex v0.169.0
+--------
+workdir: /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T12-review
+model: gpt-6.2-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 01a1eb7a-e769-70d1-9958-80081821cc98
+--------
+user
+# Seat: reviewer (verify)
+
+## Role
+You get credit for real defects found. You have read-only access to the whole repository; read whatever you need to judge the diff in context. You never edit, and you do not run tests, builds or anything that writes: the runner has already run the configured test tiers in the task's worktree, and their results and logs are in your inputs. To read code you may use read-only commands where your tools read through a shell (`cat`, `sed -n`, `rg`, `grep`, `ls`, `git diff`, `git show`, `git log`); your workspace is read-only and the runner fails the review if anything in it changes.
+
+## Judgment criteria
+- Walk every requirement ID on the task: point at the exact code that satisfies it or the gap; unmapped means `not_proven`.
+- Check every claim against its proof; a claim whose proof does not cover it is a finding.
+- A claim that tests pass is proven only by a runner result row that passed and whose log shows those tests ran. A test the claim cites that the runner did not run is `not_proven`, not `pass`; say which command would prove it.
+- Run the lane attack list: double submit, concurrent update, boundary values, currency and timezone, partial failure, authz bypass, tenant isolation, changed-contract consumers.
+- Cite file and line for every finding, with a concrete repro; "consider edge cases" is not a finding.
+- Default verdict is `not_proven`; move to `pass` only when every criterion row passes and no blocker or major finding remains.
+- Treat "zero issues" from the producer as a prompt to look harder, not as a signal.
+
+## Gotchas
+- A review from the packet alone, without reading the repository, has invented findings before; abort instead.
+- Do not report style.
+
+## Output contract
+`evidence.json`, exactly this shape (the runner fills `task` and `verifier`; use these field names):
+
+```json
+{
+  "criteria": [
+    { "id": "R4", "tier": "adversarial", "check": "what you checked, citing file:line", "result": "pass", "artifact": null }
+  ],
+  "findings": [
+    { "severity": "major", "file": "src/x.py", "line": 42, "criterion": "R4", "claim": "the defect", "repro": "how to reproduce it" }
+  ],
+  "verdict": "not_proven"
+}
+```
+
+One `criteria` row per requirement ID on the task, `tier` always `adversarial`, `result` one of `pass`, `fail`, `not_proven`. `severity` is `blocker`, `major` or `minor`. `verdict` is `pass`, `fail` or `not_proven`.
+
+## Stop conditions
+Stop with `not_proven` and a reason when a criterion depends on a test result the runner did not produce.
+
+# Inputs
+
+## task — task T12
+
+```json
+{
+  "id": "T12",
+  "title": "Hash-chained append-only case log with a single-writer lock, an expected-position conflict, and torn-last-entry detection that names the first bad entry; test: P15",
+  "requirements": [
+    "R42",
+    "R43",
+    "P15"
+  ],
+  "depends_on": [],
+  "status": "verify",
+  "attempts": 2,
+  "max_attempts": 3,
+  "branch": "bridgie-task/statement-review/T12",
+  "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-03/evidence.json",
+  "escalation": "attempt 1 of 3 fail: R42 fail (src/cma/case.py:265 chains each generic append to the previous hash. No production caller records the seven required case actions. The position check at src/cma/case.py:225 rejects a sequential retry, but the per-instance lock depth at line 195 lets concurrent threads sharing an instance bypass mutual exclusion. Cross-process locking remains unproven because the runner's child failed during import.); R43 fail (src/cma/case.py:162 detects a broken link and line 168 detects a torn tail. Line 180 normally turns those results into a numbered refusal, but no production sign-off path calls it, and malformed values accepted by the decoder can raise before an entry number is reported.); P15 fail (src/cma/case.py:137 checks the content hash and lines 139–142 check sequence and predecessor. The decoder at line 127 collapses duplicate keys, allowing a changed pre-head entry to pass. The runner supplied no passing pytest row that ran the P15 cases in tests/test_case_log.py:125–188. From an environment importing this checkout, python -m pytest tests/test_case_log.py -q -k p15 -v would prove the existing cases and identify them in the log.); specified:3 fail (python -m pytest -q); major: The append primitive is unused by production code. The claim that R42 holds conflicts with the confirmed absence of callers. at src/cma/case.py:214; major: Two threads sharing a CaseLog instance can both pass the expected-position check and append entries with the same sequence and predecessor. at src/cma/case.py:195; major: The claimed sign-off refusal has no production integration. at src/cma/case.py:175; major: The verifier can raise an unnumbered ValueError on a malformed complete entry. at src/cma/case.py:137; major: Duplicate JSON members can change a pre-head entry without triggering detection. at src/cma/case.py:127; major: The runner contradicts the full-suite pass claim, and its cross-process test never exercised the lock. Ruff passed independently. at tests/test_case_log.py:312; reviewer verdict not_proven"
+}
+```
+
+## requirements — .bridgie/specs/statement-review/requirements.md
+
+# Requirements — Statement review: every figure traced, the unclear lines first
+
+Bet: statement-review, signed 2026-11-16. Scope is a showcase for one firm (D15, D24): a working model the underwriter can try, after which the firm's approver decides on a pilot (D14, D25). Forms and risk tags follow the template.
+
+Revision 2, after D34 (changes requested). Ids from revision 1 are kept and never reused. Changed: R1 and R14 (cash deposits are trading receipts and the large ones are flagged, D31); R15 (judgement queue); R22, R23, R26 and R28 (the pack is written once, at sign-off, and carries the policy check); R25 (pass/refer/fail shown with the illustrative label, D28); R47 (synthetic cash); R50 (no durations, D32); P1 and P17. New: R55, R56, P19, P20. Withdrawn: R49 (timing the underwriter, D32). Confirmed as designed: local-first (D29), OBIE v3.1 and TrueLayer first (D30), Tier 1 only by 2026-11-29 (D33).
+
+Terms. *The system*: the cma package running on the underwriter's machine. *Figures layer*: src/cma/metrics.py and a new indicators module, the only code that does arithmetic on money (ADR 001). *Case*: one application, holding one or more of the applicant's accounts, a profile, an override log and a case log. *The reply*: the underwriter's written answers of 2026-11-16 (one anecdotal source; see evidence-synthesis.md). *Judgement queue*: the lines the workspace lists first because a person has to decide what they are. *Policy check*: the pass, refer or fail outcome and the rule results from the packaged policy (src/cma/policies/uk_sme_default.yaml). Its rule ids (R1 to R9, cited as [R1] to [R9] in a pack) are not the requirement ids in this file. *Illustrative label*: the sentence shown with every policy outcome, saying that the thresholds ship with the tool, are not the firm's lending policy, and do not make the lending decision. *Preview*: the pack's content and its snapshot hash, shown before sign-off; nothing is written until sign-off.
+
+## R1 · ubiquitous · risk: money
+THE SYSTEM SHALL place every credit in a case in exactly one money-in bucket (trading receipts, own-account transfers in, director and shareholder funding, lending drawdowns, refunds and returned payments, HMRC repayments, other explained money in, unexplained), and SHALL report total money in and each bucket as a GBP figure with the ids of the lines behind it.
+Source: the reply, 'if a tool could reliably tell me that £80k entered the business account but only £55k represented genuine trading receipts, explain the remaining £25k'; D31 (cash deposits sit inside trading receipts, R55).
+
+## R2 · ubiquitous · risk: money
+THE SYSTEM SHALL compute every money figure, bucket, monthly cell, indicator comparison and comparison difference in integer pence from GBP amounts, in the figures layer only, and never in the review workspace, the pack renderer or a model.
+
+## R3 · unwanted · risk: money
+IF the money-in buckets do not sum to total money in to the penny, or any credit is in no bucket or in more than one, THEN THE SYSTEM SHALL NOT show or export figures for the case, and SHALL report the difference in pence and the lines involved.
+
+## R4 · ubiquitous · risk: money
+THE SYSTEM SHALL recognise, from maintained lists shipped as data: credits from UK card acquirers, payment gateways, marketplaces and delivery platforms as trading receipts; lines naming UK business lenders and merchant cash advance providers as lending drawdowns (money in) or debt service (money out); moves between the applicant's own pots or savings as own-account transfers; HMRC credits as HMRC repayments; refund and reversal credits as refunds; and cash paid in at a counter or machine as cash deposits.
+Source: README known limits (unknown acquirers land in M16); the reply (Stripe, SumUp, merchant cash advances).
+
+## R5 · conditional · risk: money
+IF the case profile names a director or shareholder, THEN THE SYSTEM SHALL put each credit whose counterparty matches that name in director and shareholder funding, even when the credit carries an invoice reference.
+
+## R6 · conditional · risk: money
+IF the case profile names the applicant's other accounts, THEN THE SYSTEM SHALL classify lines in either direction whose counterparty matches one of them as own-account transfers, and SHALL leave them out of trading receipts and out of operating cash flow (M9).
+
+## R7 · unwanted · risk: money
+IF no built-in rule, firm rule or override explains a credit, THEN THE SYSTEM SHALL NOT count it as trading receipts; it stays in unexplained money in.
+
+## R8 · conditional · risk: money
+IF a case holds more than one of the applicant's accounts, THEN THE SYSTEM SHALL pair each debit in one account with the single credit of the same amount in another account of the case within the configured number of days, and SHALL classify both lines as own-account transfers.
+Source: the reply, 'transfers between business accounts can inflate turnover if counted twice'.
+
+## R9 · unwanted · risk: money
+IF a debit has more than one candidate credit for an own-account pairing, THEN THE SYSTEM SHALL NOT pair it, and SHALL list the debit and every candidate in the judgement queue as a possible own-account transfer.
+
+## R10 · ubiquitous · risk: money
+THE SYSTEM SHALL keep the ids, units and values of M1 to M16 unchanged on every committed synthetic case and test fixture, except for lines that a new rule now recognises, which the change SHALL list; M16 SHALL be renamed so that its name says it measures money in that is not trading receipts.
+
+## R11 · ubiquitous · risk: money
+THE SYSTEM SHALL produce a monthly summary with one row per calendar month in the period, part months marked as part, giving money in, money out, trading receipts, average end-of-day balance, lowest end-of-day balance and days overdrawn, each cell with the ids of the lines behind it.
+Source: the reply, 'calculating monthly credits, debits, average balances and existing repayments'.
+
+## R12 · ubiquitous · risk: money
+THE SYSTEM SHALL report the average end-of-day balance over the period as a figure, citing the lines that set each day's closing balance.
+
+## R13 · conditional · risk: money
+IF the case profile gives the proposed facility's monthly repayment, THEN THE SYSTEM SHALL report debt service cover including that repayment; otherwise THE SYSTEM SHALL show that figure as n/a with the reason.
+
+## R14 · ubiquitous · risk: data
+THE SYSTEM SHALL raise risk indicators from thresholds in an editable file (a single credit that is large against typical trading receipts; each cash deposit at or above the single-deposit limit; a calendar month in which cash deposits exceed a set share of that month's trading receipts; a cash deposit made within a set number of days after a cash withdrawal of an amount within a set tolerance; payments to gambling operators; returned direct debits; runs of consecutive overdrawn days; irregular credits from a named acquirer), each listing its lines and the threshold that fired, and SHALL label any threshold still at its shipped value as illustrative.
+Source: the reply, 'Highlight director loans, unusual credits and large cash deposits'; 'Flag returned direct debits, persistent overdraft usage'; D31, 'with deposits above a threshold flagged'.
+
+## R15 · event · risk: ux
+WHEN the underwriter opens a case, THE SYSTEM SHALL show the money-in breakdown, the monthly summary, the figures, the indicators and, while R25 applies, the policy check, with the judgement queue (unexplained lines, possible own-account transfers, and every line an indicator flagged, which includes cash deposits at or above the single-deposit limit) listed first, largest amount first.
+
+## R16 · event · risk: ux
+WHEN the underwriter selects a figure, a bucket or a monthly cell, THE SYSTEM SHALL list exactly the lines behind it, each with date, description, amount, balance, category and the rule or override that set the category; for a sum it SHALL show the lines' total next to the figure, and for an average, share, ratio or count it SHALL show the inputs and the method.
+Source: the reply, 'I'd want to click any number in the report and see exactly which transactions make up that figure'.
+
+## R17 · event · risk: money
+WHEN the underwriter changes a line's category and gives a reason, THE SYSTEM SHALL append the change (line, old and new category, reason, typed name, operating-system user, UTC time) to the case's override log, recompute every figure from the statements and the whole override log, and mark each figure that now rests on an overridden line.
+Source: the reply, 'Allow me to manually correct categories'.
+
+## R18 · unwanted · risk: money
+IF a requested change would alter a line's amount, date, balance or description, add or remove a line, or give a line a category not valid for its direction, THEN THE SYSTEM SHALL NOT accept it; overrides change categories only.
+
+## R19 · conditional · risk: data
+IF an override names a line that is not in the case, or was recorded against a statement file whose hash no longer matches, THEN THE SYSTEM SHALL NOT apply it, and SHALL show it as stale until the underwriter confirms or drops it.
+
+## R20 · event · risk: data
+WHEN the underwriter promotes an override to a firm rule, THE SYSTEM SHALL show the lines the rule would match in the open case before saving, then save the counterparty pattern, direction, category, name, time and reason to the firm rules file, and apply the rule to every case categorised afterwards.
+
+## R21 · unwanted · risk: money
+IF a firm rule would reclassify a line matched by a built-in director, capital, shareholder, lender, HMRC or returned-payment pattern, THEN THE SYSTEM SHALL NOT apply the firm rule to that line; only a per-line override with a reason can change it.
+
+## R22 · event · risk: data
+WHEN the underwriter signs off a case's figures, THE SYSTEM SHALL require a typed name, record it with the operating-system user and UTC time, and bind it to the snapshot of the preview the underwriter signed: statement hashes, ruleset, firm rules, profile, override log position, thresholds, memo field map, policy hash, the show_policy_verdict setting and package version.
+
+## R23 · unwanted · risk: data
+IF anything in the snapshot has changed since the preview was built, THEN THE SYSTEM SHALL NOT accept the sign-off, and SHALL say what changed.
+
+## R24 · ubiquitous · risk: ux
+THE SYSTEM SHALL word the underwriter's action as signing off the figures, never as approving the loan, and SHALL leave the recommendation and every judgement field blank for the underwriter.
+Source: the reply, 'I wouldn't want AI making the final lending decision. I'd want it assisting the underwriter.'
+
+## R25 · state · risk: ux
+WHILE show_policy_verdict is on in the firm configuration (the default), THE SYSTEM SHALL show in the review workspace and the pack the overall pass, refer or fail outcome and each rule's result from the packaged policy, computed from the current figures, and SHALL put the illustrative label in the same workspace panel and the same pack section as the outcome.
+Source: D28, 'Show it, labelled as illustrative thresholds, not the firm's policy'; README:127, 'Policy thresholds are illustrative. They are not any lender's real policy.'
+
+## R26 · event · risk: data
+WHEN a case is signed off, THE SYSTEM SHALL write the review pack once, from the signed preview, containing: memo-ready sections ordered by an editable memo field map (by default the 13 fields listed in the reply), each figure followed by its id; while R25 applies, a policy-check section after the memo fields that no memo field maps to; a self-contained HTML record that works offline, with click-through from every figure to its lines and the sign-off; the evidence JSON; and the monthly summary as CSV. THE SYSTEM SHALL NOT overwrite an existing pack.
+Source: the reply, 'Produce a summary I can use directly in my credit memo'.
+
+## R27 · conditional · risk: data
+IF a memo field has no figure mapped to it, THEN THE SYSTEM SHALL mark it as for the underwriter and leave it empty.
+
+## R28 · unwanted · risk: data
+IF the pack's text fails the grounding guard (a number that is not a figure or a policy threshold at the precision shown, a figure without its id, or a threshold without its rule id and a limit word), THEN THE SYSTEM SHALL NOT write the pack.
+
+## R29 · state · risk: security
+WHILE offline lock is on in the firm configuration (the default), THE SYSTEM SHALL refuse to create a hosted model client, SHALL refuse to start the MCP server, SHALL open no network connection other than the loopback workspace, and SHALL record offline mode in every evidence record.
+Source: the reply, 'A tool that operates entirely on our own machine or within our own environment, without transmitting customer data externally, could be attractive.'
+
+## R30 · unwanted · risk: security
+IF a hosted model is used, THEN THE SYSTEM SHALL NOT put transaction descriptions, counterparty names, case profile fields or any line-level data in a prompt; a prompt carries only the metric and rule tables, the period and the placeholder account name.
+
+## R31 · ubiquitous · risk: security
+THE SYSTEM SHALL keep each case's statements, profile, logs and outputs under one case root readable only by the operating-system user who created it, and SHALL refuse to create a case root inside a git working tree that does not ignore it.
+
+## R32 · conditional · risk: security
+IF the case root lies inside a folder that a known cloud-sync client uploads (OneDrive, Dropbox, Google Drive, iCloud Drive), THEN THE SYSTEM SHALL warn before creating a case, and SHALL record the warning in the case log.
+
+## R33 · event · risk: security
+WHEN the review workspace starts, THE SYSTEM SHALL listen on the loopback interface only, issue a new random session token, refuse any request that lacks the token or carries a Host header other than the loopback address and port, and serve only assets bundled in the package.
+
+## R34 · ubiquitous · risk: security
+THE SYSTEM SHALL treat all payer-written and provider-written text (descriptions, references, merchant names, provider categories) as untrusted: escape it in HTML, neutralise leading formula characters in text cells of CSV exports, never send it to a model, and never act on it.
+
+## R35 · event · risk: data
+WHEN the underwriter purges a case, THE SYSTEM SHALL delete all the case's files, and SHALL record in a firm-level ledger only the case id, the purge time and who purged it.
+
+## R36 · event · risk: data
+WHEN a UK Open Banking (OBIE Account and Transaction API v3.1) transactions file is imported, THE SYSTEM SHALL keep only booked GBP transactions, keep the provider's transaction ids, rebuild the running balance from per-line balances or from a supplied statement balance, and refuse the file if the balance chain breaks anywhere.
+Source: D5; D30; E3 and E7 (provider unknown); the reply names TrueLayer, Yapily and Plaid as common.
+
+## R37 · event · risk: data
+WHEN a TrueLayer Data API transactions export is imported, THE SYSTEM SHALL apply the same checks as R36, and SHALL keep the provider's own categories only as untrusted hints that no figure uses.
+Source: D30.
+
+## R38 · event · risk: data
+WHEN a bank CSV with separate paid-in and paid-out columns, a non-ISO date format or newest-first order is imported, THE SYSTEM SHALL convert it through a named bank profile or a custom column mapping, and SHALL apply the same checks as the five-column loader.
+
+## R39 · conditional · risk: data
+IF a file already imported into the case is imported again, THEN THE SYSTEM SHALL leave the case unchanged.
+
+## R40 · unwanted · risk: data
+IF a new account overlaps an existing account of the case in period and shares most of its (date, amount) pairs, THEN THE SYSTEM SHALL NOT add it, and SHALL say it is probably the same account imported twice.
+
+## R41 · ubiquitous · risk: money
+THE SYSTEM SHALL keep line ids unique within a case by prefixing them with the account key when the case holds more than one account, compute flow figures across all the case's accounts after removing paired own-account transfers, and compute balance figures on the combined end-of-day balance over the dates every account covers, showing n/a with the reason when those dates do not overlap.
+
+## R42 · ubiquitous · risk: data
+THE SYSTEM SHALL append every import, profile change, override, firm-rule promotion, preview, pack write and sign-off to the case log, each entry carrying the hash of the entry before it.
+Source: the reply, 'The firm would need confidence that data is secure, access is controlled and there's an audit trail.'
+
+## R43 · unwanted · risk: data
+IF the case log's hash chain is broken or its last entry is incomplete, THEN THE SYSTEM SHALL NOT accept a sign-off, and SHALL name the first bad entry.
+
+## R44 · event · risk: data
+WHEN asked to verify an evidence record, THE SYSTEM SHALL recompute every figure, bucket and monthly cell from the recorded inputs and report each mismatch, or confirm that there is none.
+
+## R45 · conditional · risk: data
+IF the evidence record was made with a ruleset other than the one installed, THEN THE SYSTEM SHALL refuse to verify it, and SHALL name the package version and ruleset that made it.
+
+## R46 · event · risk: data
+WHEN asked to pseudonymise a statement, THE SYSTEM SHALL write a copy in which personal and business names and account numbers are replaced by consistent tokens while recognised institutions (acquirers, lenders, HMRC) and all amounts, dates and balances are kept, SHALL tokenise the case profile the same way, and SHALL label the output as pseudonymised personal data, not anonymous data.
+Source: the reply, 'I'd start with synthetic or properly anonymised sample statements and compare the results with our existing process'.
+
+## R47 · ubiquitous · risk: none
+THE SYSTEM SHALL generate synthetic business cases that include real acquirer names, director funding, own-account transfers across two accounts, cash deposits (at least one at or above the single-deposit limit, and one paid in after a similar cash withdrawal) and lender lines, with ground truth for every bucket, line and indicator, while every existing archetype and profile still produces a byte-identical statement.
+
+## R48 · state · risk: ux
+WHILE a case is marked as a demo (synthetic data, or the owner's own statements per D23), THE SYSTEM SHALL show a banner in the workspace and stamp the pack, saying it demonstrates the mechanism and is not an applicant file.
+
+## R50 · event · risk: ux
+WHEN asked for a report, THE SYSTEM SHALL summarise for each case the lines in the judgement queue, the lines each indicator flagged, overrides by old and new category, unexplained share of money in, whether every figure was traced, and whether the case was signed off, with no applicant names, descriptions or amounts and no duration derived from the case log's timestamps.
+Source: D32 (files are timed with a stopwatch, outside the tool).
+
+## R51 · event · risk: ux
+WHEN the underwriter enters their own figure for a memo field or a month, THE SYSTEM SHALL show the difference from its own figure and list, largest first, the lines in that period whose bucket a person might read differently: cash deposits, unexplained lines, possible own-account transfers and overridden lines.
+Source: the reply, 'compare the results with our existing process'.
+
+## R52 · event · risk: ux
+WHEN the underwriter saves an override on a case of up to 10,000 lines, THE SYSTEM SHALL show the recomputed figures, indicators and policy check within 2 seconds on a typical office laptop.
+
+## R53 · ubiquitous · risk: data
+THE SYSTEM SHALL keep cma run, cma resume, cma import monzo, cma generate, the MCP tools and the evidence JSON working with their current options and fields; new evidence fields SHALL be additive, and every new evidence record SHALL carry a schema version.
+
+## R54 · conditional · risk: data
+IF CMA_RULESET is set to v1, THEN THE SYSTEM SHALL categorise with the built-in rule table as it was before this change, and SHALL record v1 as the ruleset in every evidence record.
+
+## R55 · ubiquitous · risk: money
+THE SYSTEM SHALL count every credit categorised as a cash deposit as trading receipts, in M2 and in every figure and monthly cell built on trading receipts, and SHALL report the cash deposits within trading receipts as a separate GBP figure with the ids of the deposits behind it.
+Source: D31, 'Counted as trading receipts, with deposits above a threshold flagged'; the reply, 'Highlight ... large cash deposits'.
+
+## R56 · state · risk: ux
+WHILE show_policy_verdict is off in the firm configuration, THE SYSTEM SHALL NOT show an overall outcome or any rule result in the review workspace or the pack, and SHALL record in the evidence that the policy check was hidden.
+Source: D28 (the setting is the rollback path for showing the outcome).
+
+## P1 · property
+For any case, trading receipts and the other seven money-in buckets SHALL sum to total money in to the penny, and every credit's id SHALL appear in exactly one bucket's evidence; the cash-deposits figure is not a bucket and is not added.
+Validates: R1, R2, R3, R7
+
+## P2 · property
+For any sum figure, bucket or monthly cell, the signed amounts of its evidence lines SHALL total the figure to the penny.
+Validates: R1, R11, R16, R55
+
+## P3 · property
+For any statements, profile and override log, computing the figures twice SHALL give identical results, and the figures after applying overrides one at a time SHALL equal a fresh computation with all of them applied.
+Validates: R17, R44
+
+## P4 · property
+For any override log, the set of (id, date, amount, balance, description) across the case's lines SHALL be the same before and after the overrides are applied.
+Validates: R18
+
+## P5 · property
+For any case whose descriptions and profile contain sentinel strings, no prompt built for a model SHALL contain any sentinel.
+Validates: R30, R34
+
+## P6 · property
+For any credit that no built-in rule, firm rule or override matches, its id SHALL be in the evidence of unexplained money in and not in the evidence of M2.
+Validates: R7
+
+## P7 · property
+For any committed synthetic case and test fixture, M1 to M16 under the new ruleset SHALL equal their values before this change, except on lines the change lists as newly recognised; under CMA_RULESET=v1 they SHALL equal them with no exceptions.
+Validates: R10, R53, R54
+
+## P8 · property
+For any description text, the workspace HTML and the pack HTML SHALL contain it only in escaped form, and no text cell in an exported CSV SHALL begin with =, +, -, @, a tab or a carriage return.
+Validates: R34
+
+## P9 · property
+For any import file, importing it twice SHALL leave the same case state and the same case log head as importing it once.
+Validates: R39
+
+## P10 · property
+For any statement and profile, the pseudonymised statement and profile SHALL give identical figures, buckets, monthly cells and indicators.
+Validates: R46
+
+## P11 · property
+For any multi-account case, each own-account pair SHALL be one debit and one credit of equal amount in different accounts, no line SHALL be in two pairs, and total money in less own-account transfers in SHALL equal the generator's credits from outside the applicant's accounts.
+Validates: R6, R8, R9, R41
+
+## P12 · property
+For any case, monthly trading receipts SHALL sum to M2 and monthly money in SHALL sum to total money in, to the penny.
+Validates: R11, R55
+
+## P13 · property
+For any signed pack, verifying its evidence record against its case SHALL reproduce every figure, bucket and monthly cell exactly.
+Validates: R22, R44
+
+## P14 · property
+For any case, the pack's text SHALL pass the grounding guard with no unmatched numbers and no missing citations.
+Validates: R26, R28
+
+## P15 · property
+For any case log, changing, removing or reordering any entry before the head SHALL be detected on the next load.
+Validates: R42, R43
+
+## P16 · property
+For any firm rules file, no line matched by a protected built-in pattern SHALL change category through a firm rule.
+Validates: R21
+
+## P17 · property
+For any synthetic case generated with the new features, every bucket, every line's category and every indicator flag SHALL equal the generator's ground truth.
+Validates: R1, R4, R5, R8, R14, R47, R55
+
+## P18 · property
+For any run while offline lock is on, asking for a hosted model or starting the MCP server SHALL fail before any network call is attempted.
+Validates: R29
+
+## P19 · property
+For any case, the evidence of the cash-deposits figure SHALL be exactly the credits categorised as cash deposits, each of them SHALL also be in M2's evidence, the figure SHALL not exceed M2, and every cash deposit at or above the single-deposit limit SHALL be in the judgement queue with the indicator that flagged it.
+Validates: R14, R15, R55
+
+## P20 · property
+For any case, with show_policy_verdict on, every workspace panel and pack section that shows a pass, refer or fail outcome SHALL contain the illustrative label and the recommendation field SHALL be empty; with it off, neither the workspace nor the pack SHALL contain an outcome or a rule result.
+Validates: R24, R25, R56
+
+## diff — diff.patch
+
+diff --git a/src/cma/case.py b/src/cma/case.py
+new file mode 100644
+index 0000000..6be931b
+--- /dev/null
++++ b/src/cma/case.py
+@@ -0,0 +1,365 @@
++"""The case log: an append-only, hash-chained record of everything done to a case (R42, R43).
++
++One JSON object per line, written in a single write that ends with its newline:
++
++    {"seq": 3, "prev": "<hash of entry 2>", "at": "2026-11-16T10:04:01.123456Z",
++     "event": "override", "data": {...}, "hash": "<sha256 of the other five fields>"}
++
++The first entry's `prev` is GENESIS. Each entry carries the hash of the entry before it
++and its own hash, so a changed, removed, inserted or reordered entry anywhere before the
++head breaks the chain on the next load, and `verify` names the first entry that does not
++hold. A last line without its newline is a torn entry (the process or the power stopped
++mid-write); it is reported as incomplete, not as tampering, and stays in the way of
++appends and sign-off until someone confirms dropping it (`drop_torn_entry`), which is
++itself logged. A line is read strictly: it must be exactly the canonical bytes the
++writer produces, so a repeated member, a number no float can hold, or reformatting is
++named as a bad entry rather than reinterpreted or raised. Removing the head itself
++cannot be seen from the file alone: whoever needs to pin the head (a sign-off, a pack)
++records its position and hash.
++
++One writer at a time: every append takes an exclusive, non-blocking lock on a sibling
++lock file and re-reads the log under it, and the caller states the position it last
++saw. A second tab or terminal that read an older position gets LogConflict and reloads;
++one that tries while another holds the lock gets CaseLocked, including another thread
++using the same CaseLog object. The operating system drops the lock when its holder
++dies, so a crash never leaves the case locked.
++
++Messages name entries by number only and never quote their content: data holds case
++details, and errors end up in terminals and logs.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import os
++import threading
++from collections.abc import Iterator
++from contextlib import contextmanager
++from dataclasses import dataclass, field
++from datetime import UTC, datetime
++from pathlib import Path
++from typing import Any
++
++GENESIS = "0" * 64
++HASHED_FIELDS = ("seq", "prev", "at", "event", "data")
++ENTRY_FIELDS = frozenset((*HASHED_FIELDS, "hash"))
++TORN_DROPPED = "torn_entry_dropped"
++
++
++class CaseLogError(Exception):
++    """Base for case-log refusals."""
++
++
++class CaseLogBroken(CaseLogError):
++    """The chain does not hold, or the last entry is incomplete. Nothing may be appended
++    and no sign-off accepted until it is resolved."""
++
++    def __init__(self, path: Path, first_bad: int, reason: str, torn: bool):
++        self.first_bad = first_bad
++        self.torn = torn
++        self.reason = reason
++        super().__init__(f"{path}: case log entry {first_bad} {reason}")
++
++
++class LogConflict(CaseLogError):
++    """The writer's view of the log is stale: someone appended since it last read."""
++
++    def __init__(self, expected: int, actual: int):
++        self.expected = expected
++        self.actual = actual
++        super().__init__(
++            f"case log is at entry {actual}, not {expected}: it changed since you loaded it; reload"
++        )
++
++
++class CaseLocked(CaseLogError):
++    """Another writer holds the case."""
++
++
++@dataclass(frozen=True)
++class Entry:
++    seq: int
++    prev: str
++    at: str
++    event: str
++    data: dict[str, Any]
++    hash: str
++
++
++@dataclass(frozen=True)
++class Head:
++    """Where the intact log ends: `position` entries, the last with hash `hash`."""
++
++    position: int
++    hash: str
++
++
++@dataclass(frozen=True)
++class LogCheck:
++    head: Head  # the end of the intact prefix
++    entries: list[Entry] = field(repr=False)
++    first_bad: int | None = None  # 1-based entry number; None when the log is intact
++    reason: str = ""
++    torn: bool = False
++    intact_bytes: int = field(default=0, repr=False)
++
++    @property
++    def ok(self) -> bool:
++        return self.first_bad is None
++
++
++def _canonical(obj: Any) -> bytes:
++    # allow_nan=False: NaN and Infinity are not JSON, and another reader of the log
++    # (verify, a future hosted version) must be able to recompute every hash.
++    return json.dumps(
++        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
++    ).encode("utf-8")
++
++
++def entry_hash(entry: dict[str, Any]) -> str:
++    """sha256 over the canonical JSON of the hashed fields (everything but `hash`)."""
++    return hashlib.sha256(_canonical({k: entry.get(k) for k in HASHED_FIELDS})).hexdigest()
++
++
++def _utc_now() -> str:
++    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
++
++
++def _unique_members(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
++    obj = dict(pairs)
++    if len(obj) != len(pairs):
++        raise ValueError("duplicate member")
++    return obj
++
++
++def _no_constant(token: str) -> Any:
++    raise ValueError(f"{token} is not JSON")
++
++
++def _decode(line: bytes) -> Any:
++    """The entry a line holds, read strictly: no duplicate members, no NaN or Infinity,
++    and the line must be exactly the canonical bytes the writer produces. Anything a
++    lenient decoder would quietly reinterpret (a repeated member, 1e999 read as
++    infinity, other spacing or key order) is therefore not the entry that was hashed."""
++    obj = json.loads(line.decode("utf-8"), object_pairs_hook=_unique_members,
++                     parse_constant=_no_constant)
++    if _canonical(obj) != line:
++        raise ValueError("not in canonical form")
++    return obj
++
++
++def _parse(line: bytes, n: int, prev: str) -> tuple[Entry | None, str]:
++    """Check one complete line as entry number `n` following hash `prev`."""
++    try:
++        obj = _decode(line)
++    except (UnicodeDecodeError, ValueError, TypeError, RecursionError):
++        return None, "is not a readable entry: it is not exactly what the log writes"
++    if not isinstance(obj, dict) or set(obj) != ENTRY_FIELDS:
++        return None, "has missing or extra fields"
++    seq, hsh = obj["seq"], obj["hash"]
++    if not isinstance(seq, int) or isinstance(seq, bool) or not isinstance(hsh, str) \
++            or not isinstance(obj["prev"], str) or not isinstance(obj["at"], str) \
++            or not isinstance(obj["event"], str) or not isinstance(obj["data"], dict):
++        return None, "has a field of the wrong type"
++    if entry_hash(obj) != hsh:
++        return None, "was changed: its hash does not match its content"
++    if seq != n:
++        return None, f"is out of place: it says it is entry {seq}; an entry is missing, added or reordered"
++    if obj["prev"] != prev:
++        return None, f"does not follow entry {n - 1}: the hash it carries for it does not match"
++    return Entry(**obj), ""
++
++
++class CaseLog:
++    def __init__(self, path: Path | str):
++        self.path = Path(path)
++        self.lock_path = self.path.with_name(self.path.name + ".lock")
++        self._state = threading.Lock()  # guards the three fields below, never held long
++        self._lock_fd: int | None = None
++        self._owner: int | None = None  # thread ident of the holder
++        self._lock_depth = 0
++
++    # --- reading -----------------------------------------------------------------------
++
++    def verify(self) -> LogCheck:
++        """Walk the chain from the start and stop at the first entry that does not hold."""
++        raw = self.path.read_bytes() if self.path.exists() else b""
++        pieces = raw.split(b"\n")
++        complete, tail = pieces[:-1], pieces[-1]  # tail is non-empty only if torn
++        entries: list[Entry] = []
++        prev, offset = GENESIS, 0
++        for n, line in enumerate(complete, start=1):
++            entry, reason = _parse(line, n, prev)
++            if entry is None:
++                return LogCheck(Head(n - 1, prev), entries, n, reason, False, offset)
++            entries.append(entry)
++            prev, offset = entry.hash, offset + len(line) + 1
++        if tail:
++            n = len(complete) + 1
++            reason = ("is incomplete: the write did not finish (the process or power stopped); "
++                      "confirm dropping it before anything else is recorded or signed off")
++            return LogCheck(Head(n - 1, prev), entries, n, reason, True, offset)
++        return LogCheck(Head(len(entries), prev), entries, intact_bytes=offset)
++
++    def require_intact(self) -> Head:
++        """The head of an intact log, or CaseLogBroken naming the first bad entry. Every
++        append goes through it; sign-off (T27) must call it and refuse on the exception (R43)."""
++        check = self.verify()
++        if not check.ok:
++            raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
++        return check.head
++
++    def entries(self) -> list[Entry]:
++        """Every entry of an intact log; CaseLogBroken otherwise."""
++        check = self.verify()
++        if not check.ok:
++            raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
++        return check.entries
++
++    # --- writing -----------------------------------------------------------------------
++
++    @contextmanager
++    def writer(self) -> Iterator[CaseLog]:
++        """Hold the case's single-writer lock; refuses at once if another writer has it.
++
++        The thread that holds it may nest (a sign-off holds the lock across its checks and
++        its append). Any other writer is refused, whether it is another process, another
++        CaseLog on the same file, or another thread using this same instance: the lock
++        belongs to a thread, not to the object."""
++        me = threading.get_ident()
++        with self._state:
++            if self._owner == me:
++                self._lock_depth += 1
++            elif self._owner is not None:
++                raise CaseLocked(f"{self.path}: another window or command is writing to this case")
++            else:
++                self.path.parent.mkdir(parents=True, exist_ok=True)
++                fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
++                try:
++                    _lock(fd)
++                except OSError as e:
++                    os.close(fd)
++                    raise CaseLocked(f"{self.path}: another window or command is writing to this case") from e
++                self._lock_fd, self._owner, self._lock_depth = fd, me, 1
++        try:
++            yield self
++        finally:
++            with self._state:
++                self._lock_depth -= 1
++                if self._lock_depth == 0:
++                    fd, self._lock_fd, self._owner = self._lock_fd, None, None
++                    if fd is not None:
++                        _unlock(fd)
++                        os.close(fd)
++
++    def append(self, event: str, data: dict[str, Any], *, expected: int) -> Entry:
++        """Append one entry if the log is intact and still at `expected` entries."""
++        if not isinstance(event, str) or not event.strip():
++            raise ValueError("event must be a non-empty string")
++        if not isinstance(data, dict):
++            raise ValueError("data must be a mapping")
++        try:
++            # Plain JSON only: json.dumps would quietly turn a tuple into a list and a 1,
++            # True or None key into a string, so the Entry returned here would differ from
++            # the one every later reader sees.
++            same = json.loads(_canonical(data)) == data
++        except (TypeError, ValueError, RecursionError) as e:
++            raise ValueError(f"data is not plain JSON: {e}") from e
++        if not same:
++            raise ValueError("data is not plain JSON: it would not read back unchanged "
++                             "(use lists, not tuples, and string keys)")
++        with self.writer():
++            head = self.require_intact()
++            if head.position != expected:
++                raise LogConflict(expected, head.position)
++            return self._write(event, data, head)
++
++    def drop_torn_entry(self, *, expected: int, by: str) -> Entry:
++        """Cut an incomplete last entry off and record who confirmed it. `expected` is the
++        intact position the person was shown. Refused if the last entry is not torn, or
++        if the chain is broken before it (that is tampering, not a torn write)."""
++        if not isinstance(by, str) or not by.strip():
++            raise ValueError("a name is required to drop a torn entry")
++        with self.writer():
++            check = self.verify()
++            if not check.torn:
++                if check.ok:
++                    raise CaseLogBroken(self.path, check.head.position + 1, "does not exist: nothing is torn", False)
++                raise CaseLogBroken(self.path, check.first_bad, check.reason, False)
++            if check.head.position != expected:
++                raise LogConflict(expected, check.head.position)
++            # Write the intact prefix plus the drop entry to a temporary file and rename it
++            # over the log, so a crash leaves either the torn log or the repaired one, never
++            # a truncated log with no record of who dropped the entry.
++            intact = self.path.read_bytes()[: check.intact_bytes]
++            entry, line = self._encode(TORN_DROPPED, {"seq": check.first_bad, "by": by.strip()}, check.head)
++            tmp = self.path.with_name(self.path.name + ".tmp")
++            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
++            try:
++                _write_all(fd, intact + line)
++                os.fsync(fd)
++            finally:
++                os.close(fd)
++            try:
++                os.replace(tmp, self.path)
++            except OSError:
++                tmp.unlink(missing_ok=True)
++                raise
++            _fsync_dir(self.path.parent)
++            return entry
++
++    @staticmethod
++    def _encode(event: str, data: dict[str, Any], head: Head) -> tuple[Entry, bytes]:
++        body = {"seq": head.position + 1, "prev": head.hash, "at": _utc_now(), "event": event, "data": data}
++        entry = Entry(**body, hash=entry_hash(body))
++        return entry, _canonical({**body, "hash": entry.hash}) + b"\n"
++
++    def _write(self, event: str, data: dict[str, Any], head: Head) -> Entry:
++        entry, line = self._encode(event, data, head)
++        created = not self.path.exists()
++        fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
++        try:
++            _write_all(fd, line)
++            os.fsync(fd)
++        finally:
++            os.close(fd)
++        if created:
++            _fsync_dir(self.path.parent)  # make the new file's name durable too
++        return entry
++
++
++def _write_all(fd: int, data: bytes) -> None:
++    view = memoryview(data)
++    while view:  # one call in practice; loop on a short write
++        view = view[os.write(fd, view):]
++
++
++def _fsync_dir(path: Path) -> None:
++    if os.name == "nt":  # pragma: no cover - Windows cannot open a directory for fsync
++        return
++    fd = os.open(path, os.O_RDONLY)
++    try:
++        os.fsync(fd)
++    finally:
++        os.close(fd)
++
++
++if os.name == "nt":  # pragma: no cover - exercised on Windows only
++    import msvcrt
++
++    def _lock(fd: int) -> None:
++        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
++
++    def _unlock(fd: int) -> None:
++        os.lseek(fd, 0, os.SEEK_SET)
++        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
++
++else:
++    import fcntl
++
++    def _lock(fd: int) -> None:
++        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
++
++    def _unlock(fd: int) -> None:
++        fcntl.flock(fd, fcntl.LOCK_UN)
+diff --git a/tests/test_case_log.py b/tests/test_case_log.py
+new file mode 100644
+index 0000000..b7a1e8f
+--- /dev/null
++++ b/tests/test_case_log.py
+@@ -0,0 +1,454 @@
++"""The case log: hash-chained, append-only, one writer at a time (R42, R43; property P15).
++
++P15: for any case log, changing, removing or reordering any entry before the head is
++detected on the next load. The logs here are small enough to try every entry and every
++kind of tamper exhaustively, which is the property over all logs of those sizes.
++"""
++
++import json
++import os
++
++import pytest
++
++from cma import case
++
++EVENTS = ["import", "profile_change", "override", "preview", "pack_write", "sign_off"]
++
++
++def _log(tmp_path, n):
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    for i in range(n):
++        log.append(EVENTS[i % len(EVENTS)], {"n": i, "file": f"h{i}"}, expected=i)
++    return log
++
++
++def _lines(log):
++    return log.path.read_text(encoding="utf-8").splitlines(keepends=True)
++
++
++def _write(log, lines):
++    log.path.write_text("".join(lines), encoding="utf-8")
++
++
++# --- appending -------------------------------------------------------------------------
++
++
++def test_each_entry_carries_the_hash_of_the_entry_before_it(tmp_path):
++    log = _log(tmp_path, 3)
++    entries = [json.loads(line) for line in _lines(log)]
++    assert [e["seq"] for e in entries] == [1, 2, 3]
++    assert entries[0]["prev"] == case.GENESIS
++    assert entries[1]["prev"] == entries[0]["hash"]
++    assert entries[2]["prev"] == entries[1]["hash"]
++    head = log.require_intact()
++    assert (head.position, head.hash) == (3, entries[2]["hash"])
++
++
++def test_append_returns_the_new_head_and_stamps_utc_time(tmp_path):
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    entry = log.append("import", {"file": "abc"}, expected=0)
++    assert entry.seq == 1 and entry.event == "import" and entry.data == {"file": "abc"}
++    assert entry.at.endswith("Z")
++    assert log.verify().head.position == 1
++
++
++def test_empty_or_missing_log_is_intact_at_position_zero(tmp_path):
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    head = log.require_intact()
++    assert (head.position, head.hash) == (0, case.GENESIS)
++
++
++def test_stale_expected_position_is_a_conflict_and_writes_nothing(tmp_path):
++    log = _log(tmp_path, 2)
++    before = log.path.read_bytes()
++    with pytest.raises(case.LogConflict) as e:
++        log.append("override", {"line": "T1"}, expected=1)
++    assert (e.value.expected, e.value.actual) == (1, 2)
++    assert log.path.read_bytes() == before
++
++
++def test_a_second_writer_is_refused_while_the_lock_is_held(tmp_path):
++    log = _log(tmp_path, 1)
++    other = case.CaseLog(log.path)
++    with log.writer(), pytest.raises(case.CaseLocked):
++        other.append("override", {}, expected=1)
++    other.append("override", {}, expected=1)  # released
++    assert log.require_intact().position == 2
++
++
++def test_append_refuses_a_broken_log(tmp_path):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    _write(log, [lines[0], lines[2]])
++    with pytest.raises(case.CaseLogBroken):
++        log.append("override", {}, expected=2)
++
++
++def test_event_and_data_are_checked(tmp_path):
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    with pytest.raises(ValueError):
++        log.append("", {}, expected=0)
++    with pytest.raises(ValueError):
++        log.append("import", ["not", "a", "dict"], expected=0)
++    assert not log.path.exists() or log.path.read_bytes() == b""
++
++
++# --- P15: tamper anywhere before the head is detected, and the first bad entry named ---
++
++
++def _change(entry, field):
++    e = dict(entry)
++    if field == "data":
++        e["data"] = {**e["data"], "n": e["data"]["n"] + 1000}
++    elif field == "event":
++        e["event"] = "sign_off" if e["event"] != "sign_off" else "import"
++    elif field == "at":
++        e["at"] = "2000-01-01T00:00:00Z"
++    elif field == "prev":
++        e["prev"] = "f" * 64
++    elif field == "seq":
++        e["seq"] = e["seq"] + 7
++    elif field == "hash":
++        e["hash"] = "0" * 63 + "1"
++    return e
++
++
++def _dump(entry):
++    return json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
++
++
++SIZES = range(2, 7)
++FIELDS = ["data", "event", "at", "prev", "seq", "hash"]
++
++
++@pytest.mark.parametrize("n", SIZES)
++@pytest.mark.parametrize("field", FIELDS)
++def test_p15_changing_any_entry_before_the_head_is_detected(tmp_path, n, field):
++    log = _log(tmp_path, n)
++    original = _lines(log)
++    for k in range(n - 1):  # every entry before the head
++        lines = list(original)
++        lines[k] = _dump(_change(json.loads(lines[k]), field))
++        _write(log, lines)
++        check = case.CaseLog(log.path).verify()
++        assert not check.ok and not check.torn
++        assert check.first_bad == k + 1, (field, k)
++
++
++@pytest.mark.parametrize("n", SIZES)
++def test_p15_changing_an_entry_and_recomputing_its_hash_is_detected_at_the_next(tmp_path, n):
++    log = _log(tmp_path, n)
++    original = _lines(log)
++    for k in range(n - 1):
++        e = json.loads(original[k])
++        e["data"] = {"n": -1}
++        e["hash"] = case.entry_hash(e)
++        lines = list(original)
++        lines[k] = _dump(e)
++        _write(log, lines)
++        check = log.verify()
++        assert not check.ok
++        assert check.first_bad == k + 2  # the entry whose link to it no longer holds
++
++
++@pytest.mark.parametrize("n", SIZES)
++def test_p15_removing_any_entry_before_the_head_is_detected(tmp_path, n):
++    log = _log(tmp_path, n)
++    original = _lines(log)
++    for k in range(n - 1):
++        _write(log, original[:k] + original[k + 1:])
++        check = log.verify()
++        assert not check.ok and not check.torn
++        assert check.first_bad == k + 1
++
++
++@pytest.mark.parametrize("n", SIZES)
++def test_p15_reordering_any_entries_before_the_head_is_detected(tmp_path, n):
++    log = _log(tmp_path, n)
++    original = _lines(log)
++    for i in range(n):
++        for j in range(i + 1, n):
++            lines = list(original)
++            lines[i], lines[j] = lines[j], lines[i]
++            _write(log, lines)
++            check = log.verify()
++            assert not check.ok
++            assert check.first_bad == i + 1, (i, j)
++
++
++@pytest.mark.parametrize("n", SIZES)
++def test_p15_inserting_an_entry_before_the_head_is_detected(tmp_path, n):
++    log = _log(tmp_path, n)
++    original = _lines(log)
++    for k in range(n):
++        lines = [*original[:k], original[k], *original[k:]]  # a duplicated entry
++        _write(log, lines)
++        check = log.verify()
++        assert not check.ok
++        assert check.first_bad == k + 2
++
++
++def test_a_garbled_line_before_the_head_is_broken_not_torn(tmp_path):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    _write(log, [lines[0], "{not json\n", lines[2]])
++    check = log.verify()
++    assert not check.ok and not check.torn and check.first_bad == 2
++
++
++def test_the_message_names_the_first_bad_entry_and_holds_no_entry_content(tmp_path):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    e = json.loads(lines[1])
++    e["data"] = {"secret": "ACME LTD"}
++    _write(log, [lines[0], _dump(e), lines[2]])
++    with pytest.raises(case.CaseLogBroken) as err:
++        log.require_intact()
++    assert err.value.first_bad == 2
++    assert "entry 2" in str(err.value)
++    assert "ACME" not in str(err.value)
++
++
++# --- a torn last entry (power lost mid-write) ------------------------------------------
++
++
++@pytest.mark.parametrize("cut", [1, 10, -2, -1])
++def test_torn_last_entry_is_detected_and_named(tmp_path, cut):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    _write(log, [*lines[:2], lines[2][:cut]])  # no newline: the write never finished
++    check = log.verify()
++    assert not check.ok and check.torn and check.first_bad == 3
++    assert check.head.position == 2  # the intact part
++    with pytest.raises(case.CaseLogBroken) as err:
++        log.require_intact()
++    assert err.value.torn and "entry 3" in str(err.value) and "incomplete" in str(err.value)
++
++
++def test_torn_last_entry_blocks_appends_until_dropped(tmp_path):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    _write(log, [*lines[:2], lines[2][:15]])
++    with pytest.raises(case.CaseLogBroken):
++        log.append("override", {}, expected=2)
++    log.drop_torn_entry(expected=2, by="A. Underwriter")
++    head = log.require_intact()
++    entries = log.entries()
++    assert head.position == 3
++    assert entries[-1].event == "torn_entry_dropped"
++    assert entries[-1].data == {"seq": 3, "by": "A. Underwriter"}
++    assert entries[-1].prev == json.loads(lines[1])["hash"]
++
++
++def test_drop_torn_entry_refuses_when_nothing_is_torn_or_the_chain_is_broken(tmp_path):
++    log = _log(tmp_path, 3)
++    with pytest.raises(case.CaseLogBroken):
++        log.drop_torn_entry(expected=3, by="A")
++    lines = _lines(log)
++    _write(log, [lines[1], lines[0], lines[2][:5]])  # broken before the torn tail
++    with pytest.raises(case.CaseLogBroken) as err:
++        log.drop_torn_entry(expected=0, by="A")
++    assert not err.value.torn and err.value.first_bad == 1
++
++
++def test_a_crash_while_dropping_a_torn_entry_leaves_the_torn_log_unchanged(tmp_path, monkeypatch):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    _write(log, [*lines[:2], lines[2][:15]])
++    before = log.path.read_bytes()
++
++    def crash(*_a, **_k):
++        raise OSError("power lost")
++
++    monkeypatch.setattr(case.os, "replace", crash)
++    with pytest.raises(OSError):
++        log.drop_torn_entry(expected=2, by="A. Underwriter")
++    assert log.path.read_bytes() == before  # still torn, still names entry 3
++    assert log.verify().torn and log.verify().first_bad == 3
++    assert not (tmp_path / "log.jsonl.tmp").exists()
++    monkeypatch.undo()
++    log.drop_torn_entry(expected=2, by="A. Underwriter")
++    assert log.require_intact().position == 3
++
++
++def test_data_that_is_not_strict_json_is_refused(tmp_path):
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    for bad in ({"x": float("nan")}, {"x": float("inf")}, {"x": object()}):
++        with pytest.raises(ValueError):
++            log.append("override", bad, expected=0)
++    assert not log.path.exists()
++
++
++def test_new_log_and_lock_files_are_private_to_their_owner(tmp_path):
++    import stat
++
++    if os.name == "nt":
++        pytest.skip("POSIX permissions")
++    log = _log(tmp_path, 1)
++    assert stat.S_IMODE(log.path.stat().st_mode) & 0o077 == 0
++    assert stat.S_IMODE(log.lock_path.stat().st_mode) & 0o077 == 0
++
++
++def test_a_complete_head_without_its_newline_is_still_torn(tmp_path):
++    log = _log(tmp_path, 2)
++    _write(log, [*_lines(log)[:1], _lines(log)[1].rstrip("\n")])
++    check = log.verify()
++    assert check.torn and check.first_bad == 2
++
++
++def test_the_lock_holds_against_another_process(tmp_path):
++    import subprocess
++    import sys
++
++    log = _log(tmp_path, 1)
++    script = (
++        "import sys; from cma import case\n"
++        "try:\n"
++        "    case.CaseLog(sys.argv[1]).append('override', {}, expected=1)\n"
++        "except case.CaseLocked:\n"
++        "    sys.exit(3)\n"
++    )
++    # The child must import this checkout's cma, not whatever is installed: put the
++    # directory that holds the imported package first on its path.
++    from pathlib import Path
++
++    env = {**os.environ, "PYTHONPATH": os.pathsep.join(
++        [str(Path(case.__file__).resolve().parents[1]), os.environ.get("PYTHONPATH", "")])}
++    run = [sys.executable, "-c", script, str(log.path)]
++    with log.writer():
++        held = subprocess.run(run, check=False, env=env, capture_output=True, text=True)
++    assert held.returncode == 3, held.stderr
++    free = subprocess.run(run, check=False, env=env, capture_output=True, text=True)
++    assert free.returncode == 0, free.stderr
++    assert log.require_intact().position == 2
++
++
++# --- findings from verification round 3 ------------------------------------------------
++
++
++def _sharing_threads_race(log, gate_name):
++    """Two threads share one CaseLog at position 1; the first pauses inside the lock."""
++    import threading
++
++    inside, release = threading.Event(), threading.Event()
++    real = getattr(log, gate_name)
++
++    def paused(*a, **k):
++        if threading.current_thread().name == "first":
++            inside.set()
++            release.wait(5)
++        return real(*a, **k)
++
++    setattr(log, gate_name, paused)
++    results = {}
++
++    def go(name):
++        try:
++            results[name] = log.append("override", {"by": name}, expected=1)
++        except case.CaseLogError as e:
++            results[name] = e
++
++    first = threading.Thread(target=go, args=("first",), name="first")
++    first.start()
++    assert inside.wait(5)
++    second = threading.Thread(target=go, args=("second",), name="second")
++    second.start()
++    second.join(5)
++    release.set()
++    first.join(5)
++    return results
++
++
++def test_threads_sharing_one_instance_do_not_share_the_lock(tmp_path):
++    log = _log(tmp_path, 1)
++    results = _sharing_threads_race(log, "_write")
++    assert isinstance(results["first"], case.Entry)
++    assert isinstance(results["second"], case.CaseLocked)
++    check = log.verify()
++    assert check.ok and check.head.position == 2
++
++
++def test_a_lock_held_by_one_thread_is_not_reentered_by_another(tmp_path):
++    import threading
++
++    log = _log(tmp_path, 1)
++    got = {}
++    with log.writer():
++        t = threading.Thread(target=lambda: got.setdefault("r", _try_append(log)))
++        t.start()
++        t.join(5)
++        log.append("override", {}, expected=1)  # the holder may still nest
++    assert isinstance(got["r"], case.CaseLocked)
++    assert log.require_intact().position == 2
++
++
++def _try_append(log):
++    try:
++        return log.append("override", {}, expected=1)
++    except case.CaseLogError as e:
++        return e
++
++
++def test_p15_a_duplicate_member_hiding_a_change_before_the_head_is_detected(tmp_path):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    # A second "event" member placed before the real one: a lenient decoder keeps the
++    # last value, so the hash still matches, but the bytes say something else first.
++    lines[1] = lines[1].replace('"event":', '"event":"sign_off","event":', 1)
++    _write(log, lines)
++    check = log.verify()
++    assert not check.ok and not check.torn and check.first_bad == 2
++
++
++@pytest.mark.parametrize("token", ["1e999", "-1e999", "NaN", "Infinity", "-Infinity"])
++def test_a_non_finite_number_in_a_complete_entry_is_named_not_raised(tmp_path, token):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    e = json.loads(lines[1])
++    lines[1] = _dump({**e, "data": {"x": 0}}).replace('{"x":0}', '{"x":' + token + "}")
++    _write(log, lines)
++    check = log.verify()
++    assert not check.ok and not check.torn and check.first_bad == 2
++    with pytest.raises(case.CaseLogBroken) as err:
++        log.require_intact()
++    assert err.value.first_bad == 2
++
++
++def test_deeply_nested_data_in_a_complete_entry_is_named_not_raised(tmp_path):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    e = json.loads(lines[1])
++    deep = "[" * 100_000 + "]" * 100_000
++    lines[1] = _dump({**e, "data": {"x": 0}}).replace('{"x":0}', '{"x":' + deep + "}")
++    _write(log, lines)
++    check = log.verify()
++    assert not check.ok and check.first_bad == 2
++
++
++def test_an_entry_not_in_canonical_form_is_named(tmp_path):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    e = json.loads(lines[1])
++    lines[1] = json.dumps(e, sort_keys=True) + "\n"  # same members, other spacing
++    _write(log, lines)
++    check = log.verify()
++    assert not check.ok and not check.torn and check.first_bad == 2
++
++
++# --- hardener round 9 ----------------------------------------------------------------
++
++
++@pytest.mark.parametrize("bad", [{"a": (1, 2)}, {"m": {1: "z"}}, {"m": {True: "z"}}, {"m": {None: 1}}])
++def test_data_that_would_not_read_back_unchanged_is_refused(tmp_path, bad):
++    # json.dumps quietly turns tuples into lists and 1/True/None keys into strings, so the
++    # Entry append returned would not be the entry every later reader sees.
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    with pytest.raises(ValueError):
++        log.append("override", bad, expected=0)
++    assert not log.path.exists()
++
++
++def test_the_entry_append_returns_is_the_entry_read_back(tmp_path):
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    written = log.append("override", {"a": [1, 2.5, None, True], "m": {"k": "v"}, "s": "é"}, expected=0)
++    assert log.entries() == [written]
+
+## claim — latest claim.json
+
+{
+  "task": "T12",
+  "claims": [
+    {"text": "P15 holds for every case in tests/test_case_log.py, run from this checkout. The suite tries every entry before the head, logs of 2-6 entries, and every way of changing one: editing any of the six fields, editing an entry and recomputing its hash, removing, reordering and inserting. The first bad entry is named each time. The duplicate-member case from the round-3 escalation, where a lenient decoder would hide a change, is also caught and named as entry 2.", "proof_cmd": ".venv/bin/python -c 'import cma;print(cma.__file__)'; .venv/bin/python -m pytest tests/test_case_log.py -v -k p15", "proof_output": "cma imported from .bridgie/worktrees/statement-review/T12/src/cma/__init__.py. 51 P15 tests pass: test_p15_changing_any_entry_before_the_head_is_detected[data|event|at|prev|seq|hash-2..6], ..._recomputing_its_hash_is_detected_at_the_next[2..6], ..._removing_...[2..6], ..._reordering_...[2..6], ..._inserting_...[2..6], test_p15_a_duplicate_member_hiding_a_change_before_the_head_is_detected PASSED"},
+    {"text": "Whole suite and lint pass at ee1b6eb. This answers the round-3 'specified:3 fail (python -m pytest -q)'.", "proof_cmd": ".venv/bin/python -m pytest -q; .venv/bin/ruff check src/cma/case.py tests/test_case_log.py", "proof_output": "304 passed, 5 skipped in 2.60s; All checks passed!"},
+    {"text": "[failure-modes] Mutations are idempotent or guarded. append is done under an exclusive non-blocking lock and is checked against the expected position. If an append already succeeded and is retried, the retry raises LogConflict and writes nothing. A second writer gets CaseLocked in four cases: another CaseLog on the same file, another process, a second thread sharing one instance (the round-3 major at case.py:195, now fixed by tracking the owning thread), and another thread while the holder is nested. Done.", "proof_cmd": ".venv/bin/python -m pytest tests/test_case_log.py -v -k 'stale_expected or second_writer or another_process or sharing_one_instance or not_reentered'", "proof_output": "all PASSED. test_the_lock_holds_against_another_process asserts the child exits 3 (CaseLocked raised from inside `from cma import case`; PYTHONPATH points at this checkout) while the lock is held, and exits 0 after release, so the cross-process lock really is exercised."},
+    {"text": "[failure-modes] A partial failure leaves a state the next run can repair. An interrupted append leaves a torn tail, which is reported as incomplete and named. It blocks appends until drop_torn_entry, and that call is logged with who ran it. drop_torn_entry writes a temporary file and renames it over the log; if it crashes at the rename, the torn log is left byte-identical. Done.", "proof_cmd": ".venv/bin/python -m pytest tests/test_case_log.py -q -k 'torn or crash_while_dropping'", "proof_output": "passed"},
+    {"text": "[failure-modes] External-call timeouts, retries with backoff and a dead-letter path are not applicable. The module imports only the standard library and makes no network or subprocess calls. The lock is non-blocking (refused at once, never waited on), and there is no queue.", "proof_cmd": "rg -n '^import|^from|^    import' src/cma/case.py", "proof_output": "__future__, hashlib, json, os, threading, collections.abc, contextlib, dataclasses, datetime, pathlib, typing, msvcrt|fcntl"},
+    {"text": "[security] Input is validated at the boundary. FIXED in this run: append accepted tuples and non-string keys (1, True, None). json.dumps rewrote them silently, so the Entry returned differed from what was persisted ({'m': {1: 'z'}} returned, {'m': {'1': 'z'}} on disk). append now refuses any data that would not read back unchanged, and RecursionError raised during that check becomes ValueError. On the read side, malformed complete entries are named by number instead of raised: NaN, ±Infinity, 1e999, deep nesting, non-canonical bytes and bigints over the int-str limit. Lone surrogates are refused at write.", "proof_cmd": ".venv/bin/python -m pytest tests/test_case_log.py -v -k 'read_back or non_finite or nested or canonical or strict_json'", "proof_output": "before the fix: 4 failed, 1 passed (read_back tests). After: all PASSED. Probe before the fix: returned data {'a': (1, 2), 'm': {1: 'z'}} persisted {'a': [1, 2], 'm': {'1': 'z'}} equal False; bigint refused ValueError; surrogate refused ValueError"},
+    {"text": "[security] Authz on new entry points is not applicable to this task. The module is a library with no CLI, HTTP or MCP entry point, and nothing outside its test imports it. Access control is the OS user: the log and lock files are created 0600. Error messages give entry numbers only and never quote content. There are no secrets, and there are no new dependencies (standard library only; lockfile unchanged).", "proof_cmd": "rg -n 'cma import case|cma\\.case|from \\.case|CaseLog' src evals -g '!src/cma/case.py'; echo exit=$?; .venv/bin/python -m pytest tests/test_case_log.py -q -k 'private_to_their_owner or holds_no_entry_content'", "proof_output": "exit=1 (no importers); 2 passed"},
+    {"text": "[data] The change is additive and reversible: one new module and one new test file, with no schema change, no backfill and no existing file touched. Rollback is a revert of the T12 commits. PII is identified: entry data may hold case details. Files are 0600, messages hold no content, and retention and purge are owned by the C3 purge task, not this one.", "proof_cmd": "git diff --stat $(git merge-base HEAD f8dc9ab~1)..HEAD -- . ':!.bridgie'", "proof_output": "src/cma/case.py and tests/test_case_log.py only (new files)"},
+    {"text": "[performance] Measured, and bounded for the case sizes the design expects. Each append costs one fsync plus one full-log verify, O(n). For 2000 override-sized entries the log is 730 KB: verifying all of it takes 42 ms, and an append averages 21 ms including fsync. There are no queries, indexes or list endpoints, so N+1, indexes and pagination are not applicable.", "proof_cmd": ".venv/bin/python scratchpad/probe.py (perf section, run before the boundary fix)", "proof_output": "2000 appends 41.66s; avg append 20.83ms; verify 2000 41.7ms; size 729783"},
+    {"text": "[observability] Partly done. The case log itself is the event record, and every refusal is an exception naming the entry number and its kind (torn vs changed). There is no remote alerting, by design (local-first). The structured log line per event and the red banner on a broken chain belong to the workspace and sign-off callers (C5/C6), so they are a gap, listed in notes.", "proof_cmd": ".venv/bin/python -m pytest tests/test_case_log.py -q -k 'names_the_first_bad_entry or torn_last_entry_is_detected'", "proof_output": "passed"},
+    {"text": "[operability] A feature flag is not applicable. Nothing runs this code unless a caller invokes it, and no caller exists yet. Rollback is a revert with no data repair, because nothing writes case logs in production. There are no config or secret changes to deploy. A runbook entry for the 'chain broken / torn entry' refusal is a gap (notes) and belongs with the sign-off UI that surfaces it.", "proof_cmd": "rg -n 'CaseLog' src -g '!src/cma/case.py'; echo exit=$?", "proof_output": "exit=1"},
+    {"text": "[docs] Contract documented in the case.py module docstring: entry format, canonical-bytes rule, torn vs broken, lock semantics, and that head removal needs a pinned head. The design.md Data-intensive and Failure modes rows already describe this behaviour, so no ADR change is needed. A changelog line is a gap (no CHANGELOG file exists in the repo, and adding one is for the owner).", "proof_cmd": "ls CHANGELOG* 2>/dev/null; echo exit=$?", "proof_output": "exit=2 (no changelog)"}
+  ],
+  "files_changed": ["src/cma/case.py", "tests/test_case_log.py"],
+  "dispositions": [
+    {"finding": "major: two threads sharing a CaseLog instance both pass the position check (case.py:195)", "disposition": "not_reproduced", "evidence": "writer() now records the owning thread ident under a threading.Lock. test_threads_sharing_one_instance_do_not_share_the_lock pauses the first thread inside _write and asserts that the second gets CaseLocked and that the log is intact at position 2; it passes."},
+    {"finding": "major: verifier can raise an unnumbered ValueError on a malformed complete entry (case.py:137)", "disposition": "not_reproduced", "evidence": "_parse catches UnicodeDecodeError, ValueError, TypeError and RecursionError and names the entry. The parametrised non-finite tests (1e999, NaN, Infinity), the deep-nesting test and the non-canonical test all pass, and each asserts first_bad == 2."},
+    {"finding": "major: duplicate JSON members can change a pre-head entry undetected (case.py:127)", "disposition": "not_reproduced", "evidence": "_decode uses object_pairs_hook that rejects duplicates, plus a canonical-bytes round-trip; test_p15_a_duplicate_member_hiding_a_change_before_the_head_is_detected passes."},
+    {"finding": "major: runner contradicts full-suite pass; cross-process test never exercised the lock (tests/test_case_log.py:312)", "disposition": "not_reproduced", "evidence": "From this checkout, 304 passed and 5 skipped. The cross-process test sets PYTHONPATH to the imported package's parent, and it asserts the child exits 3 (CaseLocked) while the lock is held, so an import failure would fail the test, not pass it."},
+    {"finding": "major: the append primitive is unused by production code (case.py:214)", "disposition": "reproduced", "evidence": "rg finds no importer of cma.case outside tests (exit=1). Not fixed here: wiring the seven case actions requires the case store, override and sign-off components, which belong to other tasks (see notes)."},
+    {"finding": "major: claimed sign-off refusal has no production integration (case.py:175)", "disposition": "reproduced", "evidence": "require_intact exists and is tested, but no sign-off path exists to call it (rg exit=1). That integration belongs to the sign-off task (T27 per the docstring); see notes."}
+  ],
+  "notes": "Gaps that need the owner (not fixed, to keep scope):\n1. R42 and R43 as written need production callers. The seven case actions (import, profile change, override, preview, pack write, sign-off, purge) must call CaseLog.append with an expected position, and sign-off must call require_intact and refuse with first_bad. Neither exists anywhere in src, and both depend on C3/C5/C6 tasks. The task decomposition should decide one of two things: (a) T12 is accepted as the primitive plus P15, with R42/R43 end-to-end traced to the sign-off and override tasks, or (b) T12 stays open until those land. Re-attempting T12 alone cannot pass the R42/R43 'no production caller' check. This is the reason for attempts 1-2 failing, and there is 1 attempt left.\n2. Removing the head entry (truncating the last complete line) cannot be detected from the file alone, and the docstring says so. The sign-off and pack must record the head position and hash, and verify must compare against them. That is a design item for C6.\n3. Deleting the .lock file while it is held lets a second writer lock a new inode. The case-root permissions (0700, R31) are the mitigation and belong to the case-root task.\n4. Observability, operability and docs gaps: there is no structured event log line, red banner or runbook entry for the broken or torn refusal yet; these belong with the C5/C6 callers. There is no CHANGELOG file in the repo.\n5. The Windows msvcrt lock path is untested here (Linux runner only).\n6. Append cost is O(log size) because it re-verifies the whole log, about 42 ms at 2000 entries. That is fine for expected case sizes, but if logs grow past ~10k entries, cache the verified head per (inode, size)."
+}
+
+## mechanical_results — test results (runner-run, read-only)
+
+### mechanical:1 · mechanical · pass
+Command: ruff check src tests evals
+
+```
+All checks passed!
+```
+
+### mechanical:2 · mechanical · pass
+Command: python -m compileall -q src
+
+```
+(empty log)
+```
+
+### specified:3 · specified · pass
+Command: python -m pytest -q
+
+```
+........................................................................ [ 22%]
+...........................s....sss..................................... [ 45%]
+........................................................................ [ 68%]
+........................................................................ [ 90%]
+.............................                                            [100%]
+313 passed, 4 skipped in 3.19s
+```
+
+### contracts:4 · contracts · pass
+Command: python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -q -m contracts
+
+```
+317 deselected in 1.01s
+```
+
+### invariants:5 · invariants · pass
+Command: python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -q -m invariants
+
+```
+317 deselected in 0.88s
+```
+
+### behavioural:6 · behavioural · pass
+Command: python evals/run_evals.py
+
+```
+case                   policy  grounded  rate   redrafts truth              s
+cafe/good              pass    True      1.0    0        ok              0.04
+cafe/stretched         refer   True      1.0    0        ok              0.03
+cafe/poor              fail    True      1.0    0        ok              0.03
+trades/good            refer   True      1.0    0        ok              0.03
+trades/stretched       refer   True      1.0    0        ok              0.03
+trades/poor            fail    True      1.0    0        ok              0.02
+ecommerce/good         refer   True      1.0    0        ok              0.02
+ecommerce/stretched    refer   True      1.0    0        ok              0.02
+ecommerce/poor         fail    True      1.0    0        ok              0.03
+
+9/9 memos fully grounded; model = fake
+```
+
+### dual_run:7 · dual_run · pass
+Command: python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -q -m dual_run
+
+```
+317 deselected in 0.94s
+```
+
+## repo_readonly — repository
+
+Repository root (read-only): /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T12-review
+Read any file you need to judge the work in context. Do not modify anything.
+
+## lane_attacks — lanes/engineering/attacks.md
+
+# Engineering attack list (reviewer)
+- Double submit: the same request or event arrives twice. Side effects once?
+- Concurrent update: two writers race on the same row or aggregate.
+- Boundary values: zero, negative, max, empty, null, unicode, very long.
+- Currency and timezone: minor units, zero-decimal currencies, DST, UTC vs local.
+- Partial failure: the first write succeeds and the second fails; the worker dies mid-batch.
+- Authz bypass: new endpoint or handler missing the scope or permission check.
+- Tenant isolation: a query without the tenant filter.
+- Changed contract consumers: every consumer of a changed DTO, field or event, including web, mobile, PDF, email.
+- Migration safety: reversible, additive first, backfill size.
+- Error paths: exceptions swallowed, retries without backoff, logs with secrets.
+
+## gotchas — gotchas (project, then lane)
+
+# Gotchas
+
+Dated one-line corrections learned in this project.
+
+
+# Engineering lane gotchas
+- 2026-08: a shared-contract field change ran seven review rounds without the web consumer ever appearing in the packet; always trace consumers with a command, not memory.
+- 2026-09: a diff packet that included the run directory grew to 3.1M characters and the reviewer refused it; packets exclude `.bridgie/runs/**`.
+- 2026-08: a QA seat without repository access invented a finding with a line number that did not exist; verifiers must read the repo or abort.
+
+# Output contract
+
+End your reply with exactly one fenced ```json block containing your evidence.json (or write it to /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-08/evidence.json).
+It must validate against /home/user/bridgie/schemas/evidence.json.
+Write nothing anywhere else except the run directory.
+
+# Run directory
+
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-08
+
+warning: Codex could not find bubblewrap on PATH. Install bubblewrap with your OS package manager. See the sandbox prerequisites: https://developers.openai.com/codex/concepts/sandboxing#prerequisites. Codex will use the bundled bubblewrap in the meantime.
+codex
+I’ll read the implementation and trace its production callers, then check each requirement against the supplied runner logs.
+exec
+/bin/bash -lc 'cat /home/user/bridgie/schemas/evidence.json; ls -a /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-08' in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T12-review
+ succeeded in 0ms:
+{
+  "type": "object",
+  "required": ["task", "criteria", "findings", "verdict", "verifier"],
+  "properties": {
+    "task": { "type": "string" },
+    "criteria": { "type": "array", "items": { "type": "object", "required": ["id", "tier", "check", "result"], "properties": { "id": { "type": "string" }, "tier": { "type": "string", "enum": ["mechanical", "specified", "contracts", "invariants", "adversarial", "behavioural", "dual_run", "human"] }, "check": { "type": "string" }, "result": { "type": "string", "enum": ["pass", "fail", "not_proven"] }, "artifact": { "type": ["string", "null"] } } } },
+    "findings": { "type": "array", "items": { "type": "object", "required": ["severity", "claim", "repro"], "properties": { "severity": { "type": "string", "enum": ["blocker", "major", "minor"] }, "file": { "type": ["string", "null"] }, "line": { "type": ["integer", "null"] }, "criterion": { "type": ["string", "null"] }, "claim": { "type": "string" }, "repro": { "type": "string" }, "disposition": { "type": ["string", "null"] } } } },
+    "verdict": { "type": "string", "enum": ["pass", "fail", "not_proven"] },
+    "verifier": { "type": "object", "required": ["seat", "adapter", "model"], "properties": { "seat": { "type": "string" }, "adapter": { "type": "string" }, "model": { "type": "string" } } }
+  }
+}
+.
+..
+.snapshot
+adapter.json
+adapter.log
+behavioural-6.log
+codex.log
+codex.log.err
+context.json
+contracts-4.log
+diff-stat.txt
+diff.patch
+dual_run-7.log
+files.txt
+inputs.json
+invariants-5.log
+mechanical-1.log
+mechanical-2.log
+mechanical.json
+prompt.md
+reply.txt
+specified-3.log
+
+exec
+/bin/bash -lc "rg -n 'CaseLog|require_intact|sign.off|firm.rule.promotion' src tests/test_case_log.py; nl -ba src/cma/case.py | sed -n '110,365p'" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T12-review
+ succeeded in 0ms:
+tests/test_case_log.py:15:EVENTS = ["import", "profile_change", "override", "preview", "pack_write", "sign_off"]
+tests/test_case_log.py:19:    log = case.CaseLog(tmp_path / "log.jsonl")
+tests/test_case_log.py:43:    head = log.require_intact()
+tests/test_case_log.py:48:    log = case.CaseLog(tmp_path / "log.jsonl")
+tests/test_case_log.py:56:    log = case.CaseLog(tmp_path / "log.jsonl")
+tests/test_case_log.py:57:    head = log.require_intact()
+tests/test_case_log.py:72:    other = case.CaseLog(log.path)
+tests/test_case_log.py:76:    assert log.require_intact().position == 2
+tests/test_case_log.py:83:    with pytest.raises(case.CaseLogBroken):
+tests/test_case_log.py:88:    log = case.CaseLog(tmp_path / "log.jsonl")
+tests/test_case_log.py:104:        e["event"] = "sign_off" if e["event"] != "sign_off" else "import"
+tests/test_case_log.py:133:        check = case.CaseLog(log.path).verify()
+tests/test_case_log.py:205:    with pytest.raises(case.CaseLogBroken) as err:
+tests/test_case_log.py:206:        log.require_intact()
+tests/test_case_log.py:223:    with pytest.raises(case.CaseLogBroken) as err:
+tests/test_case_log.py:224:        log.require_intact()
+tests/test_case_log.py:232:    with pytest.raises(case.CaseLogBroken):
+tests/test_case_log.py:235:    head = log.require_intact()
+tests/test_case_log.py:245:    with pytest.raises(case.CaseLogBroken):
+tests/test_case_log.py:249:    with pytest.raises(case.CaseLogBroken) as err:
+tests/test_case_log.py:271:    assert log.require_intact().position == 3
+tests/test_case_log.py:275:    log = case.CaseLog(tmp_path / "log.jsonl")
+tests/test_case_log.py:307:        "    case.CaseLog(sys.argv[1]).append('override', {}, expected=1)\n"
+tests/test_case_log.py:323:    assert log.require_intact().position == 2
+tests/test_case_log.py:330:    """Two threads share one CaseLog at position 1; the first pauses inside the lock."""
+tests/test_case_log.py:348:        except case.CaseLogError as e:
+tests/test_case_log.py:382:    assert log.require_intact().position == 2
+tests/test_case_log.py:388:    except case.CaseLogError as e:
+tests/test_case_log.py:397:    lines[1] = lines[1].replace('"event":', '"event":"sign_off","event":', 1)
+tests/test_case_log.py:412:    with pytest.raises(case.CaseLogBroken) as err:
+tests/test_case_log.py:413:        log.require_intact()
+tests/test_case_log.py:445:    log = case.CaseLog(tmp_path / "log.jsonl")
+tests/test_case_log.py:452:    log = case.CaseLog(tmp_path / "log.jsonl")
+src/cma/case.py:13:appends and sign-off until someone confirms dropping it (`drop_torn_entry`), which is
+src/cma/case.py:17:cannot be seen from the file alone: whoever needs to pin the head (a sign-off, a pack)
+src/cma/case.py:24:using the same CaseLog object. The operating system drops the lock when its holder
+src/cma/case.py:50:class CaseLogError(Exception):
+src/cma/case.py:54:class CaseLogBroken(CaseLogError):
+src/cma/case.py:56:    and no sign-off accepted until it is resolved."""
+src/cma/case.py:65:class LogConflict(CaseLogError):
+src/cma/case.py:76:class CaseLocked(CaseLogError):
+src/cma/case.py:174:class CaseLog:
+src/cma/case.py:205:    def require_intact(self) -> Head:
+src/cma/case.py:206:        """The head of an intact log, or CaseLogBroken naming the first bad entry. Every
+src/cma/case.py:207:        append goes through it; sign-off (T27) must call it and refuse on the exception (R43)."""
+src/cma/case.py:210:            raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
+src/cma/case.py:214:        """Every entry of an intact log; CaseLogBroken otherwise."""
+src/cma/case.py:217:            raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
+src/cma/case.py:223:    def writer(self) -> Iterator[CaseLog]:
+src/cma/case.py:226:        The thread that holds it may nest (a sign-off holds the lock across its checks and
+src/cma/case.py:228:        CaseLog on the same file, or another thread using this same instance: the lock
+src/cma/case.py:273:            head = self.require_intact()
+src/cma/case.py:288:                    raise CaseLogBroken(self.path, check.head.position + 1, "does not exist: nothing is torn", False)
+src/cma/case.py:289:                raise CaseLogBroken(self.path, check.first_bad, check.reason, False)
+   110	
+   111	
+   112	def _canonical(obj: Any) -> bytes:
+   113	    # allow_nan=False: NaN and Infinity are not JSON, and another reader of the log
+   114	    # (verify, a future hosted version) must be able to recompute every hash.
+   115	    return json.dumps(
+   116	        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+   117	    ).encode("utf-8")
+   118	
+   119	
+   120	def entry_hash(entry: dict[str, Any]) -> str:
+   121	    """sha256 over the canonical JSON of the hashed fields (everything but `hash`)."""
+   122	    return hashlib.sha256(_canonical({k: entry.get(k) for k in HASHED_FIELDS})).hexdigest()
+   123	
+   124	
+   125	def _utc_now() -> str:
+   126	    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+   127	
+   128	
+   129	def _unique_members(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+   130	    obj = dict(pairs)
+   131	    if len(obj) != len(pairs):
+   132	        raise ValueError("duplicate member")
+   133	    return obj
+   134	
+   135	
+   136	def _no_constant(token: str) -> Any:
+   137	    raise ValueError(f"{token} is not JSON")
+   138	
+   139	
+   140	def _decode(line: bytes) -> Any:
+   141	    """The entry a line holds, read strictly: no duplicate members, no NaN or Infinity,
+   142	    and the line must be exactly the canonical bytes the writer produces. Anything a
+   143	    lenient decoder would quietly reinterpret (a repeated member, 1e999 read as
+   144	    infinity, other spacing or key order) is therefore not the entry that was hashed."""
+   145	    obj = json.loads(line.decode("utf-8"), object_pairs_hook=_unique_members,
+   146	                     parse_constant=_no_constant)
+   147	    if _canonical(obj) != line:
+   148	        raise ValueError("not in canonical form")
+   149	    return obj
+   150	
+   151	
+   152	def _parse(line: bytes, n: int, prev: str) -> tuple[Entry | None, str]:
+   153	    """Check one complete line as entry number `n` following hash `prev`."""
+   154	    try:
+   155	        obj = _decode(line)
+   156	    except (UnicodeDecodeError, ValueError, TypeError, RecursionError):
+   157	        return None, "is not a readable entry: it is not exactly what the log writes"
+   158	    if not isinstance(obj, dict) or set(obj) != ENTRY_FIELDS:
+   159	        return None, "has missing or extra fields"
+   160	    seq, hsh = obj["seq"], obj["hash"]
+   161	    if not isinstance(seq, int) or isinstance(seq, bool) or not isinstance(hsh, str) \
+   162	            or not isinstance(obj["prev"], str) or not isinstance(obj["at"], str) \
+   163	            or not isinstance(obj["event"], str) or not isinstance(obj["data"], dict):
+   164	        return None, "has a field of the wrong type"
+   165	    if entry_hash(obj) != hsh:
+   166	        return None, "was changed: its hash does not match its content"
+   167	    if seq != n:
+   168	        return None, f"is out of place: it says it is entry {seq}; an entry is missing, added or reordered"
+   169	    if obj["prev"] != prev:
+   170	        return None, f"does not follow entry {n - 1}: the hash it carries for it does not match"
+   171	    return Entry(**obj), ""
+   172	
+   173	
+   174	class CaseLog:
+   175	    def __init__(self, path: Path | str):
+   176	        self.path = Path(path)
+   177	        self.lock_path = self.path.with_name(self.path.name + ".lock")
+   178	        self._state = threading.Lock()  # guards the three fields below, never held long
+   179	        self._lock_fd: int | None = None
+   180	        self._owner: int | None = None  # thread ident of the holder
+   181	        self._lock_depth = 0
+   182	
+   183	    # --- reading -----------------------------------------------------------------------
+   184	
+   185	    def verify(self) -> LogCheck:
+   186	        """Walk the chain from the start and stop at the first entry that does not hold."""
+   187	        raw = self.path.read_bytes() if self.path.exists() else b""
+   188	        pieces = raw.split(b"\n")
+   189	        complete, tail = pieces[:-1], pieces[-1]  # tail is non-empty only if torn
+   190	        entries: list[Entry] = []
+   191	        prev, offset = GENESIS, 0
+   192	        for n, line in enumerate(complete, start=1):
+   193	            entry, reason = _parse(line, n, prev)
+   194	            if entry is None:
+   195	                return LogCheck(Head(n - 1, prev), entries, n, reason, False, offset)
+   196	            entries.append(entry)
+   197	            prev, offset = entry.hash, offset + len(line) + 1
+   198	        if tail:
+   199	            n = len(complete) + 1
+   200	            reason = ("is incomplete: the write did not finish (the process or power stopped); "
+   201	                      "confirm dropping it before anything else is recorded or signed off")
+   202	            return LogCheck(Head(n - 1, prev), entries, n, reason, True, offset)
+   203	        return LogCheck(Head(len(entries), prev), entries, intact_bytes=offset)
+   204	
+   205	    def require_intact(self) -> Head:
+   206	        """The head of an intact log, or CaseLogBroken naming the first bad entry. Every
+   207	        append goes through it; sign-off (T27) must call it and refuse on the exception (R43)."""
+   208	        check = self.verify()
+   209	        if not check.ok:
+   210	            raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
+   211	        return check.head
+   212	
+   213	    def entries(self) -> list[Entry]:
+   214	        """Every entry of an intact log; CaseLogBroken otherwise."""
+   215	        check = self.verify()
+   216	        if not check.ok:
+   217	            raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
+   218	        return check.entries
+   219	
+   220	    # --- writing -----------------------------------------------------------------------
+   221	
+   222	    @contextmanager
+   223	    def writer(self) -> Iterator[CaseLog]:
+   224	        """Hold the case's single-writer lock; refuses at once if another writer has it.
+   225	
+   226	        The thread that holds it may nest (a sign-off holds the lock across its checks and
+   227	        its append). Any other writer is refused, whether it is another process, another
+   228	        CaseLog on the same file, or another thread using this same instance: the lock
+   229	        belongs to a thread, not to the object."""
+   230	        me = threading.get_ident()
+   231	        with self._state:
+   232	            if self._owner == me:
+   233	                self._lock_depth += 1
+   234	            elif self._owner is not None:
+   235	                raise CaseLocked(f"{self.path}: another window or command is writing to this case")
+   236	            else:
+   237	                self.path.parent.mkdir(parents=True, exist_ok=True)
+   238	                fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+   239	                try:
+   240	                    _lock(fd)
+   241	                except OSError as e:
+   242	                    os.close(fd)
+   243	                    raise CaseLocked(f"{self.path}: another window or command is writing to this case") from e
+   244	                self._lock_fd, self._owner, self._lock_depth = fd, me, 1
+   245	        try:
+   246	            yield self
+   247	        finally:
+   248	            with self._state:
+   249	                self._lock_depth -= 1
+   250	                if self._lock_depth == 0:
+   251	                    fd, self._lock_fd, self._owner = self._lock_fd, None, None
+   252	                    if fd is not None:
+   253	                        _unlock(fd)
+   254	                        os.close(fd)
+   255	
+   256	    def append(self, event: str, data: dict[str, Any], *, expected: int) -> Entry:
+   257	        """Append one entry if the log is intact and still at `expected` entries."""
+   258	        if not isinstance(event, str) or not event.strip():
+   259	            raise ValueError("event must be a non-empty string")
+   260	        if not isinstance(data, dict):
+   261	            raise ValueError("data must be a mapping")
+   262	        try:
+   263	            # Plain JSON only: json.dumps would quietly turn a tuple into a list and a 1,
+   264	            # True or None key into a string, so the Entry returned here would differ from
+   265	            # the one every later reader sees.
+   266	            same = json.loads(_canonical(data)) == data
+   267	        except (TypeError, ValueError, RecursionError) as e:
+   268	            raise ValueError(f"data is not plain JSON: {e}") from e
+   269	        if not same:
+   270	            raise ValueError("data is not plain JSON: it would not read back unchanged "
+   271	                             "(use lists, not tuples, and string keys)")
+   272	        with self.writer():
+   273	            head = self.require_intact()
+   274	            if head.position != expected:
+   275	                raise LogConflict(expected, head.position)
+   276	            return self._write(event, data, head)
+   277	
+   278	    def drop_torn_entry(self, *, expected: int, by: str) -> Entry:
+   279	        """Cut an incomplete last entry off and record who confirmed it. `expected` is the
+   280	        intact position the person was shown. Refused if the last entry is not torn, or
+   281	        if the chain is broken before it (that is tampering, not a torn write)."""
+   282	        if not isinstance(by, str) or not by.strip():
+   283	            raise ValueError("a name is required to drop a torn entry")
+   284	        with self.writer():
+   285	            check = self.verify()
+   286	            if not check.torn:
+   287	                if check.ok:
+   288	                    raise CaseLogBroken(self.path, check.head.position + 1, "does not exist: nothing is torn", False)
+   289	                raise CaseLogBroken(self.path, check.first_bad, check.reason, False)
+   290	            if check.head.position != expected:
+   291	                raise LogConflict(expected, check.head.position)
+   292	            # Write the intact prefix plus the drop entry to a temporary file and rename it
+   293	            # over the log, so a crash leaves either the torn log or the repaired one, never
+   294	            # a truncated log with no record of who dropped the entry.
+   295	            intact = self.path.read_bytes()[: check.intact_bytes]
+   296	            entry, line = self._encode(TORN_DROPPED, {"seq": check.first_bad, "by": by.strip()}, check.head)
+   297	            tmp = self.path.with_name(self.path.name + ".tmp")
+   298	            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+   299	            try:
+   300	                _write_all(fd, intact + line)
+   301	                os.fsync(fd)
+   302	            finally:
+   303	                os.close(fd)
+   304	            try:
+   305	                os.replace(tmp, self.path)
+   306	            except OSError:
+   307	                tmp.unlink(missing_ok=True)
+   308	                raise
+   309	            _fsync_dir(self.path.parent)
+   310	            return entry
+   311	
+   312	    @staticmethod
+   313	    def _encode(event: str, data: dict[str, Any], head: Head) -> tuple[Entry, bytes]:
+   314	        body = {"seq": head.position + 1, "prev": head.hash, "at": _utc_now(), "event": event, "data": data}
+   315	        entry = Entry(**body, hash=entry_hash(body))
+   316	        return entry, _canonical({**body, "hash": entry.hash}) + b"\n"
+   317	
+   318	    def _write(self, event: str, data: dict[str, Any], head: Head) -> Entry:
+   319	        entry, line = self._encode(event, data, head)
+   320	        created = not self.path.exists()
+   321	        fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+   322	        try:
+   323	            _write_all(fd, line)
+   324	            os.fsync(fd)
+   325	        finally:
+   326	            os.close(fd)
+   327	        if created:
+   328	            _fsync_dir(self.path.parent)  # make the new file's name durable too
+   329	        return entry
+   330	
+   331	
+   332	def _write_all(fd: int, data: bytes) -> None:
+   333	    view = memoryview(data)
+   334	    while view:  # one call in practice; loop on a short write
+   335	        view = view[os.write(fd, view):]
+   336	
+   337	
+   338	def _fsync_dir(path: Path) -> None:
+   339	    if os.name == "nt":  # pragma: no cover - Windows cannot open a directory for fsync
+   340	        return
+   341	    fd = os.open(path, os.O_RDONLY)
+   342	    try:
+   343	        os.fsync(fd)
+   344	    finally:
+   345	        os.close(fd)
+   346	
+   347	
+   348	if os.name == "nt":  # pragma: no cover - exercised on Windows only
+   349	    import msvcrt
+   350	
+   351	    def _lock(fd: int) -> None:
+   352	        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+   353	
+   354	    def _unlock(fd: int) -> None:
+   355	        os.lseek(fd, 0, os.SEEK_SET)
+   356	        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+   357	
+   358	else:
+   359	    import fcntl
+   360	
+   361	    def _lock(fd: int) -> None:
+   362	        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+   363	
+   364	    def _unlock(fd: int) -> None:
+   365	        fcntl.flock(fd, fcntl.LOCK_UN)
+
+exec
+/bin/bash -lc "git log -4 --oneline && git status --short && rg --files -g AGENTS.md -g '*case*' -g '*sign*'" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T12-review
+ succeeded in 0ms:
+ee1b6eb bridgie: T12 hardener (run hardener-09)
+e46ccab bridgie: T12 implementer (run implementer-09)
+5729392 bridgie: T12 hardener (run hardener-03)
+f8dc9ab bridgie: T12 implementer (run implementer-03)
+tests/test_case_log.py
+src/cma/case.py
+
+exec
+/bin/bash -lc "rg -n 'def test_|skip|addopts|testpaths' tests/test_case_log.py pyproject.toml; cat /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-08/specified-3.log" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T12-review
+ succeeded in 0ms:
+pyproject.toml:43:testpaths = ["tests"]
+tests/test_case_log.py:36:def test_each_entry_carries_the_hash_of_the_entry_before_it(tmp_path):
+tests/test_case_log.py:47:def test_append_returns_the_new_head_and_stamps_utc_time(tmp_path):
+tests/test_case_log.py:55:def test_empty_or_missing_log_is_intact_at_position_zero(tmp_path):
+tests/test_case_log.py:61:def test_stale_expected_position_is_a_conflict_and_writes_nothing(tmp_path):
+tests/test_case_log.py:70:def test_a_second_writer_is_refused_while_the_lock_is_held(tmp_path):
+tests/test_case_log.py:79:def test_append_refuses_a_broken_log(tmp_path):
+tests/test_case_log.py:87:def test_event_and_data_are_checked(tmp_path):
+tests/test_case_log.py:126:def test_p15_changing_any_entry_before_the_head_is_detected(tmp_path, n, field):
+tests/test_case_log.py:139:def test_p15_changing_an_entry_and_recomputing_its_hash_is_detected_at_the_next(tmp_path, n):
+tests/test_case_log.py:155:def test_p15_removing_any_entry_before_the_head_is_detected(tmp_path, n):
+tests/test_case_log.py:166:def test_p15_reordering_any_entries_before_the_head_is_detected(tmp_path, n):
+tests/test_case_log.py:180:def test_p15_inserting_an_entry_before_the_head_is_detected(tmp_path, n):
+tests/test_case_log.py:191:def test_a_garbled_line_before_the_head_is_broken_not_torn(tmp_path):
+tests/test_case_log.py:199:def test_the_message_names_the_first_bad_entry_and_holds_no_entry_content(tmp_path):
+tests/test_case_log.py:216:def test_torn_last_entry_is_detected_and_named(tmp_path, cut):
+tests/test_case_log.py:228:def test_torn_last_entry_blocks_appends_until_dropped(tmp_path):
+tests/test_case_log.py:243:def test_drop_torn_entry_refuses_when_nothing_is_torn_or_the_chain_is_broken(tmp_path):
+tests/test_case_log.py:254:def test_a_crash_while_dropping_a_torn_entry_leaves_the_torn_log_unchanged(tmp_path, monkeypatch):
+tests/test_case_log.py:274:def test_data_that_is_not_strict_json_is_refused(tmp_path):
+tests/test_case_log.py:282:def test_new_log_and_lock_files_are_private_to_their_owner(tmp_path):
+tests/test_case_log.py:286:        pytest.skip("POSIX permissions")
+tests/test_case_log.py:292:def test_a_complete_head_without_its_newline_is_still_torn(tmp_path):
+tests/test_case_log.py:299:def test_the_lock_holds_against_another_process(tmp_path):
+tests/test_case_log.py:362:def test_threads_sharing_one_instance_do_not_share_the_lock(tmp_path):
+tests/test_case_log.py:371:def test_a_lock_held_by_one_thread_is_not_reentered_by_another(tmp_path):
+tests/test_case_log.py:392:def test_p15_a_duplicate_member_hiding_a_change_before_the_head_is_detected(tmp_path):
+tests/test_case_log.py:404:def test_a_non_finite_number_in_a_complete_entry_is_named_not_raised(tmp_path, token):
+tests/test_case_log.py:417:def test_deeply_nested_data_in_a_complete_entry_is_named_not_raised(tmp_path):
+tests/test_case_log.py:428:def test_an_entry_not_in_canonical_form_is_named(tmp_path):
+tests/test_case_log.py:442:def test_data_that_would_not_read_back_unchanged_is_refused(tmp_path, bad):
+tests/test_case_log.py:451:def test_the_entry_append_returns_is_the_entry_read_back(tmp_path):
+........................................................................ [ 22%]
+...........................s....sss..................................... [ 45%]
+........................................................................ [ 68%]
+........................................................................ [ 90%]
+.............................                                            [100%]
+313 passed, 4 skipped in 3.19s
+
+exec
+/bin/bash -lc "rg -ni 'sign.off|preview|pack.write|def .*import' src/cma -g '"'!case.py'"' | head -65; rg -n 'T12|T27' /home/user/credit-memo-agent/.bridgie/specs/statement-review; git show --stat --oneline HEAD" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T12-review
+ succeeded in 0ms:
+src/cma/importers/monzo.py:122:def convert(src: Path, dst: Path, opening_balance: float | None = None) -> ImportResult:
+src/cma/cli.py:283:def import_monzo(
+/home/user/credit-memo-agent/.bridgie/specs/statement-review/tasks.json:211:      "id": "T12",
+/home/user/credit-memo-agent/.bridgie/specs/statement-review/tasks.json:222:      "branch": "bridgie-task/statement-review/T12",
+/home/user/credit-memo-agent/.bridgie/specs/statement-review/tasks.json:235:        "T12",
+/home/user/credit-memo-agent/.bridgie/specs/statement-review/tasks.json:505:      "id": "T27",
+/home/user/credit-memo-agent/.bridgie/specs/statement-review/tasks.json:516:        "T12",
+/home/user/credit-memo-agent/.bridgie/specs/statement-review/tasks.json:711:        "T27"
+/home/user/credit-memo-agent/.bridgie/specs/statement-review/tasks.json:748:        "T27",
+ee1b6eb bridgie: T12 hardener (run hardener-09)
+ src/cma/case.py        | 10 ++++++++--
+ tests/test_case_log.py | 19 +++++++++++++++++++
+ 2 files changed, 27 insertions(+), 2 deletions(-)
+
+exec
+/bin/bash -lc "rg -ni 'hash.chain|tamp|T12' /home/user/credit-memo-agent/.bridgie/specs/statement-review/design.md; nl -ba src/cma/cli.py | sed -n '280,325p'; rg -n 'pytest.*skip|@pytest.*skip' tests | head -35" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T12-review
+ succeeded in 0ms:
+34:| Runs on our machine, with an audit trail | The offline model exists; outputs are git-ignored | Nothing stops a hosted model; no tamper-evident log |
+84:- **C3 Case store** (new src/cma/case.py). Case root, case folders, profile, override log, hash-chained case log, single-writer lock, snapshot hash, purge and purge ledger, and the git-ignore and sync-folder checks.
+233:      log.jsonl          append-only, hash-chained
+280:| Lines with equal timestamps cannot be ordered so that the balance chain holds | Refused, naming the first break | R36 |
+   280	
+   281	
+   282	@import_app.command("monzo")
+   283	def import_monzo(
+   284	    export: Path = typer.Argument(..., help="The CSV exported from the Monzo app."),
+   285	    out: Path = typer.Option(..., "-o", "--out", help="Where to write the statement CSV. Keep it out of git."),
+   286	    opening_balance: float | None = typer.Option(
+   287	        None, help="Balance just before the first transaction. Needed when the export has no Balance column."
+   288	    ),
+   289	):
+   290	    """Convert a Monzo export locally. Nothing is uploaded; the file stays on this machine."""
+   291	    from .importers import monzo
+   292	
+   293	    try:
+   294	        r = monzo.convert(export, out, opening_balance)
+   295	    except monzo.MonzoImportError as e:
+   296	        console.print(f"[red]Import refused.[/red] {e}")
+   297	        raise typer.Exit(code=2) from e
+   298	    console.print(
+   299	        f"wrote {out}: {r.rows} transactions, {r.start} to {r.end}; "
+   300	        f"opening £{r.opening_balance:,.2f}, closing £{r.closing_balance:,.2f} ({r.balance_source})"
+   301	        + (f"; skipped {r.skipped_non_gbp} non-GBP rows" if r.skipped_non_gbp else "")
+   302	    )
+   303	    console.print("Check the closing balance against your Monzo app before trusting any metric.")
+   304	
+   305	
+   306	@app.command()
+   307	def truth(path: Path):
+   308	    """Print the ground truth for a generated statement."""
+   309	    console.print_json(json.dumps(json.loads(Path(path).read_text()), indent=2))
+   310	
+   311	
+   312	if __name__ == "__main__":
+   313	    app()
+tests/test_case_log.py:286:        pytest.skip("POSIX permissions")
+tests/test_mcp_paths.py:7:pytest.importorskip("mcp")
+tests/test_cli.py:59:    pytest.importorskip("langgraph.checkpoint.sqlite")
+tests/test_cli.py:112:    pytest.importorskip("langgraph.checkpoint.sqlite")
+
+codex
+```json
+{
+  "criteria": [
+    {
+      "id": "R42",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:313–316 links each append to the previous hash. The owner check at lines 230–244 and position check at lines 272–276 guard competing writers and stale retries. No production caller records imports, profile changes, overrides, firm-rule promotions, previews, pack writes or sign-offs. The producer's notes substitute purge for firm-rule promotion.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R43",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:192–210 identifies the first broken entry or incomplete tail and raises a numbered refusal. The only production call to require_intact is from append at line 273. There is no production sign-off path that invokes the check.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:129–170 rejects duplicate members, noncanonical bytes, invalid hashes, sequence gaps and broken predecessor links. The runner's specified:3 row reports 313 passed and 4 skipped, but its quiet log does not identify the 51 P15 cases at tests/test_case_log.py:126–189 and :392–400. The marked tiers deselected all 317 tests. A passing runner row for python -m pytest tests/test_case_log.py -v -k p15 would establish execution of the cited cases. Those cases also leave a fully rebuilt chain untested.",
+      "result": "not_proven",
+      "artifact": "specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 256,
+      "criterion": "R42",
+      "claim": "The append primitive has no production callers, so the seven required case actions have no audit integration.",
+      "repro": "Search src for CaseLog outside src/cma/case.py. The existing Monzo import at src/cma/cli.py:282–303 converts and reports the output without recording an audit entry. The checkout has no case-scoped caller for any of the seven actions."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 205,
+      "criterion": "R43",
+      "claim": "The numbered integrity check is available to library callers, but the required sign-off refusal is absent from the application.",
+      "repro": "Search src for require_intact and sign-off entry points. The only production invocation is append at src/cma/case.py:273. Given a log whose second entry lacks its final newline, the library can report entry 2, but there is no application sign-off operation that returns that refusal."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 315,
+      "criterion": "R42",
+      "claim": "The writer hashes caller-owned mutable data and serializes it separately. A concurrent change between the two operations can leave a broken entry even though append returns successfully.",
+      "repro": "Append a dictionary shared with a second thread. Pause _encode immediately after entry_hash returns, change a value in that dictionary from the second thread, and resume serialization. Append returns, then require_intact reports a hash mismatch at the newly written entry."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 187,
+      "criterion": "P15",
+      "claim": "The verifier reads its entire trust chain from the file it is checking. A changed pre-head entry survives verification if the stored hashes and predecessor links are rebuilt through the head.",
+      "repro": "Construct a three-entry log, change entry 1's data, and rebuild the canonical lines with updated hashes and predecessor links through entry 3. A fresh CaseLog.verify() accepts the rewritten history. The test at tests/test_case_log.py:139 updates only the edited entry's hash, leaving the next link stale."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 126,
+      "criterion": "P15",
+      "claim": "The producer reports a named 51-case P15 run, but the supplied runner logs do not show those named cases. The runner independently confirms a full-suite pass with 313 passed and 4 skipped, a different count from the producer's 304 passed and 5 skipped.",
+      "repro": "Compare specified-3.log and the three marker-tier logs with the producer's proof. A passing runner result for python -m pytest tests/test_case_log.py -v -k p15 would identify each selected case and its outcome."
+    }
+  ],
+  "verdict": "not_proven"
+}
+```
+tokens used
+30,959
