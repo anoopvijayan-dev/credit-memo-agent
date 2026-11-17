@@ -1,0 +1,85 @@
+I fixed the three code defects in the case log, and the full suite now passes: 308 passed, 4 skipped. The other main finding, that nothing in the app calls the log yet, I confirmed but did not fix. The plan gives that wiring to later tasks.
+
+**Fixed in this attempt** (`src/cma/case.py`, `tests/test_case_log.py`):
+- **Edited entries that slipped through:** the log is now read strictly, so a duplicate field or an out-of-range number like `1e999` is reported as a numbered bad entry. Before, one could hide a change and the other crashed with no entry number. Old logs still read the same, because the writer has always written in that form.
+- **Two threads sharing one log object:** the lock now belongs to a thread, so a second thread is refused even when it uses the same object. Before, both threads could append at the same position.
+- **The cross-process lock test:** it failed because the child process loaded the package from the main checkout, not this worktree. It now loads this worktree's code. With the lock held the child is refused, and once released it appends.
+
+I wrote a failing test for each finding first. The P15 cases now run by name: 51 pass. The case-log file passed 5 runs in a row, and ruff and compile pass.
+
+**Not fixed: nothing in the app writes to the log or checks it before sign-off.** No case actions exist yet: imports, profile edits, overrides, preview, the pack and sign-off are all still to be built. The plan gives logging imports and profile edits to T13, and the sign-off refusal to T27. Overrides go to T16 and previews to T24. All four depend on T12. Building them here would mean doing those tasks inside this one. If R42 and R43 must show real callers before T12 can pass, the plan needs re-splitting; the notes say so.
+
+```json
+{
+  "task": "T12",
+  "claims": [
+    {
+      "text": "P15: changing any field of, removing, inserting or reordering any entry before the head is detected on the next load, and the first bad entry is named. This covers logs of 2 to 6 entries, an entry whose hash was recomputed, and a duplicate member that hides a change. The 51 P15 cases run by name with -v.",
+      "proof_cmd": "python -m pytest tests/test_case_log.py -k p15 -v",
+      "proof_output": "30 test_p15_changing_any_entry_before_the_head_is_detected, 5 ..._recomputing_its_hash_is_detected_at_the_next, 5 ..._removing_..., 5 ..._reordering_..., 5 ..._inserting_..., 1 test_p15_a_duplicate_member_hiding_a_change_before_the_head_is_detected PASSED\n====================== 51 passed, 29 deselected in 0.32s ======================="
+    },
+    {
+      "text": "Entries are read strictly. A line must be exactly the canonical bytes the writer produces, with no duplicate members and no NaN or Infinity. A complete entry holding 1e999, -1e999, NaN, Infinity, -Infinity, 100k-deep nesting or non-canonical spacing is named as bad entry 2 through verify() and CaseLogBroken. It no longer raises an unnumbered ValueError.",
+      "proof_cmd": "python -m pytest tests/test_case_log.py -q -k \"duplicate_member or non_finite or nested or canonical\"",
+      "proof_output": "8 passed, 72 deselected in 0.11s"
+    },
+    {
+      "text": "The single-writer lock belongs to a thread, not to the CaseLog object. Two threads share one instance, and the first pauses inside _write after its position check. The second thread gets CaseLocked, and the log ends intact at position 2. A thread cannot re-enter a lock that another thread holds, while the holding thread can still nest. Another process is refused while the lock is held and succeeds once it is released. The child process now imports this checkout's cma through PYTHONPATH taken from case.__file__.",
+      "proof_cmd": "python -m pytest tests/test_case_log.py -v -k \"another_process or threads or reentered\"",
+      "proof_output": "tests/test_case_log.py::test_the_lock_holds_against_another_process PASSED [ 33%]\ntests/test_case_log.py::test_threads_sharing_one_instance_do_not_share_the_lock PASSED [ 66%]\ntests/test_case_log.py::test_a_lock_held_by_one_thread_is_not_reentered_by_another PASSED [100%]\n======================= 3 passed, 77 deselected in 0.24s ======================="
+    },
+    {
+      "text": "The whole case-log module still holds: each entry chains to the previous hash, a stale position is a conflict, a torn last entry is detected and named, and repair is logged. The file is stable across 5 repeated runs.",
+      "proof_cmd": "for i in 1 2 3 4 5; do python -m pytest tests/test_case_log.py -q 2>&1 | tail -1; done",
+      "proof_output": "80 passed in 0.46s\n80 passed in 0.45s\n80 passed in 0.43s\n80 passed in 0.53s\n80 passed in 0.54s"
+    },
+    {
+      "text": "The full suite passes, including the cross-process test that failed in verify-03, and lint and compile pass.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q",
+      "proof_output": "All checks passed!\n308 passed, 4 skipped in 3.29s"
+    }
+  ],
+  "files_changed": [
+    "src/cma/case.py",
+    "tests/test_case_log.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major src/cma/case.py:214 (R42): the append primitive is unused by production code.",
+      "disposition": "reproduced",
+      "evidence": "Confirmed: `grep -rn 'CaseLog|cma.case' src` finds no caller outside case.py. Not fixed in T12, by plan. tasks.json gives that wiring to tasks that depend on T12: T13 (requirements R31, R42, R48, depends_on T12 and T05: 'cma case new ..., profile edit, and import ... each logged'), T16 (override log), T24 (preview) and T27 (sign-off and pack write). The case root, `cma case import`, the profile, overrides, preview, pack and sign-off do not exist yet. `cma import monzo` (cli.py:283) converts a file with no case to log into. Building those here would mean doing T13, T16, T24 and T27 inside T12. See notes."
+    },
+    {
+      "finding": "major src/cma/case.py:195 (R42): threads sharing one CaseLog instance bypass mutual exclusion through the per-instance lock depth.",
+      "disposition": "reproduced",
+      "evidence": "test_threads_sharing_one_instance_do_not_share_the_lock failed before the fix: both threads appended. writer() now records the owning thread ident under a threading.Lock. Only that thread may nest, and any other thread gets CaseLocked. Proof: claim 3, 3 passed."
+    },
+    {
+      "finding": "major src/cma/case.py:175 (R43): the sign-off refusal has no production integration.",
+      "disposition": "reproduced",
+      "evidence": "Confirmed: no sign-off exists in src. The sign-off path is T27 ('refused if the snapshot is stale or the log chain is broken', requirements include R43, depends_on T12). In this task, require_intact() is the refusal primitive: CaseLogBroken carries first_bad, torn and a numbered reason. Its docstring now names T27 as the caller that must refuse on it. Not wired here; see notes."
+    },
+    {
+      "finding": "major src/cma/case.py:137 (R43): an unnumbered ValueError on a malformed complete entry (1e999).",
+      "disposition": "reproduced",
+      "evidence": "test_a_non_finite_number_in_a_complete_entry_is_named_not_raised[1e999] failed before the fix with ValueError from entry_hash. _decode now rejects NaN and Infinity tokens and requires canonical bytes, where 1e999 re-encodes differently or raises. _parse also catches ValueError, TypeError and RecursionError and returns a numbered reason. Proof: claim 2, 8 passed, first_bad == 2."
+    },
+    {
+      "finding": "major src/cma/case.py:127 (P15): duplicate JSON members let a changed pre-head entry pass.",
+      "disposition": "reproduced",
+      "evidence": "test_p15_a_duplicate_member_hiding_a_change_before_the_head_is_detected failed before the fix: verify().ok was True. The decoder now uses an object_pairs_hook that refuses repeated members, and requires the line to equal its canonical encoding. Proof: claims 1 and 2."
+    },
+    {
+      "finding": "major tests/test_case_log.py:312 (R42): the full suite failed under the runner because the cross-process child imported cma from the base checkout.",
+      "disposition": "reproduced",
+      "evidence": "Reproduced: under system python, `import cma` resolves to /home/user/credit-memo-agent/src/cma/__init__.py, and verify-03/specified-3.log shows ImportError in the child. This is a test defect, not a lock defect. The child now gets PYTHONPATH set to the directory that holds the imported cma package (Path(case.__file__).parents[1]). Its stderr is shown on failure. With the lock held, the child exits 3 (CaseLocked); once released, it exits 0. The full `python -m pytest -q` passes: 308 passed, 4 skipped."
+    },
+    {
+      "finding": "minor src/cma/case.py:225: benchmark timings unproven, and they do not measure R52.",
+      "disposition": "reproduced",
+      "evidence": "The earlier timing claim had no runner row, and scratchpad/perf.py is not in the checkout. This claim.json makes no timing or R52 claim. R52 belongs to T22 ('recompute within 2 s at 10,000 lines')."
+    }
+  ],
+  "notes": "Scope limit for the reviewer. T12 lists R42 and R43, but tasks.json splits each one: the log primitive is here, and its callers come later. T13 ('... import ... each logged', requirements R31, R42, R48) logs imports and profile changes; T16 logs overrides, T24 previews, and T27 the pack write and sign-off and the broken-chain refusal (requirements include R43). All of them depend on T12. None of the seven case actions exists yet in src, so there is nothing to wire to without building those tasks. Judge R42 and R43 here on the primitive: append chains every entry, writes are single-writer with an expected-position conflict, and require_intact()/CaseLogBroken name the first bad or torn entry. The end-to-end 'every action is logged' and 'sign-off refused' checks belong in T13 and T27. If the runner insists that T12 must prove production callers, the plan needs re-cutting; this is a stop-condition note, not a contract change. Fixes made in this attempt: (1) strict decoding: canonical bytes only, no duplicate members, no NaN or Infinity, and any decode error is a numbered bad entry; (2) the lock is owned per thread; (3) the cross-process test imports this checkout. Strict decoding changes no format: the writer has always written canonical JSON (_canonical), so every log the writer produced reads exactly as before. Nothing committed; .bridgie/ untouched apart from this run directory."
+}
+```
