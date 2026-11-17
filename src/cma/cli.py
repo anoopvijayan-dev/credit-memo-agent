@@ -89,7 +89,9 @@ def run(
                  "vat_stagger": vat_stagger},
                 cfg,
             )
-        except (StatementError, PolicyError, FirmConfigError) as e:
+        except (StatementError, PolicyError, FirmConfigError, OfflineLockError) as e:
+            # OfflineLockError here: the firm turned the lock on after the client was made;
+            # the request was refused before sending, so it is a refusal, not a model failure.
             console.print(f"[red]Refused.[/red] {e}")
             raise typer.Exit(code=2) from e
         except Exception as e:  # the model provider: network, auth, cut-off reply

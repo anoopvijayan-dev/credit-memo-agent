@@ -283,6 +283,24 @@ def test_cli_refuses_hosted_model_under_lock(home, no_network, tmp_path):
     assert no_network == []
 
 
+def test_cli_refuses_when_lock_turns_on_mid_run(home, no_network, sdks, monkeypatch, tmp_path):
+    # The client is made with the lock off; the firm turns it on before the draft request.
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    real_init = llm.AnthropicLLM.__init__
+
+    def init_then_lock(self, *a, **k):
+        real_init(self, *a, **k)
+        (home / "firm.yaml").write_text("offline_lock: true\n")
+
+    monkeypatch.setattr(llm.AnthropicLLM, "__init__", init_then_lock)
+    r = CliRunner().invoke(app, ["run", str(_statement(tmp_path)), "--llm", "anthropic",
+                                 "--out", str(tmp_path / "memo.md")])
+    assert r.exit_code == 2, r.output
+    assert "Refused." in r.output and "offline lock" in r.output
+    assert [c for c in sdks if c[1] == "request"] == [] and no_network == []
+    assert not (tmp_path / "memo.md").exists()
+
+
 def test_evidence_records_offline_mode(home, tmp_path):
     out = tmp_path / "memo.md"
     r = CliRunner().invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A", "--out", str(out)])
