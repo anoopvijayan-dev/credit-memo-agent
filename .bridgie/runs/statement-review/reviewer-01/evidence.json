@@ -1,0 +1,90 @@
+{
+  "criteria": [
+    {
+      "id": "R54",
+      "tier": "adversarial",
+      "check": "The 12 ordered YAML rules match the pre-change table at fd7b64c:src/cma/categorise.py:37. The sign checks, fallback, reversal linking and round-trip handling are preserved at src/cma/categorise.py:153 and :231. Fresh graph runs pin the same table for categorisation and provenance at src/cma/graph.py:202. Legacy resume bypasses that node and can write ruleset=null. The installed-wheel smoke check at .github/workflows/ci.yml:33–37 has no runner result. The attack review traced double submit and concurrent review through src/cma/cli.py:139 and :224, partial failure through :87 and :208, and changed evidence consumers through tests/test_cli.py:46, :65 and :102. No new endpoint, authorization decision, tenant lookup, currency conversion or timezone handling was introduced. The ruleset allow-list precedes resource lookup at src/cma/categorise.py:133. Malformed YAML field types can escape the intended error handler.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R10",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py is unchanged from fd7b64c and the new table introduces no newly recognised lines. tests/test_rules.py:134 and :163–193 compare IDs, units and values for captured cases. src/cma/metrics.py:289 still calls M16 'Unclassified inflows', which does not identify the measure as non-trading money in.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "P7",
+      "tier": "adversarial",
+      "check": "tests/test_rules.py:150–201 exercises explicit v1 against the committed baseline. The runner reported 300 passed and 4 skipped, and dual_run:7 deselected all 304 items. No runner row executed the independent pre-change replay at fd7b64c. The baseline also omits a committed VAT-stagger fixture configuration because its generator deduplicates by transaction rows alone. To prove the full claim, include the missing configuration, run the baseline capture against fd7b64c, and run `CMA_RULESET=v1 python -m pytest -vv tests/test_rules.py -k p7` against the revised baseline with the results logged.",
+      "result": "not_proven",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 175,
+      "criterion": "R54",
+      "claim": "The claim that every evidence record names the table conflicts with the documented legacy-checkpoint behavior. A newly emitted record can have ruleset=null even though the legacy categoriser used the table now called v1.",
+      "repro": "Leave a review pending in a SQLite checkpoint using fd7b64c. Upgrade, then run `CMA_RULESET=v1 cma resume case-7 --checkpoint-db reviews.sqlite --reviewer Analyst --out memo.md` and complete review. The resume path at src/cma/cli.py:110–122 uses saved figures without setting ruleset. Inspect memo.evidence.json for `\"ruleset\": null`."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 289,
+      "criterion": "R10",
+      "claim": "M16 retains its old name despite the explicit rename requirement.",
+      "repro": "Run `CMA_RULESET=v1 cma run examples/cafe_stretched.csv --yes --reviewer Analyst`. The metrics table shows M16 as 'Unclassified inflows' instead of naming it as non-trading money in."
+    },
+    {
+      "severity": "major",
+      "file": "tests/test_rules.py",
+      "line": 185,
+      "criterion": "P7",
+      "claim": "The claim of baseline coverage for every fixture is false. The golden fixture rows omit the `_vat_year(7)` statement with VAT stagger 3, a committed regression case for M13. The baseline generator at .bridgie/runs/statement-review/implementer-01/make_p7_baseline.py:89–101 keeps only the first stagger for identical transaction rows.",
+      "repro": "Compare tests/test_panel_run02_metrics.py:122–129 with the `fixtures` in the decompressed golden. The on-time 7th-of-month VAT rows are present with stagger 1 only. The existing stagger-3 test checks that M13 is positive, so it can pass when the exact pre-change value differs."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 104,
+      "criterion": "R54",
+      "claim": "A malformed category can bypass RulesetError and be reported as a model failure. The claimed malformed-table refusal coverage only tests invalid category strings.",
+      "repro": "In a disposable package, set the first YAML rule's category to `[returned_dd]`. Launch a fresh `CMA_RULESET=v1 cma run examples/cafe_stretched.csv --yes --reviewer Analyst`. Set membership raises TypeError for the list and src/cma/cli.py:90–92 reports a model failure with exit 4. A list-valued rule ID has the same failure at src/cma/categorise.py:99."
+    },
+    {
+      "severity": "minor",
+      "file": ".github/workflows/ci.yml",
+      "line": 37,
+      "criterion": "R54",
+      "claim": "The installed-wheel claim is not proven by the runner. The resource test imports from the test environment and the runner did not build or install a wheel.",
+      "repro": "Compare the runner commands with the workflow. Run the wheel build, clean-environment install and out-of-tree resource load at .github/workflows/ci.yml:33–37 as a logged runner tier. Compare the reported hash with SHA-256 of the wheel's YAML member."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_cli.py",
+      "line": 76,
+      "criterion": "R54",
+      "claim": "The producer's 304-passed claim and durable-resume proof are not established by the runner's 300-passed, 4-skipped result. The existing restart test also asserts only memo approval and does not check ruleset provenance.",
+      "repro": "With the dev, mcp and durable extras installed, run `python -m pytest -vv -rs` as a logged runner tier. Add a legacy-checkpoint resume case that asserts the emitted ruleset ID and hash to prove the compatibility claim."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 231,
+      "criterion": "R54",
+      "claim": "The reported categorisation benchmark does not establish the R52 performance claim, which measures saving an override through display of recomputed figures, indicators and policy.",
+      "repro": "Compare the timed categorise-only call with R52 at .bridgie/specs/statement-review/requirements.md:176. A runner benchmark must time the ordinary override-save action through the rendered result on a 10,000-line case to substantiate that claim."
+    }
+  ],
+  "verdict": "not_proven",
+  "task": "T01",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
