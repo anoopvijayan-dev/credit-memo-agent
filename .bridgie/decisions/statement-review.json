@@ -1103,12 +1103,12 @@
         "kill task"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "take over manually",
+      "free_text": "Owner: take over with the prepared fix. writer() always closes the lock descriptor, even when the explicit unlock fails (closing releases the lock); invariants test p15 proves a failed unlock leaves the lock free.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-18T09:55:48.534Z",
+      "effect": "task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12",
       "created_at": "2026-11-18T09:32:21.302Z"
     },
     {
