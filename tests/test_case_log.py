@@ -251,6 +251,39 @@ def test_p15_torn_last_entry_is_detected_and_named(tmp_path, monkeypatch, cut):
     assert err.value.torn and "entry 3" in str(err.value) and "incomplete" in str(err.value)
 
 
+@pytest.mark.invariants
+def test_p15_a_lock_error_is_not_a_live_writer_so_a_torn_entry_is_still_reported(tmp_path, monkeypatch):
+    # T12 review verify-28: a lock subsystem error (here ENOLCK) was treated as another
+    # writer holding the lock, so a torn log was reported as its intact prefix.
+    import errno
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 5)
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+
+    def broken_lock(fd):
+        raise OSError(errno.ENOLCK, "no locks available")
+
+    monkeypatch.setattr(case, "_lock", broken_lock)
+    with pytest.raises(OSError) as err, log.writer():
+        pass
+    assert not isinstance(err.value, case.CaseLocked)
+    check = log.verify()
+    assert not check.ok and check.torn and check.first_bad == 3
+
+
+@pytest.mark.invariants
+def test_p15_a_contended_lock_still_reads_as_another_writer(tmp_path, monkeypatch):
+    import errno
+    log = _log(tmp_path, 1)
+
+    def held(fd):
+        raise OSError(errno.EWOULDBLOCK, "held")
+
+    monkeypatch.setattr(case, "_lock", held)
+    with pytest.raises(case.CaseLocked), log.writer():
+        pass
+
+
 def test_torn_last_entry_blocks_appends_until_dropped(tmp_path, monkeypatch):
     log = _log(tmp_path, 2)
     lines = _lines(log)

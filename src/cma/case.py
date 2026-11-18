@@ -44,6 +44,7 @@ details, and errors end up in terminals and logs.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -338,7 +339,7 @@ class CaseLog:
                 return _check(self._read_log(), _read_head(self.head_path))
         except CaseLocked:
             pass
-        except OSError:  # cannot create or open the lock file: nobody can be writing
+        except OSError:  # the lock cannot be taken or tested: no writer is known, the read stands
             return check
         # Another writer holds the lock. The log is only ever appended to, so the log read
         # after a head holds every entry that head records; those entries were walked and
@@ -393,7 +394,13 @@ class CaseLog:
                     _lock(fd)
                 except OSError as e:
                     os.close(fd)
-                    raise CaseLocked(f"{self.path}: another window or command is writing to this case") from e
+                    # Only contention means another writer holds the lock. Any other lock
+                    # error (no locks available, an I/O error) is not evidence of a writer:
+                    # it propagates, so a reader falls back to the plain read and a torn
+                    # entry is reported, never excused as some writer's append.
+                    if e.errno in _CONTENDED:
+                        raise CaseLocked(f"{self.path}: another window or command is writing to this case") from e
+                    raise
                 self._lock_fd, self._owner, self._lock_depth = fd, me, 1
         try:
             yield self
@@ -534,6 +541,9 @@ def _fsync_dir(path: Path) -> None:
 if os.name == "nt":  # pragma: no cover - exercised on Windows only
     import msvcrt
 
+    # msvcrt.locking reports a region another process holds as EACCES or EDEADLOCK.
+    _CONTENDED = {errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)}
+
     def _lock(fd: int) -> None:
         msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
 
@@ -543,6 +553,9 @@ if os.name == "nt":  # pragma: no cover - exercised on Windows only
 
 else:
     import fcntl
+
+    # flock with LOCK_NB reports a lock another process holds as EWOULDBLOCK (EAGAIN).
+    _CONTENDED = {errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES}
 
     def _lock(fd: int) -> None:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
