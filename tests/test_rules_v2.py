@@ -126,6 +126,10 @@ LISTS = {
         ("TO SPACE VAT", -300.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
         ("FROM SPACE VAT", 300.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
         ("TEAPOT SUPPLIES", -18.00, C.SUPPLIER, "v2:default"),
+        # an explicit move to a pot is an own-account transfer, whatever the pot is for
+        ("TFR TO POT RENT", -300.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
+        ("POT TRANSFER PAYROLL POT", -3000.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
+        ("FROM POT RENT", 300.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
     ],
     "cash_paid_in": [
         ("CASH PAID IN", 640.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
@@ -133,8 +137,18 @@ LISTS = {
         ("COUNTER CREDIT", 380.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
         ("PAID IN AT HIGH ST BRANCH", 380.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
         ("CASH DEPOSIT MACHINE 0412", 250.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
-        ("POST OFFICE COUNTERS", 500.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
+        ("POST OFFICE CASH DEPOSIT", 500.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
+        ("CASH DEP POST OFFICE 0412", 500.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
+        ("POST OFFICE COUNTER CREDIT", 500.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
         ("PAYPOINT CASH", 90.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
+        # a provider's name alone is not cash: Post Office Ltd and PayPoint also pay by
+        # transfer, and a transfer is left for a person, never counted as cash takings
+        ("BACS CREDIT POST OFFICE LTD", 500.00, C.OTHER, "v2:default"),
+        ("POST OFFICE COUNTERS", 500.00, C.OTHER, "v2:default"),
+        ("PAYPOINT PLC", 90.00, C.OTHER, "v2:default"),
+        # cash wording a payer typed into an electronic payment's reference is not cash
+        ("FPS CREDIT CASH DEPOSIT", 200.00, C.OTHER, "v2:default"),
+        ("BACS CREDIT POST OFFICE CASH", 200.00, C.OTHER, "v2:default"),
         # a cheque is not cash; it stays unexplained for a person
         ("CHEQUE PAID IN AT BRANCH", 900.00, C.OTHER, "v2:default"),
         # protected wording wins over cash wording: never cash or trading receipts
@@ -166,6 +180,11 @@ LISTS = {
         ("AMAZON REFUND", 25.00, C.REFUND_IN, "v2:refunds"),
         ("REVERSAL OF PAYMENT", 75.00, C.REFUND_IN, "v2:refunds"),
         ("RETURNED PAYMENT ACME", 75.00, C.REFUND_IN, "v2:refunds"),
+        # explicit refund wording beats generic finance or loan wording: no debt was drawn
+        ("CARD REFUND ACME RETAIL FINANCE", 75.00, C.REFUND_IN, "v2:refunds"),
+        ("LOAN REPAYMENT REVERSAL", 450.00, C.REFUND_IN, "v2:refunds"),
+        # a named lender stays a lender (protected, R21)
+        ("IWOCA REFUND", 50.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
         ("UNPAID DD BRITISH GAS", 75.00, C.RETURNED_DD, "v2:returned_dd"),
     ],
     "explained_non_trading": [
@@ -343,6 +362,8 @@ GOOD = {"id": "card", "names": ["STRIPE"], "direction": "in", "category": "reven
     ([{**GOOD, "unless": 3}], "unless 3 is not"),
     ([{**GOOD, "protected": "yes"}], "protected must be"),
     ([GOOD, {**GOOD, "id": "p", "protected": True}], "protected rule must come before"),
+    # each part compiles alone, but a global flag is not allowed once the parts are joined
+    ([{**GOOD, "pattern": "(?i)stripe"}], "pattern and names do not compile together"),
 ])
 def test_a_malformed_v2_rule_is_refused_naming_the_problem(rules, match):
     with pytest.raises(RulesetError, match=match):
@@ -404,6 +425,26 @@ def test_cma_run_under_v2_categorises_with_v2_and_records_each_lines_rule(tmp_pa
     m = {x["id"]: x for x in record["metrics"]}
     assert m["M2"]["value"] == pytest.approx(6 * (2000.0 + 640.0))
     assert m["M8"]["value"] == pytest.approx(6 * 450.0)
+
+
+@pytest.mark.contracts
+def test_cma_run_under_v2_keeps_a_post_office_transfer_out_of_trading_receipts(tmp_path, monkeypatch):
+    """The review's repro: a BACS credit from Post Office Ltd is not cash paid in, so it is
+    not in M2 (or M18's cash) and stays unexplained for a person."""
+    from cma.cli import app
+
+    monkeypatch.setenv("CMA_RULESET", "v2")
+    rows = [("STRIPE PAYMENTS UK LTD", 2000.0), ("BACS CREDIT POST OFFICE LTD", 500.0), ("CARD TESCO", -45.0)] * 4
+    path = _write(tmp_path / "s.csv", rows)
+    r = CliRunner().invoke(app, ["run", str(path), "--yes", "--reviewer", "A", "--out", str(tmp_path / "m.md")])
+    assert r.exit_code == 0, r.output
+    record = json.loads((tmp_path / "m.evidence.json").read_text())
+    ids = {t.id for t in ingest.load_csv(path).transactions if t.description == "BACS CREDIT POST OFFICE LTD"}
+    lines = {d["id"]: d for d in record["lines"]}
+    assert {(lines[i]["category"], lines[i]["rule_id"]) for i in ids} == {("other", "v2:default")}
+    m = {x["id"]: x for x in record["metrics"]}
+    assert m["M2"]["value"] == pytest.approx(4 * 2000.0)
+    assert not ids & set(m["M2"]["evidence"])
 
 
 @pytest.mark.contracts
@@ -549,7 +590,8 @@ def test_evidence_lines_carry_ids_only_never_descriptions(tmp_path, monkeypatch)
 
 def test_categorise_10000_lines_under_v2_with_a_profile_is_fast(v2):
     """The design's recompute target is 2 seconds at 10,000 lines; categorising is part of
-    it. Measured at about 0.16 s; the bound is loose so the test is not flaky."""
+    it. This bounds the categoriser alone, not the whole recompute (figures, indicators,
+    policy check), which belongs to the workspace's own test (R52)."""
     import time
 
     s = Statement(account_name="a", transactions=_mixed_lines(10_000))

@@ -175,13 +175,24 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                 problem = _compile_problem(r[key])
                 if problem:
                     problems.append(f"{where}: {key} does not compile ({problem})")
+        # A pattern and names that each compile can still fail joined (a global flag such
+        # as (?i) is allowed only at the start), so the joined text is checked too.
+        if (isinstance(r.get("pattern"), str) and r["pattern"] and isinstance(r.get("names"), list) and r["names"]
+                and all(isinstance(n, str) and n.strip() for n in r["names"]) and not _compile_problem(r["pattern"])):
+            problem = _compile_problem(_rule_pattern_text(r))
+            if problem:
+                problems.append(f"{where}: pattern and names do not compile together ({problem})")
     if problems:
         raise RulesetError(f"{source}: " + "; ".join(problems))
 
 
-def _rule_pattern(r: dict) -> re.Pattern[str]:
+def _rule_pattern_text(r: dict) -> str:
     parts = [p for p in (r.get("pattern"), names_pattern(r["names"]) if "names" in r else None) if p]
-    return re.compile(parts[0] if len(parts) == 1 else "|".join(f"(?:{p})" for p in parts))
+    return parts[0] if len(parts) == 1 else "|".join(f"(?:{p})" for p in parts)
+
+
+def _rule_pattern(r: dict) -> re.Pattern[str]:
+    return re.compile(_rule_pattern_text(r))
 
 
 def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) -> Ruleset:

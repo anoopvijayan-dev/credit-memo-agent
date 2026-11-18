@@ -106,8 +106,12 @@ rules:
     direction: in
     category: director_funding
     protected: true
+  # Generic loan or finance wording, unless the line says it is a refund or a reversal:
+  # "CARD REFUND ACME RETAIL FINANCE" is money given back, not debt drawn, and goes to the
+  # refunds rule below. A named lender above stays a lender whatever the wording (R21).
   - id: loan_drawdown
     pattern: '\bLOAN\b|FINANCE\b'
+    unless: '(?<![A-Z0-9])(?:REFUND|REFUNDED|REVERSAL|REVERSED|RETURNED\s+PAYMENT|PAYMENT\s+RETURNED|CHARGEBACK)(?![A-Z0-9])'
     direction: in
     category: loan_drawdown
     protected: true
@@ -117,19 +121,9 @@ rules:
     category: owner_drawings
     protected: true
   # --- not protected: a profile name or a firm rule is tried before these ---------------
-  - id: bank_fees
-    pattern: 'UNPAID ITEM FEE|ACCOUNT FEES|BANK CHARGES'
-    direction: out
-    category: bank_fees
-  - id: payroll
-    pattern: 'PAYROLL|SALARIES'
-    direction: out
-    category: payroll
-  - id: rent
-    pattern: '\bRENT\b'
-    direction: out
-    category: rent
-  # Moves between the applicant's own pots, spaces and savings, either way.
+  # Moves between the applicant's own pots, spaces and savings, either way. First of the
+  # unprotected rules, so an explicit move to a pot wins over what the pot is for:
+  # "TFR TO POT RENT" is an own-account transfer, not rent.
   - id: own_pots_savings
     names:
       - POT TRANSFER
@@ -145,6 +139,18 @@ rules:
       - TAX POT
     direction: any
     category: own_account_transfer
+  - id: bank_fees
+    pattern: 'UNPAID ITEM FEE|ACCOUNT FEES|BANK CHARGES'
+    direction: out
+    category: bank_fees
+  - id: payroll
+    pattern: 'PAYROLL|SALARIES'
+    direction: out
+    category: payroll
+  - id: rent
+    pattern: '\bRENT\b'
+    direction: out
+    category: rent
   - id: refunds
     names: [REFUND, REFUNDED, REVERSAL, REVERSED, RETURNED PAYMENT, PAYMENT RETURNED, CHARGEBACK]
     direction: in
@@ -155,7 +161,10 @@ rules:
     direction: in
     category: other_explained_in
   # Cash paid in at a counter or a machine, at a bank, a Post Office or a PayPoint. A
-  # cheque is not cash.
+  # cheque is not cash. Post Office and PayPoint count only with cash, deposit or counter
+  # wording: both also pay by transfer, and their name alone is not cash. An electronic
+  # payment (Faster Payment, BACS, CHAPS, a transfer, a standing order) is never cash,
+  # whatever its payer-written reference says; it stays unexplained for a person.
   - id: cash_paid_in
     names:
       - CASH PAID IN
@@ -169,9 +178,13 @@ rules:
       - DEPOSIT MACHINE
       - ATM DEPOSIT
       - CDM DEPOSIT
-      - POST OFFICE
-      - PAYPOINT
-    unless: '\bCHEQUES?\b|\bCHQ\b'
+      - POST OFFICE CASH
+      - POST OFFICE DEPOSIT
+      - POST OFFICE COUNTER CREDIT
+      - POST OFFICE COUNTER DEPOSIT
+      - PAYPOINT CASH
+      - PAYPOINT DEPOSIT
+    unless: '\bCHEQUES?\b|\bCHQ\b|^(?:FPS|FASTER\s+PAYMENTS?|BACS|CHAPS|TFR|TRANSFER|SO|STO)\b'
     direction: in
     category: cash_deposit
   # Trading receipts. The first three patterns are v1's synthetic acquirer wording.
