@@ -3,51 +3,45 @@
 # merchant cash advance providers; own pots and savings; cash paid in; cash-withdrawal
 # wording; HMRC repayments; refunds; explained non-trading money in).
 #
-# Rules are ordered; the first whose pattern (or one of whose names) matches the
-# upper-cased description, whose `unless` does not, and whose direction matches the sign
-# of the amount wins. `names` are plain words matched whole, with any run of spaces
-# between words; `pattern` is a Python regular expression.
+# A rule matches when its pattern (or one of its names) matches the upper-cased
+# description, its `unless` does not, its `requires` (if any) does, and its direction
+# matches the sign of the amount. `names` are plain words matched whole, with any run of
+# spaces between words; `pattern` is a Python regular expression.
 #
-# Classification is in two stages. First the line type, from explicit wording: a returned
-# direct debit; a move to or from the applicant's own pot, space or savings; an HMRC line;
-# a refund or reversal; and the payment rail (Faster Payment, FP, FPI, BACS, BGC, CHAPS, a
-# transfer, a standing order, a direct credit) anywhere in the line, which rules out cash
-# paid in. Only then the name lists: lenders and merchant cash advance providers, director
-# or capital wording, cash venues, rent, acquirers, gateways, marketplaces and delivery
-# platforms. So "TFR FROM SAVINGS CAPITAL RESERVE" is an own-account transfer and "CARD
-# REFUND CAPITAL OFFICE SUPPLIES" a refund, whatever names follow the line-type wording.
-# A rail has no category of its own: a rail line with a name on a list takes that list's
-# category, except cash, which a rail line never is.
+# Two stages (design C1, revision 3). Stage 1, `line_type`, is explicit wording of what the
+# line is: a returned direct debit, a move to or from the applicant's own pot, space or
+# savings, HMRC, a refund or reversal, and the payment rail. The rail has no category: it
+# says the money did not arrive as cash. Stage 2, `names`, says who sent the money or what
+# it is for.
 #
-# The stages are enforced: every rule says `stage: line_type` or `stage: names`, every
-# line_type rule is protected and comes before any names rule, or the table is refused.
-# Two line_type cues that put a credit in different money-in buckets make it a judgement
-# for a person (the bank's own `^UNPAID DD` code excepted, it is decisive). With no cue,
-# a credit the first matching name list counts as trading receipts while another list
-# says something else (a director, a lender, CAPITAL in a branch name) is a judgement too.
-# Cash paid in heads the name lists: it is how money arrived, not what it is.
+# The verdict on a credit (src/cma/categorise.py) collects every matching rule. A match
+# inside a longer match from another rule counts only as the longer one (STRIPE inside
+# STRIPE CAPITAL, REFUND inside HMRC REFUND, LOAN inside DIRECTOR LOAN). The bank's own
+# returned-payment code at the start of the line settles it alone. Otherwise the cues
+# decide when any cue with a category matches; with none, the names decide (a rail with
+# cash paid-in wording is ambiguous). Rules in one money-in bucket agree; rules in two or
+# more make the credit ambiguous: unexplained money in, every candidate recorded, for the
+# underwriter. The verdict does not depend on the order of rules within a stage. Debits
+# keep first-match order through the same stages.
+#
+# No hidden tie-breaks: an `unless` may exclude wording that is on no list (a cheque is
+# not cash), never another list's cue or name. Where two lists' wording meets, a longer
+# phrase goes on one list, or the credit is ambiguous.
 #
 # Protected rules come first and win over the case profile and firm rules; only a
-# per-line override changes a line they match (R21). They are the line-type rules (returned
-# DD, own pot or savings move, HMRC, refund) and the protected name lists (cash paid in,
-# lender, director, capital introduced, shareholder, generic loan wording). The precedence is in src/cma/categorise.py.
-# A rule may also have `requires`, a pattern that must match too.
+# per-line override changes a line they settle (R21). They are the line-type cues and the
+# lender, director, capital-introduced, shareholder and generic loan wording. Cash paid
+# in, the trading lists, invoice references and explained words are not protected.
 #
-# Bare words are not evidence. SAVINGS, SAVER or POT alone (a payer called "SAVINGS AND
-# LOANS", an HMRC reference) is not a move between the applicant's own accounts: only
-# move wording ("TO SAVINGS", "FROM POT", "POT TRANSFER") or an own account named in the
-# case profile is. CAPITAL alone (a branch, a pot, a merchant) is not director funding:
-# only capital introduced, injected or contributed is. Generic explained words (interest,
-# grant, cashback, compensation) are a name list, so an explicit refund wins over them.
-#
-# Ambiguous wording never resolves to trading receipts: refunds, own-pot moves and
-# explained non-trading credits are tried before the acquirer lists, so "PAYPAL REFUND" is a
-# refund and "STRIPE CAPITAL" a drawdown. Cash paid in is trading receipts (D31).
+# Bare words are not evidence (D48). SAVINGS, SAVER, POT, SPACE or a pot label such as TAX
+# POT without move wording is on no list: only move wording ("TO SAVINGS", "FROM POT")
+# or an own account named in the case profile is a move. CAPITAL alone is on no list:
+# only capital introduced, injected or contributed is director funding.
 id: v2
 frozen: false
 rules:
-  # --- stage 1, line type: explicit wording, protected; two of these in different
-  # money-in buckets on one credit make it a judgement for a person ----------------
+  # --- stage 1, line type: explicit wording, protected -----------------------------
+  # The bank's own returned-payment code, at the start of the line: settles it alone.
   - id: returned_dd
     pattern: '^UNPAID DD\b'
     direction: any
@@ -55,8 +49,9 @@ rules:
     protected: true
     stage: line_type
   # An explicit move to or from the applicant's own pot, space or savings, either way,
-  # whatever the pot or account is called: "TFR TO POT RENT", "TO POT HMRC VAT", "TFR FROM
-  # SAVINGS CAPITAL RESERVE" and "FROM POT IWOCA" are own-account transfers.
+  # whatever names the pot or account: "TFR TO POT RENT", "TFR FROM SAVINGS CAPITAL
+  # RESERVE" and "FROM POT IWOCA" are own-account transfers. With another cue on a credit
+  # (HMRC, a refund) the cues disagree and the credit is ambiguous.
   - id: own_pots_savings
     names:
       - POT TRANSFER
@@ -98,11 +93,11 @@ rules:
     category: hmrc_paye
     protected: true
     stage: line_type
-  # HMRC paying money back (VAT repayment, tax refund, R&D credit). Before the refund
-  # wording: an HMRC refund is an HMRC repayment, its own bucket.
+  # HMRC paying money back (VAT repayment, tax refund, R&D credit). An HMRC refund is an
+  # HMRC repayment by the longer phrase, not by an exception in the refund list.
   - id: hmrc_repayment
-    names: [HMRC, HM REVENUE]
-    unless: '(?<![A-Z0-9])(?:(?:TO|FROM|TFR)\s+(?:(?:TAX|VAT)\s+)?(?:POT|SPACE|SAVINGS|SAVER|BUSINESS\s+SAVER|INSTANT\s+ACCESS)|POT\s+TRANSFER|SAVINGS\s+(?:TRANSFER|TFR)|(?:TFR|TRANSFER)\s+SAVINGS)(?![A-Z0-9])'
+    names: [HMRC, HM REVENUE, HMRC REFUND, HMRC VAT REFUND, HMRC TAX REFUND, HMRC CT REFUND, HMRC PAYE REFUND,
+            HMRC SA REFUND]
     direction: in
     category: hmrc_repayment
     protected: true
@@ -112,44 +107,22 @@ rules:
   # wording is left to the name lists: a payment to a lender stays debt service.
   - id: refunds
     names: [REFUND, REFUNDED, REVERSAL, REVERSED, RETURNED PAYMENT, PAYMENT RETURNED, CHARGEBACK]
-    unless: '(?<![A-Z0-9])(?:HMRC|HM\s+REVENUE)(?![A-Z0-9])'
     direction: in
     category: refund_in
     protected: true
     stage: line_type
-  # --- stage 2, name lists ---------------------------------------------------------
-  # Cash paid in at a counter or a machine, at a bank, a Post Office or a PayPoint. A
-  # cheque is not cash. Post Office and PayPoint count only with cash, deposit or counter
-  # wording: both also pay by transfer, and their name alone is not cash. An electronic
-  # payment (Faster Payment, including the FP and FPI codes, BACS, CHAPS, a bank giro
-  # credit (BGC), a transfer, a standing order, a direct credit) is never cash, wherever in the line the rail is named and whatever its payer-written
-  # reference says; it stays unexplained for a person.
-  - id: cash_paid_in
-    names:
-      - CASH PAID IN
-      - CASH DEPOSIT
-      - CASH DEP
-      - CASH CREDIT
-      - CASH IN BRANCH
-      - PAID IN AT
-      - COUNTER CREDIT
-      - COUNTER DEPOSIT
-      - DEPOSIT MACHINE
-      - ATM DEPOSIT
-      - CDM DEPOSIT
-      - POST OFFICE CASH
-      - POST OFFICE DEPOSIT
-      - POST OFFICE COUNTER CREDIT
-      - POST OFFICE COUNTER DEPOSIT
-      - PAYPOINT CASH
-      - PAYPOINT DEPOSIT
-    unless: '(?<![A-Z0-9])(?:CHEQUES?|CHQ|FPS|FPI|FP|BGC|FASTER\s+PAYMENTS?|BACS|CHAPS|TFR|TRANSFER|SO|STO|STANDING\s+ORDER|DIRECT\s+CREDIT)(?![A-Z0-9])'
+  # The payment rail (Faster Payment, including the FP and FPI codes, BACS, CHAPS, a bank
+  # giro credit, a transfer, a standing order, a direct credit), anywhere in the line. No
+  # category: it says the money did not arrive as cash, and otherwise the names decide.
+  - id: payment_rail
+    names: [FPS, FPI, FP, BGC, BANK GIRO CREDIT, FASTER PAYMENT, FASTER PAYMENTS, BACS, CHAPS, TFR, TRANSFER, SO,
+            STO, STANDING ORDER, DIRECT CREDIT]
     direction: in
-    category: cash_deposit
     protected: true
-    stage: names
-  # UK business lenders and merchant cash advance providers, named. Before the director
-  # and capital wording, so "STRIPE CAPITAL" and "BOOST CAPITAL" are lenders.
+    stage: line_type
+  # --- stage 2, name lists ---------------------------------------------------------
+  # UK business lenders and merchant cash advance providers, named. STRIPE CAPITAL,
+  # SHOPIFY CAPITAL and SUMUP CASH ADVANCE are lenders by the longer phrase.
   - id: lender_repayment
     names: &lenders
       - FUNDING CIRCLE
@@ -210,10 +183,13 @@ rules:
     category: loan_repayment
     protected: true
     stage: names
-  # Money from a director, shareholder or owner, or capital introduced. Before the
-  # generic loan wording, so a director's loan to the business is director funding.
+  # Money from a director, shareholder or owner, or capital introduced. A director's loan
+  # to the business is director funding by the longer phrase (DIRECTOR LOAN), which
+  # contains the generic loan wording.
   - id: director_funding
-    names: [DIRECTOR, DIRECTORS, OWNER, SHAREHOLDER, SHAREHOLDERS, CAPITAL INTRODUCED, CAPITAL INJECTION, CAPITAL CONTRIBUTION]
+    names: [DIRECTOR, DIRECTORS, OWNER, SHAREHOLDER, SHAREHOLDERS, CAPITAL INTRODUCED, CAPITAL INJECTION,
+            CAPITAL CONTRIBUTION, DIRECTOR LOAN, DIRECTORS LOAN, DIRECTOR LOAN ACCOUNT, DIRECTORS LOAN ACCOUNT,
+            SHAREHOLDER LOAN, OWNER LOAN]
     direction: in
     category: director_funding
     protected: true
@@ -230,18 +206,39 @@ rules:
     category: owner_drawings
     protected: true
     stage: names
+  # Cash paid in at a counter or a machine, at a bank, a Post Office or a PayPoint. Not
+  # protected: a director named in the case profile outranks cash wording (R5). A cheque
+  # is not cash (wording on no list). Post Office and PayPoint count only with cash,
+  # deposit or counter wording: both also pay by transfer. A payment rail with cash
+  # wording is ambiguous by the verdict, not by an exception here.
+  - id: cash_paid_in
+    names:
+      - CASH PAID IN
+      - CASH DEPOSIT
+      - CASH DEP
+      - CASH CREDIT
+      - CASH IN BRANCH
+      - PAID IN AT
+      - COUNTER CREDIT
+      - COUNTER DEPOSIT
+      - DEPOSIT MACHINE
+      - ATM DEPOSIT
+      - CDM DEPOSIT
+      - POST OFFICE CASH
+      - POST OFFICE DEPOSIT
+      - POST OFFICE COUNTER CREDIT
+      - POST OFFICE COUNTER DEPOSIT
+      - PAYPOINT CASH
+      - PAYPOINT DEPOSIT
+    unless: '(?<![A-Z0-9])(?:CHEQUES?|CHQ)(?![A-Z0-9])'
+    direction: in
+    category: cash_deposit
+    stage: names
   # Explained, but not trading: grants, insurance claims, interest, cashback.
   - id: explained_non_trading
     names: [INTEREST, GRANT, INSURANCE CLAIM, INSURANCE PAYOUT, INSURANCE SETTLEMENT, CASHBACK, COMPENSATION]
     direction: in
     category: other_explained_in
-    stage: names
-  # Bare pot names with no move wording ("TAX POT", "VAT POT"): a name, not a line type,
-  # so explicit wording such as a refund comes first. An own-account transfer otherwise.
-  - id: pot_names
-    names: [VAT POT, TAX POT]
-    direction: any
-    category: own_account_transfer
     stage: names
   - id: bank_fees
     pattern: 'UNPAID ITEM FEE|ACCOUNT FEES|BANK CHARGES'

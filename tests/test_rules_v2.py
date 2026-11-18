@@ -1,9 +1,10 @@
 """The v2 rule table (R4) and the categoriser's precedence with per-line provenance.
 
 v2 is packaged data like v1 (src/cma/rules/v2.yaml) and adds the maintained lists of R4.
-Every line records the rule that set its category. Precedence, first match wins: a
-per-line override, the protected built-in rules, the case profile's names, firm rules,
-the rest of the table, the default.
+Every line records the rule that set its category. A credit gets design C1's verdict
+(line-type cues, then name lists; two or more buckets are ambiguous) and the precedence:
+a per-line override, a protected verdict, the case profile's names, an ambiguous verdict,
+firm rules, an unprotected verdict, the default. Debits keep first-match order.
 """
 
 import csv
@@ -77,7 +78,8 @@ LISTS = {
         ("GOCARDLESS LTD", 600.00, C.REVENUE_CARD, "v2:payment_gateways"),
         ("OPAYO PAYOUT", 60.00, C.REVENUE_CARD, "v2:payment_gateways"),
         ("KLARNA BANK AB", 89.00, C.REVENUE_CARD, "v2:payment_gateways"),
-        ("CLEARPAY FINANCE LTD", 89.00, C.LOAN_DRAWDOWN, "v2:loan_drawdown"),  # lender wording wins, never trading
+        # a gateway's name with generic finance wording: names in two buckets, never trading
+        ("CLEARPAY FINANCE LTD", 89.00, C.OTHER, "v2:conflict:loan_drawdown+payment_gateways"),
     ],
     "marketplaces": [
         ("AMAZON PAYMENTS UK", 830.00, C.REVENUE_CARD, "v2:marketplaces"),
@@ -117,9 +119,13 @@ LISTS = {
         ("HOLLOWAY BRIDGE FINANCE LOAN", -300.00, C.LOAN_REPAYMENT, "v2:loan_repayment"),  # v1 wording stays
         ("HOLLOWAY BRIDGE FINANCE LOAN", 9000.00, C.LOAN_DRAWDOWN, "v2:loan_drawdown"),
     ],
-    "pot_names": [
-        ("TAX POT", 400.00, C.OWN_ACCOUNT_TRANSFER, "v2:pot_names"),
-        ("VAT POT", -400.00, C.OWN_ACCOUNT_TRANSFER, "v2:pot_names"),
+    "payment_rail": [
+        # the rail has no category: the name list decides, and with nothing listed it is unexplained
+        ("FPS CREDIT STRIPE PAYMENTS", 900.00, C.REVENUE_CARD, "v2:payment_gateways"),
+        ("BACS CREDIT ACME LTD", 900.00, C.OTHER, "v2:default"),
+        # bare pot labels are not evidence (D48): no move wording, no own-account transfer
+        ("TAX POT", 400.00, C.OTHER, "v2:default"),
+        ("VAT POT", -400.00, C.SUPPLIER, "v2:default"),
     ],
     "own_pots_savings": [
         ("POT TRANSFER IN HOLIDAY POT", 200.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
@@ -155,19 +161,19 @@ LISTS = {
         ("BACS CREDIT POST OFFICE LTD", 500.00, C.OTHER, "v2:default"),
         ("POST OFFICE COUNTERS", 500.00, C.OTHER, "v2:default"),
         ("PAYPOINT PLC", 90.00, C.OTHER, "v2:default"),
-        # cash wording a payer typed into an electronic payment's reference is not cash
-        ("FPS CREDIT CASH DEPOSIT", 200.00, C.OTHER, "v2:default"),
-        ("BACS CREDIT POST OFFICE CASH", 200.00, C.OTHER, "v2:default"),
+        # cash wording on an electronic payment: the rail says it is not cash, so ambiguous
+        ("FPS CREDIT CASH DEPOSIT", 200.00, C.OTHER, "v2:conflict:payment_rail+cash_paid_in"),
+        ("BACS CREDIT POST OFFICE CASH", 200.00, C.OTHER, "v2:conflict:payment_rail+cash_paid_in"),
         # a cheque is not cash; it stays unexplained for a person
         ("CHEQUE PAID IN AT BRANCH", 900.00, C.OTHER, "v2:default"),
-        # protected wording wins over cash wording: never cash or trading receipts
-        # cash wording with a director or lender name: never trading receipts, a judgement
-        ("CASH DEPOSIT DIRECTOR", 3000.00, C.OTHER, "v2:conflict:cash_paid_in+director_funding"),
-        ("CASH DEPOSIT IWOCA", 3000.00, C.OTHER, "v2:conflict:cash_paid_in+lender_drawdown"),
+        # cash wording with a director or lender name: names in two buckets, a judgement
+        ("CASH DEPOSIT DIRECTOR", 3000.00, C.OTHER, "v2:conflict:director_funding+cash_paid_in"),
+        ("CASH DEPOSIT IWOCA", 3000.00, C.OTHER, "v2:conflict:lender_drawdown+cash_paid_in"),
+        # a cue decides over names: the HMRC cue
         ("HMRC CASH PAID IN", 3000.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),
-        # an electronic rail anywhere in the line, not only first, means it is not cash
-        ("CREDIT FPS POST OFFICE CASH", 500.00, C.OTHER, "v2:default"),
-        ("CASH DEPOSIT VIA FASTER PAYMENT", 500.00, C.OTHER, "v2:default"),
+        # a rail anywhere in the line, not only first, makes cash wording ambiguous
+        ("CREDIT FPS POST OFFICE CASH", 500.00, C.OTHER, "v2:conflict:payment_rail+cash_paid_in"),
+        ("CASH DEPOSIT VIA FASTER PAYMENT", 500.00, C.OTHER, "v2:conflict:payment_rail+cash_paid_in"),
     ],
     "cash_withdrawal": [
         # cash out keeps the category an unmatched debit gets; the rule id marks it for
@@ -211,12 +217,17 @@ LISTS = {
         ("COUNCIL GRANT", 2500.00, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),
         ("AVIVA INSURANCE CLAIM", 1800.00, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),
         ("CASHBACK", 5.00, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),
-        ("COUNCIL GRANT INV 12", 2500.00, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),  # not a customer
+        # explained wording with an invoice reference: never a customer by order, a judgement
+        ("COUNCIL GRANT INV 12", 2500.00, C.OTHER, "v2:conflict:explained_non_trading+invoice_transfer"),
     ],
     "director_and_shareholder": [
         ("FPS CREDIT DIRECTOR CAPITAL INTRODUCED", 5000.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
         ("FPS CREDIT A DIRECTOR LOAN ACCOUNT", 5000.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
-        ("J SMITH SHAREHOLDER INV 1234", 900.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
+        ("J SMITH SHAREHOLDER", 900.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
+        ("FPS CREDIT J SMITH DIRECTOR LOAN", 900.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
+        # shareholder wording with an invoice reference: names in two buckets (a profile
+        # director with an invoice reference is director funding, R5)
+        ("J SMITH SHAREHOLDER INV 1234", 900.00, C.OTHER, "v2:conflict:director_funding+invoice_transfer"),
         ("CAPITAL INJECTION", 900.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
         # an explicit move from the applicant's own pot is not director money, whatever the pot is called
         ("TFR FROM POT CAPITAL RESERVE", 300.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
@@ -253,7 +264,8 @@ def test_every_list_in_the_task_has_a_rule_in_v2(v2):
             "lender_repayment", "own_pots_savings", "cash_paid_in", "cash_withdrawal", "hmrc_repayment",
             "refunds", "explained_non_trading"} <= ids
     # each list rule is exercised above, in the direction it applies to
-    exercised = {rid.split(":", 1)[1] for *_, rid in CASES}
+    # (a rule recorded as a candidate of a conflict counts: the rail never sets a category)
+    exercised = {i for *_, rid in CASES for i in rid.split(":", 1)[1].removeprefix("conflict:").split("+")}
     assert ids <= exercised, ids - exercised
 
 
@@ -261,7 +273,8 @@ def test_every_credit_category_v2_can_give_has_a_bucket(v2):
     """A credit landing in a category with no bucket would be a reconciliation failure (R3)."""
     for r in v2.rules:
         if r.direction in ("in", "any"):
-            assert r.category in CREDIT_BUCKET, r.id
+            # only a line-type cue may have no category (the rail); it never sets one
+            assert r.category in CREDIT_BUCKET or (r.category is None and r.stage == "line_type"), r.id
     assert CREDIT_BUCKET[C.CASH_DEPOSIT] is Bucket.TRADING_RECEIPTS
 
 
@@ -321,7 +334,7 @@ def test_a_named_lender_refund_is_a_protected_refund_for_every_lender_and_refund
         assert classify(_t(lender, 75.0), v2) == (C.LOAN_DRAWDOWN, "v2:lender_drawdown"), lender
 
 
-POT_MOVES = ("POT TRANSFER", "TO POT", "FROM POT", "TO SPACE", "FROM SPACE", "VAT POT", "TAX POT")
+POT_MOVES = ("POT TRANSFER", "TO POT", "FROM POT", "TO SPACE", "FROM SPACE", "TO VAT POT", "FROM TAX POT")
 
 
 @pytest.mark.contracts
@@ -329,15 +342,22 @@ def test_an_explicit_pot_move_beats_protected_wording_in_the_pot_name(v2):
     """A move to or from the applicant's own pot or space is an own-account transfer in
     either direction, even when the pot's name is protected wording (CAPITAL, DIRECTOR,
     HMRC, a lender, LOAN)."""
-    protected_words = ["CAPITAL", "DIRECTOR", "DIRECTORS", "OWNER", "SHAREHOLDER", "HMRC", "HMRC VAT",
-                       "HMRC PAYE", "HM REVENUE", "LOAN", "FINANCE", "DIVIDEND", "OWNER DRAWINGS",
-                       *_list("lender_drawdown")]
+    protected_words = ["CAPITAL", "DIRECTOR", "DIRECTORS", "OWNER", "SHAREHOLDER", "LOAN", "FINANCE",
+                       "DIVIDEND", "OWNER DRAWINGS", *_list("lender_drawdown")]
     for pot in POT_MOVES:
         for word in protected_words:
             for amount in (300.0, -300.0):
                 desc = f"TFR {pot} {word} RESERVE"
                 assert classify(_t(desc, amount), v2) == (C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"), \
                     (desc, amount)
+        # HMRC is a cue of its own: on a debit the first match is the pot move; on a credit
+        # the two cues disagree and it is a judgement (R4)
+        for word in ("HMRC", "HMRC VAT", "HMRC PAYE", "HM REVENUE"):
+            desc = f"TFR {pot} {word} RESERVE"
+            assert classify(_t(desc, -300.0), v2) == (C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"), desc
+            got = classify(_t(desc, 300.0), v2)
+            assert got[0] is C.OTHER and set(got[1].split(":conflict:")[1].split("+")) == \
+                {"own_pots_savings", "hmrc_repayment"}, (desc, got)
     # only a returned direct debit is tried before an explicit pot move
     assert [r.id for r in v2.rules].index("own_pots_savings") == 1
 
@@ -387,7 +407,8 @@ def test_line_type_cue_beats_every_name_list_in_a_full_matrix(v2):
                 for desc in (f"{rail} {name}", f"{name} {rail} REF 12"):
                     got = classify(_t(desc, amount), v2)
                     if list_id == "cash_venues":
-                        assert got == (C.OTHER, "v2:default"), desc
+                        # electronic money with cash wording: ambiguous, never cash
+                        assert got[0] is C.OTHER and got[1].startswith("v2:conflict:payment_rail+"), desc
                     else:
                         assert got == alone, (desc, got, alone)
 
@@ -499,11 +520,14 @@ def test_v2_is_packaged_with_an_id_and_the_hash_of_its_file(v2):
     # the protected rules are the ones the design names, and they come first
     flags = [r.protected for r in v2.rules]
     assert flags == sorted(flags, reverse=True)
-    # line type first, then the protected name lists
+    # line type first, then the protected name lists; cash paid in is not protected (design rev 3)
     assert [r.id for r in v2.protected] == ["returned_dd", "own_pots_savings", "hmrc_vat", "hmrc_paye",
-                                            "hmrc_repayment", "refunds", "cash_paid_in",
+                                            "hmrc_repayment", "refunds", "payment_rail",
                                             "lender_repayment", "lender_drawdown", "loan_repayment",
                                             "director_funding", "loan_drawdown", "owner_drawings"]
+    # no rule's exception hides another list's cue or name: only wording on no list (a cheque)
+    unless = {r["id"]: r["unless"] for r in data["rules"] if "unless" in r}
+    assert unless == {"cash_paid_in": "(?<![A-Z0-9])(?:CHEQUES?|CHQ)(?![A-Z0-9])"}
 
 
 GOOD = {"id": "card", "names": ["STRIPE"], "direction": "in", "category": "revenue_card_settlement"}
@@ -627,7 +651,7 @@ def test_cma_run_under_v2_records_the_second_review_repros_as_their_buckets(tmp_
     expect = {"STRIPE PAYMENTS UK LTD": ("revenue_card_settlement", "v2:payment_gateways"),
               "DD REPAYMENT REVERSAL IWOCA LTD": ("refund_in", "v2:refunds"),
               "TFR FROM POT CAPITAL RESERVE": ("own_account_transfer", "v2:own_pots_savings"),
-              "CREDIT FPS POST OFFICE CASH": ("other", "v2:default"),
+              "CREDIT FPS POST OFFICE CASH": ("other", "v2:conflict:payment_rail+cash_paid_in"),
               "CARD TESCO": ("supplier", "v2:default")}
     txns = ingest.load_csv(path).transactions
     for t in txns:
@@ -857,9 +881,8 @@ def test_two_line_type_cues_in_different_buckets_are_a_judgement_unless_one_is_t
             if "returned_dd" in (a.id, b.id):
                 assert got == (C.RETURNED_DD, "v2:returned_dd"), desc
             elif {a.id, b.id} == {"hmrc_repayment", "refunds"}:
-                assert got == (C.HMRC_REPAYMENT, "v2:hmrc_repayment"), desc   # an HMRC refund is a repayment
-            elif {a.id, b.id} == {"hmrc_repayment", "own_pots_savings"}:
-                assert got == (C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"), desc   # a pot named HMRC
+                # HMRC REFUND is one longer phrase on the HMRC list, so it is a repayment
+                assert got == (C.HMRC_REPAYMENT, "v2:hmrc_repayment"), desc
             else:
                 assert got[0] == C.OTHER and got[1].startswith("v2:conflict:"), (desc, got)
             checked += 1
@@ -897,3 +920,202 @@ def test_a_v2_table_must_keep_its_stages(mutate, message):
     mutate(data["rules"])
     with pytest.raises(RulesetError, match=message):
         validate_ruleset(data, "v2")
+
+
+# --- revision 3 (D52): ambiguous wording is a verdict of its own --------------------------------
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("desc, amount, category, rule_id", [
+    # verify-27: an HMRC credit with explicit savings move wording: HMRC and own-account cues disagree
+    ("BACS CREDIT HMRC VAT REPAYMENT REF TO SAVINGS", 1200.00, C.OTHER, "v2:conflict:own_pots_savings+hmrc_repayment"),
+    # verify-27: counter cash at a branch whose name holds a generic explained word: names disagree
+    ("COUNTER DEPOSIT GRANT ST BRANCH", 500.00, C.OTHER, "v2:conflict:cash_paid_in+explained_non_trading"),
+    # verify-27: a bare pot label in an external payment is no move wording: not own-account
+    ("FPS CREDIT ACME LTD REF TAX POT", 900.00, C.OTHER, "v2:default"),
+    # verify-27: a card refund from a merchant named with savings-transfer wording: cues disagree
+    ("CARD REFUND FROM SAVINGS AND LOANS LTD", 25.00, C.OTHER, "v2:conflict:own_pots_savings+refunds"),
+])
+def test_p_verify27_repros_take_the_r4_outcome(v2, desc, amount, category, rule_id):
+    assert classify(_t(desc, amount), v2) == (category, rule_id)
+
+
+@pytest.mark.contracts
+def test_cma_run_under_v2_lists_the_verify27_repros_as_unexplained_with_their_candidates(tmp_path, monkeypatch):
+    """End to end: each verify-27 repro is in unexplained money in (M16's evidence), never in
+    M2, and its line records the conflict with every candidate rule (or the default)."""
+    from cma.cli import app
+
+    monkeypatch.setenv("CMA_RULESET", "v2")
+    expect = {"STRIPE PAYMENTS UK LTD": ("revenue_card_settlement", "v2:payment_gateways"),
+              "BACS CREDIT HMRC VAT REPAYMENT REF TO SAVINGS": ("other", "v2:conflict:own_pots_savings+hmrc_repayment"),
+              "COUNTER DEPOSIT GRANT ST BRANCH": ("other", "v2:conflict:cash_paid_in+explained_non_trading"),
+              "FPS CREDIT ACME LTD REF TAX POT": ("other", "v2:default"),
+              "CARD REFUND FROM SAVINGS AND LOANS LTD": ("other", "v2:conflict:own_pots_savings+refunds"),
+              "CARD TESCO": ("supplier", "v2:default")}
+    rows = [(d, a) for d, a in zip(expect, [2000.0, 1200.0, 500.0, 900.0, 25.0, -45.0], strict=True)] * 4
+    path = _write(tmp_path / "s.csv", rows)
+    r = CliRunner().invoke(app, ["run", str(path), "--yes", "--reviewer", "A", "--out", str(tmp_path / "m.md")])
+    assert r.exit_code == 0, r.output
+    record = json.loads((tmp_path / "m.evidence.json").read_text())
+    lines = {d["id"]: d for d in record["lines"]}
+    txns = ingest.load_csv(path).transactions
+    for t in txns:
+        assert (lines[t.id]["category"], lines[t.id]["rule_id"]) == expect[t.description]
+    m = {x["id"]: x for x in record["metrics"]}
+    stripe = {t.id for t in txns if t.description == "STRIPE PAYMENTS UK LTD"}
+    unclear = {t.id for t in txns if t.amount > 0} - stripe
+    assert set(m["M2"]["evidence"]) == stripe
+    assert unclear <= set(m["M16"]["evidence"])
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("desc, amount, category, rule_id", [
+    # a match inside a longer listed phrase counts only as the longer phrase
+    ("STRIPE CAPITAL", 5000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
+    ("HMRC REFUND", 300.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),
+    ("HMRC VAT REFUND", 300.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),
+    ("FPS CREDIT J SMITH DIRECTOR LOAN", 2000.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
+    # agreeing cues outrank names that point elsewhere
+    ("PAYPAL REFUND", 40.00, C.REFUND_IN, "v2:refunds"),
+    ("HMRC CASH PAID IN", 300.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),
+    # the bank's returned-payment code settles the line alone
+    ("UNPAID DD HMRC VAT", 900.00, C.RETURNED_DD, "v2:returned_dd"),
+    # a rail has no bucket: the acquirer decides; with cash wording it is ambiguous
+    ("FPS CREDIT STRIPE PAYMENTS", 900.00, C.REVENUE_CARD, "v2:payment_gateways"),
+    ("FPS CREDIT CASH DEPOSIT", 200.00, C.OTHER, "v2:conflict:payment_rail+cash_paid_in"),
+    # names in two buckets, no cue: ambiguous, never trading receipts
+    ("CASH DEPOSIT DIRECTOR", 3000.00, C.OTHER, "v2:conflict:director_funding+cash_paid_in"),
+    ("COUNTER DEPOSIT IWOCA", 3000.00, C.OTHER, "v2:conflict:lender_drawdown+cash_paid_in"),
+    ("COUNTER DEPOSIT AVIVA INSURANCE CLAIM", 500.00, C.OTHER, "v2:conflict:cash_paid_in+explained_non_trading"),
+    ("COUNCIL GRANT INV 12", 2500.00, C.OTHER, "v2:conflict:explained_non_trading+invoice_transfer"),
+])
+def test_p_verdict_follows_design_c1(v2, desc, amount, category, rule_id):
+    assert classify(_t(desc, amount), v2) == (category, rule_id)
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("desc", ["COUNTER DEPOSIT GRANT ST BRANCH", "CARD REFUND FROM SAVINGS AND LOANS LTD",
+                                  "BACS CREDIT HMRC VAT REPAYMENT REF TO SAVINGS", "CASH DEPOSIT DIRECTOR"])
+def test_p_only_an_override_or_a_profile_name_settles_an_ambiguous_credit_never_a_firm_rule(v2, desc):
+    conflict = classify(_t(desc, 500.0), v2)
+    assert conflict[0] is C.OTHER and ":conflict:" in conflict[1]
+    firm = [_firm("f", ".", "in", C.REVENUE_TRANSFER)]
+    assert classify(_t(desc, 500.0), v2, firm_rules=firm) == conflict
+    assert classify(_t(desc, 500.0), v2, override=LineOverride(C.CASH_DEPOSIT, "override:1")) == \
+        (C.CASH_DEPOSIT, "override:1")
+    profile = ProfileNames(own_accounts=(desc.split()[-1],))
+    assert classify(_t(desc, 500.0), v2, profile=profile) == (C.OWN_ACCOUNT_TRANSFER, "profile:own_account")
+
+
+@pytest.mark.invariants
+def test_p_a_profile_director_outranks_cash_wording(v2):
+    profile = ProfileNames(directors=("JANE DOE",))
+    assert classify(_t("CASH PAID IN JANE DOE", 900.0), v2, profile=profile) == (C.DIRECTOR_FUNDING, "profile:director")
+    assert classify(_t("CASH PAID IN JANE DOE", 900.0), v2) == (C.CASH_DEPOSIT, "v2:cash_paid_in")
+
+
+def _credit_samples() -> list[str]:
+    """Every credit description the tests in this module use, plus every listed name alone."""
+    data = yaml.safe_load(resources.files("cma.rules").joinpath("v2.yaml").read_bytes())
+    names = [n for r in data["rules"] if "names" in r and r["direction"] != "out" for n in r["names"]]
+    descs = [c[1] for c in CASES if c[2] > 0] + names
+    for a in ("TO SAVINGS", "REFUND", "HMRC", "FPS", "COUNTER DEPOSIT", "IWOCA", "CAPITAL INTRODUCED", "LOAN",
+              "GRANT", "WORLDPAY", "STRIPE", "ETSY", "DELIVEROO", "INV 12"):
+        for b in names:
+            descs.append(f"{a} / {b}")
+    return descs
+
+
+def _verdict_key(category: Category, rule_id: str) -> tuple:
+    """The verdict, which must not depend on list order: the money-in bucket, and for an
+    ambiguous credit the set of candidates. Among agreeing rules (one bucket) the rule
+    recorded is the first in table order (design C1), so the rule id is not compared."""
+    if ":conflict:" in rule_id:
+        return CREDIT_BUCKET[category], frozenset(rule_id.split(":conflict:", 1)[1].split("+"))
+    return CREDIT_BUCKET[category], None
+
+
+@pytest.mark.invariants
+def test_p_shuffling_lists_within_a_stage_gives_the_same_verdict_on_every_credit(v2):
+    """Design Rollout: the verdict on a credit does not depend on the order of the lists
+    within a stage (D52). Every stage of the table is shuffled with several seeds."""
+    import random
+
+    descs = _credit_samples()
+    want = [_verdict_key(*classify(_t(d, 100.0), v2)) for d in descs]
+    for seed in range(8):
+        rng = random.Random(seed)
+        cues = [r for r in v2.rules if r.stage == "line_type"]
+        names = [r for r in v2.rules if r.stage == "names"]
+        rng.shuffle(cues)
+        rng.shuffle(names)
+        shuffled = categorise.Ruleset(id="v2", sha256=v2.sha256, rules=tuple(cues + names))
+        got = [_verdict_key(*classify(_t(d, 100.0), shuffled)) for d in descs]
+        assert got == want, [(d, a, b) for d, a, b in zip(descs, got, want, strict=True) if a != b][:5]
+
+
+def _expected_verdict(parts: list[list[Rule]]) -> tuple[Bucket, set[str] | None]:
+    """R4's ambiguity policy, written out again from the rules each part matches alone."""
+    rules = {r.id: r for p in parts for r in p}.values()
+    bank = [r for r in rules if r.id == "returned_dd"]
+    if bank:
+        return Bucket.REFUNDS_RETURNED, None
+    cues = [r for r in rules if r.stage == "line_type" and r.category is not None]
+    names = [r for r in rules if r.stage == "names"]
+    rails = [r for r in rules if r.stage == "line_type" and r.category is None]
+    if cues:
+        deciding = cues
+    elif rails and any(r.category is C.CASH_DEPOSIT for r in names):
+        return Bucket.UNEXPLAINED, {r.id for r in rails + names}
+    else:
+        deciding = names
+    if not deciding:
+        return Bucket.UNEXPLAINED, None
+    if len({CREDIT_BUCKET[r.category] for r in deciding}) > 1:
+        return Bucket.UNEXPLAINED, {r.id for r in deciding}
+    return CREDIT_BUCKET[deciding[0].category], None
+
+
+@pytest.mark.invariants
+def test_p_pairwise_matrix_every_two_credit_lists_combine_by_the_policy_alone(v2):
+    """Every listed credit name (and rail) crossed with one name from every other credit
+    list: what the pair matches is exactly what each part matches alone (no exception in
+    one list hides another list's wording), and the verdict is R4's policy on that union."""
+    data = yaml.safe_load(resources.files("cma.rules").joinpath("v2.yaml").read_bytes())
+    credit_lists = {r["id"]: r["names"] for r in data["rules"] if "names" in r and r["direction"] != "out"}
+    samples = {rid: names[0] for rid, names in credit_lists.items()}
+    samples.update({"card_settlement": "CARD SETTLEMENT", "invoice_transfer": "INV 12", "loan_drawdown": "LOAN",
+                    "returned_dd": "UNPAID DD"})
+    checked = 0
+    for rid, names in [*credit_lists.items(), ("returned_dd", ["UNPAID DD"])]:
+        for name in names:
+            for other, sample in samples.items():
+                if other == rid:
+                    continue
+                first, second = (sample, name) if other == "returned_dd" else (name, sample)
+                desc = f"{first} / {second}"
+                a = categorise.credit_matches(v2, first, 100.0)
+                b = categorise.credit_matches(v2, second, 100.0)
+                assert {r.id for r in categorise.credit_matches(v2, desc, 100.0)} == {r.id for r in a + b}, desc
+                bucket, candidates = _expected_verdict([a, b])
+                got = classify(_t(desc, 100.0), v2)
+                assert _verdict_key(*got) == (bucket, candidates), (desc, got)
+                checked += 1
+    assert checked > 1000
+
+
+@pytest.mark.contracts
+def test_only_a_line_type_cue_of_a_v2_table_may_have_no_category():
+    rail = {"id": "rail", "names": ["FPS"], "direction": "in", "protected": True, "stage": "line_type"}
+    name = {**GOOD, "stage": "names"}
+    validate_ruleset({"id": "v2", "frozen": False, "rules": [rail, name]}, expected_id="v2")
+    with pytest.raises(RulesetError, match="missing category"):
+        validate_ruleset({"id": "v2", "frozen": False,
+                          "rules": [rail, {k: v for k, v in name.items() if k != "category"}]}, expected_id="v2")
+    with pytest.raises(RulesetError, match="missing category"):
+        validate_ruleset({"id": "v2", "frozen": True, "rules": [rail]}, expected_id="v2")
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [rail, name]}, "v2", "t", "0")
+    assert rs.rules[0].category is None
+    # the cue alone never sets a category: a debit or a credit with only the rail is the default
+    assert classify(_t("FPS ACME", 5.0), rs) == (C.OTHER, "v2:default")
+    assert classify(_t("FPS ACME", -5.0), rs) == (C.SUPPLIER, "v2:default")

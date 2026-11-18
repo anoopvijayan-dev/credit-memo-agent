@@ -15,15 +15,24 @@ cash advance providers, own pots and savings, cash paid in, cash-withdrawal word
 HMRC, refunds, explained non-trading money in). The matching passes below (reversals,
 round trips) stay in code.
 
-Precedence, first match wins: a per-line override; the table's protected rules (in v2,
-first the line type from explicit wording: returned DD, a move to or from the applicant's
-own pot or savings, HMRC, a refund or reversal; then the protected name lists: lenders,
-director, capital, shareholder); the case profile's names (directors
-and shareholders, own accounts); firm rules; the rest of the table; the default (a debit
-is supplier, a credit is OTHER, unexplained). Every line records the rule that set its
-category in Transaction.rule_id: "<ruleset>:<rule id>", "<ruleset>:default",
-"<ruleset>:round_trip", "profile:director", "profile:own_account", "firm:<rule id>" or
-the override's own reference.
+A v2 credit gets a verdict (design C1, R4): every matching rule is collected, a match
+inside a longer match from another rule counts only as the longer one, the bank's own
+returned-payment code settles the line alone, otherwise line-type cues decide when any
+cue with a category matches and the name lists decide when none does. Rules in one
+money-in bucket agree (the first in table order is recorded); rules in two or more, or a
+payment rail with cash paid-in wording, make the credit ambiguous. The verdict does not
+depend on the order of rules within a stage.
+
+Precedence, highest first: a per-line override; a protected verdict (the line-type cues,
+lender, director, capital-introduced, shareholder and generic loan wording); the case
+profile's names (directors and shareholders, own accounts); an ambiguous verdict, which
+leaves the credit OTHER (unexplained) with every candidate recorded; firm rules; an
+unprotected verdict; the default (a debit is supplier, a credit is OTHER, unexplained).
+Debits, and every line under the frozen v1 table, keep first-match order: the protected
+rules, the profile, firm rules, the rest of the table. Every line records the rule that
+set its category in Transaction.rule_id: "<ruleset>:<rule id>", "<ruleset>:default",
+"<ruleset>:round_trip", "<ruleset>:conflict:<id>+<id>...", "profile:director",
+"profile:own_account", "firm:<rule id>" or the override's own reference.
 
 Revenue is claimed narrowly. A card or gateway settlement is trading income. A bank
 transfer in is only counted as a customer payment when it carries an invoice
@@ -51,7 +60,7 @@ from typing import Literal
 
 import yaml
 
-from .models import CREDIT_BUCKET, Bucket, Category, Statement, Transaction
+from .models import CREDIT_BUCKET, Category, Statement, Transaction
 
 Direction = Literal["in", "out", "any"]
 
@@ -63,6 +72,9 @@ DEFAULT_RULESET = "v1"
 DIRECTIONS = ("in", "out", "any")
 TABLE_KEYS = {"id", "frozen", "rules"}
 RULE_KEYS = {"id", "direction", "category"}  # required, plus a pattern or names
+# A line-type rule may have no category: a cue that only says how the money moved (the
+# payment rail). It never sets a category itself.
+CUE_ONLY_KEYS = RULE_KEYS - {"category"}
 MATCH_KEYS = {"pattern", "names"}
 OPTIONAL_KEYS = {"unless", "requires", "protected", "stage"}
 # Stages of a table that is not frozen: explicit line-type wording first, then the name lists.
@@ -83,7 +95,7 @@ class Rule:
     id: str
     pattern: re.Pattern[str]
     direction: Direction
-    category: Category
+    category: Category | None  # None only for a line-type cue with no bucket (the payment rail)
     protected: bool = False  # wins over profile names and firm rules (R21)
     unless: re.Pattern[str] | None = None  # the rule does not match when this does
     requires: re.Pattern[str] | None = None  # the rule matches only when this does too
@@ -146,7 +158,8 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
         if not isinstance(r, dict):
             problems.append(f"{where}: not a mapping")
             continue
-        for key in sorted(RULE_KEYS - set(r)):
+        cue_only = r.get("stage") == "line_type" and data.get("frozen") is False
+        for key in sorted((CUE_ONLY_KEYS if cue_only else RULE_KEYS) - set(r)):
             problems.append(f"{where}: missing {key}")
         if not MATCH_KEYS & set(r):
             problems.append(f"{where}: missing pattern (or names)")
@@ -222,7 +235,7 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) 
         sha256=sha256,
         frozen=bool(data.get("frozen", False)),
         rules=tuple(
-            Rule(r["id"], _rule_pattern(r), r["direction"], Category(r["category"]),
+            Rule(r["id"], _rule_pattern(r), r["direction"], Category(r["category"]) if "category" in r else None,
                  protected=r.get("protected", False), stage=r.get("stage"),
                  unless=re.compile(r["unless"]) if "unless" in r else None,
                  requires=re.compile(r["requires"]) if "requires" in r else None)
@@ -332,6 +345,65 @@ def _names_in(names: Sequence[str], description: str) -> bool:
     return bool(names) and re.search(names_pattern(names), description) is not None
 
 
+def _spans(rule: Rule, description: str) -> list[tuple[int, int]]:
+    return [m.span() for m in rule.pattern.finditer(description) if m.end() > m.start()]
+
+
+def credit_matches(ruleset: Ruleset, description: str, amount: float) -> list[Rule]:
+    """Every rule of `ruleset` that matches a line, in table order, less those whose every
+    match lies inside a longer match of another rule (STRIPE inside STRIPE CAPITAL, REFUND
+    inside HMRC REFUND, LOAN inside DIRECTOR LOAN): those count only as the longer one."""
+    desc = description.upper()
+    matched = [(r, _spans(r, desc)) for r in ruleset.rules if rule_matches(r, desc, amount)]
+
+    def inside_longer(rule: Rule, spans: list[tuple[int, int]]) -> bool:
+        others = [o for other, ss in matched if other is not rule for o in ss]
+        return bool(spans) and all(any(a <= s and e <= b and b - a > e - s for a, b in others) for s, e in spans)
+
+    return [r for r, spans in matched if not inside_longer(r, spans)]
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """What the table says about a credit: the rule that settles it, or, when the wording
+    points to more than one money-in bucket, every candidate rule."""
+
+    rules: tuple[Rule, ...]
+    ambiguous: bool = False
+
+    @property
+    def rule(self) -> Rule:
+        return self.rules[0]
+
+
+def _bucket(rule: Rule) -> object:
+    return CREDIT_BUCKET.get(rule.category, rule.category) if rule.category is not None else None
+
+
+def _decide(rules: Sequence[Rule]) -> Verdict:
+    if len({_bucket(r) for r in rules}) > 1:
+        return Verdict(tuple(rules), ambiguous=True)
+    return Verdict((rules[0],))
+
+
+def credit_verdict(ruleset: Ruleset, description: str, amount: float) -> Verdict | None:
+    """R4's verdict on a credit under a table that is not frozen, or None when no rule
+    with a category matches."""
+    rules = credit_matches(ruleset, description, amount)
+    cues = [r for r in rules if r.stage == "line_type"]
+    bank = [r for r in cues if r.category is not None and r.pattern.pattern.startswith("^")]
+    if bank:  # the bank's own code at the start of the line (UNPAID DD), not payer wording
+        return Verdict((bank[0],))
+    bucketed = [r for r in cues if r.category is not None]
+    if bucketed:
+        return _decide(bucketed)
+    names = [r for r in rules if r.stage == "names" and r.category is not None]
+    rails = [r for r in cues if r.category is None]
+    if rails and any(r.category is Category.CASH_DEPOSIT for r in names):
+        return Verdict(tuple(rails + names), ambiguous=True)  # electronic money is not cash
+    return _decide(names) if names else None
+
+
 def classify(
     t: Transaction,
     ruleset: Ruleset | None = None,
@@ -346,40 +418,50 @@ def classify(
         return override.category, override.ref
     desc = t.description.upper()
     if t.amount > 0 and not ruleset.frozen:
-        # Two line-type cues that put a credit in different money-in buckets ("INSURANCE
-        # CLAIM REFUND", "COUNTER DEPOSIT FROM SAVINGS") are a judgement for the underwriter,
-        # never a guess by rule order. The rule id names both cues.
-        cues = [r for r in ruleset.rules if r.stage == "line_type" and rule_matches(r, desc, t.amount)]
-        # A cue anchored at the start of the line is the bank's own transaction code
-        # (`^UNPAID DD`) and is decisive; otherwise cues in different buckets conflict.
-        decisive = any(r.pattern.pattern.startswith("^") for r in cues)
-        if not decisive and len({CREDIT_BUCKET.get(r.category, r.category) for r in cues}) > 1:
-            return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(r.id for r in cues)
-        if not cues:
-            # Ambiguous wording never resolves to trading receipts: when the name list that
-            # wins by order counts a credit as trading ("CASH DEPOSIT", an acquirer) and a
-            # later list counts it as something else ("DIRECTOR", a lender, "CAPITAL" in a
-            # branch name), it is a judgement for the underwriter. A list that wins as
-            # non-trading ("STRIPE CAPITAL", a named lender) stands.
-            names = [r for r in ruleset.rules if r.stage == "names" and rule_matches(r, desc, t.amount)]
-            buckets = {CREDIT_BUCKET.get(r.category, r.category) for r in names}
-            if names and CREDIT_BUCKET.get(names[0].category) == Bucket.TRADING_RECEIPTS and len(buckets) > 1:
-                return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(r.id for r in names)
+        return _classify_credit(t, desc, ruleset, profile, firm_rules)
     for rule in ruleset.protected:
-        if rule_matches(rule, desc, t.amount):
+        if rule.category is not None and rule_matches(rule, desc, t.amount):
             return rule.category, f"{ruleset.id}:{rule.id}"
+    found = _profile(t, desc, profile)
+    if found:
+        return found
+    for rule in firm_rules:
+        if rule_matches(rule, desc, t.amount):
+            return rule.category, f"firm:{rule.id}"
+    for rule in ruleset.unprotected:
+        if rule.category is not None and rule_matches(rule, desc, t.amount):
+            return rule.category, f"{ruleset.id}:{rule.id}"
+    return (Category.SUPPLIER if t.amount < 0 else Category.OTHER), f"{ruleset.id}:default"
+
+
+def _profile(t: Transaction, desc: str, profile: ProfileNames | None) -> tuple[Category, str] | None:
     if profile is not None:
         if t.amount > 0 and _names_in(profile.directors, desc):
             return Category.DIRECTOR_FUNDING, "profile:director"
         if t.amount != 0 and _names_in(profile.own_accounts, desc):
             return Category.OWN_ACCOUNT_TRANSFER, "profile:own_account"
+    return None
+
+
+def _classify_credit(t: Transaction, desc: str, ruleset: Ruleset, profile: ProfileNames | None,
+                     firm_rules: Sequence[Rule]) -> tuple[Category, str]:
+    """Design C1's precedence for a credit, after the override: (2) a protected verdict,
+    (3) a profile name, (4) an ambiguous verdict, (5) firm rules, (6) an unprotected
+    verdict, (7) the default. Only (3) and an override settle an ambiguous credit."""
+    verdict = credit_verdict(ruleset, desc, t.amount)
+    if verdict is not None and not verdict.ambiguous and verdict.rule.protected:
+        return verdict.rule.category, f"{ruleset.id}:{verdict.rule.id}"
+    found = _profile(t, desc, profile)
+    if found:
+        return found
+    if verdict is not None and verdict.ambiguous:
+        return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(r.id for r in verdict.rules)
     for rule in firm_rules:
         if rule_matches(rule, desc, t.amount):
             return rule.category, f"firm:{rule.id}"
-    for rule in ruleset.unprotected:
-        if rule_matches(rule, desc, t.amount):
-            return rule.category, f"{ruleset.id}:{rule.id}"
-    return (Category.SUPPLIER if t.amount < 0 else Category.OTHER), f"{ruleset.id}:default"
+    if verdict is not None:
+        return verdict.rule.category, f"{ruleset.id}:{verdict.rule.id}"
+    return Category.OTHER, f"{ruleset.id}:default"
 
 
 def categorise_one(t: Transaction, ruleset: Ruleset | None = None) -> Category:
