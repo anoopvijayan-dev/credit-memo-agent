@@ -1,0 +1,73 @@
+The gap that failed attempt 1 is closed. The P7 golden now gives the two-credit Monzo invoice fixture its own M1–M16 baseline, and the runner's marker tiers pass. I changed no code: everything is in the existing commit d079ca2, and I only walked the checklist and wrote claim.json.
+
+**Evidence from the runner's tiers:**
+- **History rebuild:** `pytest -m 'invariants or dual_run'` gives 63 passed. That includes the test that rebuilds the golden from fd7b64c and checks it equals the committed file on every key.
+- **The Monzo fixture:** it is in the golden with 16 metric rows. `test_p7_golden_covers_every_case` checks it is there, and its replay under v1 is its own passing test result (`fixture-2-lines0`).
+- **Other tiers:** the full suite passes (357 tests), and so do ruff on `src tests evals`, compileall and the offline evals (9/9 memos grounded). An unknown `CMA_RULESET=v9` is refused with exit 2, not blamed on the model.
+
+**Gaps for the owner (in `notes`):**
+- **No alert or runbook entry.** This is by design: the tool runs locally, so a refusal with a non-zero exit stands in for alerting.
+- **Rollback by flag can't be tried yet.** Only v1 exists, so `CMA_RULESET` has nothing to switch back from until v2 lands. Rollback today means reinstalling the previous wheel, and none of the configured tiers has tried that in a separate environment.
+- **No changelog line.** The repo has no CHANGELOG file, so the owner needs to decide where a release note goes.
+- **No packaging claim.** The wheel-install test runs only in the full suite, not in a configured tier, so I claimed nothing beyond "full suite passed".
+- **Lint errors in old seat folders.** `ruff check .` reports 14 errors, all in helper scripts from earlier seats under `.bridgie/runs/` (implementer-02 and implementer-05). That folder is committed to git but outside CI's lint scope. I didn't touch them; the owner should decide whether to remove them.
+
+```json
+{
+  "task": "T01",
+  "claims": [
+    {
+      "text": "P7 (verify-10 finding): the golden is rebuilt from fd7b64c by running the pre-change suite with capture_plugin.py, which now also records every whole statement categorise.categorise returns. The rebuild equals the committed golden on every key. The marker tiers pass.",
+      "proof_cmd": "python -m pytest -v -p no:cacheprovider -m 'invariants or dual_run'",
+      "proof_output": "tests/test_p7_history.py::test_p7_golden_is_rebuilt_exactly_from_the_pre_change_commit PASSED; tests/test_rules.py::test_p7_golden_covers_every_case PASSED; 63 passed, 294 deselected in 8.05s"
+    },
+    {
+      "text": "P7: the two-credit Monzo invoice fixture (tests/test_import_monzo.py:136) is now a whole-statement fixture in the golden, with all 16 M1-M16 rows. test_p7_golden_covers_every_case asserts it is there, and its v1 replay is a separate test result (fixture-2-lines0).",
+      "proof_cmd": "python -m pytest -p no:cacheprovider -v -k p7_v1_test_fixtures tests/test_rules.py",
+      "proof_output": "tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-2-lines0] PASSED ... 43 passed, 76 deselected in 0.17s (golden: made_at_commit fd7b64c, synthetic=13 examples=1 fixtures=43 lines=13; the fixture with descriptions {FPS CREDIT OAKFIELD PROPERTIES INV1042, BACS CREDIT ACME LTD INVOICE2210} has 16 metric rows, M2=5700.0)"
+    },
+    {
+      "text": "Full suite, lint (the CI scope: src tests evals), compileall and the offline evals pass.",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider; ruff check src tests evals; python -m compileall -q src tests; python evals/run_evals.py",
+      "proof_output": "357 passed in 17.81s; All checks passed!; compileall-ok; 9/9 memos fully grounded; model = fake (exit 0)"
+    },
+    {
+      "text": "Failure modes and input validation (R54): an unknown or damaged CMA_RULESET table is a refusal (exit 2), not a model failure (exit 4). Malformed tables are rejected at load, naming the rule: wrong types, duplicate keys, bad regexes (re.error, OverflowError, RecursionError), and a missing file or package.",
+      "proof_cmd": "CMA_RULESET=v9 python -m cma.cli run examples/cafe_stretched.csv --yes --reviewer A; echo $?  (plus test_rules.py validation tests in the full suite)",
+      "proof_output": "v9_exit=2; the validation and refusal tests are among the 357 passed"
+    },
+    {
+      "text": "Data/migration: the change is additive. Evidence gains a ruleset {id, sha256} key, and the existing keys are unchanged apart from M16's name. A review left pending in a checkpoint by fd7b64c resumes here: its evidence names v1 marked inferred, and with a damaged table it is refused with nothing recorded.",
+      "proof_cmd": "python -m pytest -v -p no:cacheprovider -m 'invariants or dual_run'",
+      "proof_output": "test_a_review_left_pending_by_the_pre_change_version_resumes_here is marked contracts+dual_run and is among the 63 passed"
+    }
+  ],
+  "files_changed": [
+    ".github/workflows/ci.yml",
+    "README.md",
+    "examples/cafe_stretched.memo.evidence.json",
+    "examples/cafe_stretched.memo.md",
+    "pyproject.toml",
+    "src/cma/categorise.py",
+    "src/cma/cli.py",
+    "src/cma/graph.py",
+    "src/cma/metrics.py",
+    "src/cma/rules/__init__.py",
+    "src/cma/rules/v1.yaml",
+    "tests/golden/p7_tools/capture_plugin.py",
+    "tests/golden/p7_tools/make_p7_baseline.py",
+    "tests/golden/p7_v1_baseline.json.gz",
+    "tests/test_cli.py",
+    "tests/test_p7_history.py",
+    "tests/test_rules.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "verify-10 major: golden omits M1-M16 for the two-credit Monzo invoice fixture (capture_plugin.py:24 captured whole statements only via metrics.compute)",
+      "disposition": "not_reproduced",
+      "evidence": "At d079ca2, capture_plugin wraps categorise.categorise and records its output. The golden rebuilt from fd7b64c contains that fixture with 16 metric rows, test_p7_golden_covers_every_case asserts it, and test_p7_v1_test_fixtures_match_the_baseline[fixture-2-lines0] passes under the runner's marker tiers."
+    }
+  ],
+  "notes": "Checklist walk (hardener-12). Failure modes: the change makes no external calls; categorisation is a pure function, so it is idempotent; validation refuses before any output; a resume refusal records nothing (tested). Retry/dead letter: n/a, there are no queues. Data: additive; reversible by reinstalling the previous wheel; no backfill; no PII added (evidence gains only a table id and hash). Security: no new entry point (CMA_RULESET is checked against an allow-list, so an id cannot name a path; tested); YAML loaded with SafeLoader plus duplicate-key refusal; no secrets; no new dependency (PyYAML already used by policy.py). Performance: the table is parsed once per process (lru_cache); the hot path is unchanged apart from iterating dataclasses; not benchmarked. Observability: the evidence JSON records the ruleset id and sha256 (proved by tests), which is how the tool traces this per run. GAP for the owner: there is no alert, by design (local tool, design.md Observability: refusal with a non-zero exit stands in for alerting), and no runbook entry. Operability: the flag is CMA_RULESET. GAP: only v1 exists in this change, so 'rollback by flag' cannot be tried until v2 lands; rollback today is reinstalling the previous wheel, which has not been tried in a separate environment by a configured tier. Not claimed: the wheel-install test and the CI wheel check are not in the runner's configured tiers (test_the_built_wheel_carries_v1_byte_for_byte is in the full suite only), so no packaging claim is made beyond 'full suite passed'. Docs: README updated for CMA_RULESET and the M16 rename. GAP: there is no CHANGELOG file in the repo, so no release-note line was written; the owner should decide where one goes. Hygiene: ruff on '.' reports 14 errors, all in tracked files under .bridgie/runs/statement-review/implementer-02 and implementer-05 (helper scripts from earlier seats). They are outside CI's lint scope, but they are tracked in the worktree; the owner should decide whether to remove them, and this seat did not touch them."
+}
+```

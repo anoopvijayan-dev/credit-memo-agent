@@ -1,0 +1,55 @@
+I fixed the gap the reviewer found: the P7 golden now gives the two-credit Monzo invoice fixture its own M1–M16 baseline, and the rebuild from fd7b64c matches the committed file on every key. The full suite, ruff and compileall pass, and the offline evals still report 9 of 9 memos grounded.
+
+**Cause.** The capture plugin recorded a whole statement only when a test called `metrics.compute`. Tests that categorised a statement without computing figures left only single lines in the golden.
+
+**Fix.** The plugin now also wraps `categorise.categorise` and records every statement it returns, so each one gets a full baseline. I changed the coverage test first: it now requires the Oakfield INV1042 and Acme INVOICE2210 statement, and it failed on the old golden.
+
+**Effect on the golden.**
+- The rebuild gives 43 fixtures, up from 37. The 37 old ones are unchanged and in the same order.
+- Six whole statements are new. The Monzo fixture is one of them (M2 = 5700.0); the other five came from other test files with the same gap.
+- Four single lines moved out of the `lines` list because they now sit inside a statement with a full baseline.
+- I raised the minimum fixture count in both tests from 37 to 43.
+
+**Results.**
+- `python -m pytest -v -m 'invariants or dual_run'`: 63 passed, none skipped, including the rebuild-from-fd7b64c test and the coverage test.
+- `python -m pytest -q`: 357 passed.
+
+No production code changed in this attempt. The commit is d079ca2 on `bridgie-task/statement-review/T01`.
+
+```json
+{
+  "task": "T01",
+  "claims": [
+    {
+      "text": "P7: the golden is rebuilt from the pre-change commit fd7b64c with the fixed capture and equals the committed golden on every key; it now holds a whole-statement M1-M16 baseline for the two-credit Monzo invoice fixture (tests/test_import_monzo.py:136), and v1 reproduces every synthetic case, example, fixture and single line.",
+      "proof_cmd": "python -m pytest -v -m 'invariants or dual_run'",
+      "proof_output": "tests/test_p7_history.py::test_p7_golden_is_rebuilt_exactly_from_the_pre_change_commit PASSED\ntests/test_rules.py::test_p7_golden_covers_every_case PASSED\n====================== 63 passed, 294 deselected in 7.70s ======================"
+    },
+    {
+      "text": "Full suite passes.",
+      "proof_cmd": "python -m pytest -q",
+      "proof_output": "357 passed in 17.10s"
+    },
+    {
+      "text": "Lint is clean.",
+      "proof_cmd": "ruff check src tests evals",
+      "proof_output": "All checks passed!"
+    }
+  ],
+  "files_changed": [
+    "tests/golden/p7_tools/capture_plugin.py",
+    "tests/golden/p7_tools/make_p7_baseline.py",
+    "tests/golden/p7_v1_baseline.json.gz",
+    "tests/test_rules.py",
+    "tests/test_p7_history.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "tests/golden/p7_tools/capture_plugin.py:24 — the golden does not cover M1-M16 for every committed fixture; whole statements were captured only when a test called metrics.compute, so the two-credit Monzo invoice fixture was represented only by single categorisation rows.",
+      "disposition": "reproduced",
+      "evidence": "Wrote the failing check first: test_p7_golden_covers_every_case now requires a fixture whose lines are exactly the Oakfield INV1042 and Acme INVOICE2210 credits (it failed on the old golden). The capture plugin now also wraps categorise.categorise and records every statement it returns (VAT stagger None), so make_p7_baseline.py gives each whole categorised statement an M1-M16 baseline. The rebuild from fd7b64c gives 43 fixtures, up from 37: the 37 earlier ones are unchanged and in the same order, and six whole statements are new, the Monzo invoice fixture among them (M2 = 5700.0). Four single lines moved out of 'lines' because they are now inside a statement with a full baseline. The golden was recompressed with mtime=0, and both fixture-count floors were raised from 37 to 43."
+    }
+  ],
+  "notes": "The general fix covers every statement that pre-change tests categorise as a whole, not only the Monzo one. The other five new whole-statement fixtures were missing for the same reason, in other test files. No production code changed in this attempt; R54 code is as verified in verify-10. Commit d079ca2 on bridgie-task/statement-review/T01."
+}
+```
