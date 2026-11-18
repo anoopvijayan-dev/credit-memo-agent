@@ -1,0 +1,59 @@
+{
+  "task": "T12",
+  "claims": [
+    {
+      "text": "P15 through production code: `cma case check <case folder>` loads the case's log (cases/<id>/log.jsonl via case.for_case) and checks it against its head file. A changed, removed, reordered or rebuilt-with-recomputed-hashes entry exits 3 and names entry 2 without quoting entry content. A torn last entry exits 3 and is named as entry 3, incomplete. An intact log exits 0. Tests: test_p15_loading_a_case_detects_a_tampered_log_and_names_the_first_bad_entry[change|remove|reorder|rebuild] and test_p15_loading_a_case_with_a_torn_last_entry_names_it_and_says_to_confirm_dropping_it, marked invariants.",
+      "proof_cmd": "python -m pytest -v -m invariants",
+      "proof_output": "tests/test_case_log.py::test_p15_loading_a_case_detects_a_tampered_log_and_names_the_first_bad_entry[change] PASSED\ntests/test_case_log.py::test_p15_loading_a_case_detects_a_tampered_log_and_names_the_first_bad_entry[remove] PASSED\ntests/test_case_log.py::test_p15_loading_a_case_detects_a_tampered_log_and_names_the_first_bad_entry[reorder] PASSED\ntests/test_case_log.py::test_p15_loading_a_case_detects_a_tampered_log_and_names_the_first_bad_entry[rebuild] PASSED\ntests/test_case_log.py::test_p15_loading_a_case_with_a_torn_last_entry_names_it_and_says_to_confirm_dropping_it PASSED\n82 passed, 312 deselected"
+    },
+    {
+      "text": "If appends keep landing on every read attempt and another writer still holds the lock at the fallback, a reader reports the log as recorded (ok, in_progress) and never reports it as broken. A failure inside the recorded entries is still reported. Test: test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing. It failed before the fix with first_bad=11 'was added after the head the head file records (entry 10)'.",
+      "proof_cmd": "python -m pytest -v -rs",
+      "proof_output": "tests/test_case_log.py::test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing PASSED\n394 passed"
+    },
+    {
+      "text": "If the reader cannot create or open the lock file, a torn log is still named by its first bad entry (entry 3, torn) instead of raising PermissionError. Test: test_a_torn_log_is_still_named_when_the_reader_cannot_create_the_lock_file. With the fix removed, the same test fails with PermissionError.",
+      "proof_cmd": "python -m pytest -v -rs",
+      "proof_output": "tests/test_case_log.py::test_a_torn_log_is_still_named_when_the_reader_cannot_create_the_lock_file PASSED\n394 passed"
+    },
+    {
+      "text": "The other configured tiers still pass: ruff, compileall, contracts, dual_run and the offline evals.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q -m contracts && python -m pytest -q -m dual_run && python evals/run_evals.py",
+      "proof_output": "All checks passed!\n11 passed, 383 deselected\n10 passed, 384 deselected\n9/9 memos fully grounded; model = fake"
+    }
+  ],
+  "files_changed": [
+    "src/cma/case.py",
+    "src/cma/cli.py",
+    "tests/test_case_log.py",
+    "README.md"
+  ],
+  "dispositions": [
+    {
+      "finding": "major src/cma/case.py:296 — The integrity check is unreachable from production case loading; the runner exercises the case-log library directly.",
+      "disposition": "reproduced",
+      "evidence": "Added case.for_case(folder), which returns the log at cases/<id>/log.jsonl as the design lays it out, and the production command `cma case check FOLDER` in src/cma/cli.py. The command loads the log, exits 3 naming the first bad entry (tamper or torn) and exits 0 when the log is intact. It is tested through the Typer app by the invariants-marked tests test_p15_loading_a_case_detects_a_tampered_log_and_names_the_first_bad_entry[change|remove|reorder|rebuild] and test_p15_loading_a_case_with_a_torn_last_entry_names_it_and_says_to_confirm_dropping_it, all PASSED in the invariants tier. Sign-off (T27) and the case store's other commands (T13) remain theirs; see notes."
+    },
+    {
+      "finding": "major src/cma/case.py:322 — A reader can report a healthy log as corrupted during rapid appends: after the retry budget, the lock-contention branch returns a failure computed from a stale head and newer log bytes.",
+      "disposition": "reproduced",
+      "evidence": "Reproduced exactly as described by test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing: two committed appends between each head read and log read, and a lock holder on the last attempt. Before the fix it failed with first_bad=11, 'was added after the head the head file records'. The fix: LogCheck now records how many entries the head file records. In the CaseLocked fallback, a failure lying wholly after those entries (past_recorded) is reported as the log as recorded (as_recorded(): ok, in_progress). This generalises the earlier torn-only rule. A failure at or before a recorded entry is still returned, because the log is append-only, so a log read after a head always contains that head's entries. The test now passes, and every earlier P15 test still passes (82 invariants)."
+    },
+    {
+      "finding": "minor src/cma/case.py:365 — A readable torn log can fail with PermissionError during verification, losing the first-bad-entry diagnostic.",
+      "disposition": "reproduced",
+      "evidence": "test_a_torn_log_is_still_named_when_the_reader_cannot_create_the_lock_file makes os.open raise PermissionError for the lock path. Without the fix it fails with PermissionError at tests/test_case_log.py:807. verify() now catches OSError from taking the lock, other than CaseLocked: nobody can be writing, so it returns the check as read. require_intact then raises CaseLogBroken with first_bad=3, torn. The test passes."
+    },
+    {
+      "finding": "minor src/cma/case.py:64 — The exact scratchpad timing claim (75× multiplier, 1.5-second observation) is unproven by the runner.",
+      "disposition": "reproduced",
+      "evidence": "The claim was not proven by any configured tier. This claim.json drops it, and the code comment at case.py:64 no longer asserts a timing ('a writer paused for longer is handled in verify'). Correctness under a pause of any length is proven by the event-gated test test_a_reader_never_reports_a_live_append_as_torn_however_long_the_writer_pauses and the new rapid-append test, both in the full suite."
+    },
+    {
+      "finding": "minor src/cma/case.py:477 — The reported 30 ms append, 32 ms verification and fsync attribution at 2,000 entries are unproven by the runner.",
+      "disposition": "reproduced",
+      "evidence": "No configured tier benchmarks the log, so this claim.json makes no performance claim. The implementation is unchanged in that respect: each append walks the log and rewrites a head listing every entry hash."
+    }
+  ],
+  "notes": "Scope boundary. The production load path added here is `cma case check FOLDER`, a read-only command in a new `cma case` Typer group. The design lists other `cma case` subcommands (new, import, profile, preview, sign, purge) under T13 and T27. They should register on the same `case_app` in cli.py and not create a second group. T27's sign-off must call CaseLog.require_intact() under writer() and refuse on CaseLogBroken (R43). Dropping a torn entry still has only the library entry point (drop_torn_entry); the command that asks the underwriter to confirm it belongs with the case store or workspace. `check` takes a case folder path, not a case id, because resolving ids under CMA_HOME is the case store's job (T13). A torn or in-progress result: verify() reports the log as recorded (in_progress) only when another writer holds the lock and the first failure lies after every entry the head file records. Any failure at or before a recorded entry is reported as tampering."
+}
