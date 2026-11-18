@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 58,
+  "next_id": 59,
   "decisions": [
     {
       "id": "D1",
@@ -1228,6 +1228,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-18T21:43:17.005Z"
+    },
+    {
+      "id": "D58",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 5 attempts. Last verdict fail: R4 fail (Verified the shipped lists in src/cma/rules/v2.yaml:45,55,98,108,117,126,174,214,238,264,299,316,333,354 and traced rule selection and evidence through src/cma/graph.py:250 and :221. The runner logged 644 passing tests, including per-list provenance, all four verify-27 examples, stage shuffling, idempotency, checkpoint compatibility and rollback. The explicit rail-plus-cash condition, complete conflict provenance and judgement queue still fail R4. Reviewed duplicate submission, concurrent updates, sign and text boundaries, currency and dates, partial failure, authorization, case isolation, and CLI, MCP and checkpoint consumers. Reproductions below are from source inspection. No tests or writes were performed during review.); major: A bucketed cue bypasses the explicit payment-rail-plus-cash ambiguity condition. at src/cma/categorise.py:398; major: Conflict provenance omits rules outside the deciding stage even when their matches survive the longer-phrase filter. at src/cma/categorise.py:399; major: The production review flow never lists ambiguous credits in a judgement queue. The regression test proves M2 exclusion and M16 evidence membership only. at src/cma/graph.py:298; major: ASCII-only boundaries allow an acquirer or gateway name embedded in a Unicode merchant name to count as trading receipts. at src/cma/categorise.py:126; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-18T22:00:17.830Z"
     }
   ]
 }
