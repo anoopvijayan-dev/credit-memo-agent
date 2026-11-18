@@ -181,13 +181,53 @@ def test_cma_run_refuses_a_missing_table_rather_than_blaming_the_model(tmp_path,
 
 
 def test_the_hash_is_of_the_file_bytes_not_of_normalised_text(packaged_table):
+    """The pin is compared with the file's bytes: a CRLF copy with the same rules is a
+    different file and is refused, naming both hashes."""
     lf = _v1_text().encode()
     crlf = lf.replace(b"\n", b"\r\n")
+    assert load_ruleset("v1").sha256 == hashlib.sha256(lf).hexdigest()
     packaged_table(crlf)
-    rs = load_ruleset("v1")
-    assert rs.sha256 == hashlib.sha256(crlf).hexdigest() != hashlib.sha256(lf).hexdigest()
-    assert [r.id for r in rs.rules] == [r.id for r in categorise.ruleset_from_data(
-        yaml.safe_load(lf), expected_id="v1", source="t", sha256="x").rules]
+    with pytest.raises(RulesetError, match=hashlib.sha256(crlf).hexdigest()):
+        load_ruleset("v1")
+
+
+@pytest.mark.contracts
+def test_v1_hash_is_pinned_in_code():
+    assert categorise.FROZEN_SHA256["v1"] == hashlib.sha256(_v1_text().encode()).hexdigest()
+    assert load_ruleset("v1").sha256 == categorise.FROZEN_SHA256["v1"]
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("old, new", [
+    ("category: revenue_card_settlement", "category: other"),  # verify-12: schema-valid, still v1
+    ("direction: in\n", "direction: any\n"),
+    ("frozen: true", "frozen: false"),
+])
+def test_a_schema_valid_change_to_frozen_v1_is_refused(packaged_table, old, new):
+    text = _v1_text()
+    assert old in text
+    changed = text.replace(old, new, 1)
+    validate_ruleset(yaml.safe_load(changed), "v1")  # the schema alone accepts it
+    packaged_table(changed)
+    with pytest.raises(RulesetError, match=r"cma/rules/v1\.yaml: frozen table v1 has been changed"):
+        load_ruleset("v1")
+
+
+@pytest.mark.contracts
+def test_cma_run_refuses_a_changed_v1_and_writes_no_evidence(tmp_path, monkeypatch, packaged_table):
+    from typer.testing import CliRunner
+
+    from cma.cli import app
+
+    packaged_table(_v1_text().replace("category: revenue_card_settlement", "category: other", 1))
+    monkeypatch.setenv("CMA_RULESET", "v1")
+    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
+    csv_path, _ = synth.write(rows, truth, tmp_path)
+    out = tmp_path / "memo.md"
+    r = CliRunner().invoke(app, ["run", str(csv_path), "--yes", "--reviewer", "A", "--out", str(out)])
+    assert r.exit_code == 2, r.output
+    assert "Refused." in r.output and "frozen table v1 has been changed" in r.output
+    assert not out.exists() and not (tmp_path / "memo.evidence.json").exists()
 
 
 @pytest.mark.parametrize("old, new", [
@@ -340,8 +380,18 @@ def test_p7_golden_covers_every_case():
     g = _golden()
     combos = {(c["archetype"], c["profile"]) for c in g["synthetic"]}
     assert combos >= {(a, p) for a in synth.ARCHETYPES for p in synth.PROFILES}
-    assert [e["path"] for e in g["examples"]] == ["examples/cafe_stretched.csv"]
-    assert len(g["fixtures"]) >= 43 and g["lines"]
+    # Every committed statement file, found by globbing tests/ and examples/, has a baseline.
+    root = Path(__file__).parents[1]
+    committed = sorted(p.relative_to(root).as_posix() for d in ("tests", "examples") for p in (root / d).rglob("*.csv"))
+    assert committed == ["examples/cafe_stretched.csv"]
+    assert [e["path"] for e in g["examples"]] == committed
+    # 48 statements the pre-change suite wrote, loaded, categorised or computed on; a
+    # rebuild that finds fewer has lost one (tests/test_p7_history.py rebuilds it).
+    assert len(g["fixtures"]) == 48 and len(g["lines"]) == 13
+    # verify-12: the Monzo balance-column conversion writes a statement no test loads; the
+    # capture finds it in the suite's temporary files.
+    assert [["tx_1", "2026-03-01", "FPS CREDIT CLIENT A", 100.0, 600.0],
+            ["tx_2", "2026-03-02", "CARD SHOP", -50.0, 550.0]] in [[line[:5] for line in f["lines"]] for f in g["fixtures"]]
     # The same lines under another VAT stagger are another case (M13 differs); the
     # stagger-3 run of the on-time stagger-1 VAT year is the regression case for that.
     by_lines: dict[str, set] = {}

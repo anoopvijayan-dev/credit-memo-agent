@@ -79,9 +79,10 @@ def test_p7_golden_is_rebuilt_exactly_from_the_pre_change_commit(pre_change, tmp
     want = json.loads(gzip.decompress(GOLDEN.read_bytes()))
     assert want["made_at_commit"] == PRE_CHANGE
     assert set(got) == set(want)
-    for key in sorted(set(want) - {"_about"}):
+    for key in sorted(want):  # _about included
         assert got[key] == want[key], f"golden key {key!r} differs from the pre-change rebuild"
-    assert len(got["synthetic"]) == 13 and len(got["examples"]) == 1 and len(got["fixtures"]) >= 43
+    assert got == want
+    assert len(got["synthetic"]) == 13 and len(got["examples"]) == 1 and len(got["fixtures"]) == 48
 
 
 @pytest.mark.contracts

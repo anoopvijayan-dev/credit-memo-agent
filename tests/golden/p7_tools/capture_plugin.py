@@ -5,7 +5,10 @@ too, with no VAT stagger, so make_p7_baseline.py gives it an M1-M16 baseline (ve
 the two-credit Monzo invoice fixture was otherwise captured only as single lines). So is
 every statement ingest.load_csv returns, before any category is set, marked "loaded" so
 the baseline categorises it with the rule table (verify-11: the newest-first and
-byte-order-mark fixtures in tests/test_ingest.py are only loaded).
+byte-order-mark fixtures in tests/test_ingest.py are only loaded). And, so that no
+fixture depends on which function its test happens to call, every file left in the
+session's temporary directories that ingest.load_csv accepts is recorded the same way
+(verify-12: the Monzo balance-column conversion writes a statement no test loads).
 Output: $CAPTURE_OUT (JSON)."""
 
 import atexit
@@ -57,6 +60,17 @@ ingest.load_csv = _load_csv
 categorise.categorise_one = _one
 categorise.categorise = _categorise
 metrics.compute = _compute
+
+
+def pytest_sessionfinish(session):
+    """Every statement file the suite wrote, found by walking its temporary directories."""
+    base = session.config._tmp_path_factory.getbasetemp()
+    for path in sorted(p for p in base.rglob("*") if p.is_file()):
+        try:
+            statement = _orig_load_csv(path)
+        except Exception:  # not a five-column statement, or one the loader refuses
+            continue
+        _record(statement, None, loaded=True)
 
 
 @atexit.register

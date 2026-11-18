@@ -8,7 +8,8 @@ or debt service. The model never overrides a rule match.
 The rule table is data, not code: src/cma/rules/<id>.yaml, validated on load like the
 policy (a key repeated in a mapping is refused), with an id and the SHA-256 of the
 file's bytes. CMA_RULESET chooses the table (default v1). v1 is the table as it was
-when it lived here, frozen, so CMA_RULESET=v1 always reproduces those categories. The
+when it lived here, frozen: its hash is pinned in FROZEN_SHA256 and any other bytes are
+refused, so CMA_RULESET=v1 always reproduces those categories. The
 matching passes below (reversals, round trips) stay in code.
 
 Revenue is claimed narrowly. A card or gateway settlement is trading income. A bank
@@ -48,6 +49,10 @@ DEFAULT_RULESET = "v1"
 DIRECTIONS = ("in", "out", "any")
 TABLE_KEYS = {"id", "frozen", "rules"}
 RULE_KEYS = {"id", "pattern", "direction", "category"}
+# A frozen table's SHA-256, pinned here. A file that validates but differs from these
+# bytes (a rule recategorised, CRLF line ends, frozen switched off) is refused, so the id
+# v1 in an evidence record always means this exact table.
+FROZEN_SHA256 = {"v1": "7573366854a668793ca20b3ecfaad91d406ea3018a71d524ea3324cc4ff76630"}
 
 
 class RulesetError(ValueError):
@@ -178,7 +183,15 @@ def load_ruleset(ruleset_id: str) -> Ruleset:
     except (ValueError, TypeError, OverflowError) as e:  # a scalar the loader cannot build, e.g. 2026-02-30
         raise RulesetError(f"{source}: not valid YAML ({e.__class__.__name__} building a value)") from e
     # The hash is of the file's bytes as installed, so it matches sha256sum on that file.
-    return ruleset_from_data(data, ruleset_id, source, hashlib.sha256(raw).hexdigest())
+    digest = hashlib.sha256(raw).hexdigest()
+    ruleset = ruleset_from_data(data, ruleset_id, source, digest)
+    pinned = FROZEN_SHA256.get(ruleset_id)
+    if pinned is not None and digest != pinned:
+        raise RulesetError(f"{source}: frozen table {ruleset_id} has been changed "
+                           f"(sha256 {digest}, pinned {pinned}); reinstall the package")
+    if data["frozen"] and pinned is None:
+        raise RulesetError(f"{source}: marked frozen but no hash is pinned for {ruleset_id}")
+    return ruleset
 
 
 def active_ruleset() -> Ruleset:

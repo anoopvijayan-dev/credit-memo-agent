@@ -14,8 +14,8 @@ From the worktree root, with S a scratch directory:
 
 tests/test_p7_history.py runs exactly these steps and the comparison.
 
-The committed golden's "_about" text predates this folder and says the tools were in
-the T01 run directory; they are these files, unchanged apart from this docstring.
+Committed statement files are found by globbing tests/ and examples/ for *.csv, not
+listed by hand.
 """
 
 import hashlib
@@ -38,7 +38,11 @@ SYNTH_CASES = [
     ("cafe", "poor", 7, 4, "2026-09-30"),
     ("cafe", "poor", 7, 2, "2026-09-30"),
 ]
-EXAMPLES = ["examples/cafe_stretched.csv"]
+
+
+def statement_files(root: Path = Path(".")) -> list[str]:
+    """Every committed statement file under tests/ and examples/."""
+    return sorted(p.relative_to(root).as_posix() for d in ("tests", "examples") for p in (root / d).rglob("*.csv"))
 
 
 def sha(text: str) -> str:
@@ -72,7 +76,8 @@ def main(capture_path: str, out_path: str) -> None:
             "P7 baseline: M1-M16 (id, unit, value, evidence) and categories, computed by the "
             "categoriser as it was before the rule table moved to src/cma/rules/ (T01). "
             "Under CMA_RULESET=v1 every entry must be reproduced exactly. Built by "
-            "make_p7_baseline.py in the T01 run directory; do not regenerate from newer code."
+            "tests/golden/p7_tools/make_p7_baseline.py from the pre-change commit; do not "
+            "regenerate from newer code."
         ),
         "made_at_commit": os.environ.get("MADE_AT") or subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip(),
         "synthetic": [], "examples": [], "fixtures": [], "lines": [],
@@ -92,7 +97,7 @@ def main(capture_path: str, out_path: str) -> None:
             "categories_sha256": categories_sha(s),
             "metrics": {str(v): metric_rows(s, v) for v in (None, truth.vat_stagger)},
         })
-    for p in EXAMPLES:
+    for p in statement_files():
         s = categorise.categorise(ingest.load_csv(Path(p)))
         for v in (None, 3):
             seen_rows.add(rows_key(s.model_dump(mode="json"), v))
