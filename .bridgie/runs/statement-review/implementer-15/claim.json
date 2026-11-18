@@ -1,0 +1,57 @@
+{
+  "task": "T01",
+  "claims": [
+    {
+      "text": "R54: v1's SHA-256 is pinned in code (categorise.FROZEN_SHA256). load_ruleset refuses a v1 file whose bytes differ, even when it passes the schema: a recategorised rule, a changed direction, frozen switched off, or CRLF line ends. cma run then exits 2 and writes no memo or evidence.",
+      "proof_cmd": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "proof_output": "tests/test_rules.py::test_v1_hash_is_pinned_in_code PASSED\ntests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[category: revenue_card_settlement-category: other] PASSED\ntests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[direction: in\\n-direction: any\\n] PASSED\ntests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[frozen: true-frozen: false] PASSED\ntests/test_rules.py::test_cma_run_refuses_a_changed_v1_and_writes_no_evidence PASSED\n15 passed, 355 deselected"
+    },
+    {
+      "text": "R54: the evidence file that cma run writes records {id: v1, sha256: <pinned hash>}, with CMA_RULESET unset and with it set to v1. The test is marked contracts, so the runner runs it by name.",
+      "proof_cmd": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "proof_output": "tests/test_cli.py::test_written_evidence_records_the_ruleset[None] PASSED\ntests/test_cli.py::test_written_evidence_records_the_ruleset[v1] PASSED"
+    },
+    {
+      "text": "P7: the golden was rebuilt from fd7b64c by running the pre-change suite with the capture plugin. The plugin now also walks the suite's temporary directories and records every file the pre-change ingest.load_csv accepts, so it no longer matters which function a test calls. Two statements were added: the Monzo balance-column conversion (tx_1 FPS CREDIT CLIENT A 100.00, tx_2 CARD SHOP -50.00) and a 389-line synthetic variant. None were dropped. Committed statement files are found by globbing tests/ and examples/ for *.csv, and a test asserts that list and exact counts: 48 fixtures, 13 lines. v1 reproduces every entry.",
+      "proof_cmd": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "proof_output": "tests/test_p7_history.py::test_p7_golden_is_rebuilt_exactly_from_the_pre_change_commit PASSED\ntests/test_rules.py::test_p7_golden_covers_every_case PASSED\ntests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-2-lines-FPS CREDIT CLIENT A] PASSED\n65 passed, 305 deselected"
+    },
+    {
+      "text": "P7: the historical rebuild is compared with the committed golden on every key, _about included (got == want). The _about text now names tests/golden/p7_tools/.",
+      "proof_cmd": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "proof_output": "tests/test_p7_history.py::test_p7_golden_is_rebuilt_exactly_from_the_pre_change_commit PASSED\n69 passed, 301 deselected"
+    },
+    {
+      "text": "Mechanical checks, the full suite and the evals pass.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q -rs && python evals/run_evals.py",
+      "proof_output": "All checks passed!\n370 passed in 19.47s\n9/9 memos fully grounded; model = fake"
+    }
+  ],
+  "files_changed": [
+    "src/cma/categorise.py",
+    "tests/golden/p7_tools/capture_plugin.py",
+    "tests/golden/p7_tools/make_p7_baseline.py",
+    "tests/golden/p7_v1_baseline.json.gz",
+    "tests/test_cli.py",
+    "tests/test_p7_history.py",
+    "tests/test_rules.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "src/cma/categorise.py:181 (R54): the loader accepts a schema-valid change to the frozen v1 rules. New evidence still calls it v1, and a pending pre-change review can be attributed to the replacement file's hash by src/cma/graph.py:177-178.",
+      "disposition": "reproduced",
+      "evidence": "Added FROZEN_SHA256 = {'v1': '7573366854a6...6630'} to categorise.py. After validation, load_ruleset raises RulesetError('... frozen table v1 has been changed (sha256 X, pinned Y)') when the bytes differ, and refuses a table marked frozen that has no pinned hash. graph.py's legacy inference calls load_ruleset('v1'), so it can no longer return a replacement hash: it refuses instead, the same path test_a_review_left_pending_by_the_pre_change_version_resumes_here exercises. New tests: test_a_schema_valid_change_to_frozen_v1_is_refused (the verifier's card_settlement->other repro, plus direction and frozen), test_cma_run_refuses_a_changed_v1_and_writes_no_evidence, test_v1_hash_is_pinned_in_code. test_the_hash_is_of_the_file_bytes_not_of_normalised_text now asserts that a CRLF copy is refused, naming its byte hash."
+    },
+    {
+      "finding": "tests/golden/p7_tools/capture_plugin.py:56 (P7): the capture omits the valid committed Monzo fixture at tests/test_import_monzo.py:74-82, which writes a statement CSV without loading it; rebuilding the golden repeats the omission.",
+      "disposition": "reproduced",
+      "evidence": "Fixed in general terms rather than for this one file. capture_plugin.py has a new pytest_sessionfinish hook that walks the session's basetemp and records every file the pre-change ingest.load_csv accepts. make_p7_baseline.py globs tests/ and examples/ for committed statement files instead of using a hand list. Rebuilt from fd7b64c: fixtures went from 46 to 48 (the Monzo tx_1/tx_2 statement and a 389-line synthetic variant), none dropped. test_p7_golden_covers_every_case asserts the glob result, the exact counts (48 fixtures, 13 lines) and that the Monzo statement is present. test_p7_v1_test_fixtures_match_the_baseline[fixture-2-lines-FPS CREDIT CLIENT A] passes under v1."
+    },
+    {
+      "finding": "tests/test_p7_history.py:82 (P7, minor): the rebuild test excludes _about from value comparisons, so the claim that every key is equal overstated the assertion.",
+      "disposition": "reproduced",
+      "evidence": "The comparison loop now covers every key, and the test also asserts got == want. make_p7_baseline.py's _about text was corrected to name tests/golden/p7_tools/, and the golden was rebuilt with it. Checked on a disposable copy: setting _about to 'changed' in the golden makes the test fail with \"AssertionError: golden key '_about' differs from the pre-change rebuild\". The file was restored byte for byte afterwards (cmp)."
+    }
+  ],
+  "notes": "Commit c16ddb7 on bridgie-task/statement-review/T01. The golden was rebuilt from fd7b64c with exactly the steps test_p7_history.py runs, and that test reproduces it. No tests/ statement files are committed today, so the glob finds only examples/cafe_stretched.csv. Inline test fixtures are covered through the capture, which now includes every loadable file the suite writes. Validation runs before the pin check, so a damaged table still gets its specific schema message ('rule 1 ...'). Only a table that passes the schema and has different bytes gets the 'has been changed' refusal."
+}

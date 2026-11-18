@@ -1,0 +1,99 @@
+{
+  "task": "T01",
+  "claims": [
+    {
+      "text": "Mechanical tiers: ruff and compileall are clean at c16ddb7.",
+      "proof_cmd": "ruff check src tests evals; python -m compileall -q src",
+      "proof_output": "All checks passed! RUFF=0 COMPILE=0"
+    },
+    {
+      "text": "The full suite passes with every extra installed (pip install -e '.[dev,mcp,durable,llm]'). The -rs flag reports no skips.",
+      "proof_cmd": "python -m pytest -q -rs",
+      "proof_output": "370 passed in 19.82s"
+    },
+    {
+      "text": "R54 (verify-12 finding 1): v1's SHA-256 is pinned in code (FROZEN_SHA256), and a schema-valid change to v1.yaml is refused. The changes tested are card_settlement -> other, direction in -> any, and frozen true -> false. `cma run` with a changed v1 exits 2 and writes no memo or evidence. Because the legacy-resume inference (graph.ruleset_used) loads v1 through the same pin, it can only name the pinned hash.",
+      "proof_cmd": "python -m pytest -v -rs -m contracts",
+      "proof_output": "15 passed, 355 deselected; includes test_v1_hash_is_pinned_in_code PASSED, test_a_schema_valid_change_to_frozen_v1_is_refused[category: revenue_card_settlement-category: other|direction: in\\n-direction: any\\n|frozen: true-frozen: false] PASSED"
+    },
+    {
+      "text": "R54: `cma run` records the ruleset id and the pinned hash in the evidence file, with CMA_RULESET unset and with CMA_RULESET=v1. The test is marked contracts so the runner runs it by name.",
+      "proof_cmd": "python -m pytest -v -rs -m contracts",
+      "proof_output": "tests/test_cli.py::test_written_evidence_records_the_ruleset[None] PASSED; tests/test_cli.py::test_written_evidence_records_the_ruleset[v1] PASSED"
+    },
+    {
+      "text": "Security, input validation at the boundary: CMA_RULESET accepts only ids listed in RULESETS, so an id can never name a path. An unknown id is a refusal (exit 2), not a model failure (exit 4). No new entry point carries authz: the only new input is a local environment variable, read by the OS user running the CLI.",
+      "proof_cmd": "python -m pytest -q -k 'unknown_ruleset or cannot_name_a_path or unknown_cma_ruleset'; CMA_RULESET=v9 cma run examples/cafe_stretched.csv --yes --reviewer A --out $S/m.md; echo EXIT=$?",
+      "proof_output": "3 passed, 367 deselected; Refused. CMA_RULESET='v9': unknown ruleset 'v9'; known: v1  EXIT=2"
+    },
+    {
+      "text": "P7 (verify-12 finding 2): the capture walks the suite's temporary directories for statement files. The golden now holds the Monzo balance-column conversion (tx_1 FPS CREDIT CLIENT A 100.00, tx_2 CARD SHOP -50.00), and a test asserts that. Committed statement files come from globbing tests/ and examples/, and their count is asserted. The tests carry the invariants and dual_run markers and have p7 in their names.",
+      "proof_cmd": "python -m pytest -v -rs -m invariants; python -m pytest -v -rs -m dual_run",
+      "proof_output": "invariants: 65 passed, 305 deselected; dual_run: 69 passed, 301 deselected; includes tests/test_rules.py::test_p7_golden_covers_every_case PASSED and tests/test_p7_history.py::test_p7_golden_is_rebuilt_exactly_from_the_pre_change_commit PASSED"
+    },
+    {
+      "text": "P7 (verify-12 finding 3): the historical rebuild compares every key of the golden, _about included, and then compares the whole object (got == want). The golden was made at fd7b64c and holds 13 synthetic cases, 1 example, 48 fixtures and 13 single lines.",
+      "proof_cmd": "python -m pytest -v -m dual_run -k rebuilt_exactly; zcat tests/golden/p7_v1_baseline.json.gz | python -c \"import json,sys;g=json.load(sys.stdin);print(g['made_at_commit'],len(g['synthetic']),len(g['examples']),len(g['fixtures']),len(g['lines']))\"",
+      "proof_output": "test_p7_golden_is_rebuilt_exactly_from_the_pre_change_commit PASSED; fd7b64c 13 1 48 13"
+    },
+    {
+      "text": "Behavioural: the offline evals still pass under the default ruleset (v1).",
+      "proof_cmd": "python evals/run_evals.py",
+      "proof_output": "EVALS=0; 9/9 memos fully grounded; model = fake"
+    },
+    {
+      "text": "Failure modes and idempotency: loading the table is a pure read of packaged bytes (lru_cache), and categorising writes nothing, so a re-run gives the same result. There are no external calls, so the timeout and retry lines do not apply. On partial failure, a damaged, missing or changed table, or a missing rules package, is refused before anything is recorded. A legacy resume with a damaged table leaves the review pending, and the same review resumes once the table is repaired.",
+      "proof_cmd": "python -m pytest -v -rs -m contracts",
+      "proof_output": "test_a_review_left_pending_by_the_pre_change_version_resumes_here PASSED; test_cma_run_refuses_when_the_rules_package_is_missing PASSED; test_cma_run_refuses_a_changed_v1_and_writes_no_evidence PASSED"
+    },
+    {
+      "text": "Data, migration and rollback: the change is additive. The evidence gains a ruleset key, the graph state gains an optional ruleset, and CHECKPOINT_TYPES is unchanged. It is reversible in both directions against real SQLite checkpoints. A review left pending by fd7b64c resumes here, and a review left pending here resumes under fd7b64c, which is the rollback by reinstalling the previous wheel. There is no backfill. No PII is added: evidence gets an id and a hash only.",
+      "proof_cmd": "python -m pytest -v -rs -m dual_run",
+      "proof_output": "test_a_review_left_pending_by_the_pre_change_version_resumes_here PASSED; test_rollback_a_review_left_pending_here_resumes_under_the_pre_change_version PASSED"
+    },
+    {
+      "text": "Packaging: the built wheel carries v1.yaml byte for byte. Loaded from outside the checkout, it gives the source file's hash.",
+      "proof_cmd": "python -m pytest -v -rs -m contracts",
+      "proof_output": "tests/test_p7_history.py::test_the_built_wheel_carries_v1_byte_for_byte PASSED"
+    },
+    {
+      "text": "Dependencies and secrets: the change adds no dependency, because pyyaml>=6 was already a runtime dependency. The only pyproject change is the pytest markers. No secrets appear in the changed code, the table or the test tools.",
+      "proof_cmd": "git diff fd7b64c -- pyproject.toml; grep -n pyyaml pyproject.toml; grep -rnE '(api[_-]?key|secret|password)\\s*=' src/cma/categorise.py src/cma/rules tests/test_rules.py tests/test_p7_history.py tests/golden/p7_tools || echo NO_SECRETS",
+      "proof_output": "only the markers block added; 12:  \"pyyaml>=6\",; NO_SECRETS"
+    },
+    {
+      "text": "Performance: the categoriser's hot path was timed before (fd7b64c) and after on the committed café example. The cost is unchanged within noise, because the table is loaded once per categorise() call and cached across calls. The N+1, index and pagination lines do not apply: there is no database and no list endpoint.",
+      "proof_cmd": "timeit over categorise.categorise on examples/cafe_stretched.csv (20x5, min), with PYTHONPATH set to a git-archive of fd7b64c and then to the worktree",
+      "proof_output": "before: 389 lines 1.45 ms; after: 389 lines 1.5 ms"
+    },
+    {
+      "text": "Observability and operability: the signal that the new behaviour ran is the evidence file's ruleset {id, sha256} (proven above). The failure that matters most, a wrong or damaged table, is answered by a refusal: exit 2 and a red 'Refused.' line naming CMA_RULESET and the problem. That matches the design's local, no-remote-alerting stance. The feature flag is CMA_RULESET, and the rollback is CMA_RULESET=v1 (today's only table) or reinstalling the previous wheel, tested as above. No config or secret changes are needed to deploy.",
+      "proof_cmd": "CMA_RULESET=v9 cma run examples/cafe_stretched.csv --yes --reviewer A; echo EXIT=$?",
+      "proof_output": "Refused. CMA_RULESET='v9': unknown ruleset 'v9'; known: v1  EXIT=2"
+    },
+    {
+      "text": "Docs: the README documents CMA_RULESET, the table's location, and the evidence's id and hash. M16's rename appears in the README and the committed examples. The design decision is already in design.md (the sub-decision on where the categorisation rules live).",
+      "proof_cmd": "git diff fd7b64c -- README.md | grep -n CMA_RULESET",
+      "proof_output": "+CMA_RULESET=v1 cma run examples/cafe_stretched.csv; + ... chosen by `CMA_RULESET`."
+    }
+  ],
+  "files_changed": [],
+  "dispositions": [
+    {
+      "finding": "verify-12 R54 major: the loader accepts a schema-valid change to frozen v1 (src/cma/categorise.py:181)",
+      "disposition": "not_reproduced",
+      "evidence": "At c16ddb7, load_ruleset compares the file's SHA-256 with FROZEN_SHA256['v1'] and refuses a mismatch. test_a_schema_valid_change_to_frozen_v1_is_refused[category: revenue_card_settlement-category: other] and test_cma_run_refuses_a_changed_v1_and_writes_no_evidence both PASSED in the contracts tier (15 passed)."
+    },
+    {
+      "finding": "verify-12 P7 major: the capture omits the Monzo balance-column fixture (tests/test_import_monzo.py:74-82)",
+      "disposition": "not_reproduced",
+      "evidence": "capture_plugin.pytest_sessionfinish walks the session's temporary directories. test_p7_golden_covers_every_case asserts the tx_1/tx_2 rows are in the golden, and it PASSED in the invariants and dual_run tiers. The rebuild from fd7b64c equals the golden on every key."
+    },
+    {
+      "finding": "verify-12 P7 minor: the historical rebuild excludes _about from value comparisons (tests/test_p7_history.py:82)",
+      "disposition": "not_reproduced",
+      "evidence": "tests/test_p7_history.py loops `for key in sorted(want)` with _about included and then asserts got == want. test_p7_golden_is_rebuilt_exactly_from_the_pre_change_commit PASSED in the dual_run tier."
+    }
+  ],
+  "notes": "No code change was needed in this pass, because c16ddb7 already addresses all three verify-12 findings and the escalation guidance. Gaps for the owner: (1) The repo has no CHANGELOG, so there is no release-note line. Adding a changelog is a project decision, not part of T01. (2) There is no remote alert, by design (local-first, design.md Observability). The refusal with exit 2 is the alert, and no runbook file exists to add an entry to. (3) The P7 history and wheel tests need git with fd7b64c reachable (CI uses fetch-depth 0) and pip able to build a wheel. In a shallow clone, test_p7_history skips instead of failing. (4) FROZEN_SHA256 makes any edit to v1.yaml, including comment-only and CRLF edits, a refusal. This is intended, but it means a fix to v1 must ship as a new table id."
+}
