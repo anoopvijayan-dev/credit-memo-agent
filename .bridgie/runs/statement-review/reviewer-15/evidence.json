@@ -1,0 +1,60 @@
+{
+  "task": "T02",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R53",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:31–96 adds the six categories, credit bucket map, cash-deposit revenue membership, and defaulted transaction fields. src/cma/graph.py:174–188 adds schema_version to the evidence returned through the shared run/resume writer at src/cma/cli.py:207–212. Contracts row 4 proves the legacy evidence key subset and version on actual cma run output. The generate and Monzo entry points at src/cma/cli.py:31–41 and :283–303 retain their options and dispatch. MCP tools at src/cma/mcp_server.py:61–105 keep their signatures and explicitly select response fields or serialize metrics and policy. For double submit, concurrent updates, and partial failure, the diff leaves the existing duplicate checks and two-file writer in place. No authorization or data-directory scope changed at src/cma/mcp_server.py:37–48, and no date, currency, or numeric input parsing changed. The SQLite contract passes for a checkpoint generated on T02 and rewritten to the old field shape. The runner supplied no replay of a checkpoint written on the old revision and no proof that the llm extra was installed during the run.",
+      "result": "not_proven",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "tests/test_models.py",
+      "line": 205,
+      "criterion": "R53",
+      "claim": "The passing SQLite contract proves resume of a simulated old payload. The task asks for a checkpoint written by the old version, and the test uses the current CLI to create the database before deleting the new fields from its serialized contents.",
+      "repro": "Create a pending review with cma run examples/cafe_stretched.csv --checkpoint-db /tmp/t02-legacy.sqlite --thread t02-legacy on cba9dba, leaving the review at the prompt with EOF. Then run cma resume t02-legacy --checkpoint-db /tmp/t02-legacy.sqlite --reviewer 'C. Later' --out /tmp/t02-legacy.md on T02 and approve it. Have the runner capture both commands and verify the approved memo and schema_version in its evidence."
+    },
+    {
+      "severity": "minor",
+      "file": "pyproject.toml",
+      "line": 18,
+      "criterion": "R53",
+      "claim": "The runner proves the lint, compilation, and pytest stages of the build-gate claim. Its logs leave the all-extras installation unverified. The SQLite contract requires durable and the MCP tests exercise MCP, while the fake-model tests and evals leave both llm dependencies unexercised.",
+      "repro": "In a clean runner environment, run pip install -e '.[dev,mcp,durable,llm]' followed by python -c 'import anthropic, openai, mcp, langgraph.checkpoint.sqlite' and python -m pytest -q -rs. Capture installation and test results from the same environment."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_models.py",
+      "line": 283,
+      "criterion": "R53",
+      "claim": "The idempotency claim cites a test that executes cma run once and checks a key subset. It proves neither replay behavior nor the claimed equality of key sets across runs.",
+      "repro": "Compare evidence key sets from two identical runs with separate output paths. Then replay against the first output path and check that the CLI refuses the duplicate and leaves the original memo and evidence byte-for-byte intact. The cited contract exercises only the first invocation."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_models.py",
+      "line": 311,
+      "criterion": "R53",
+      "claim": "The rollback contract uses a local model with the current Category enum and a transaction in an existing category. It proves that the local model ignores the new keys for that example. The previous release itself is absent from the runner proof.",
+      "repro": "Write a T02 transaction with the three new fields and an existing category, then validate its payload using the actual cma.models.Transaction from cba9dba in a separate environment. Compare the retained fields with the original values. The passing contract instantiates _PreviousTransaction instead."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 252,
+      "criterion": "R53",
+      "claim": "The behavioral runner result proves nine grounded fake-model memos with passing truth checks. It does not prove the producer's claim that all committed financial values remained unchanged, or the performance claim based on the stated before-and-after suite durations.",
+      "repro": "For the value claim, have the runner compare metric IDs, units, and values on the same fixtures at cba9dba and T02, including python -m pytest -v -m dual_run once that tier contains a baseline comparison. The supplied dual-run log selected zero tests. For the timing claim, record python -m pytest -q on both revisions in the same environment."
+    }
+  ],
+  "verdict": "not_proven"
+}
