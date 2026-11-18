@@ -152,6 +152,7 @@ Every answer and decision, dated.
 - 2026-11-18 D42 (unblock): take over manually — Owner delegated to Claude: add .gitattributes so the rule tables keep LF line endings on Windows, with a test, then verify. → task T01 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T01 [Anoop Vijayan]
 - 2026-11-18 D43 (unblock): take over manually — Owner delegated to Claude: mark the unknown-id and path-rejection tests as contracts so the runner names them, then verify. → task T01 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T01 [Anoop Vijayan]
 - 2026-11-18 D44 (unblock): take over manually — Owner delegated to Claude: check the ruleset in cma run before the graph starts, add a durable-mode test that a refused run leaves the review id reusable, drop the unproven performance claim, then verify. → task T01 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T01 [Anoop Vijayan]
+- 2026-11-18 D45 (unblock): take over manually — Owner delegated to Claude: no code change; Bridgie's reviewer now judges each requirement by its own text, so re-verify. → task T01 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T01 [Anoop Vijayan]
 
 ## Idea
 
