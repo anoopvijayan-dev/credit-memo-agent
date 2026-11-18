@@ -1,0 +1,68 @@
+I've fixed both major findings and the minor one, and committed the work as `aa4ec05` on the task branch. Every runner tier passes: ruff, compileall, the full suite (367 tests), the offline evals, and the contracts, invariants and dual_run markers.
+
+- **v1 can no longer be swapped for another table.** The code now holds the SHA-256 of the shipped `v1.yaml` (`FROZEN_SHA256` in `categorise.py`). A file under id v1 with any other bytes is refused, including a valid replacement like the reviewer's card-settlement change. `cma run` then exits 2 and writes no memo or evidence. A review left pending before this change also refuses to resume against such a file, so its evidence can only ever name the original table.
+- **The Monzo fixture is now in the P7 golden.** The capture also records every statement written by the Monzo importer or the synthetic generator, and committed statement files are now found by glob under `tests/` and `examples/`. I rebuilt the golden from the pre-change commit `fd7b64c`. It gained exactly one fixture, the balance-column Monzo statement, and lost none. That fixture's M1–M16 values match under v1.
+- **The rebuild check is exact.** It now compares every key including `_about`, and asserts 13 synthetic cases, 1 example and 47 fixtures. A new test checks that the glob finds the same single statement file in the pre-change commit and in this checkout.
+- **The CLI evidence test now runs by name.** `test_written_evidence_records_the_ruleset` is marked `contracts` and checks the exact pinned hash.
+
+Any edit to `v1.yaml` now stops `CMA_RULESET=v1` from running, even whitespace or line endings. That is intended for a frozen table: changes belong in a table with a new id. Because of it, I replaced the old line-endings test with one that expects the refusal.
+
+```json
+{
+  "task": "T01",
+  "claims": [
+    {
+      "text": "R54: frozen v1 is pinned in code (categorise.FROZEN_SHA256) to the SHA-256 of the shipped v1.yaml. A schema-valid replacement that keeps id v1 and frozen: true (the verifier's card_settlement -> other repro) is refused on load, and `cma run` under CMA_RULESET=v1 refuses it with exit 2 and writes no memo or evidence. CLI-written evidence names v1 with exactly the pinned hash.",
+      "proof_cmd": "python -m pytest -v tests/test_cli.py::test_written_evidence_records_the_ruleset tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused tests/test_rules.py::test_cma_run_under_v1_refuses_a_schema_valid_replacement_table",
+      "proof_output": "tests/test_cli.py::test_written_evidence_records_the_ruleset PASSED\ntests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused PASSED\ntests/test_rules.py::test_cma_run_under_v1_refuses_a_schema_valid_replacement_table PASSED"
+    },
+    {
+      "text": "R54: the CLI evidence test is now marked contracts, so the runner's contracts tier runs it by name; the contracts tier passes.",
+      "proof_cmd": "python -m pytest -q -m contracts",
+      "proof_output": "13 passed, 354 deselected"
+    },
+    {
+      "text": "R54: a review left pending before the ruleset was recorded is refused on resume when v1.yaml is replaced by a schema-valid but different table, with nothing recorded, so inferred v1 provenance can only name the pinned table (parametrised legacy-resume test, malformed and valid_but_changed).",
+      "proof_cmd": "python -m pytest -q -m contracts",
+      "proof_output": "13 passed, 354 deselected"
+    },
+    {
+      "text": "P7: the capture plugin also loads back and records every statement that monzo.convert or synth.write produces, and make_p7_baseline.py finds committed statement files by globbing tests/**/*.csv and examples/**/*.csv. The golden was rebuilt from fd7b64c. It gains exactly one fixture, the balance-column Monzo statement (tx_1 FPS CREDIT CLIENT A 100.00, tx_2 CARD SHOP -50.00), and loses none. Its M1-M16 baseline replays under v1. The rebuild test now compares every key, `_about` included, and asserts 13 synthetic cases, 1 example and 47 fixtures. A glob test asserts that the statement-file list is the same in fd7b64c and in this checkout, and has a count of 1.",
+      "proof_cmd": "python -m pytest -q -m 'invariants or dual_run'",
+      "proof_output": "71 passed, 296 deselected"
+    },
+    {
+      "text": "Mechanical tiers, the full suite and the offline evals pass.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q -rs && python evals/run_evals.py",
+      "proof_output": "All checks passed!\n367 passed\n9/9 memos fully grounded; model = fake"
+    }
+  ],
+  "files_changed": [
+    "src/cma/categorise.py",
+    "tests/test_rules.py",
+    "tests/test_cli.py",
+    "tests/test_p7_history.py",
+    "tests/golden/p7_tools/capture_plugin.py",
+    "tests/golden/p7_tools/make_p7_baseline.py",
+    "tests/golden/p7_v1_baseline.json.gz"
+  ],
+  "dispositions": [
+    {
+      "finding": "major src/cma/categorise.py:181 — loader accepts a schema-valid change to frozen v1; evidence still calls it v1; a pending pre-change review can be attributed to the replacement hash",
+      "disposition": "reproduced",
+      "fix": "FROZEN_SHA256 pins v1 to 7573366854a668793ca20b3ecfaad91d406ea3018a71d524ea3324cc4ff76630. load_ruleset validates first, so malformed tables keep their specific messages, and then refuses any other bytes under id v1. graph.ruleset_used therefore can only infer the pinned table. Tests: test_a_schema_valid_change_to_frozen_v1_is_refused, test_cma_run_under_v1_refuses_a_schema_valid_replacement_table, test_a_legacy_resume_with_a_damaged_table_is_refused_before_anything_is_recorded[valid_but_changed]. The old CRLF test is replaced by test_the_hash_is_of_the_file_bytes_and_v1_is_pinned_to_them, because CRLF bytes are now refused as not frozen v1."
+    },
+    {
+      "finding": "major tests/golden/p7_tools/capture_plugin.py:56 — capture omits the valid balance-column Monzo fixture",
+      "disposition": "reproduced",
+      "fix": "The capture plugin wraps monzo.convert and synth.write and records their output loaded back through ingest.load_csv. make_p7_baseline.py globs committed statement files instead of listing them. The golden was rebuilt from fd7b64c and now holds the fixture (test_p7_v1_test_fixtures_match_the_baseline[fixture-2-lines-FPS CREDIT CLIENT A] PASSED). test_p7_golden_covers_every_case asserts the fixture's lines."
+    },
+    {
+      "finding": "minor tests/test_p7_history.py:82 — rebuild comparison excludes `_about`",
+      "disposition": "reproduced",
+      "fix": "The `_about` text now names tests/golden/p7_tools. The rebuild test compares every key, asserts got == want for the whole document and asserts exact counts (47 fixtures)."
+    }
+  ],
+  "notes": "Committed as aa4ec05 on the task branch. The pin means that any edit to v1.yaml, even whitespace or line endings, makes CMA_RULESET=v1 refuse to run (exit 2). This is intended for a frozen table: a new table should get a new id. The glob covers *.csv only, because the only statement files committed at fd7b64c or now are CSVs (git ls-files shows examples/cafe_stretched.csv and nothing under tests/). Statements that tests build in tmp_path are covered by the capture hooks on load_csv, categorise, metrics.compute, monzo.convert and synth.write."
+}
+```
