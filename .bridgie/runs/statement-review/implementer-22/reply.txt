@@ -1,0 +1,74 @@
+I've fixed all three findings from the last review. Lint, compile, the full suite (595 passed, none skipped), the contracts, invariants and dual_run tiers, and the offline evals all pass.
+
+**Fix to the v2 table (`src/cma/rules/v2.yaml`).** Lines are now classified in two stages, as the guidance asked:
+1. **Line type first:** a returned direct debit, then an explicit move to or from the applicant's own pot, space or savings, then HMRC, then a refund or reversal.
+2. **Name lists second:** lenders and MCA providers, director or capital wording, cash places, rent, acquirers, gateways, marketplaces and delivery platforms.
+
+So `TFR FROM SAVINGS CAPITAL RESERVE` is now an own-account transfer, and `CARD REFUND CAPITAL OFFICE SUPPLIES` is a refund. Savings wording with no move (`DIRECTOR SAVINGS`) still counts as director funding. HMRC is checked before the refund wording, so an HMRC refund stays an HMRC repayment.
+
+**Payment rails** (Faster Payment, BACS, CHAPS and so on) don't get a category of their own. A rail anywhere in the line rules out cash; otherwise the name list decides, so `FPS STRIPE` is still a gateway payout. Flagging an acquirer credit that arrives by Faster Payment under a person's name is an indicator's job (R14), not this task's.
+
+**Tests (`tests/test_rules_v2.py`)**
+- A matrix test crosses every refund word, every pot or savings phrase and every rail with every name on every list, with the cue before and after the name, and checks the cue wins. It also runs with a profile and a catch-all firm rule. It fails on the old table and passes now.
+- A `cma run` test under `CMA_RULESET=v2` checks both repro lines get the right category and rule id in the evidence JSON.
+
+**Checkpoint fix (`src/cma/graph.py`).** A checkpoint saved by the previous release records v1 and its hash but no rule id on any line. On resume, each line's rule id is now filled in by re-running that recorded table, provided the installed table still has the same hash. A new test in `tests/test_rules.py` fails on the old code and passes now.
+
+**Before accepting, please check:**
+- **Wider protection than the design lists.** Own pot/savings moves and refunds are now protected rules, so a profile director name or a firm rule can no longer take them. The design names only returned DD, director, capital, shareholder, lender and HMRC as protected. No shared contract changed.
+- **Rule ids changed.** `lender_refund` is gone and lender refunds now record `v2:refunds`. Bare savings wording now records `v2:savings_wording`.
+
+The changes are left uncommitted in the worktree for the runner.
+
+```json
+{
+  "task": "T03",
+  "claims": [
+    {
+      "text": "The v2 table classifies in two stages: line-type wording first (returned DD; an explicit move to or from the applicant's own pot, space or savings; HMRC; a refund or reversal; a payment rail, which rules out cash), then the name lists (lenders and MCA providers, director or capital wording, cash venues, rent, acquirers, gateways, marketplaces, delivery platforms). The line-type rules own_pots_savings and refunds are now protected and come right after returned_dd, so a profile name or firm rule cannot take them either. A full matrix crosses every refund word, every pot/savings move phrase and every rail with every name on every list (cue before and after the name) and asserts the cue wins; it fails on the previous table (first failure 'REFUND SUMUP') and passes now.",
+      "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k \"matrix or third_review or each_list or packaged or pot_move or lender_refund\"",
+      "proof_output": "all selected tests passed (part of the 314 passed in tests/test_rules_v2.py tests/test_rules.py)"
+    },
+    {
+      "text": "cma run under CMA_RULESET=v2 records TFR FROM SAVINGS CAPITAL RESERVE as own_account_transfer (v2:own_pots_savings) and CARD REFUND CAPITAL OFFICE SUPPLIES as refund_in (v2:refunds) in the evidence JSON; no line is director_funding.",
+      "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k third_review",
+      "proof_output": "1 passed (fails on the previous v2.yaml with ('director_funding', 'v2:director_funding') != ('own_account_transfer', 'v2:own_pots_savings'))"
+    },
+    {
+      "text": "A checkpoint from the release before T03 (ruleset v1 and its hash recorded, no rule id on any line) now resumes with each line's rule id replayed from the recorded table; a recorded hash the installed table does not have replays nothing.",
+      "proof_cmd": "python -m pytest -q tests/test_rules.py -k t02_checkpoint",
+      "proof_output": "1 passed (fails against the previous src/cma/graph.py)"
+    },
+    {
+      "text": "Lint, compile, the full suite, the marker tiers and the offline evals pass.",
+      "proof_cmd": "ruff check src tests evals; python -m compileall -q src; python -m pytest -q -rs; python -m pytest -q -m contracts; python -m pytest -q -m invariants; python -m pytest -q -m dual_run; python evals/run_evals.py",
+      "proof_output": "All checks passed! | compile-ok | 595 passed in 32.91s | 57 passed, 538 deselected | 66 passed, 529 deselected | 83 passed, 512 deselected | 9/9 memos fully grounded; model = fake; ruleset = v1"
+    }
+  ],
+  "files_changed": [
+    "src/cma/rules/v2.yaml",
+    "src/cma/categorise.py",
+    "src/cma/graph.py",
+    "tests/test_rules_v2.py",
+    "tests/test_rules.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major src/cma/rules/v2.yaml:126 — An explicit transfer from the applicant's own savings is classified as director funding when the savings account name contains CAPITAL (TFR FROM SAVINGS CAPITAL RESERVE, +300.00).",
+      "disposition": "reproduced",
+      "evidence": "Replaced the per-rule `unless: *pot_move` exceptions with a first-stage protected own_pots_savings rule (rule 2, right after returned_dd) whose list now includes explicit savings moves (TO/FROM SAVINGS, SAVINGS TRANSFER, TFR SAVINGS, TO/FROM SAVER, BUSINESS SAVER, INSTANT ACCESS) as well as pot/space moves. Savings wording with no move (FPS CREDIT DIRECTOR SAVINGS) moved to a new unprotected savings_wording rule after the director wording, so it stays director funding. Tests: LISTS cases 'TFR FROM SAVINGS CAPITAL RESERVE' and 'TRANSFER TO SAVINGS DIRECTOR', test_line_type_cue_beats_every_name_list_in_a_full_matrix, and the CLI test test_cma_run_under_v2_records_the_third_review_repros_as_their_buckets."
+    },
+    {
+      "finding": "major src/cma/rules/v2.yaml:126 — A card purchase refund from a merchant with CAPITAL in its name is classified as director funding (CARD REFUND CAPITAL OFFICE SUPPLIES, +75.00).",
+      "disposition": "reproduced",
+      "evidence": "The refunds rule is now a first-stage protected rule placed after HMRC (an HMRC refund stays an HMRC repayment) and before every protected name list; lender_refund and the refund exception on loan_drawdown are no longer needed and were removed (lender refunds record v2:refunds). Tests: LISTS cases 'CARD REFUND CAPITAL OFFICE SUPPLIES' and 'REFUND DIRECTOR TRAINING LTD', the matrix test (every refund word × every name on every list, with a profile and a catch-all firm rule), and the CLI third-review test."
+    },
+    {
+      "finding": "minor src/cma/graph.py:195 — A checkpoint from the previous release that stored the v1 ruleset id and hash but no line rule ids resumes with null rule ids.",
+      "disposition": "reproduced",
+      "evidence": "line_rule_ids now replays whenever any line lacks a rule id, using the table the state records (v1 when none), provided the installed table has the recorded hash; otherwise it leaves the ids as they are. Test: tests/test_rules.py::test_a_t02_checkpoint_with_a_recorded_v1_ruleset_but_no_line_rule_ids_replays_v1 (fails on the previous graph.py, passes now); the existing pre-T01 legacy test still passes."
+    }
+  ],
+  "notes": "Design deviation to flag: the guidance's two-stage order makes own pot/savings moves and refunds line-type cues that win over the name lists, so they are now protected rules (a profile director name or a firm rule no longer takes an explicit pot move or a refund credit). The design's precedence list names only returned DD, director, capital, shareholder, lender and HMRC as protected; this widens that set by two line-type rules and does not change any shared contract (Ruleset/Rule shape, classify signature, evidence keys unchanged). Rail cue: a rail has no category of its own, so the matrix asserts it rules out cash and otherwise leaves the name list's category (e.g. FPS STRIPE stays a gateway payout); acquirer credits arriving by Faster Payment under a person's name are an indicator's job (R14), not this task's. Rule ids changed: lender_refund removed (now v2:refunds); bare savings wording now records v2:savings_wording. HMRC stays ahead of the refund cue so HMRC refunds land in the HMRC repayments bucket. Changes are left uncommitted in the worktree for the runner."
+}
+```
