@@ -1,0 +1,109 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Verified the shipped tables for acquirers, gateways, marketplaces and delivery platforms at src/cma/rules/v2.yaml:271,306,323,340, lenders and MCA providers at :156,204, own pots and savings at :56,238,245, HMRC and refunds at :99,109, and cash deposits at :130. Cash withdrawals and explained credits are also table-driven at :361 and :117. The CLI graph selects the ruleset at src/cma/graph.py:250, assigns provenance at src/cma/categorise.py:468 and exports it at src/cma/graph.py:221. Runner logs show 608 passing tests, including the table-driven cases, CLI provenance, repeat categorisation, historical checkpoint replay and offline evals under both rulesets. Reviewed double submission, concurrent updates, sign and description boundaries, currency and timezone, partial failure, authorisation, tenant isolation, rollback and CLI, MCP and checkpoint consumers. Confirmed classification defects remain for cash deposits, HMRC credits, refunds and external payments containing savings wording.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-25/specified-3.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-25/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-25/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-25/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-25/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-25/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-25/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-25/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 366,
+      "criterion": "R4",
+      "claim": "A branch name containing CAPITAL still prevents a recognised counter cash deposit from being categorised as cash. The conflict branch sends it to unexplained and excludes it from trading receipts.",
+      "repro": "With CMA_RULESET=v2, use a +500 credit described as COUNTER DEPOSIT CAPITAL ST BRANCH. The passing runner case at tests/test_rules_v2.py:822 asserts other with v2:conflict:cash_paid_in+director_funding. R4 requires cash_deposit for the counter deposit."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/rules/v2.yaml",
+      "line": 101,
+      "criterion": "R4",
+      "claim": "Savings wording in an HMRC payment reference suppresses HMRC recognition. The refund rule also suppresses itself on HMRC wording, so the credit can fall through to an own-account transfer.",
+      "repro": "With CMA_RULESET=v2, classify +250 described as BACS CREDIT HMRC TAX REFUND PERSONAL SAVINGS ALLOWANCE. The HMRC and refund exclusions both match, then savings_wording returns own_account_transfer with v2:savings_wording. The sender is HMRC."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 356,
+      "criterion": "R4",
+      "claim": "An explicit card refund becomes unexplained when the merchant name contains a generic explained-credit word. The conflict check treats both word matches as equally authoritative.",
+      "repro": "With CMA_RULESET=v2, classify +25 described as CARD REFUND GRANT STATIONERY LTD. Both refunds and explained_non_trading match, so the line becomes other with v2:conflict:refunds+explained_non_trading. The card refund should be refund_in."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/rules/v2.yaml",
+      "line": 246,
+      "criterion": "R4",
+      "claim": "The savings rule treats a word in an external payer's name as evidence that the applicant moved money between their own accounts.",
+      "repro": "With CMA_RULESET=v2, classify +100 described as FPS CREDIT ACME SAVINGS CLUB LTD, where ACME SAVINGS CLUB LTD is an unrelated payer. The line becomes own_account_transfer with v2:savings_wording even with no matching own account and no own-transfer wording."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 348,
+      "criterion": "R4",
+      "claim": "The runner confirms the precedence matrix passed, but the producer's claim that it crosses every line-type cue with every name list exceeds the test coverage. The matrix omits the bare pot and savings lists and does not exercise HMRC or explained-credit cues against the enumerated lists.",
+      "repro": "Compare _name_lists and the loops in test_line_type_cue_beats_every_name_list_in_a_full_matrix with the staged rules in src/cma/rules/v2.yaml. The separate returned-DD test covers its own cue. Proving the broader claim requires expanding the matrix and obtaining a passing runner row for python -m pytest -v tests/test_rules_v2.py -k 'matrix or returned_dd_cue'."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
