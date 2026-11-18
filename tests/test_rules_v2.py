@@ -492,3 +492,68 @@ def test_p7_v2_changes_only_the_listed_lines_and_m1_m16_only_where_listed(tmp_pa
         if x != y:
             changed.add((desc, "in" if amount > 0 else "out", x.value, y.value))
     assert changed == NEWLY_RECOGNISED
+
+
+# --- hardening: idempotency, rollback, no descriptions in evidence, size ---------------
+
+
+def _mixed_lines(n: int) -> list[Transaction]:
+    descs = ["STRIPE PAYOUT", "CASH PAID IN", "FPS CREDIT ACME LTD INV 12", "CARD TESCO", "DD IWOCA LTD",
+             "FPS DEBIT ACME LTD", "UNPAID DD IWOCA LTD", "SOMETHING ELSE", "TFR ACME HOLDINGS", "FPS CREDIT JANE DOE"]
+    return [_t(descs[i % len(descs)], (1 if i % 3 else -1) * (10.0 + i % 97), f"T{i}") for i in range(n)]
+
+
+@pytest.mark.contracts
+def test_categorise_is_idempotent_under_v2_with_every_source(v2):
+    """Re-categorising a statement (as every recompute does) gives the same category, rule
+    id and reversal link on every line: nothing from the previous pass leaks in."""
+    s = Statement(account_name="a", transactions=_mixed_lines(200))
+    kw = {"profile": PROFILE, "overrides": {"T5": LineOverride(C.OTHER_EXPLAINED_IN, "override:1")},
+          "firm_rules": [_firm("f1", "SOMETHING ELSE", "in", C.OTHER_EXPLAINED_IN)]}
+    categorise.categorise(s, v2, **kw)
+    first = [(t.category, t.rule_id, t.reverses) for t in s.transactions]
+    categorise.categorise(s, v2, **kw)
+    assert [(t.category, t.rule_id, t.reverses) for t in s.transactions] == first
+    assert all(t.rule_id for t in s.transactions)
+
+
+@pytest.mark.dual_run
+def test_rollback_to_v1_after_v2_restores_v1_categories_and_rule_ids(v2):
+    """Switching CMA_RULESET back to v1 on a statement already categorised under v2 gives
+    exactly what v1 gives on a fresh copy: the rollback needs no data repair."""
+    v1 = load_ruleset("v1")
+    lines = _mixed_lines(100)
+    fresh = categorise.categorise(Statement(account_name="a", transactions=[t.model_copy() for t in lines]), v1)
+    s = categorise.categorise(Statement(account_name="a", transactions=lines), v2)
+    categorise.categorise(s, v1)
+    assert [(t.category, t.rule_id, t.reverses) for t in s.transactions] == \
+        [(t.category, t.rule_id, t.reverses) for t in fresh.transactions]
+
+
+@pytest.mark.contracts
+def test_evidence_lines_carry_ids_only_never_descriptions(tmp_path, monkeypatch):
+    """Payer-written text stays in the statement: the per-line provenance in the evidence
+    file has exactly id, category, rule_id and reverses."""
+    from cma.cli import app
+
+    monkeypatch.setenv("CMA_RULESET", "v2")
+    path = _write(tmp_path / "s.csv", [("STRIPE PAYMENTS UK LTD", 2000.0), ("CASH PAID IN", 640.0),
+                                       ("CARD TESCO", -45.0)] * 4)
+    r = CliRunner().invoke(app, ["run", str(path), "--yes", "--reviewer", "A", "--out", str(tmp_path / "m.md")])
+    assert r.exit_code == 0, r.output
+    raw = (tmp_path / "m.evidence.json").read_text()
+    record = json.loads(raw)
+    assert all(set(d) == {"id", "category", "rule_id", "reverses"} for d in record["lines"])
+    assert "lines" in record and "STRIPE PAYMENTS" not in json.dumps(record["lines"])
+
+
+def test_categorise_10000_lines_under_v2_with_a_profile_is_fast(v2):
+    """The design's recompute target is 2 seconds at 10,000 lines; categorising is part of
+    it. Measured at about 0.16 s; the bound is loose so the test is not flaky."""
+    import time
+
+    s = Statement(account_name="a", transactions=_mixed_lines(10_000))
+    t0 = time.perf_counter()
+    categorise.categorise(s, v2, profile=ProfileNames(directors=("JANE DOE", "JOHN SMITH"),
+                                                      own_accounts=("ACME HOLDINGS",)))
+    assert time.perf_counter() - t0 < 2.0
