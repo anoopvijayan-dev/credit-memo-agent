@@ -147,6 +147,7 @@ Every answer and decision, dated.
 - 2026-11-16 D37 (ack_risk): ack → risk paths acknowledged [Anoop Vijayan]
 - 2026-11-17 D38 (unblock): retry with guidance — Fix the 2 majors: reject duplicate YAML keys when loading a rule table; make the legacy-resume ruleset lookup fail before the review is recorded, or fall back to v1. Test the missing-table path and hash the file bytes. Remove claims the runner cannot prove (wheel install, historical replay, no-skip suite) from the claim instead of asserting them. → task T01 gets one more attempt [Anoop Vijayan]
 - 2026-11-18 D39: superseded (re-planned; the task it was about was replaced) [Anoop Vijayan]
+- 2026-11-18 D40 (unblock): retry with guidance — Pin v1's SHA-256 in code and refuse a v1 table that does not match it. Build the P7 fixture list by globbing every statement file under tests/ and examples/ (not from what tests happen to compute), with a test asserting the count. Mark the evidence-ruleset test so the runner runs it by name. → task T01 gets one more attempt [Anoop Vijayan]
 
 ## Idea
 
