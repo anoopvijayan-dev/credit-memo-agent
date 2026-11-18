@@ -1,0 +1,71 @@
+{
+  "task": "T03",
+  "claims": [
+    {
+      "text": "A named lender's explicit refund or reversal credit (e.g. +450.00 DD REPAYMENT REVERSAL IWOCA LTD, IWOCA REFUND, BOOST CAPITAL REFUND) is categorised refund_in with rule id v2:lender_refund, a new protected rule placed before lender_drawdown, so a profile name or firm rule still cannot reclassify it (R21); the same wording on a debit stays loan_repayment / v2:lender_repayment. Proven for every lender x every refund word, and end to end through cma run under CMA_RULESET=v2.",
+      "proof_cmd": "python -m pytest -v -rs",
+      "proof_output": "tests/test_rules_v2.py::test_each_list_categorises_its_lines_and_records_the_rule[refunds:DD REPAYMENT REVERSAL IWOCA LTD:in] PASSED\ntests/test_rules_v2.py::test_a_named_lender_refund_is_a_protected_refund_for_every_lender_and_refund_word PASSED\ntests/test_rules_v2.py::test_cma_run_under_v2_records_the_second_review_repros_as_their_buckets PASSED\n============================= 588 passed in 31.96s ============================="
+    },
+    {
+      "text": "An explicit move to or from the applicant's own pot or space (POT TRANSFER, TO/FROM POT, TO/FROM SPACE, VAT POT, TAX POT) is an own-account transfer (v2:own_pots_savings) in either direction even when the pot name is protected wording: every protected v2 rule except returned_dd now carries unless: *pot_move. +300.00 TFR FROM POT CAPITAL RESERVE is own_account_transfer, not director_funding; savings wording alone (FPS CREDIT DIRECTOR SAVINGS) stays director_funding.",
+      "proof_cmd": "python -m pytest -v -rs",
+      "proof_output": "tests/test_rules_v2.py::test_each_list_categorises_its_lines_and_records_the_rule[director_and_shareholder:TFR FROM POT CAPITAL RESERVE:in] PASSED\ntests/test_rules_v2.py::test_an_explicit_pot_move_beats_protected_wording_in_the_pot_name PASSED\n============================= 588 passed in 31.96s ============================="
+    },
+    {
+      "text": "A cash_paid_in line that names an electronic rail anywhere in the description (FPS, FASTER PAYMENT(S), BACS, CHAPS, TFR, TRANSFER, SO, STO, STANDING ORDER, DIRECT CREDIT) or a cheque is not a cash deposit; +500.00 CREDIT FPS POST OFFICE CASH is other / v2:default and is not in M2's evidence under cma run with CMA_RULESET=v2. Proven for every cash word x every rail in four positions; every cash word without a rail is still cash_deposit.",
+      "proof_cmd": "python -m pytest -v -rs",
+      "proof_output": "tests/test_rules_v2.py::test_each_list_categorises_its_lines_and_records_the_rule[cash_paid_in:CREDIT FPS POST OFFICE CASH:in] PASSED\ntests/test_rules_v2.py::test_each_list_categorises_its_lines_and_records_the_rule[cash_paid_in:CASH DEPOSIT VIA FASTER PAYMENT:in] PASSED\ntests/test_rules_v2.py::test_overlaps_from_the_review_hold_for_every_listed_word PASSED\ntests/test_rules_v2.py::test_cma_run_under_v2_records_the_second_review_repros_as_their_buckets PASSED"
+    },
+    {
+      "text": "Evidence written on resuming a review saved before provenance carries a v1 rule id for each line: v1 is replayed on a copy and its rule id used where it reproduces the saved category, otherwise null. Proven on a real SQLite checkpoint left pending by the pre-change commit, and in-process.",
+      "proof_cmd": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "proof_output": "tests/test_p7_history.py::test_a_review_left_pending_by_the_pre_change_version_resumes_here PASSED\n83 passed, 505 deselected"
+    },
+    {
+      "text": "The rule table format gains an optional `requires` key (a pattern that must also match), validated like `unless` (string, compiles).",
+      "proof_cmd": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "proof_output": "54 passed, 534 deselected"
+    },
+    {
+      "text": "Lint passes on src, tests and evals; src compiles; the invariants tier and the offline evals pass (v1 default unchanged).",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q -m invariants && python evals/run_evals.py",
+      "proof_output": "All checks passed!\n66 passed, 522 deselected\n9/9 memos fully grounded; model = fake; ruleset = v1"
+    }
+  ],
+  "files_changed": [
+    "src/cma/rules/v2.yaml",
+    "src/cma/categorise.py",
+    "src/cma/graph.py",
+    "tests/test_rules_v2.py",
+    "tests/test_rules.py",
+    "tests/test_p7_history.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major src/cma/rules/v2.yaml:92 — a named lender's explicit repayment reversal (+450.00 DD REPAYMENT REVERSAL IWOCA LTD) is recorded as loan_drawdown / v2:lender_drawdown.",
+      "disposition": "reproduced",
+      "evidence": "New tests failed before the fix. Added protected rule lender_refund (names *lenders, requires &refund_wording, category refund_in) before lender_drawdown, and the optional `requires` key in categorise.py. The old IWOCA REFUND expectation (lender_drawdown) was wrong and now expects refund_in / v2:lender_refund. Tests: test_each_list...[refunds:DD REPAYMENT REVERSAL IWOCA LTD:in], test_a_named_lender_refund_is_a_protected_refund_for_every_lender_and_refund_word (also checks a profile name and firm rule cannot override it), test_cma_run_under_v2_records_the_second_review_repros_as_their_buckets."
+    },
+    {
+      "finding": "major src/cma/rules/v2.yaml:104 — +300.00 TFR FROM POT CAPITAL RESERVE is recorded as director_funding.",
+      "disposition": "reproduced",
+      "evidence": "Generalised to every protected rule: defined &pot_move (explicit pot/space move wording) and added unless: *pot_move to hmrc_vat, hmrc_paye, hmrc_repayment, lender_repayment, lender_refund, lender_drawdown, loan_repayment, director_funding, loan_drawdown (merged into its existing unless) and owner_drawings; returned_dd is unchanged. Tests: test_each_list...[director_and_shareholder:TFR FROM POT CAPITAL RESERVE:in], test_an_explicit_pot_move_beats_protected_wording_in_the_pot_name (every pot move x protected word x both directions), and the cma run repro test."
+    },
+    {
+      "finding": "major src/cma/rules/v2.yaml:187 — the electronic-payment exclusion is anchored to the first word, so +500.00 CREDIT FPS POST OFFICE CASH enters M2 as cash_deposit.",
+      "disposition": "reproduced",
+      "evidence": "cash_paid_in's unless now matches a rail or cheque word anywhere as a whole word, and adds STANDING ORDER and DIRECT CREDIT. test_overlaps_from_the_review_hold_for_every_listed_word now puts each rail before, after and in the middle of each cash word and checks each cash word without a rail is still cash; test_cma_run_under_v2_records_the_second_review_repros_as_their_buckets checks the line is other / v2:default and not in M2's evidence."
+    },
+    {
+      "finding": "minor src/cma/graph.py:199 — evidence from a review resumed from a pre-provenance checkpoint has rule_id null on every line.",
+      "disposition": "reproduced",
+      "evidence": "Added graph.line_rule_ids: when the ruleset is missing or inferred and lines lack rule ids, v1 is replayed on a deep copy and its rule id is used only where it reproduces the saved category (null otherwise). test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1 now strips rule ids and checks the exported ids equal a fresh run's, and that a mismatched category keeps null; test_a_review_left_pending_by_the_pre_change_version_resumes_here (dual_run, real pre-change SQLite checkpoint) checks every exported line has a v1: rule id."
+    },
+    {
+      "finding": "minor tests/test_rules_v2.py:1 — compilation of evals and tests is not proven by the runner; compileall covers only src.",
+      "disposition": "reproduced",
+      "evidence": "The earlier claim went beyond the runner's tier. This claim only states that src compiles (mechanical:2) and that the full pytest suite and evals pass, which import and run tests and evals."
+    }
+  ],
+  "notes": "Rule table format: added an optional `requires` key (the rule matches only when it matches too). It is additive and optional, Rule gains a defaulted field, and the v1 table and its pinned hash are unchanged. The v2 table hash changes. A pot move now also takes precedence over HMRC, lender, loan, director and drawings wording. A payer could write FROM POT to move a credit out of director funding or lending, but that only moves it to own-account transfers, which is also non-trading, so M2 is unaffected. Logs for this run are in this run directory (pytest.log, contracts.log, invariants.log, dual_run.log, evals.log). Nothing committed; .bridgie/ not touched apart from this run directory."
+}
