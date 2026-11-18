@@ -875,3 +875,37 @@ def test_p15_loading_a_case_with_a_torn_last_entry_names_it_and_says_to_confirm_
 def test_loading_a_folder_that_is_not_a_case_is_refused(tmp_path):
     r = _check_cli(tmp_path / "nope")
     assert r.exit_code == 2
+
+
+# --- hardener round 23: the `cma case check` exit-code contract --------------------------
+
+
+@pytest.mark.contracts
+def test_case_check_exit_codes_are_0_intact_2_not_a_case_3_broken(tmp_path):
+    # A new case folder with no log yet is intact at entry 0 and the check writes nothing.
+    folder = tmp_path / "cases" / "c0"
+    folder.mkdir(parents=True)
+    r = _check_cli(folder)
+    assert r.exit_code == 0 and "0 entries" in r.output, r.output
+    assert sorted(p.name for p in folder.iterdir()) == []
+    # A log that cannot be read is broken (exit 3), named by entry number, not raised.
+    (folder / case.LOG_NAME).mkdir()
+    r = _check_cli(folder)
+    assert r.exit_code == 3 and "entry 1" in r.output, r.output
+    # A path that is a file, not a case folder, is refused (exit 2).
+    stray = tmp_path / "stray.txt"
+    stray.write_text("x", encoding="utf-8")
+    assert _check_cli(stray).exit_code == 2
+
+
+@pytest.mark.contracts
+def test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break(tmp_path, monkeypatch):
+    # A torn tail while another command holds the lock is that command's append landing.
+    folder, log = _case_dir(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    with case.for_case(folder).writer():
+        r = _check_cli(folder)
+    assert r.exit_code == 0, r.output
+    assert "2 entries" in r.output and "appending" in r.output
+    r = _check_cli(folder)  # the lock free again: the torn entry is named
+    assert r.exit_code == 3 and "entry 3" in r.output and "incomplete" in r.output
