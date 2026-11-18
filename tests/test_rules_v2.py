@@ -1119,3 +1119,16 @@ def test_only_a_line_type_cue_of_a_v2_table_may_have_no_category():
     # the cue alone never sets a category: a debit or a credit with only the rail is the default
     assert classify(_t("FPS ACME", 5.0), rs) == (C.OTHER, "v2:default")
     assert classify(_t("FPS ACME", -5.0), rs) == (C.SUPPLIER, "v2:default")
+
+
+@pytest.mark.contracts
+def test_only_the_banks_returned_payment_code_is_anchored_so_only_it_settles_a_credit_alone(v2):
+    """credit_verdict treats a categorised line-type rule whose pattern starts with "^" as the
+    bank's own code, which settles a credit on its own. Pin that only returned_dd has that
+    shape, so a future anchored cue cannot silently become a tie-break (design C1)."""
+    anchored = {r.id for r in v2.rules if r.stage == "line_type" and r.category is not None
+                and r.pattern.pattern.startswith("^")}
+    assert anchored == {"returned_dd"}
+    # payer wording cannot take the bank code's place: UNPAID DD later in the line is not anchored
+    got = classify(_t("REFUND REF UNPAID DD", 50.0), v2)
+    assert got == (C.REFUND_IN, "v2:refunds")
