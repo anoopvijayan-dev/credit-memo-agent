@@ -1,0 +1,60 @@
+{
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:153–185 checks canonical bytes, hashes, sequence numbers and links. Lines 210–259 compare the chain with the recorded head. Lines 317–374 serialize appends and reject stale positions. The runner confirmed 69 invariant tests, including the named P15 change, removal, reorder, rebuilt-chain and torn-entry tests. The rebuilt-chain test does not verify the reported first bad entry, and no production caller loads or writes the log. The full suite and contracts logs confirm duplicate-submit and ordinary writer-contention tests. UTC timestamps, JSON boundaries, file permissions and existing consumers were checked. The module adds no currency arithmetic, endpoint, tenant query or migration.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-19/invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 299,
+      "criterion": "P15",
+      "claim": "The case-log integrity check has no production caller. The passing tests exercise the library directly, so they do not establish detection on a production case load.",
+      "repro": "Search src/ for CaseLog, cma.case and require_intact. The definitions and references are confined to case.py. Invoking an existing production command cannot reach the new log verifier."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 252,
+      "criterion": "P15",
+      "claim": "A rebuilt chain with an earlier entry removed is reported as a missing final entry, and the altered entries are returned as the intact prefix. The cited rebuilt-chain test checks refusal and an error mentioning the head file, but its assertion at tests/test_case_log.py:540 only checks that a bound method is truthy and never checks first_bad.",
+      "repro": "Create a three-entry log. Remove entry 1, renumber and rehash the two survivors, and leave the head file untouched. verify() reports first_bad=3 and returns the two rewritten entries as the intact prefix, although the history diverges at entry 1."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 281,
+      "criterion": "P15",
+      "claim": "A reader can report a live append as torn and tell the user to confirm dropping it. The passing reader test at tests/test_case_log.py:592 pauses the writer for about 30 ms and does not cover a writer delayed past the retry window.",
+      "repro": "Pause a writer after the complete line is on disk and before the head replacement. Keep the writer paused while a second CaseLog verifies. After four 20 ms retry sleeps, verify() can return torn=True while the original writer still holds the lock and can complete normally."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 403,
+      "criterion": "P15",
+      "claim": "The test cited for the claim that a crash during a drop leaves the torn log unchanged only injects failure before the log rename. A failure after the rename leaves different log bytes and the old head.",
+      "repro": "Create a torn entry, then make _write_head raise during drop_torn_entry. The log already contains the replacement torn_entry_dropped event, the old head remains, and the next load treats the replacement event as torn. The log remains repairable, but its bytes changed."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 192,
+      "criterion": "P15",
+      "claim": "The unreadable-head claim is only covered for malformed bytes. A filesystem read error bypasses the integrity result and produces no numbered CaseLogBroken error.",
+      "repro": "Create a valid log, then replace its .head file with a directory of the same name. Calling require_intact() raises IsADirectoryError from read_bytes() instead of reporting the unreadable head through CaseLogBroken."
+    }
+  ],
+  "verdict": "fail"
+}
