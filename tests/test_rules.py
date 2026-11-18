@@ -160,6 +160,7 @@ def test_a_missing_packaged_table_is_refused_not_raised_as_an_os_error(monkeypat
         load_ruleset.cache_clear()
 
 
+@pytest.mark.contracts
 def test_cma_run_refuses_a_missing_table_rather_than_blaming_the_model(tmp_path, monkeypatch):
     from typer.testing import CliRunner
 
@@ -251,11 +252,13 @@ def test_cma_run_refuses_a_damaged_table_rather_than_blaming_the_model(tmp_path,
     assert "Refused." in r.output and "rule 1" in r.output and "model call failed" not in r.output
 
 
+@pytest.mark.contracts
 def test_an_unknown_ruleset_is_refused_naming_the_known_ones():
     with pytest.raises(RulesetError, match=r"v9.*v1"):
         load_ruleset("v9")
 
 
+@pytest.mark.contracts
 def test_a_ruleset_id_cannot_name_a_path():
     with pytest.raises(RulesetError):
         load_ruleset("../policies/uk_sme_default")

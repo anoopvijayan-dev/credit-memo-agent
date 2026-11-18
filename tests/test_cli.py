@@ -49,6 +49,7 @@ def test_written_memo_carries_its_evidence(tmp_path):
     assert record["vat_stagger"] == 3 and record["guard"]["grounded"] is True
 
 
+@pytest.mark.contracts
 def test_unknown_cma_ruleset_is_refused_not_blamed_on_the_model(tmp_path, monkeypatch):
     # T01: exit 4 means the model failed; a bad CMA_RULESET is a refusal (exit 2).
     monkeypatch.setenv("CMA_RULESET", "v9")
