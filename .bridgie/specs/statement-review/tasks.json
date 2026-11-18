@@ -9,12 +9,12 @@
         "P7"
       ],
       "depends_on": [],
-      "status": "blocked",
+      "status": "failed",
       "attempts": 4,
-      "max_attempts": 4,
+      "max_attempts": 5,
       "branch": "bridgie-task/statement-review/T01",
       "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-12/evidence.json",
-      "escalation": "blocked after 4 attempts. Last: implementer run failed (see .bridgie/runs/statement-review)"
+      "escalation": "blocked after 4 attempts. Last: implementer run failed (see .bridgie/runs/statement-review) | guidance: Pin v1's SHA-256 in code and refuse a v1 table that does not match it. Build the P7 fixture list by globbing every statement file under tests/ and examples/ (not from what tests happen to compute), with a test asserting the count. Mark the evidence-ruleset test so the runner runs it by name."
     },
     {
       "id": "T02",
