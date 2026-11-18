@@ -62,7 +62,7 @@ DIRECTIONS = ("in", "out", "any")
 TABLE_KEYS = {"id", "frozen", "rules"}
 RULE_KEYS = {"id", "direction", "category"}  # required, plus a pattern or names
 MATCH_KEYS = {"pattern", "names"}
-OPTIONAL_KEYS = {"unless", "protected"}
+OPTIONAL_KEYS = {"unless", "requires", "protected"}
 ALL_RULE_KEYS = RULE_KEYS | MATCH_KEYS | OPTIONAL_KEYS
 # A frozen table's SHA-256, pinned here. A file that validates but differs from these
 # bytes (a rule recategorised, CRLF line ends, frozen switched off) is refused, so the id
@@ -82,6 +82,7 @@ class Rule:
     category: Category
     protected: bool = False  # wins over profile names and firm rules (R21)
     unless: re.Pattern[str] | None = None  # the rule does not match when this does
+    requires: re.Pattern[str] | None = None  # the rule matches only when this does too
 
 
 @dataclass(frozen=True)
@@ -147,7 +148,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
             problems.append(f"{where}: unknown key {key!r}")
         # Every field is a string. Checking the type first means a list, a mapping, a
         # number or null is reported here, not raised later as a TypeError.
-        for key in sorted((RULE_KEYS | {"pattern", "unless"}) & set(r)):
+        for key in sorted((RULE_KEYS | {"pattern", "unless", "requires"}) & set(r)):
             if not isinstance(r[key], str) or not r[key]:
                 problems.append(f"{where}: {key} {r[key]!r} is not a non-empty string")
         if "names" in r:
@@ -170,7 +171,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
             problems.append(f"{where}: direction {r['direction']!r} is not one of {list(DIRECTIONS)}")
         if isinstance(r.get("category"), str) and r["category"] not in categories:
             problems.append(f"{where}: category {r['category']!r} is not a category")
-        for key in ("pattern", "unless"):
+        for key in ("pattern", "unless", "requires"):
             if isinstance(r.get(key), str) and r[key]:
                 problem = _compile_problem(r[key])
                 if problem:
@@ -204,7 +205,8 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) 
         rules=tuple(
             Rule(r["id"], _rule_pattern(r), r["direction"], Category(r["category"]),
                  protected=r.get("protected", False),
-                 unless=re.compile(r["unless"]) if "unless" in r else None)
+                 unless=re.compile(r["unless"]) if "unless" in r else None,
+                 requires=re.compile(r["requires"]) if "requires" in r else None)
             for r in data["rules"]
         ),
     )
@@ -285,7 +287,8 @@ def _direction_ok(direction: Direction, amount: float) -> bool:
 def rule_matches(rule: Rule, description: str, amount: float) -> bool:
     """`description` upper-cased."""
     return (_direction_ok(rule.direction, amount) and rule.pattern.search(description) is not None
-            and (rule.unless is None or rule.unless.search(description) is None))
+            and (rule.unless is None or rule.unless.search(description) is None)
+            and (rule.requires is None or rule.requires.search(description) is not None))
 
 
 @dataclass(frozen=True)

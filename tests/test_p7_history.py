@@ -140,6 +140,8 @@ def test_a_review_left_pending_by_the_pre_change_version_resumes_here(pre_change
     assert r.exit_code == 0, r.output
     record = json.loads((tmp_path / "memo.evidence.json").read_text())
     assert record["ruleset"] == {"id": "v1", "sha256": load_ruleset("v1").sha256, "inferred": "pre-ruleset checkpoint"}
+    # The pre-change version recorded no rule ids; each line's is inferred from v1.
+    assert record["lines"] and all((line["rule_id"] or "").startswith("v1:") for line in record["lines"])
     assert "APPROVED by C" in out.read_text()
 
 

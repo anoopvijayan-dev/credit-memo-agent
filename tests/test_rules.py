@@ -331,11 +331,26 @@ def test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1(tmp_pat
     cfg = {"configurable": {"thread_id": "legacy"}}
     graph.invoke({"statement_path": str(csv_path)}, cfg)
     graph.invoke(Command(resume={"approved": True, "reviewer": "A. Analyst"}), cfg)
-    legacy = {k: v for k, v in graph.get_state(cfg).values.items() if k != "ruleset"}
+    state = graph.get_state(cfg).values
+    recorded = [(t.category, t.rule_id) for t in state["statement"].transactions]
+    # A checkpoint from before provenance: no ruleset in the state, no rule id on any line.
+    legacy = {k: v for k, v in state.items() if k != "ruleset"}
+    legacy["statement"] = state["statement"].model_copy(deep=True)
+    for t in legacy["statement"].transactions:
+        t.rule_id = None
     monkeypatch.setenv("CMA_RULESET", "v9")
-    assert evidence_record(legacy)["ruleset"] == {
+    record = evidence_record(legacy)
+    assert record["ruleset"] == {
         "id": "v1", "sha256": load_ruleset("v1").sha256, "inferred": "pre-ruleset checkpoint"}
     assert evidence_record({**legacy, "ruleset": None})["ruleset"]["id"] == "v1"
+    # Each line's provenance is inferred from v1 too, and equals what a fresh run records.
+    assert [(t.category, t.rule_id) for t in legacy["statement"].transactions] == [(c, None) for c, _ in recorded]
+    assert [(line["category"], line["rule_id"]) for line in record["lines"]] == \
+        [(c.value, r) for c, r in recorded]
+    assert all(r.startswith("v1:") for _, r in recorded)
+    # A line whose saved category v1 would not give keeps no rule id rather than a wrong one.
+    legacy["statement"].transactions[0].category = Category.LOAN_DRAWDOWN
+    assert evidence_record(legacy)["lines"][0]["rule_id"] is None
 
 
 # --- R10: M16 keeps its id, unit and value, and its name says what it measures ------------

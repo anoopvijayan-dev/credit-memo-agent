@@ -185,6 +185,19 @@ def ruleset_used(s: MemoState) -> dict:
     return {"id": v1.id, "sha256": v1.sha256, "inferred": "pre-ruleset checkpoint"}
 
 
+def line_rule_ids(s: MemoState) -> list[str | None]:
+    """Each line's rule id. A checkpoint from before provenance holds none; its lines were
+    categorised by the table that is now v1 (P7), so v1 is replayed on a copy and its rule
+    id taken for each line whose saved category it reproduces. A line it does not
+    reproduce keeps None rather than a rule that did not set it."""
+    txns = s["statement"].transactions
+    recorded = s.get("ruleset")
+    if (recorded and not recorded.get("inferred")) or all(t.rule_id for t in txns):
+        return [t.rule_id for t in txns]
+    replay = cat.categorise(s["statement"].model_copy(deep=True), cat.load_ruleset("v1")).transactions
+    return [t.rule_id or (r.rule_id if r.category == t.category else None) for t, r in zip(txns, replay, strict=True)]
+
+
 def evidence_record(s: MemoState) -> dict:
     """Everything needed to audit the memo later, as plain JSON."""
     return {
@@ -196,8 +209,9 @@ def evidence_record(s: MemoState) -> dict:
         "vat_stagger": s.get("vat_stagger"),
         "ruleset": ruleset_used(s),
         # Each line's category and the rule that set it: ids only, no descriptions.
-        "lines": [{"id": t.id, "category": t.category.value if t.category else None, "rule_id": t.rule_id,
-                   "reverses": t.reverses} for t in s["statement"].transactions],
+        "lines": [{"id": t.id, "category": t.category.value if t.category else None, "rule_id": rule_id,
+                   "reverses": t.reverses} for t, rule_id in zip(s["statement"].transactions, line_rule_ids(s),
+                                                                 strict=True)],
         "metrics": [m.model_dump() for m in s["metrics"]],
         "policy": s["policy"].model_dump(mode="json"),
         "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},

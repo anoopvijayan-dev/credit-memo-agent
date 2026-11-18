@@ -10,7 +10,14 @@
 #
 # Protected rules (returned DD, director, capital, shareholder, lender, HMRC) come first
 # and win over the case profile and firm rules; only a per-line override changes a line
-# they match (R21). The precedence is in src/cma/categorise.py.
+# they match (R21). The precedence is in src/cma/categorise.py. A rule may also have
+# `requires`, a pattern that must match too.
+#
+# An explicit move to or from the applicant's own pot or space ("TFR FROM POT CAPITAL
+# RESERVE", "TO POT HMRC VAT") is an own-account transfer whatever the pot is called, so
+# every protected rule but a returned DD has `unless: *pot_move` and leaves it to the own
+# pots rule below. Savings wording alone is not a pot move: "DIRECTOR SAVINGS" stays
+# director funding.
 #
 # Ambiguous wording never resolves to trading receipts: refunds, own pots and explained
 # non-trading credits are tried before the acquirer lists, so "PAYPAL REFUND" is a
@@ -26,17 +33,20 @@ rules:
     protected: true
   - id: hmrc_vat
     pattern: 'HMRC VAT'
+    unless: &pot_move '(?<![A-Z0-9])(?:POT\s+TRANSFER|(?:TO|FROM)\s+(?:POT|SPACE)|(?:VAT|TAX)\s+POT)(?![A-Z0-9])'
     direction: out
     category: hmrc_vat
     protected: true
   - id: hmrc_paye
     pattern: 'HMRC PAYE'
+    unless: *pot_move
     direction: out
     category: hmrc_paye
     protected: true
   # HMRC paying money back (VAT repayment, tax refund, R&D credit).
   - id: hmrc_repayment
     names: [HMRC, HM REVENUE]
+    unless: *pot_move
     direction: in
     category: hmrc_repayment
     protected: true
@@ -86,16 +96,28 @@ rules:
       - BBLS
       - CBILS
       - RECOVERY LOAN SCHEME
+    unless: *pot_move
     direction: out
     category: loan_repayment
     protected: true
+  # A named lender's explicit refund or reversal ("DD REPAYMENT REVERSAL IWOCA LTD") is
+  # money given back, not a new drawdown. Still protected: a lender line (R21).
+  - id: lender_refund
+    names: *lenders
+    requires: &refund_wording '(?<![A-Z0-9])(?:REFUND|REFUNDED|REVERSAL|REVERSED|RETURNED\s+PAYMENT|PAYMENT\s+RETURNED|CHARGEBACK)(?![A-Z0-9])'
+    unless: *pot_move
+    direction: in
+    category: refund_in
+    protected: true
   - id: lender_drawdown
     names: *lenders
+    unless: *pot_move
     direction: in
     category: loan_drawdown
     protected: true
   - id: loan_repayment
     pattern: '\bLOAN\b|FINANCE\b'
+    unless: *pot_move
     direction: out
     category: loan_repayment
     protected: true
@@ -103,20 +125,22 @@ rules:
   # generic loan wording, so a director's loan to the business is director funding.
   - id: director_funding
     names: [DIRECTOR, DIRECTORS, OWNER, CAPITAL, SHAREHOLDER, SHAREHOLDERS]
+    unless: *pot_move
     direction: in
     category: director_funding
     protected: true
-  # Generic loan or finance wording, unless the line says it is a refund or a reversal:
-  # "CARD REFUND ACME RETAIL FINANCE" is money given back, not debt drawn, and goes to the
-  # refunds rule below. A named lender above stays a lender whatever the wording (R21).
+  # Generic loan or finance wording, unless the line says it is a refund or a reversal
+  # (the refund wording above, or a pot move): "CARD REFUND ACME RETAIL FINANCE" is money
+  # given back, not debt drawn, and goes to the refunds rule below.
   - id: loan_drawdown
     pattern: '\bLOAN\b|FINANCE\b'
-    unless: '(?<![A-Z0-9])(?:REFUND|REFUNDED|REVERSAL|REVERSED|RETURNED\s+PAYMENT|PAYMENT\s+RETURNED|CHARGEBACK)(?![A-Z0-9])'
+    unless: '(?<![A-Z0-9])(?:REFUND|REFUNDED|REVERSAL|REVERSED|RETURNED\s+PAYMENT|PAYMENT\s+RETURNED|CHARGEBACK|POT\s+TRANSFER|(?:TO|FROM)\s+(?:POT|SPACE)|(?:VAT|TAX)\s+POT)(?![A-Z0-9])'
     direction: in
     category: loan_drawdown
     protected: true
   - id: owner_drawings
     pattern: 'OWNER DRAWINGS|DIRECTOR DRAWINGS|DIVIDEND'
+    unless: *pot_move
     direction: out
     category: owner_drawings
     protected: true
@@ -163,8 +187,9 @@ rules:
   # Cash paid in at a counter or a machine, at a bank, a Post Office or a PayPoint. A
   # cheque is not cash. Post Office and PayPoint count only with cash, deposit or counter
   # wording: both also pay by transfer, and their name alone is not cash. An electronic
-  # payment (Faster Payment, BACS, CHAPS, a transfer, a standing order) is never cash,
-  # whatever its payer-written reference says; it stays unexplained for a person.
+  # payment (Faster Payment, BACS, CHAPS, a transfer, a standing order, a direct credit)
+  # is never cash, wherever in the line the rail is named and whatever its payer-written
+  # reference says; it stays unexplained for a person.
   - id: cash_paid_in
     names:
       - CASH PAID IN
@@ -184,7 +209,7 @@ rules:
       - POST OFFICE COUNTER DEPOSIT
       - PAYPOINT CASH
       - PAYPOINT DEPOSIT
-    unless: '\bCHEQUES?\b|\bCHQ\b|^(?:FPS|FASTER\s+PAYMENTS?|BACS|CHAPS|TFR|TRANSFER|SO|STO)\b'
+    unless: '(?<![A-Z0-9])(?:CHEQUES?|CHQ|FPS|FASTER\s+PAYMENTS?|BACS|CHAPS|TFR|TRANSFER|SO|STO|STANDING\s+ORDER|DIRECT\s+CREDIT)(?![A-Z0-9])'
     direction: in
     category: cash_deposit
   # Trading receipts. The first three patterns are v1's synthetic acquirer wording.

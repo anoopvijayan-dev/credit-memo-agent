@@ -155,6 +155,9 @@ LISTS = {
         ("CASH DEPOSIT DIRECTOR", 3000.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
         ("CASH DEPOSIT IWOCA", 3000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
         ("HMRC CASH PAID IN", 3000.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),
+        # an electronic rail anywhere in the line, not only first, means it is not cash
+        ("CREDIT FPS POST OFFICE CASH", 500.00, C.OTHER, "v2:default"),
+        ("CASH DEPOSIT VIA FASTER PAYMENT", 500.00, C.OTHER, "v2:default"),
     ],
     "cash_withdrawal": [
         # cash out keeps the category an unmatched debit gets; the rule id marks it for
@@ -183,8 +186,11 @@ LISTS = {
         # explicit refund wording beats generic finance or loan wording: no debt was drawn
         ("CARD REFUND ACME RETAIL FINANCE", 75.00, C.REFUND_IN, "v2:refunds"),
         ("LOAN REPAYMENT REVERSAL", 450.00, C.REFUND_IN, "v2:refunds"),
-        # a named lender stays a lender (protected, R21)
-        ("IWOCA REFUND", 50.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
+        # a named lender giving money back is a refund, not new debt; still protected (R21)
+        ("IWOCA REFUND", 50.00, C.REFUND_IN, "v2:lender_refund"),
+        ("DD REPAYMENT REVERSAL IWOCA LTD", 450.00, C.REFUND_IN, "v2:lender_refund"),
+        ("BOOST CAPITAL REFUND", 60.00, C.REFUND_IN, "v2:lender_refund"),  # not director capital
+        ("IWOCA REFUND", -50.00, C.LOAN_REPAYMENT, "v2:lender_repayment"),  # money out stays debt service
         ("UNPAID DD BRITISH GAS", 75.00, C.RETURNED_DD, "v2:returned_dd"),
     ],
     "explained_non_trading": [
@@ -199,6 +205,10 @@ LISTS = {
         ("FPS CREDIT A DIRECTOR LOAN ACCOUNT", 5000.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
         ("J SMITH SHAREHOLDER INV 1234", 900.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
         ("CAPITAL INJECTION", 900.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
+        # an explicit move from the applicant's own pot is not director money, whatever the pot is called
+        ("TFR FROM POT CAPITAL RESERVE", 300.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
+        # savings wording alone is not a pot move: a director's savings paid in is director funding
+        ("FPS CREDIT DIRECTOR SAVINGS", 300.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
         ("DIRECTOR DRAWINGS", -900.00, C.OWNER_DRAWINGS, "v2:owner_drawings"),
     ],
     "defaults_and_invoices": [
@@ -273,8 +283,50 @@ def test_overlaps_from_the_review_hold_for_every_listed_word(v2):
         for rail in ("", "BACS CREDIT ", "FPS CREDIT "):
             assert classify(_t(f"{rail}{provider}", 500.0), v2)[0] is C.OTHER, (rail, provider)
     for cash in _list("cash_paid_in"):
-        for rail in ("FPS", "FASTER PAYMENT", "BACS", "CHAPS", "TFR", "TRANSFER", "SO", "STO"):
-            assert classify(_t(f"{rail} {cash}", 200.0), v2)[0] is not C.CASH_DEPOSIT, (rail, cash)
+        for rail in ("FPS", "FASTER PAYMENT", "FASTER PAYMENTS", "BACS", "CHAPS", "TFR", "TRANSFER", "SO", "STO",
+                     "STANDING ORDER", "DIRECT CREDIT"):
+            # wherever the rail sits in the line
+            for desc in (f"{rail} {cash}", f"CREDIT {rail} {cash}", f"{cash} {rail}", f"{cash} BY {rail} REF 12"):
+                assert classify(_t(desc, 200.0), v2)[0] is not C.CASH_DEPOSIT, desc
+        assert classify(_t(f"{cash} HIGH ST", 200.0), v2) == (C.CASH_DEPOSIT, "v2:cash_paid_in"), cash
+
+
+@pytest.mark.contracts
+def test_a_named_lender_refund_is_a_protected_refund_for_every_lender_and_refund_word(v2):
+    """A named lender's explicit refund or reversal is money given back, not a new
+    drawdown, and stays protected: a profile name or firm rule cannot reclassify it (R21).
+    Money out to a lender is debt service whatever the wording."""
+    firm = [_firm("f", ".", "any", C.REVENUE_TRANSFER)]
+    profile = ProfileNames(directors=("IWOCA",), own_accounts=("IWOCA",))
+    for lender in _list("lender_drawdown"):
+        for refund in _list("refunds"):
+            for desc in (f"{refund} {lender}", f"{lender} {refund}", f"DD REPAYMENT {refund} {lender} LTD"):
+                assert classify(_t(desc, 75.0), v2, profile=profile, firm_rules=firm) == \
+                    (C.REFUND_IN, "v2:lender_refund"), desc
+                assert classify(_t(desc, -75.0), v2) == (C.LOAN_REPAYMENT, "v2:lender_repayment"), desc
+        assert classify(_t(lender, 75.0), v2) == (C.LOAN_DRAWDOWN, "v2:lender_drawdown"), lender
+
+
+POT_MOVES = ("POT TRANSFER", "TO POT", "FROM POT", "TO SPACE", "FROM SPACE", "VAT POT", "TAX POT")
+
+
+@pytest.mark.contracts
+def test_an_explicit_pot_move_beats_protected_wording_in_the_pot_name(v2):
+    """A move to or from the applicant's own pot or space is an own-account transfer in
+    either direction, even when the pot's name is protected wording (CAPITAL, DIRECTOR,
+    HMRC, a lender, LOAN)."""
+    protected_words = ["CAPITAL", "DIRECTOR", "DIRECTORS", "OWNER", "SHAREHOLDER", "HMRC", "HMRC VAT",
+                       "HMRC PAYE", "HM REVENUE", "LOAN", "FINANCE", "DIVIDEND", "OWNER DRAWINGS",
+                       *_list("lender_drawdown")]
+    for pot in POT_MOVES:
+        for word in protected_words:
+            for amount in (300.0, -300.0):
+                desc = f"TFR {pot} {word} RESERVE"
+                assert classify(_t(desc, amount), v2) == (C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"), \
+                    (desc, amount)
+    # every protected rule except a returned direct debit yields to an explicit pot move
+    assert {r.id for r in v2.protected if r.unless is None or not r.unless.search("TFR FROM POT X")} == \
+        {"returned_dd"}
 
 
 # --- precedence ----------------------------------------------------------------------
@@ -370,7 +422,8 @@ def test_v2_is_packaged_with_an_id_and_the_hash_of_its_file(v2):
     flags = [r.protected for r in v2.rules]
     assert flags == sorted(flags, reverse=True)
     assert {r.id for r in v2.protected} == {"returned_dd", "hmrc_vat", "hmrc_paye", "hmrc_repayment",
-                                            "lender_repayment", "lender_drawdown", "loan_repayment",
+                                            "lender_repayment", "lender_refund", "lender_drawdown",
+                                            "loan_repayment",
                                             "director_funding", "loan_drawdown", "owner_drawings"}
 
 
@@ -386,6 +439,8 @@ GOOD = {"id": "card", "names": ["STRIPE"], "direction": "in", "category": "reven
     ([{**GOOD, "names": ["STRIPE", "stripe"]}], "listed twice"),
     ([{**GOOD, "unless": "("}], "unless does not compile"),
     ([{**GOOD, "unless": 3}], "unless 3 is not"),
+    ([{**GOOD, "requires": "("}], "requires does not compile"),
+    ([{**GOOD, "requires": ["REFUND"]}], "requires \\['REFUND'\\] is not"),
     ([{**GOOD, "protected": "yes"}], "protected must be"),
     ([GOOD, {**GOOD, "id": "p", "protected": True}], "protected rule must come before"),
     # each part compiles alone, but a global flag is not allowed once the parts are joined
@@ -471,6 +526,36 @@ def test_cma_run_under_v2_keeps_a_post_office_transfer_out_of_trading_receipts(t
     m = {x["id"]: x for x in record["metrics"]}
     assert m["M2"]["value"] == pytest.approx(4 * 2000.0)
     assert not ids & set(m["M2"]["evidence"])
+
+
+@pytest.mark.contracts
+def test_cma_run_under_v2_records_the_second_review_repros_as_their_buckets(tmp_path, monkeypatch):
+    """The second review's repros end to end: a named lender's repayment reversal is a
+    refund, not a drawdown; a transfer from a pot called CAPITAL is an own-account
+    transfer, not director funding; a Faster Payment that names Post Office cash is not
+    cash and stays out of M2."""
+    from cma.cli import app
+
+    monkeypatch.setenv("CMA_RULESET", "v2")
+    rows = [("STRIPE PAYMENTS UK LTD", 2000.0), ("DD REPAYMENT REVERSAL IWOCA LTD", 450.0),
+            ("TFR FROM POT CAPITAL RESERVE", 300.0), ("CREDIT FPS POST OFFICE CASH", 500.0),
+            ("CARD TESCO", -45.0)] * 4
+    path = _write(tmp_path / "s.csv", rows)
+    r = CliRunner().invoke(app, ["run", str(path), "--yes", "--reviewer", "A", "--out", str(tmp_path / "m.md")])
+    assert r.exit_code == 0, r.output
+    record = json.loads((tmp_path / "m.evidence.json").read_text())
+    lines = {d["id"]: d for d in record["lines"]}
+    expect = {"STRIPE PAYMENTS UK LTD": ("revenue_card_settlement", "v2:payment_gateways"),
+              "DD REPAYMENT REVERSAL IWOCA LTD": ("refund_in", "v2:lender_refund"),
+              "TFR FROM POT CAPITAL RESERVE": ("own_account_transfer", "v2:own_pots_savings"),
+              "CREDIT FPS POST OFFICE CASH": ("other", "v2:default"),
+              "CARD TESCO": ("supplier", "v2:default")}
+    txns = ingest.load_csv(path).transactions
+    for t in txns:
+        assert (lines[t.id]["category"], lines[t.id]["rule_id"]) == expect[t.description]
+    m = {x["id"]: x for x in record["metrics"]}
+    assert m["M2"]["value"] == pytest.approx(4 * 2000.0)
+    assert set(m["M2"]["evidence"]) == {t.id for t in txns if t.description == "STRIPE PAYMENTS UK LTD"}
 
 
 @pytest.mark.contracts
