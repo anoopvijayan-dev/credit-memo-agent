@@ -146,12 +146,12 @@
         "P15"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T12",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-28/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: major: A lock subsystem error is treated as evidence of a live writer. On a torn log, verification can therefore return the recorded prefix as intact and the CLI can exit 0 even though no writer holds the lock. The passing contention test covers a held lock only. at src/cma/case.py:394; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-29/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: major: If lock release fails, writer() skips closing the descriptor after clearing its reference to it. The process can keep the lock indefinitely, blocking subsequent appends and torn-entry recovery until it exits. at src/cma/case.py:413; reviewer verdict fail"
     },
     {
       "id": "T13",

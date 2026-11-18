@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 51,
+  "next_id": 52,
   "decisions": [
     {
       "id": "D1",
@@ -1090,6 +1090,26 @@
       "decided_at": "2026-11-18T09:27:51.249Z",
       "effect": "task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12",
       "created_at": "2026-11-18T08:58:55.372Z"
+    },
+    {
+      "id": "D51",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: major: If lock release fails, writer() skips closing the descriptor after clearing its reference to it. The process can keep the lock indefinitely, blocking subsequent appends and torn-entry recovery until it exits. at src/cma/case.py:413; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-18T09:32:21.302Z"
     }
   ]
 }
