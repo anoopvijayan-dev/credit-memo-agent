@@ -1,0 +1,60 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped acquirers, gateways, marketplaces and delivery platforms to src/cma/rules/v2.yaml:195,229,245,261, lenders and MCA providers in both directions to :45,92, own pots and savings to :127, HMRC credits to :38, refunds and reversals to :154, and counter and machine deposits to :168. src/cma/graph.py:227 applies the selected table, src/cma/categorise.py:426 assigns provenance, and src/cma/graph.py:199 exports it. The specified runner log confirms the table-driven cases, overlap regression and v2 CLI provenance tests passed. Code inspection found explicit reversals and own-pot transfers misclassified by earlier rules, and electronic credits counted as cash when the rail appears after the first word. Reviewed double submission, concurrent updates, partial failure, error paths, input and sign boundaries, currency and timezone, authorization, tenant isolation, and CLI, checkpoint and MCP consumers. The runner confirmed sequential duplicate-output refusal and legacy resume compatibility. The categoriser introduces no new write path, authorization boundary, tenant query, currency conversion or timezone handling. No tests were run during review.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-22/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/rules/v2.yaml",
+      "line": 92,
+      "criterion": "R4",
+      "claim": "A named lender's explicit repayment reversal is recorded as a new drawdown. The protected lender rule wins before the refund rule, and the refund exception applies only to the generic loan rule. R21 limits firm-rule reclassification and does not require this ordering between built-in rules.",
+      "repro": "Categorise a +450.00 credit described as DD REPAYMENT REVERSAL IWOCA LTD under v2. It gets loan_drawdown and v2:lender_drawdown instead of refund_in and v2:refunds. The existing IWOCA REFUND case at tests/test_rules_v2.py:187 explicitly expects this precedence."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/rules/v2.yaml",
+      "line": 104,
+      "criterion": "R4",
+      "claim": "An explicit transfer from the applicant's own pot is recorded as director funding when the pot name contains CAPITAL.",
+      "repro": "Categorise a +300.00 credit described as TFR FROM POT CAPITAL RESERVE under v2. CAPITAL matches protected director_funding before FROM POT can match own_pots_savings. The regression test at tests/test_rules_v2.py:260 checks unprotected debit purposes and misses this credit overlap."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/rules/v2.yaml",
+      "line": 187,
+      "criterion": "R4",
+      "claim": "The electronic-payment exclusion applies only when a rail is the first word. A credit explicitly marked as a Faster Payment can be reported as cash and inflate trading receipts.",
+      "repro": "Include a +500.00 line described as CREDIT FPS POST OFFICE CASH in a valid statement and run cma with CMA_RULESET=v2. POST OFFICE CASH matches cash_paid_in, the anchored exclusion misses FPS, and the credit enters M2 as cash_deposit. The overlap test builds every electronic example with the rail first."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 199,
+      "criterion": "R4",
+      "claim": "The claim that each evidence record has per-line rule provenance is too broad for reviews resumed from older checkpoints. The exporter writes null rule IDs for transactions whose saved state predates provenance.",
+      "repro": "Resume a pending review saved before rule_id was populated and export evidence with --out. The record can name the inferred v1 ruleset while its lines contain rule_id: null. The runner's new-run provenance test does not cover this resume path."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "Compilation of evals and tests is not_proven by the runner. The passing compileall row covers only src.",
+      "repro": "Compare the producer's compile command with mechanical:2. A passing runner row for python -m compileall -q src evals tests would prove the full compilation claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
