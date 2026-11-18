@@ -1,0 +1,2930 @@
+Reading prompt from stdin...
+OpenAI Codex v0.169.0
+--------
+workdir: /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T03-review
+model: gpt-6.2-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 01a1ed6e-7e13-7572-9798-d6d28fc3b148
+--------
+user
+# Seat: reviewer (verify)
+
+## Role
+You get credit for real defects found. You have read-only access to the whole repository; read whatever you need to judge the diff in context. You never edit, and you do not run tests, builds or anything that writes: the runner has already run the configured test tiers in the task's worktree, and their results and logs are in your inputs. To read code you may use read-only commands where your tools read through a shell (`cat`, `sed -n`, `rg`, `grep`, `ls`, `git diff`, `git show`, `git log`); your workspace is read-only and the runner fails the review if anything in it changes.
+
+## Judgment criteria
+- Walk every requirement ID on the task: point at the exact code that satisfies it or the gap; unmapped means `not_proven`.
+- Judge each requirement row against that requirement's own text (requirements.md). A producer claim that goes beyond it (speed, a release note, a benchmark) is not part of the row: if it is unproven, report it as a finding with the right severity, and leave the row `pass` when the requirement itself is met.
+- Check every claim against its proof; a claim whose proof does not cover it is a finding.
+- A claim that tests pass is proven only by a runner result row that passed and whose log shows those tests ran. A test the claim cites that the runner did not run is `not_proven`, not `pass`; say which command would prove it.
+- Run the lane attack list: double submit, concurrent update, boundary values, currency and timezone, partial failure, authz bypass, tenant isolation, changed-contract consumers.
+- Cite file and line for every finding, with a concrete repro; "consider edge cases" is not a finding.
+- Default verdict is `not_proven`; move to `pass` only when every criterion row passes and no blocker or major finding remains.
+- Treat "zero issues" from the producer as a prompt to look harder, not as a signal.
+
+## Gotchas
+- A review from the packet alone, without reading the repository, has invented findings before; abort instead.
+- Do not report style.
+
+## Output contract
+`evidence.json`, exactly this shape (the runner fills `task` and `verifier`; use these field names):
+
+```json
+{
+  "criteria": [
+    { "id": "R4", "tier": "adversarial", "check": "what you checked, citing file:line", "result": "pass", "artifact": null }
+  ],
+  "findings": [
+    { "severity": "major", "file": "src/x.py", "line": 42, "criterion": "R4", "claim": "the defect", "repro": "how to reproduce it" }
+  ],
+  "verdict": "not_proven"
+}
+```
+
+One `criteria` row per requirement ID on the task, `tier` always `adversarial`, `result` one of `pass`, `fail`, `not_proven`. `severity` is `blocker`, `major` or `minor`. `verdict` is `pass`, `fail` or `not_proven`.
+
+## Stop conditions
+Stop with `not_proven` and a reason when a criterion depends on a test result the runner did not produce.
+
+# Inputs
+
+## task — task T03
+
+```json
+{
+  "id": "T03",
+  "title": "v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded",
+  "requirements": [
+    "R4"
+  ],
+  "depends_on": [
+    "T01",
+    "T02"
+  ],
+  "status": "verify",
+  "attempts": 3,
+  "max_attempts": 3,
+  "branch": "bridgie-task/statement-review/T03",
+  "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-22/evidence.json",
+  "escalation": "attempt 2 of 3 fail: R4 fail (Mapped acquirers, gateways, marketplaces and delivery platforms to src/cma/rules/v2.yaml:195,229,245,261, lenders and MCA providers in both directions to :45,92, own pots and savings to :127, HMRC credits to :38, refunds and reversals to :154, and counter and machine deposits to :168. src/cma/graph.py:227 applies the selected table, src/cma/categorise.py:426 assigns provenance, and src/cma/graph.py:199 exports it. The specified runner log confirms the table-driven cases, overlap regression and v2 CLI provenance tests passed. Code inspection found explicit reversals and own-pot transfers misclassified by earlier rules, and electronic credits counted as cash when the rail appears after the first word. Reviewed double submission, concurrent updates, partial failure, error paths, input and sign boundaries, currency and timezone, authorization, tenant isolation, and CLI, checkpoint and MCP consumers. The runner confirmed sequential duplicate-output refusal and legacy resume compatibility. The categoriser introduces no new write path, authorization boundary, tenant query, currency conversion or timezone handling. No tests were run during review.); major: A named lender's explicit repayment reversal is recorded as a new drawdown. The protected lender rule wins before the refund rule, and the refund exception applies only to the generic loan rule. R21 limits firm-rule reclassification and does not require this ordering between built-in rules. at src/cma/rules/v2.yaml:92; major: An explicit transfer from the applicant's own pot is recorded as director funding when the pot name contains CAPITAL. at src/cma/rules/v2.yaml:104; major: The electronic-payment exclusion applies only when a rail is the first word. A credit explicitly marked as a Faster Payment can be reported as cash and inflate trading receipts. at src/cma/rules/v2.yaml:187; reviewer verdict fail"
+}
+```
+
+## requirements — .bridgie/specs/statement-review/requirements.md
+
+# Requirements — Statement review: every figure traced, the unclear lines first
+
+Bet: statement-review, signed 2026-11-16. Scope is a showcase for one firm (D15, D24): a working model the underwriter can try, after which the firm's approver decides on a pilot (D14, D25). Forms and risk tags follow the template.
+
+Revision 2, after D34 (changes requested). Ids from revision 1 are kept and never reused. Changed: R1 and R14 (cash deposits are trading receipts and the large ones are flagged, D31); R15 (judgement queue); R22, R23, R26 and R28 (the pack is written once, at sign-off, and carries the policy check); R25 (pass/refer/fail shown with the illustrative label, D28); R47 (synthetic cash); R50 (no durations, D32); P1 and P17. New: R55, R56, P19, P20. Withdrawn: R49 (timing the underwriter, D32). Confirmed as designed: local-first (D29), OBIE v3.1 and TrueLayer first (D30), Tier 1 only by 2026-11-29 (D33).
+
+Terms. *The system*: the cma package running on the underwriter's machine. *Figures layer*: src/cma/metrics.py and a new indicators module, the only code that does arithmetic on money (ADR 001). *Case*: one application, holding one or more of the applicant's accounts, a profile, an override log and a case log. *The reply*: the underwriter's written answers of 2026-11-16 (one anecdotal source; see evidence-synthesis.md). *Judgement queue*: the lines the workspace lists first because a person has to decide what they are. *Policy check*: the pass, refer or fail outcome and the rule results from the packaged policy (src/cma/policies/uk_sme_default.yaml). Its rule ids (R1 to R9, cited as [R1] to [R9] in a pack) are not the requirement ids in this file. *Illustrative label*: the sentence shown with every policy outcome, saying that the thresholds ship with the tool, are not the firm's lending policy, and do not make the lending decision. *Preview*: the pack's content and its snapshot hash, shown before sign-off; nothing is written until sign-off.
+
+## R1 · ubiquitous · risk: money
+THE SYSTEM SHALL place every credit in a case in exactly one money-in bucket (trading receipts, own-account transfers in, director and shareholder funding, lending drawdowns, refunds and returned payments, HMRC repayments, other explained money in, unexplained), and SHALL report total money in and each bucket as a GBP figure with the ids of the lines behind it.
+Source: the reply, 'if a tool could reliably tell me that £80k entered the business account but only £55k represented genuine trading receipts, explain the remaining £25k'; D31 (cash deposits sit inside trading receipts, R55).
+
+## R2 · ubiquitous · risk: money
+THE SYSTEM SHALL compute every money figure, bucket, monthly cell, indicator comparison and comparison difference in integer pence from GBP amounts, in the figures layer only, and never in the review workspace, the pack renderer or a model.
+
+## R3 · unwanted · risk: money
+IF the money-in buckets do not sum to total money in to the penny, or any credit is in no bucket or in more than one, THEN THE SYSTEM SHALL NOT show or export figures for the case, and SHALL report the difference in pence and the lines involved.
+
+## R4 · ubiquitous · risk: money
+THE SYSTEM SHALL recognise, from maintained lists shipped as data: credits from UK card acquirers, payment gateways, marketplaces and delivery platforms as trading receipts; lines naming UK business lenders and merchant cash advance providers as lending drawdowns (money in) or debt service (money out); moves between the applicant's own pots or savings as own-account transfers; HMRC credits as HMRC repayments; refund and reversal credits as refunds; and cash paid in at a counter or machine as cash deposits.
+Source: README known limits (unknown acquirers land in M16); the reply (Stripe, SumUp, merchant cash advances).
+
+## R5 · conditional · risk: money
+IF the case profile names a director or shareholder, THEN THE SYSTEM SHALL put each credit whose counterparty matches that name in director and shareholder funding, even when the credit carries an invoice reference.
+
+## R6 · conditional · risk: money
+IF the case profile names the applicant's other accounts, THEN THE SYSTEM SHALL classify lines in either direction whose counterparty matches one of them as own-account transfers, and SHALL leave them out of trading receipts and out of operating cash flow (M9).
+
+## R7 · unwanted · risk: money
+IF no built-in rule, firm rule or override explains a credit, THEN THE SYSTEM SHALL NOT count it as trading receipts; it stays in unexplained money in.
+
+## R8 · conditional · risk: money
+IF a case holds more than one of the applicant's accounts, THEN THE SYSTEM SHALL pair each debit in one account with the single credit of the same amount in another account of the case within the configured number of days, and SHALL classify both lines as own-account transfers.
+Source: the reply, 'transfers between business accounts can inflate turnover if counted twice'.
+
+## R9 · unwanted · risk: money
+IF a debit has more than one candidate credit for an own-account pairing, THEN THE SYSTEM SHALL NOT pair it, and SHALL list the debit and every candidate in the judgement queue as a possible own-account transfer.
+
+## R10 · ubiquitous · risk: money
+THE SYSTEM SHALL keep the ids, units and values of M1 to M16 unchanged on every committed synthetic case and test fixture, except for lines that a new rule now recognises, which the change SHALL list; M16 SHALL be renamed so that its name says it measures money in that is not trading receipts.
+
+## R11 · ubiquitous · risk: money
+THE SYSTEM SHALL produce a monthly summary with one row per calendar month in the period, part months marked as part, giving money in, money out, trading receipts, average end-of-day balance, lowest end-of-day balance and days overdrawn, each cell with the ids of the lines behind it.
+Source: the reply, 'calculating monthly credits, debits, average balances and existing repayments'.
+
+## R12 · ubiquitous · risk: money
+THE SYSTEM SHALL report the average end-of-day balance over the period as a figure, citing the lines that set each day's closing balance.
+
+## R13 · conditional · risk: money
+IF the case profile gives the proposed facility's monthly repayment, THEN THE SYSTEM SHALL report debt service cover including that repayment; otherwise THE SYSTEM SHALL show that figure as n/a with the reason.
+
+## R14 · ubiquitous · risk: data
+THE SYSTEM SHALL raise risk indicators from thresholds in an editable file (a single credit that is large against typical trading receipts; each cash deposit at or above the single-deposit limit; a calendar month in which cash deposits exceed a set share of that month's trading receipts; a cash deposit made within a set number of days after a cash withdrawal of an amount within a set tolerance; payments to gambling operators; returned direct debits; runs of consecutive overdrawn days; irregular credits from a named acquirer), each listing its lines and the threshold that fired, and SHALL label any threshold still at its shipped value as illustrative.
+Source: the reply, 'Highlight director loans, unusual credits and large cash deposits'; 'Flag returned direct debits, persistent overdraft usage'; D31, 'with deposits above a threshold flagged'.
+
+## R15 · event · risk: ux
+WHEN the underwriter opens a case, THE SYSTEM SHALL show the money-in breakdown, the monthly summary, the figures, the indicators and, while R25 applies, the policy check, with the judgement queue (unexplained lines, possible own-account transfers, and every line an indicator flagged, which includes cash deposits at or above the single-deposit limit) listed first, largest amount first.
+
+## R16 · event · risk: ux
+WHEN the underwriter selects a figure, a bucket or a monthly cell, THE SYSTEM SHALL list exactly the lines behind it, each with date, description, amount, balance, category and the rule or override that set the category; for a sum it SHALL show the lines' total next to the figure, and for an average, share, ratio or count it SHALL show the inputs and the method.
+Source: the reply, 'I'd want to click any number in the report and see exactly which transactions make up that figure'.
+
+## R17 · event · risk: money
+WHEN the underwriter changes a line's category and gives a reason, THE SYSTEM SHALL append the change (line, old and new category, reason, typed name, operating-system user, UTC time) to the case's override log, recompute every figure from the statements and the whole override log, and mark each figure that now rests on an overridden line.
+Source: the reply, 'Allow me to manually correct categories'.
+
+## R18 · unwanted · risk: money
+IF a requested change would alter a line's amount, date, balance or description, add or remove a line, or give a line a category not valid for its direction, THEN THE SYSTEM SHALL NOT accept it; overrides change categories only.
+
+## R19 · conditional · risk: data
+IF an override names a line that is not in the case, or was recorded against a statement file whose hash no longer matches, THEN THE SYSTEM SHALL NOT apply it, and SHALL show it as stale until the underwriter confirms or drops it.
+
+## R20 · event · risk: data
+WHEN the underwriter promotes an override to a firm rule, THE SYSTEM SHALL show the lines the rule would match in the open case before saving, then save the counterparty pattern, direction, category, name, time and reason to the firm rules file, and apply the rule to every case categorised afterwards.
+
+## R21 · unwanted · risk: money
+IF a firm rule would reclassify a line matched by a built-in director, capital, shareholder, lender, HMRC or returned-payment pattern, THEN THE SYSTEM SHALL NOT apply the firm rule to that line; only a per-line override with a reason can change it.
+
+## R22 · event · risk: data
+WHEN the underwriter signs off a case's figures, THE SYSTEM SHALL require a typed name, record it with the operating-system user and UTC time, and bind it to the snapshot of the preview the underwriter signed: statement hashes, ruleset, firm rules, profile, override log position, thresholds, memo field map, policy hash, the show_policy_verdict setting and package version.
+
+## R23 · unwanted · risk: data
+IF anything in the snapshot has changed since the preview was built, THEN THE SYSTEM SHALL NOT accept the sign-off, and SHALL say what changed.
+
+## R24 · ubiquitous · risk: ux
+THE SYSTEM SHALL word the underwriter's action as signing off the figures, never as approving the loan, and SHALL leave the recommendation and every judgement field blank for the underwriter.
+Source: the reply, 'I wouldn't want AI making the final lending decision. I'd want it assisting the underwriter.'
+
+## R25 · state · risk: ux
+WHILE show_policy_verdict is on in the firm configuration (the default), THE SYSTEM SHALL show in the review workspace and the pack the overall pass, refer or fail outcome and each rule's result from the packaged policy, computed from the current figures, and SHALL put the illustrative label in the same workspace panel and the same pack section as the outcome.
+Source: D28, 'Show it, labelled as illustrative thresholds, not the firm's policy'; README:127, 'Policy thresholds are illustrative. They are not any lender's real policy.'
+
+## R26 · event · risk: data
+WHEN a case is signed off, THE SYSTEM SHALL write the review pack once, from the signed preview, containing: memo-ready sections ordered by an editable memo field map (by default the 13 fields listed in the reply), each figure followed by its id; while R25 applies, a policy-check section after the memo fields that no memo field maps to; a self-contained HTML record that works offline, with click-through from every figure to its lines and the sign-off; the evidence JSON; and the monthly summary as CSV. THE SYSTEM SHALL NOT overwrite an existing pack.
+Source: the reply, 'Produce a summary I can use directly in my credit memo'.
+
+## R27 · conditional · risk: data
+IF a memo field has no figure mapped to it, THEN THE SYSTEM SHALL mark it as for the underwriter and leave it empty.
+
+## R28 · unwanted · risk: data
+IF the pack's text fails the grounding guard (a number that is not a figure or a policy threshold at the precision shown, a figure without its id, or a threshold without its rule id and a limit word), THEN THE SYSTEM SHALL NOT write the pack.
+
+## R29 · state · risk: security
+WHILE offline lock is on in the firm configuration (the default), THE SYSTEM SHALL refuse to create a hosted model client, SHALL refuse to start the MCP server, SHALL open no network connection other than the loopback workspace, and SHALL record offline mode in every evidence record.
+Source: the reply, 'A tool that operates entirely on our own machine or within our own environment, without transmitting customer data externally, could be attractive.'
+
+## R30 · unwanted · risk: security
+IF a hosted model is used, THEN THE SYSTEM SHALL NOT put transaction descriptions, counterparty names, case profile fields or any line-level data in a prompt; a prompt carries only the metric and rule tables, the period and the placeholder account name.
+
+## R31 · ubiquitous · risk: security
+THE SYSTEM SHALL keep each case's statements, profile, logs and outputs under one case root readable only by the operating-system user who created it, and SHALL refuse to create a case root inside a git working tree that does not ignore it.
+
+## R32 · conditional · risk: security
+IF the case root lies inside a folder that a known cloud-sync client uploads (OneDrive, Dropbox, Google Drive, iCloud Drive), THEN THE SYSTEM SHALL warn before creating a case, and SHALL record the warning in the case log.
+
+## R33 · event · risk: security
+WHEN the review workspace starts, THE SYSTEM SHALL listen on the loopback interface only, issue a new random session token, refuse any request that lacks the token or carries a Host header other than the loopback address and port, and serve only assets bundled in the package.
+
+## R34 · ubiquitous · risk: security
+THE SYSTEM SHALL treat all payer-written and provider-written text (descriptions, references, merchant names, provider categories) as untrusted: escape it in HTML, neutralise leading formula characters in text cells of CSV exports, never send it to a model, and never act on it.
+
+## R35 · event · risk: data
+WHEN the underwriter purges a case, THE SYSTEM SHALL delete all the case's files, and SHALL record in a firm-level ledger only the case id, the purge time and who purged it.
+
+## R36 · event · risk: data
+WHEN a UK Open Banking (OBIE Account and Transaction API v3.1) transactions file is imported, THE SYSTEM SHALL keep only booked GBP transactions, keep the provider's transaction ids, rebuild the running balance from per-line balances or from a supplied statement balance, and refuse the file if the balance chain breaks anywhere.
+Source: D5; D30; E3 and E7 (provider unknown); the reply names TrueLayer, Yapily and Plaid as common.
+
+## R37 · event · risk: data
+WHEN a TrueLayer Data API transactions export is imported, THE SYSTEM SHALL apply the same checks as R36, and SHALL keep the provider's own categories only as untrusted hints that no figure uses.
+Source: D30.
+
+## R38 · event · risk: data
+WHEN a bank CSV with separate paid-in and paid-out columns, a non-ISO date format or newest-first order is imported, THE SYSTEM SHALL convert it through a named bank profile or a custom column mapping, and SHALL apply the same checks as the five-column loader.
+
+## R39 · conditional · risk: data
+IF a file already imported into the case is imported again, THEN THE SYSTEM SHALL leave the case unchanged.
+
+## R40 · unwanted · risk: data
+IF a new account overlaps an existing account of the case in period and shares most of its (date, amount) pairs, THEN THE SYSTEM SHALL NOT add it, and SHALL say it is probably the same account imported twice.
+
+## R41 · ubiquitous · risk: money
+THE SYSTEM SHALL keep line ids unique within a case by prefixing them with the account key when the case holds more than one account, compute flow figures across all the case's accounts after removing paired own-account transfers, and compute balance figures on the combined end-of-day balance over the dates every account covers, showing n/a with the reason when those dates do not overlap.
+
+## R42 · ubiquitous · risk: data
+THE SYSTEM SHALL append every import, profile change, override, firm-rule promotion, preview, pack write and sign-off to the case log, each entry carrying the hash of the entry before it.
+Source: the reply, 'The firm would need confidence that data is secure, access is controlled and there's an audit trail.'
+
+## R43 · unwanted · risk: data
+IF the case log's hash chain is broken or its last entry is incomplete, THEN THE SYSTEM SHALL NOT accept a sign-off, and SHALL name the first bad entry.
+
+## R44 · event · risk: data
+WHEN asked to verify an evidence record, THE SYSTEM SHALL recompute every figure, bucket and monthly cell from the recorded inputs and report each mismatch, or confirm that there is none.
+
+## R45 · conditional · risk: data
+IF the evidence record was made with a ruleset other than the one installed, THEN THE SYSTEM SHALL refuse to verify it, and SHALL name the package version and ruleset that made it.
+
+## R46 · event · risk: data
+WHEN asked to pseudonymise a statement, THE SYSTEM SHALL write a copy in which personal and business names and account numbers are replaced by consistent tokens while recognised institutions (acquirers, lenders, HMRC) and all amounts, dates and balances are kept, SHALL tokenise the case profile the same way, and SHALL label the output as pseudonymised personal data, not anonymous data.
+Source: the reply, 'I'd start with synthetic or properly anonymised sample statements and compare the results with our existing process'.
+
+## R47 · ubiquitous · risk: none
+THE SYSTEM SHALL generate synthetic business cases that include real acquirer names, director funding, own-account transfers across two accounts, cash deposits (at least one at or above the single-deposit limit, and one paid in after a similar cash withdrawal) and lender lines, with ground truth for every bucket, line and indicator, while every existing archetype and profile still produces a byte-identical statement.
+
+## R48 · state · risk: ux
+WHILE a case is marked as a demo (synthetic data, or the owner's own statements per D23), THE SYSTEM SHALL show a banner in the workspace and stamp the pack, saying it demonstrates the mechanism and is not an applicant file.
+
+## R50 · event · risk: ux
+WHEN asked for a report, THE SYSTEM SHALL summarise for each case the lines in the judgement queue, the lines each indicator flagged, overrides by old and new category, unexplained share of money in, whether every figure was traced, and whether the case was signed off, with no applicant names, descriptions or amounts and no duration derived from the case log's timestamps.
+Source: D32 (files are timed with a stopwatch, outside the tool).
+
+## R51 · event · risk: ux
+WHEN the underwriter enters their own figure for a memo field or a month, THE SYSTEM SHALL show the difference from its own figure and list, largest first, the lines in that period whose bucket a person might read differently: cash deposits, unexplained lines, possible own-account transfers and overridden lines.
+Source: the reply, 'compare the results with our existing process'.
+
+## R52 · event · risk: ux
+WHEN the underwriter saves an override on a case of up to 10,000 lines, THE SYSTEM SHALL show the recomputed figures, indicators and policy check within 2 seconds on a typical office laptop.
+
+## R53 · ubiquitous · risk: data
+THE SYSTEM SHALL keep cma run, cma resume, cma import monzo, cma generate, the MCP tools and the evidence JSON working with their current options and fields; new evidence fields SHALL be additive, and every new evidence record SHALL carry a schema version.
+
+## R54 · conditional · risk: data
+IF CMA_RULESET is set to v1, THEN THE SYSTEM SHALL categorise with the built-in rule table as it was before this change, and SHALL record v1 as the ruleset in every evidence record.
+
+## R55 · ubiquitous · risk: money
+THE SYSTEM SHALL count every credit categorised as a cash deposit as trading receipts, in M2 and in every figure and monthly cell built on trading receipts, and SHALL report the cash deposits within trading receipts as a separate GBP figure with the ids of the deposits behind it.
+Source: D31, 'Counted as trading receipts, with deposits above a threshold flagged'; the reply, 'Highlight ... large cash deposits'.
+
+## R56 · state · risk: ux
+WHILE show_policy_verdict is off in the firm configuration, THE SYSTEM SHALL NOT show an overall outcome or any rule result in the review workspace or the pack, and SHALL record in the evidence that the policy check was hidden.
+Source: D28 (the setting is the rollback path for showing the outcome).
+
+## P1 · property
+For any case, trading receipts and the other seven money-in buckets SHALL sum to total money in to the penny, and every credit's id SHALL appear in exactly one bucket's evidence; the cash-deposits figure is not a bucket and is not added.
+Validates: R1, R2, R3, R7
+
+## P2 · property
+For any sum figure, bucket or monthly cell, the signed amounts of its evidence lines SHALL total the figure to the penny.
+Validates: R1, R11, R16, R55
+
+## P3 · property
+For any statements, profile and override log, computing the figures twice SHALL give identical results, and the figures after applying overrides one at a time SHALL equal a fresh computation with all of them applied.
+Validates: R17, R44
+
+## P4 · property
+For any override log, the set of (id, date, amount, balance, description) across the case's lines SHALL be the same before and after the overrides are applied.
+Validates: R18
+
+## P5 · property
+For any case whose descriptions and profile contain sentinel strings, no prompt built for a model SHALL contain any sentinel.
+Validates: R30, R34
+
+## P6 · property
+For any credit that no built-in rule, firm rule or override matches, its id SHALL be in the evidence of unexplained money in and not in the evidence of M2.
+Validates: R7
+
+## P7 · property
+For any committed synthetic case and test fixture, M1 to M16 under the new ruleset SHALL equal their values before this change, except on lines the change lists as newly recognised; under CMA_RULESET=v1 they SHALL equal them with no exceptions.
+Validates: R10, R53, R54
+
+## P8 · property
+For any description text, the workspace HTML and the pack HTML SHALL contain it only in escaped form, and no text cell in an exported CSV SHALL begin with =, +, -, @, a tab or a carriage return.
+Validates: R34
+
+## P9 · property
+For any import file, importing it twice SHALL leave the same case state and the same case log head as importing it once.
+Validates: R39
+
+## P10 · property
+For any statement and profile, the pseudonymised statement and profile SHALL give identical figures, buckets, monthly cells and indicators.
+Validates: R46
+
+## P11 · property
+For any multi-account case, each own-account pair SHALL be one debit and one credit of equal amount in different accounts, no line SHALL be in two pairs, and total money in less own-account transfers in SHALL equal the generator's credits from outside the applicant's accounts.
+Validates: R6, R8, R9, R41
+
+## P12 · property
+For any case, monthly trading receipts SHALL sum to M2 and monthly money in SHALL sum to total money in, to the penny.
+Validates: R11, R55
+
+## P13 · property
+For any signed pack, verifying its evidence record against its case SHALL reproduce every figure, bucket and monthly cell exactly.
+Validates: R22, R44
+
+## P14 · property
+For any case, the pack's text SHALL pass the grounding guard with no unmatched numbers and no missing citations.
+Validates: R26, R28
+
+## P15 · property
+For any case log, changing, removing or reordering any entry before the head SHALL be detected on the next load.
+Validates: R42, R43
+
+## P16 · property
+For any firm rules file, no line matched by a protected built-in pattern SHALL change category through a firm rule.
+Validates: R21
+
+## P17 · property
+For any synthetic case generated with the new features, every bucket, every line's category and every indicator flag SHALL equal the generator's ground truth.
+Validates: R1, R4, R5, R8, R14, R47, R55
+
+## P18 · property
+For any run while offline lock is on, asking for a hosted model or starting the MCP server SHALL fail before any network call is attempted.
+Validates: R29
+
+## P19 · property
+For any case, the evidence of the cash-deposits figure SHALL be exactly the credits categorised as cash deposits, each of them SHALL also be in M2's evidence, the figure SHALL not exceed M2, and every cash deposit at or above the single-deposit limit SHALL be in the judgement queue with the indicator that flagged it.
+Validates: R14, R15, R55
+
+## P20 · property
+For any case, with show_policy_verdict on, every workspace panel and pack section that shows a pass, refer or fail outcome SHALL contain the illustrative label and the recommendation field SHALL be empty; with it off, neither the workspace nor the pack SHALL contain an outcome or a rule result.
+Validates: R24, R25, R56
+
+## diff — diff.patch
+
+diff --git a/README.md b/README.md
+index 1874437..18b080a 100644
+--- a/README.md
++++ b/README.md
+@@ -52,9 +52,13 @@ cma resume case-7 --checkpoint-db private/reviews.sqlite
+ cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out private/mine.csv
+ 
+ # Choose the categorisation table (src/cma/rules/<id>.yaml; default v1). v1 is the
+-# original table, frozen; an unknown id is refused. The evidence file records the
+-# table's id and hash.
+-CMA_RULESET=v1 cma run examples/cafe_stretched.csv
++# original table, frozen; v2 adds real UK acquirers, gateways, marketplaces, delivery
++# platforms, lenders and merchant cash advance providers, own pots and savings, cash
++# paid in (counted as trading receipts), cash-withdrawal wording, HMRC repayments,
++# refunds and explained non-trading credits. An unknown id is refused. The evidence
++# file records the table's id and hash, and under "lines" each line's id, category and
++# the rule that set it (no descriptions). CMA_RULESET=v1 is the rollback.
++CMA_RULESET=v2 cma run examples/cafe_stretched.csv
+ 
+ # Use a real model instead of the offline one.
+ export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
+@@ -71,7 +75,7 @@ example.
+ | Synthetic data | `synth.py` | Three business archetypes (café, trades, e-commerce) × three risk profiles (good, stretched, poor). Seeded. Writes the ground truth next to each statement. |
+ | Ingest | `ingest.py` | CSV in: `id, date, description, amount, balance`. Refuses duplicate ids, non-ISO or future dates, out-of-order dates, loose amounts and a broken balance chain; reads newest-first files. |
+ | Import | `importers/monzo.py` | Monzo export → statement CSV, locally. Monzo Flex is read as a loan. |
+-| Categoriser | `categorise.py` + `cma/rules/v1.yaml` | Ordered regex rules, direction-aware, kept as validated data and chosen by `CMA_RULESET`. A transfer in is revenue only with an invoice reference. Returned DDs are linked to the debit they undo. Unmatched lines are `OTHER`, never guessed. |
++| Categoriser | `categorise.py` + `cma/rules/v1.yaml`, `v2.yaml` | Ordered regex rules and name lists, direction-aware, kept as validated data and chosen by `CMA_RULESET`. Precedence: per-line override, protected rules (returned DD, HMRC, lenders, director, capital, shareholder), profile names, firm rules, the rest of the table, the default; each line records its rule id. A transfer in is revenue only with an invoice reference. Returned DDs are linked to the debit they undo. Unmatched lines are `OTHER`, never guessed. |
+ | Metrics | `metrics.py` | Sixteen figures (revenue, trend, lowest balance, days overdrawn, returned DDs, debt service cover after drawings, VAT timeliness by stagger group, non-trading money in…). Each carries the transaction ids it came from; a figure that can't be computed is n/a with the reason, never a placeholder. |
+ | Policy | `cma/policies/uk_sme_default.yaml` | Nine illustrative rules with pass / refer / fail, and what a missing figure means. Validated on load. Edit the YAML, not the code. |
+ | Draft | `graph.py` + `llm.py` | The model gets the metrics table and the policy table, nothing else, and must tag every figure ([Mn]) and threshold ([Rn]). |
+diff --git a/evals/run_evals.py b/evals/run_evals.py
+index ed76fca..ed2b0d0 100644
+--- a/evals/run_evals.py
++++ b/evals/run_evals.py
+@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+ from langgraph.types import Command
+ 
+ from cma import synth
++from cma.categorise import active_ruleset
+ from cma.graph import build
+ from cma.llm import get_llm
+ 
+@@ -76,7 +77,7 @@ def main() -> int:
+             f"{r['redrafts']:<8} {truth_col:14} {r['seconds']:>5}"
+         )
+     grounded = sum(r["grounded"] for r in results)
+-    print(f"\n{grounded}/{len(results)} memos fully grounded; model = {args.llm}")
++    print(f"\n{grounded}/{len(results)} memos fully grounded; model = {args.llm}; ruleset = {active_ruleset().id}")
+     truth_ok = all(not r["truth_mismatches"] for r in results)
+     fake_ok = args.llm != "fake" or grounded == len(results)
+     return 0 if truth_ok and fake_ok else 1
+diff --git a/src/cma/categorise.py b/src/cma/categorise.py
+index 91fa734..94d4a89 100644
+--- a/src/cma/categorise.py
++++ b/src/cma/categorise.py
+@@ -9,8 +9,19 @@ The rule table is data, not code: src/cma/rules/<id>.yaml, validated on load lik
+ policy (a key repeated in a mapping is refused), with an id and the SHA-256 of the
+ file's bytes. CMA_RULESET chooses the table (default v1). v1 is the table as it was
+ when it lived here, frozen: its hash is pinned in FROZEN_SHA256 and any other bytes are
+-refused, so CMA_RULESET=v1 always reproduces those categories. The
+-matching passes below (reversals, round trips) stay in code.
++refused, so CMA_RULESET=v1 always reproduces those categories. v2 adds the maintained
++lists of R4 (acquirers, gateways, marketplaces, delivery platforms, lenders and merchant
++cash advance providers, own pots and savings, cash paid in, cash-withdrawal wording,
++HMRC, refunds, explained non-trading money in). The matching passes below (reversals,
++round trips) stay in code.
++
++Precedence, first match wins: a per-line override; the table's protected rules (returned
++DD, HMRC, lenders, director, capital, shareholder); the case profile's names (directors
++and shareholders, own accounts); firm rules; the rest of the table; the default (a debit
++is supplier, a credit is OTHER, unexplained). Every line records the rule that set its
++category in Transaction.rule_id: "<ruleset>:<rule id>", "<ruleset>:default",
++"<ruleset>:round_trip", "profile:director", "profile:own_account", "firm:<rule id>" or
++the override's own reference.
+ 
+ Revenue is claimed narrowly. A card or gateway settlement is trading income. A bank
+ transfer in is only counted as a customer payment when it carries an invoice
+@@ -30,6 +41,7 @@ from __future__ import annotations
+ import hashlib
+ import os
+ import re
++from collections.abc import Mapping, Sequence
+ from dataclasses import dataclass
+ from functools import lru_cache
+ from importlib import resources
+@@ -44,11 +56,14 @@ Direction = Literal["in", "out", "any"]
+ INVOICE_REF = re.compile(r"\bINV(?:OICE)?\s*[-#:]?\s*\d+")
+ 
+ RULESET_ENV = "CMA_RULESET"
+-RULESETS = ("v1",)
++RULESETS = ("v1", "v2")
+ DEFAULT_RULESET = "v1"
+ DIRECTIONS = ("in", "out", "any")
+ TABLE_KEYS = {"id", "frozen", "rules"}
+-RULE_KEYS = {"id", "pattern", "direction", "category"}
++RULE_KEYS = {"id", "direction", "category"}  # required, plus a pattern or names
++MATCH_KEYS = {"pattern", "names"}
++OPTIONAL_KEYS = {"unless", "requires", "protected"}
++ALL_RULE_KEYS = RULE_KEYS | MATCH_KEYS | OPTIONAL_KEYS
+ # A frozen table's SHA-256, pinned here. A file that validates but differs from these
+ # bytes (a rule recategorised, CRLF line ends, frozen switched off) is refused, so the id
+ # v1 in an evidence record always means this exact table.
+@@ -65,6 +80,9 @@ class Rule:
+     pattern: re.Pattern[str]
+     direction: Direction
+     category: Category
++    protected: bool = False  # wins over profile names and firm rules (R21)
++    unless: re.Pattern[str] | None = None  # the rule does not match when this does
++    requires: re.Pattern[str] | None = None  # the rule matches only when this does too
+ 
+ 
+ @dataclass(frozen=True)
+@@ -73,6 +91,32 @@ class Ruleset:
+     sha256: str
+     rules: tuple[Rule, ...]
+ 
++    @property
++    def protected(self) -> tuple[Rule, ...]:
++        return tuple(r for r in self.rules if r.protected)
++
++    @property
++    def unprotected(self) -> tuple[Rule, ...]:
++        return tuple(r for r in self.rules if not r.protected)
++
++
++def names_pattern(names: Sequence[str]) -> str:
++    """A pattern matching any of `names` as whole words in an upper-cased description,
++    with any run of spaces between words. A name's other characters (".", "-", "&",
++    digits) are matched literally."""
++    alts = sorted({r"\s+".join(re.escape(w) for w in n.upper().split()) for n in names}, key=lambda a: (-len(a), a))
++    return r"(?<![A-Z0-9])(?:" + "|".join(alts) + r")(?![A-Z0-9])"
++
++
++def _compile_problem(pattern: str) -> str | None:
++    # re.error is not the only way a pattern fails to compile: a repeat count past
++    # the engine's limit raises OverflowError, deep nesting RecursionError.
++    try:
++        re.compile(pattern)
++    except (re.error, OverflowError, RecursionError, MemoryError) as e:
++        return f"{e.__class__.__name__}: {e}"
++    return None
++
+ 
+ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> None:
+     if not isinstance(data, dict):
+@@ -98,13 +142,27 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
+             continue
+         for key in sorted(RULE_KEYS - set(r)):
+             problems.append(f"{where}: missing {key}")
+-        for key in sorted(set(r) - RULE_KEYS, key=repr):
++        if not MATCH_KEYS & set(r):
++            problems.append(f"{where}: missing pattern (or names)")
++        for key in sorted(set(r) - ALL_RULE_KEYS, key=repr):
+             problems.append(f"{where}: unknown key {key!r}")
+         # Every field is a string. Checking the type first means a list, a mapping, a
+         # number or null is reported here, not raised later as a TypeError.
+-        for key in sorted(RULE_KEYS & set(r)):
++        for key in sorted((RULE_KEYS | {"pattern", "unless", "requires"}) & set(r)):
+             if not isinstance(r[key], str) or not r[key]:
+                 problems.append(f"{where}: {key} {r[key]!r} is not a non-empty string")
++        if "names" in r:
++            names = r["names"]
++            if not isinstance(names, list) or not names or not all(isinstance(n, str) and n.strip() for n in names):
++                problems.append(f"{where}: names must be a non-empty list of non-empty strings")
++            elif len({" ".join(n.upper().split()) for n in names}) != len(names):
++                problems.append(f"{where}: a name is listed twice")
++        if "protected" in r:
++            if not isinstance(r["protected"], bool):
++                problems.append(f"{where}: protected must be true or false")
++            elif r["protected"] and any(not isinstance(p, dict) or not p.get("protected") for p in rules[:i - 1]):
++                # One ordered pass and the precedence agree only if the protected rules come first.
++                problems.append(f"{where}: a protected rule must come before every rule that is not")
+         if isinstance(r.get("id"), str):
+             if r["id"] in seen:
+                 problems.append(f"{where}: duplicate id")
+@@ -113,17 +171,31 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
+             problems.append(f"{where}: direction {r['direction']!r} is not one of {list(DIRECTIONS)}")
+         if isinstance(r.get("category"), str) and r["category"] not in categories:
+             problems.append(f"{where}: category {r['category']!r} is not a category")
+-        if isinstance(r.get("pattern"), str) and r["pattern"]:
+-            # re.error is not the only way a pattern fails to compile: a repeat count past
+-            # the engine's limit raises OverflowError, deep nesting RecursionError.
+-            try:
+-                re.compile(r["pattern"])
+-            except (re.error, OverflowError, RecursionError, MemoryError) as e:
+-                problems.append(f"{where}: pattern does not compile ({e.__class__.__name__}: {e})")
++        for key in ("pattern", "unless", "requires"):
++            if isinstance(r.get(key), str) and r[key]:
++                problem = _compile_problem(r[key])
++                if problem:
++                    problems.append(f"{where}: {key} does not compile ({problem})")
++        # A pattern and names that each compile can still fail joined (a global flag such
++        # as (?i) is allowed only at the start), so the joined text is checked too.
++        if (isinstance(r.get("pattern"), str) and r["pattern"] and isinstance(r.get("names"), list) and r["names"]
++                and all(isinstance(n, str) and n.strip() for n in r["names"]) and not _compile_problem(r["pattern"])):
++            problem = _compile_problem(_rule_pattern_text(r))
++            if problem:
++                problems.append(f"{where}: pattern and names do not compile together ({problem})")
+     if problems:
+         raise RulesetError(f"{source}: " + "; ".join(problems))
+ 
+ 
++def _rule_pattern_text(r: dict) -> str:
++    parts = [p for p in (r.get("pattern"), names_pattern(r["names"]) if "names" in r else None) if p]
++    return parts[0] if len(parts) == 1 else "|".join(f"(?:{p})" for p in parts)
++
++
++def _rule_pattern(r: dict) -> re.Pattern[str]:
++    return re.compile(_rule_pattern_text(r))
++
++
+ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) -> Ruleset:
+     validate_ruleset(data, expected_id, source)
+     assert isinstance(data, dict)
+@@ -131,7 +203,10 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str)
+         id=data["id"],
+         sha256=sha256,
+         rules=tuple(
+-            Rule(r["id"], re.compile(r["pattern"]), r["direction"], Category(r["category"]))
++            Rule(r["id"], _rule_pattern(r), r["direction"], Category(r["category"]),
++                 protected=r.get("protected", False),
++                 unless=re.compile(r["unless"]) if "unless" in r else None,
++                 requires=re.compile(r["requires"]) if "requires" in r else None)
+             for r in data["rules"]
+         ),
+     )
+@@ -209,14 +284,67 @@ def _direction_ok(direction: Direction, amount: float) -> bool:
+     return amount > 0 if direction == "in" else amount < 0
+ 
+ 
+-def categorise_one(t: Transaction, ruleset: Ruleset | None = None) -> Category:
++def rule_matches(rule: Rule, description: str, amount: float) -> bool:
++    """`description` upper-cased."""
++    return (_direction_ok(rule.direction, amount) and rule.pattern.search(description) is not None
++            and (rule.unless is None or rule.unless.search(description) is None)
++            and (rule.requires is None or rule.requires.search(description) is not None))
++
++
++@dataclass(frozen=True)
++class LineOverride:
++    """A person's category for one line, with the reference recorded as its rule id."""
++
++    category: Category
++    ref: str
++
++
++@dataclass(frozen=True)
++class ProfileNames:
++    """Names from the case profile: directors and shareholders, and the applicant's other
++    accounts. Matched as whole words in the upper-cased description."""
++
++    directors: tuple[str, ...] = ()
++    own_accounts: tuple[str, ...] = ()
++
++
++def _names_in(names: Sequence[str], description: str) -> bool:
++    names = [n for n in names if n.strip()]
++    return bool(names) and re.search(names_pattern(names), description) is not None
++
++
++def classify(
++    t: Transaction,
++    ruleset: Ruleset | None = None,
++    *,
++    override: LineOverride | None = None,
++    profile: ProfileNames | None = None,
++    firm_rules: Sequence[Rule] = (),
++) -> tuple[Category, str]:
++    """The category of one line and the id of the rule that set it, in precedence order."""
++    ruleset = ruleset or active_ruleset()
++    if override is not None:
++        return override.category, override.ref
+     desc = t.description.upper()
+-    for rule in (ruleset or active_ruleset()).rules:
+-        if rule.pattern.search(desc) and _direction_ok(rule.direction, t.amount):
+-            return rule.category
+-    if t.amount < 0:
+-        return Category.SUPPLIER
+-    return Category.OTHER
++    for rule in ruleset.protected:
++        if rule_matches(rule, desc, t.amount):
++            return rule.category, f"{ruleset.id}:{rule.id}"
++    if profile is not None:
++        if t.amount > 0 and _names_in(profile.directors, desc):
++            return Category.DIRECTOR_FUNDING, "profile:director"
++        if t.amount != 0 and _names_in(profile.own_accounts, desc):
++            return Category.OWN_ACCOUNT_TRANSFER, "profile:own_account"
++    for rule in firm_rules:
++        if rule_matches(rule, desc, t.amount):
++            return rule.category, f"firm:{rule.id}"
++    for rule in ruleset.unprotected:
++        if rule_matches(rule, desc, t.amount):
++            return rule.category, f"{ruleset.id}:{rule.id}"
++    return (Category.SUPPLIER if t.amount < 0 else Category.OTHER), f"{ruleset.id}:default"
++
++
++def categorise_one(t: Transaction, ruleset: Ruleset | None = None) -> Category:
++    return classify(t, ruleset)[0]
+ 
+ 
+ RAIL_PREFIX = re.compile(
+@@ -265,25 +393,40 @@ def link_reversals(statement: Statement) -> Statement:
+ OUTGOING_TRANSFER = re.compile(r"^(?:FPS DEBIT|BACS DEBIT|TFR)\b")
+ 
+ 
+-def unmark_round_trips(statement: Statement) -> Statement:
++def unmark_round_trips(statement: Statement, ruleset_id: str | None = None) -> Statement:
+     """A "customer" the applicant also sends transfers to is not counted as revenue.
+ 
+     Money sent out by transfer and received back with an invoice reference is the
+     cheapest way to manufacture revenue. Such credits become OTHER (and so show in M16).
+     This also catches a genuine customer who is paid a refund by transfer: the cost is
+     understated revenue, which a person can add back; the alternative is gameable.
++
++    Only a category the built-in table set is undone: a person's override, a profile name
++    or a firm rule ranks above the table and is left alone.
+     """
+     paid_out = {counterparty(t.description) for t in statement.transactions
+                 if t.amount < 0 and OUTGOING_TRANSFER.search(t.description.upper())}
+     for t in statement.transactions:
+-        if t.category == Category.REVENUE_TRANSFER and counterparty(t.description) in paid_out:
++        set_by_table = ruleset_id is None or (t.rule_id or "").startswith(f"{ruleset_id}:")
++        if t.category == Category.REVENUE_TRANSFER and counterparty(t.description) in paid_out and set_by_table:
+             t.category = Category.OTHER
++            if ruleset_id is not None:
++                t.rule_id = f"{ruleset_id}:round_trip"
+     return statement
+ 
+ 
+-def categorise(statement: Statement, ruleset: Ruleset | None = None) -> Statement:
++def categorise(
++    statement: Statement,
++    ruleset: Ruleset | None = None,
++    *,
++    overrides: Mapping[str, LineOverride] | None = None,
++    profile: ProfileNames | None = None,
++    firm_rules: Sequence[Rule] = (),
++) -> Statement:
+     ruleset = ruleset or active_ruleset()
++    overrides = overrides or {}
+     for t in statement.transactions:
+-        t.category = categorise_one(t, ruleset)
++        t.category, t.rule_id = classify(t, ruleset, override=overrides.get(t.id), profile=profile,
++                                         firm_rules=firm_rules)
+         t.reverses = None
+-    return link_reversals(unmark_round_trips(statement))
++    return link_reversals(unmark_round_trips(statement, ruleset.id))
+diff --git a/src/cma/graph.py b/src/cma/graph.py
+index 8e788f0..d6221a6 100644
+--- a/src/cma/graph.py
++++ b/src/cma/graph.py
+@@ -185,6 +185,19 @@ def ruleset_used(s: MemoState) -> dict:
+     return {"id": v1.id, "sha256": v1.sha256, "inferred": "pre-ruleset checkpoint"}
+ 
+ 
++def line_rule_ids(s: MemoState) -> list[str | None]:
++    """Each line's rule id. A checkpoint from before provenance holds none; its lines were
++    categorised by the table that is now v1 (P7), so v1 is replayed on a copy and its rule
++    id taken for each line whose saved category it reproduces. A line it does not
++    reproduce keeps None rather than a rule that did not set it."""
++    txns = s["statement"].transactions
++    recorded = s.get("ruleset")
++    if (recorded and not recorded.get("inferred")) or all(t.rule_id for t in txns):
++        return [t.rule_id for t in txns]
++    replay = cat.categorise(s["statement"].model_copy(deep=True), cat.load_ruleset("v1")).transactions
++    return [t.rule_id or (r.rule_id if r.category == t.category else None) for t, r in zip(txns, replay, strict=True)]
++
++
+ def evidence_record(s: MemoState) -> dict:
+     """Everything needed to audit the memo later, as plain JSON."""
+     return {
+@@ -195,6 +208,10 @@ def evidence_record(s: MemoState) -> dict:
+         "model": s.get("model"),
+         "vat_stagger": s.get("vat_stagger"),
+         "ruleset": ruleset_used(s),
++        # Each line's category and the rule that set it: ids only, no descriptions.
++        "lines": [{"id": t.id, "category": t.category.value if t.category else None, "rule_id": rule_id,
++                   "reverses": t.reverses} for t, rule_id in zip(s["statement"].transactions, line_rule_ids(s),
++                                                                 strict=True)],
+         "metrics": [m.model_dump() for m in s["metrics"]],
+         "policy": s["policy"].model_dump(mode="json"),
+         "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
+diff --git a/src/cma/metrics.py b/src/cma/metrics.py
+index a294efe..ec65010 100644
+--- a/src/cma/metrics.py
++++ b/src/cma/metrics.py
+@@ -23,6 +23,12 @@ from .models import REVENUE_CATEGORIES, Category, Metric, Statement, Transaction
+ VAT_STAGGERS: dict[int, tuple[int, ...]] = {1: (3, 6, 9, 12), 2: (1, 4, 7, 10), 3: (2, 5, 8, 11)}
+ VAT_DD_WORKING_DAYS = 3  # HMRC collects by Direct Debit up to three working days after the due date.
+ FINANCING = {Category.LOAN_REPAYMENT, Category.LOAN_DRAWDOWN, Category.OWNER_DRAWINGS}
++# Money in that is neither trading receipts, a lending drawdown nor a returned DD. Under v1
++# every such credit is OTHER; v2 names some of them (director funding, own pots, refunds,
++# HMRC, grants), and M9 and M16 treat them all as v1 treats OTHER, so naming a credit
++# never moves either figure (R10).
++NON_TRADING_IN = {Category.OTHER, Category.OWN_ACCOUNT_TRANSFER, Category.DIRECTOR_FUNDING, Category.REFUND_IN,
++                  Category.HMRC_REPAYMENT, Category.OTHER_EXPLAINED_IN}
+ 
+ 
+ def _month(d: date) -> str:
+@@ -181,11 +187,12 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
+             sent[counterparty(t.description)] += -t.amount
+     back: dict[str, list[Transaction]] = defaultdict(list)
+     for t in txns:
+-        if t.amount > 0 and t.category == Category.OTHER and counterparty(t.description) in sent:
++        if t.amount > 0 and t.category in NON_TRADING_IN and counterparty(t.description) in sent:
+             back[counterparty(t.description)].append(t)
+     offset = sum(min(sum(t.amount for t in ts), sent[cp]) for cp, ts in back.items())
+     operating += [t for ts in back.values() for t in ts]
+-    net_operating = round(sum(t.amount for t in operating if t.category != Category.OTHER) + offset, 2)
++    net_operating = round(sum(t.amount for t in operating if not (t.amount > 0 and t.category in NON_TRADING_IN))
++                          + offset, 2)
+     dscr: float | None = None
+     dscr_note = (
+         "Historical cover of existing debt only: net operating cash flow after owner drawings, "
+@@ -238,7 +245,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
+     # Inflows nobody has explained.
+     inflows = [t for t in txns if t.amount > 0 and eff(t) not in (Category.LOAN_DRAWDOWN,)
+                and t.category != Category.RETURNED_DD]
+-    unclassified = [t for t in inflows if t.category == Category.OTHER]
++    unclassified = [t for t in inflows if t.category in NON_TRADING_IN]
+     total_in = sum(t.amount for t in inflows)
+     unclassified_share = round(sum(t.amount for t in unclassified) / total_in * 100, 2) if total_in else None
+ 
+diff --git a/src/cma/rules/v2.yaml b/src/cma/rules/v2.yaml
+new file mode 100644
+index 0000000..f8b4227
+--- /dev/null
++++ b/src/cma/rules/v2.yaml
+@@ -0,0 +1,316 @@
++# Built-in categorisation table v2: v1's rules plus the maintained lists of R4 (UK card
++# acquirers, payment gateways, marketplaces and delivery platforms; business lenders and
++# merchant cash advance providers; own pots and savings; cash paid in; cash-withdrawal
++# wording; HMRC repayments; refunds; explained non-trading money in).
++#
++# Rules are ordered; the first whose pattern (or one of whose names) matches the
++# upper-cased description, whose `unless` does not, and whose direction matches the sign
++# of the amount wins. `names` are plain words matched whole, with any run of spaces
++# between words; `pattern` is a Python regular expression.
++#
++# Protected rules (returned DD, director, capital, shareholder, lender, HMRC) come first
++# and win over the case profile and firm rules; only a per-line override changes a line
++# they match (R21). The precedence is in src/cma/categorise.py. A rule may also have
++# `requires`, a pattern that must match too.
++#
++# An explicit move to or from the applicant's own pot or space ("TFR FROM POT CAPITAL
++# RESERVE", "TO POT HMRC VAT") is an own-account transfer whatever the pot is called, so
++# every protected rule but a returned DD has `unless: *pot_move` and leaves it to the own
++# pots rule below. Savings wording alone is not a pot move: "DIRECTOR SAVINGS" stays
++# director funding.
++#
++# Ambiguous wording never resolves to trading receipts: refunds, own pots and explained
++# non-trading credits are tried before the acquirer lists, so "PAYPAL REFUND" is a
++# refund and "STRIPE CAPITAL" a drawdown. Cash paid in is trading receipts (D31).
++id: v2
++frozen: false
++rules:
++  # --- protected ---------------------------------------------------------------------
++  - id: returned_dd
++    pattern: '^UNPAID DD\b'
++    direction: any
++    category: returned_dd
++    protected: true
++  - id: hmrc_vat
++    pattern: 'HMRC VAT'
++    unless: &pot_move '(?<![A-Z0-9])(?:POT\s+TRANSFER|(?:TO|FROM)\s+(?:POT|SPACE)|(?:VAT|TAX)\s+POT)(?![A-Z0-9])'
++    direction: out
++    category: hmrc_vat
++    protected: true
++  - id: hmrc_paye
++    pattern: 'HMRC PAYE'
++    unless: *pot_move
++    direction: out
++    category: hmrc_paye
++    protected: true
++  # HMRC paying money back (VAT repayment, tax refund, R&D credit).
++  - id: hmrc_repayment
++    names: [HMRC, HM REVENUE]
++    unless: *pot_move
++    direction: in
++    category: hmrc_repayment
++    protected: true
++  # UK business lenders and merchant cash advance providers, named. Before the director
++  # and capital wording, so "STRIPE CAPITAL" and "BOOST CAPITAL" are lenders.
++  - id: lender_repayment
++    names: &lenders
++      - FUNDING CIRCLE
++      - IWOCA
++      - YOULEND
++      - LIBERIS
++      - 365 BUSINESS FINANCE
++      - CAPIFY
++      - BOOST CAPITAL
++      - FLEXIMIZE
++      - MARKETFINANCE
++      - MARKET FINANCE
++      - NUCLEUS COMMERCIAL FINANCE
++      - ESME LOANS
++      - ALLICA
++      - ULTIMATE FINANCE
++      - BIZCAP
++      - SWIFTFUND
++      - GOT CAPITAL
++      - MERCHANT MONEY
++      - UNCAPPED
++      - CLEARCO
++      - WAYFLYER
++      - OPTIMUM FINANCE
++      - LENDINGCROWD
++      - ARCHOVER
++      - THINCATS
++      - SHAWBROOK
++      - CLOSE BROTHERS
++      - ALDERMORE
++      - STRIPE CAPITAL
++      - PAYPAL WORKING CAPITAL
++      - PAYPAL BUSINESS LOAN
++      - SHOPIFY CAPITAL
++      - AMAZON LENDING
++      - SQUARE CAPITAL
++      - SQUARE LOANS
++      - SUMUP CASH ADVANCE
++      - MERCHANT CASH ADVANCE
++      - BUSINESS CASH ADVANCE
++      - BOUNCE BACK LOAN
++      - BBLS
++      - CBILS
++      - RECOVERY LOAN SCHEME
++    unless: *pot_move
++    direction: out
++    category: loan_repayment
++    protected: true
++  # A named lender's explicit refund or reversal ("DD REPAYMENT REVERSAL IWOCA LTD") is
++  # money given back, not a new drawdown. Still protected: a lender line (R21).
++  - id: lender_refund
++    names: *lenders
++    requires: &refund_wording '(?<![A-Z0-9])(?:REFUND|REFUNDED|REVERSAL|REVERSED|RETURNED\s+PAYMENT|PAYMENT\s+RETURNED|CHARGEBACK)(?![A-Z0-9])'
++    unless: *pot_move
++    direction: in
++    category: refund_in
++    protected: true
++  - id: lender_drawdown
++    names: *lenders
++    unless: *pot_move
++    direction: in
++    category: loan_drawdown
++    protected: true
++  - id: loan_repayment
++    pattern: '\bLOAN\b|FINANCE\b'
++    unless: *pot_move
++    direction: out
++    category: loan_repayment
++    protected: true
++  # Money from a director, shareholder or owner, or capital introduced. Before the
++  # generic loan wording, so a director's loan to the business is director funding.
++  - id: director_funding
++    names: [DIRECTOR, DIRECTORS, OWNER, CAPITAL, SHAREHOLDER, SHAREHOLDERS]
++    unless: *pot_move
++    direction: in
++    category: director_funding
++    protected: true
++  # Generic loan or finance wording, unless the line says it is a refund or a reversal
++  # (the refund wording above, or a pot move): "CARD REFUND ACME RETAIL FINANCE" is money
++  # given back, not debt drawn, and goes to the refunds rule below.
++  - id: loan_drawdown
++    pattern: '\bLOAN\b|FINANCE\b'
++    unless: '(?<![A-Z0-9])(?:REFUND|REFUNDED|REVERSAL|REVERSED|RETURNED\s+PAYMENT|PAYMENT\s+RETURNED|CHARGEBACK|POT\s+TRANSFER|(?:TO|FROM)\s+(?:POT|SPACE)|(?:VAT|TAX)\s+POT)(?![A-Z0-9])'
++    direction: in
++    category: loan_drawdown
++    protected: true
++  - id: owner_drawings
++    pattern: 'OWNER DRAWINGS|DIRECTOR DRAWINGS|DIVIDEND'
++    unless: *pot_move
++    direction: out
++    category: owner_drawings
++    protected: true
++  # --- not protected: a profile name or a firm rule is tried before these ---------------
++  # Moves between the applicant's own pots, spaces and savings, either way. First of the
++  # unprotected rules, so an explicit move to a pot wins over what the pot is for:
++  # "TFR TO POT RENT" is an own-account transfer, not rent.
++  - id: own_pots_savings
++    names:
++      - POT TRANSFER
++      - TO POT
++      - FROM POT
++      - SAVINGS
++      - SAVER
++      - BUSINESS SAVER
++      - INSTANT ACCESS
++      - TO SPACE
++      - FROM SPACE
++      - VAT POT
++      - TAX POT
++    direction: any
++    category: own_account_transfer
++  - id: bank_fees
++    pattern: 'UNPAID ITEM FEE|ACCOUNT FEES|BANK CHARGES'
++    direction: out
++    category: bank_fees
++  - id: payroll
++    pattern: 'PAYROLL|SALARIES'
++    direction: out
++    category: payroll
++  - id: rent
++    pattern: '\bRENT\b'
++    direction: out
++    category: rent
++  - id: refunds
++    names: [REFUND, REFUNDED, REVERSAL, REVERSED, RETURNED PAYMENT, PAYMENT RETURNED, CHARGEBACK]
++    direction: in
++    category: refund_in
++  # Explained, but not trading: grants, insurance claims, interest, cashback.
++  - id: explained_non_trading
++    names: [INTEREST, GRANT, INSURANCE CLAIM, INSURANCE PAYOUT, INSURANCE SETTLEMENT, CASHBACK, COMPENSATION]
++    direction: in
++    category: other_explained_in
++  # Cash paid in at a counter or a machine, at a bank, a Post Office or a PayPoint. A
++  # cheque is not cash. Post Office and PayPoint count only with cash, deposit or counter
++  # wording: both also pay by transfer, and their name alone is not cash. An electronic
++  # payment (Faster Payment, including the FP and FPI codes, BACS, CHAPS, a bank giro
++  # credit (BGC), a transfer, a standing order, a direct credit) is never cash, wherever in the line the rail is named and whatever its payer-written
++  # reference says; it stays unexplained for a person.
++  - id: cash_paid_in
++    names:
++      - CASH PAID IN
++      - CASH DEPOSIT
++      - CASH DEP
++      - CASH CREDIT
++      - CASH IN BRANCH
++      - PAID IN AT
++      - COUNTER CREDIT
++      - COUNTER DEPOSIT
++      - DEPOSIT MACHINE
++      - ATM DEPOSIT
++      - CDM DEPOSIT
++      - POST OFFICE CASH
++      - POST OFFICE DEPOSIT
++      - POST OFFICE COUNTER CREDIT
++      - POST OFFICE COUNTER DEPOSIT
++      - PAYPOINT CASH
++      - PAYPOINT DEPOSIT
++    unless: '(?<![A-Z0-9])(?:CHEQUES?|CHQ|FPS|FPI|FP|BGC|FASTER\s+PAYMENTS?|BACS|CHAPS|TFR|TRANSFER|SO|STO|STANDING\s+ORDER|DIRECT\s+CREDIT)(?![A-Z0-9])'
++    direction: in
++    category: cash_deposit
++  # Trading receipts. The first three patterns are v1's synthetic acquirer wording.
++  - id: card_settlement
++    pattern: 'ACQUIRER SETTLEMENT|PAYGATE PAYOUT|CARD SETTLEMENT'
++    direction: in
++    category: revenue_card_settlement
++  - id: card_acquirers
++    names:
++      - SUMUP
++      - SUM UP
++      - SQUARE UK
++      - SQUARE EUROPE
++      - SQUARE PAYMENTS
++      - ZETTLE
++      - IZETTLE
++      - WORLDPAY
++      - BARCLAYCARD MERCHANT
++      - BARCLAYCARD PAYMENT ACCEPTANCE
++      - ELAVON
++      - GLOBAL PAYMENTS
++      - GLOBALPAYMENTS
++      - CARDNET
++      - TAKEPAYMENTS
++      - DOJO
++      - PAYMENTSENSE
++      - TEYA
++      - SALTPAY
++      - ADYEN
++      - CHECKOUT.COM
++      - CHECKOUT COM
++      - TRUST PAYMENTS
++      - FISERV
++      - FIRST DATA
++      - VIVA WALLET
++      - MYPOS
++      - EVO PAYMENTS
++      - HANDEPAY
++      - TOTAL PROCESSING
++    direction: in
++    category: revenue_card_settlement
++  - id: payment_gateways
++    names:
++      - STRIPE
++      - PAYPAL
++      - GOCARDLESS
++      - OPAYO
++      - SAGEPAY
++      - SAGE PAY
++      - BRAINTREE
++      - KLARNA
++      - CLEARPAY
++      - PAYSAFE
++    direction: in
++    category: revenue_card_settlement
++  # Marketplace payouts. Amazon by its payout entities only: a plain AMAZON credit is
++  # usually a refund on a purchase, and stays for a person to look at.
++  - id: marketplaces
++    names:
++      - AMAZON PAYMENTS
++      - AMAZON EU
++      - AMAZON SERVICES EUROPE
++      - AMZN PAYMENTS
++      - AMZN MKTP PAYOUT
++      - EBAY
++      - ETSY
++      - NOT ON THE HIGH STREET
++      - NOTHS
++      - ONBUY
++      - SHOPIFY
++      - FRUUGO
++    direction: in
++    category: revenue_card_settlement
++  - id: delivery_platforms
++    names:
++      - DELIVEROO
++      - ROOFOODS
++      - JUST EAT
++      - JUSTEAT
++      - JUST-EAT
++      - UBER EATS
++      - PORTIER EATS
++      - FOODHUB
++    direction: in
++    category: revenue_card_settlement
++  - id: invoice_transfer
++    pattern: '\bINV(?:OICE)?\s*[-#:]?\s*\d+'
++    direction: in
++    category: revenue_transfer
++  # Cash taken out. The category is what an unmatched debit gets anyway (supplier); the
++  # rule is here so the line records cash_withdrawal as its rule, which the cash round-trip
++  # indicator reads. Last, so it never takes a debit from another rule.
++  - id: cash_withdrawal
++    names:
++      - CASH WITHDRAWAL
++      - CASH WDL
++      - CASH WITHDRAWN
++      - ATM
++      - CASH MACHINE
++      - CASHPOINT
++      - POST OFFICE CASH
++      - COUNTER WITHDRAWAL
++    direction: out
++    category: supplier
+diff --git a/tests/test_evals_rulesets.py b/tests/test_evals_rulesets.py
+new file mode 100644
+index 0000000..d873166
+--- /dev/null
++++ b/tests/test_evals_rulesets.py
+@@ -0,0 +1,22 @@
++"""The offline evals pass under both rule tables (CMA_RULESET=v1 and v2), and the summary
++names the table it ran with, so a result can be read as a v1 or a v2 run."""
++
++import os
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++@pytest.mark.dual_run
++@pytest.mark.parametrize("ruleset", ["v1", "v2"])
++def test_offline_evals_pass_and_name_their_ruleset(tmp_path, ruleset):
++    env = {**os.environ, "CMA_RULESET": ruleset}
++    r = subprocess.run([sys.executable, str(ROOT / "evals" / "run_evals.py"), "--llm", "fake", "--out", str(tmp_path)],
++                       env=env, capture_output=True, text=True, timeout=300)
++    print(r.stdout)  # the runner log keeps the per-case table and the summary
++    assert r.returncode == 0, r.stdout + r.stderr
++    assert f"9/9 memos fully grounded; model = fake; ruleset = {ruleset}" in r.stdout
+diff --git a/tests/test_p7_history.py b/tests/test_p7_history.py
+index c6dd289..0ca406a 100644
+--- a/tests/test_p7_history.py
++++ b/tests/test_p7_history.py
+@@ -140,6 +140,8 @@ def test_a_review_left_pending_by_the_pre_change_version_resumes_here(pre_change
+     assert r.exit_code == 0, r.output
+     record = json.loads((tmp_path / "memo.evidence.json").read_text())
+     assert record["ruleset"] == {"id": "v1", "sha256": load_ruleset("v1").sha256, "inferred": "pre-ruleset checkpoint"}
++    # The pre-change version recorded no rule ids; each line's is inferred from v1.
++    assert record["lines"] and all((line["rule_id"] or "").startswith("v1:") for line in record["lines"])
+     assert "APPROVED by C" in out.read_text()
+ 
+ 
+diff --git a/tests/test_rules.py b/tests/test_rules.py
+index 417c375..c6c6996 100644
+--- a/tests/test_rules.py
++++ b/tests/test_rules.py
+@@ -331,11 +331,26 @@ def test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1(tmp_pat
+     cfg = {"configurable": {"thread_id": "legacy"}}
+     graph.invoke({"statement_path": str(csv_path)}, cfg)
+     graph.invoke(Command(resume={"approved": True, "reviewer": "A. Analyst"}), cfg)
+-    legacy = {k: v for k, v in graph.get_state(cfg).values.items() if k != "ruleset"}
++    state = graph.get_state(cfg).values
++    recorded = [(t.category, t.rule_id) for t in state["statement"].transactions]
++    # A checkpoint from before provenance: no ruleset in the state, no rule id on any line.
++    legacy = {k: v for k, v in state.items() if k != "ruleset"}
++    legacy["statement"] = state["statement"].model_copy(deep=True)
++    for t in legacy["statement"].transactions:
++        t.rule_id = None
+     monkeypatch.setenv("CMA_RULESET", "v9")
+-    assert evidence_record(legacy)["ruleset"] == {
++    record = evidence_record(legacy)
++    assert record["ruleset"] == {
+         "id": "v1", "sha256": load_ruleset("v1").sha256, "inferred": "pre-ruleset checkpoint"}
+     assert evidence_record({**legacy, "ruleset": None})["ruleset"]["id"] == "v1"
++    # Each line's provenance is inferred from v1 too, and equals what a fresh run records.
++    assert [(t.category, t.rule_id) for t in legacy["statement"].transactions] == [(c, None) for c, _ in recorded]
++    assert [(line["category"], line["rule_id"]) for line in record["lines"]] == \
++        [(c.value, r) for c, r in recorded]
++    assert all(r.startswith("v1:") for _, r in recorded)
++    # A line whose saved category v1 would not give keeps no rule id rather than a wrong one.
++    legacy["statement"].transactions[0].category = Category.LOAN_DRAWDOWN
++    assert evidence_record(legacy)["lines"][0]["rule_id"] is None
+ 
+ 
+ # --- R10: M16 keeps its id, unit and value, and its name says what it measures ------------
+diff --git a/tests/test_rules_v2.py b/tests/test_rules_v2.py
+new file mode 100644
+index 0000000..a3785b5
+--- /dev/null
++++ b/tests/test_rules_v2.py
+@@ -0,0 +1,713 @@
++"""The v2 rule table (R4) and the categoriser's precedence with per-line provenance.
++
++v2 is packaged data like v1 (src/cma/rules/v2.yaml) and adds the maintained lists of R4.
++Every line records the rule that set its category. Precedence, first match wins: a
++per-line override, the protected built-in rules, the case profile's names, firm rules,
++the rest of the table, the default.
++"""
++
++import csv
++import gzip
++import hashlib
++import json
++import re
++from datetime import date, timedelta
++from importlib import resources
++from pathlib import Path
++
++import pytest
++import yaml
++from typer.testing import CliRunner
++
++from cma import categorise, ingest, metrics, synth
++from cma.categorise import (
++    LineOverride,
++    ProfileNames,
++    Rule,
++    RulesetError,
++    classify,
++    load_ruleset,
++    validate_ruleset,
++)
++from cma.models import CREDIT_BUCKET, Bucket, Category, Statement, Transaction
++
++C = Category
++GOLDEN = Path(__file__).parent / "golden" / "p7_v1_baseline.json.gz"
++
++
++@pytest.fixture(scope="module")
++def v2():
++    return load_ruleset("v2")
++
++
++def _t(desc: str, amount: float, tid: str = "T") -> Transaction:
++    return Transaction(id=tid, date=date(2026, 1, 1), description=desc, amount=amount, balance=0.0)
++
++
++# --- one table of cases per maintained list ------------------------------------------
++# (description, amount, category, rule id recorded on the line)
++
++LISTS = {
++    "card_acquirers": [
++        ("SUMUP PAYMENTS LTD", 412.30, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("BGC SUM UP PAYOUT", 80.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("WORLDPAY UK LTD", 1250.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("ZETTLE BY PAYPAL", 55.10, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("IZETTLE PAYOUT", 55.10, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("SQUARE EUROPE LTD", 300.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("BARCLAYCARD MERCHANT SERVICES", 990.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("ELAVON FINANCIAL SERVICES", 210.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("GLOBAL PAYMENTS UK", 120.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("LLOYDS CARDNET SETTLEMENT", 640.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("DOJO PAYOUT", 400.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("TEYA UK LTD", 400.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("CHECKOUT.COM PAYOUT", 75.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("ADYEN NV", 75.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("CARD ACQUIRER SETTLEMENT", 100.00, C.REVENUE_CARD, "v2:card_settlement"),  # v1's wording stays
++        # a debit to the same names is not money in; a card repayment is a supplier
++        ("BARCLAYCARD", -120.00, C.SUPPLIER, "v2:default"),
++        ("SUMUP FEES", -4.50, C.SUPPLIER, "v2:default"),
++        # whole words only: a payer who merely contains an acquirer's letters is not one
++        ("DOJOMATIC LTD", 50.00, C.OTHER, "v2:default"),
++    ],
++    "payment_gateways": [
++        ("STRIPE PAYMENTS UK LTD", 2300.00, C.REVENUE_CARD, "v2:payment_gateways"),
++        ("STRIPE PAYOUT", 2300.00, C.REVENUE_CARD, "v2:payment_gateways"),
++        ("PAYPAL PPWDL 7HK2", 145.00, C.REVENUE_CARD, "v2:payment_gateways"),
++        ("GOCARDLESS LTD", 600.00, C.REVENUE_CARD, "v2:payment_gateways"),
++        ("OPAYO PAYOUT", 60.00, C.REVENUE_CARD, "v2:payment_gateways"),
++        ("KLARNA BANK AB", 89.00, C.REVENUE_CARD, "v2:payment_gateways"),
++        ("CLEARPAY FINANCE LTD", 89.00, C.LOAN_DRAWDOWN, "v2:loan_drawdown"),  # lender wording wins, never trading
++    ],
++    "marketplaces": [
++        ("AMAZON PAYMENTS UK", 830.00, C.REVENUE_CARD, "v2:marketplaces"),
++        ("AMAZON SERVICES EUROPE SARL", 830.00, C.REVENUE_CARD, "v2:marketplaces"),
++        ("EBAY COMMERCE UK LTD", 210.00, C.REVENUE_CARD, "v2:marketplaces"),
++        ("ETSY UK", 33.00, C.REVENUE_CARD, "v2:marketplaces"),
++        ("NOTHS PAYOUT", 70.00, C.REVENUE_CARD, "v2:marketplaces"),
++        ("SHOPIFY PAYMENTS", 70.00, C.REVENUE_CARD, "v2:marketplaces"),
++        # a plain Amazon credit is usually a refund on a purchase: left for a person
++        ("AMAZON.CO.UK", 25.00, C.OTHER, "v2:default"),
++    ],
++    "delivery_platforms": [
++        ("DELIVEROO PLC", 510.00, C.REVENUE_CARD, "v2:delivery_platforms"),
++        ("ROOFOODS LTD", 510.00, C.REVENUE_CARD, "v2:delivery_platforms"),
++        ("JUST EAT PAYOUT", 310.00, C.REVENUE_CARD, "v2:delivery_platforms"),
++        ("JUST-EAT.CO.UK", 310.00, C.REVENUE_CARD, "v2:delivery_platforms"),
++        ("UBER EATS UK", 150.00, C.REVENUE_CARD, "v2:delivery_platforms"),
++        ("PORTIER EATS UK LTD", 150.00, C.REVENUE_CARD, "v2:delivery_platforms"),
++        ("UBER TRIP", -12.00, C.SUPPLIER, "v2:default"),
++    ],
++    "lenders": [
++        ("IWOCA LTD", 10000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("DD IWOCA LTD", -450.00, C.LOAN_REPAYMENT, "v2:lender_repayment"),
++        ("FUNDING CIRCLE", 25000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("DD FUNDING CIRCLE", -812.40, C.LOAN_REPAYMENT, "v2:lender_repayment"),
++        ("YOULEND LTD", 8000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("LIBERIS LTD", 8000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("365 BUSINESS FINANCE", 6000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("ESME LOANS", 15000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        # merchant cash advances from acquirers and gateways are drawdowns, not takings
++        ("STRIPE CAPITAL", 5000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("PAYPAL WORKING CAPITAL", 3000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("SHOPIFY CAPITAL", 3000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("SUMUP CASH ADVANCE", 2000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("BOOST CAPITAL", 4000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),  # a lender, not capital introduced
++        ("MERCHANT CASH ADVANCE", 4000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("HOLLOWAY BRIDGE FINANCE LOAN", -300.00, C.LOAN_REPAYMENT, "v2:loan_repayment"),  # v1 wording stays
++        ("HOLLOWAY BRIDGE FINANCE LOAN", 9000.00, C.LOAN_DRAWDOWN, "v2:loan_drawdown"),
++    ],
++    "own_pots_savings": [
++        ("POT TRANSFER IN HOLIDAY POT", 200.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("POT TRANSFER OUT HOLIDAY POT", -200.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("TFR TO SAVINGS", -1000.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("FPS CREDIT SAVINGS ACCOUNT", 1000.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("TRANSFER FROM BUSINESS SAVER", 750.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("TO SPACE VAT", -300.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("FROM SPACE VAT", 300.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("TEAPOT SUPPLIES", -18.00, C.SUPPLIER, "v2:default"),
++        # an explicit move to a pot is an own-account transfer, whatever the pot is for
++        ("TFR TO POT RENT", -300.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("POT TRANSFER PAYROLL POT", -3000.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("FROM POT RENT", 300.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++    ],
++    "cash_paid_in": [
++        ("CASH PAID IN", 640.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        ("CASH DEPOSIT BRANCH 30-11-22", 1200.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        ("COUNTER CREDIT", 380.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        ("PAID IN AT HIGH ST BRANCH", 380.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        ("CASH DEPOSIT MACHINE 0412", 250.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        ("POST OFFICE CASH DEPOSIT", 500.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        ("CASH DEP POST OFFICE 0412", 500.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        ("POST OFFICE COUNTER CREDIT", 500.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        ("PAYPOINT CASH", 90.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        # a provider's name alone is not cash: Post Office Ltd and PayPoint also pay by
++        # transfer, and a transfer is left for a person, never counted as cash takings
++        ("BACS CREDIT POST OFFICE LTD", 500.00, C.OTHER, "v2:default"),
++        ("POST OFFICE COUNTERS", 500.00, C.OTHER, "v2:default"),
++        ("PAYPOINT PLC", 90.00, C.OTHER, "v2:default"),
++        # cash wording a payer typed into an electronic payment's reference is not cash
++        ("FPS CREDIT CASH DEPOSIT", 200.00, C.OTHER, "v2:default"),
++        ("BACS CREDIT POST OFFICE CASH", 200.00, C.OTHER, "v2:default"),
++        # a cheque is not cash; it stays unexplained for a person
++        ("CHEQUE PAID IN AT BRANCH", 900.00, C.OTHER, "v2:default"),
++        # protected wording wins over cash wording: never cash or trading receipts
++        ("CASH DEPOSIT DIRECTOR", 3000.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
++        ("CASH DEPOSIT IWOCA", 3000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("HMRC CASH PAID IN", 3000.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),
++        # an electronic rail anywhere in the line, not only first, means it is not cash
++        ("CREDIT FPS POST OFFICE CASH", 500.00, C.OTHER, "v2:default"),
++        ("CASH DEPOSIT VIA FASTER PAYMENT", 500.00, C.OTHER, "v2:default"),
++    ],
++    "cash_withdrawal": [
++        # cash out keeps the category an unmatched debit gets; the rule id marks it for
++        # the round-trip indicator
++        ("CASH WITHDRAWAL LLOYDS", -60.00, C.SUPPLIER, "v2:cash_withdrawal"),
++        ("ATM LINK 1234", -100.00, C.SUPPLIER, "v2:cash_withdrawal"),
++        ("POST OFFICE CASH", -50.00, C.SUPPLIER, "v2:cash_withdrawal"),
++        ("CASHPOINT HIGH ST", -40.00, C.SUPPLIER, "v2:cash_withdrawal"),
++        ("ATM REFUND", 40.00, C.REFUND_IN, "v2:refunds"),  # money in is never a withdrawal
++    ],
++    "hmrc": [
++        ("HMRC VAT REPAYMENT", 1840.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),
++        ("BACS CREDIT HMRC VAT REPAYMENT", 1840.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),
++        ("HM REVENUE & CUSTOMS", 220.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),
++        ("HMRC VAT", -2400.00, C.HMRC_VAT, "v2:hmrc_vat"),
++        ("HMRC PAYE", -900.00, C.HMRC_PAYE, "v2:hmrc_paye"),
++        ("HMRC INV 1234", 500.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),  # never a customer
++    ],
++    "refunds": [
++        ("CARD REFUND TESCO", 12.00, C.REFUND_IN, "v2:refunds"),
++        ("DD REFUND COUNCIL", 140.00, C.REFUND_IN, "v2:refunds"),
++        ("PAYPAL REFUND", 40.00, C.REFUND_IN, "v2:refunds"),  # a refund, not gateway takings
++        ("AMAZON REFUND", 25.00, C.REFUND_IN, "v2:refunds"),
++        ("REVERSAL OF PAYMENT", 75.00, C.REFUND_IN, "v2:refunds"),
++        ("RETURNED PAYMENT ACME", 75.00, C.REFUND_IN, "v2:refunds"),
++        # explicit refund wording beats generic finance or loan wording: no debt was drawn
++        ("CARD REFUND ACME RETAIL FINANCE", 75.00, C.REFUND_IN, "v2:refunds"),
++        ("LOAN REPAYMENT REVERSAL", 450.00, C.REFUND_IN, "v2:refunds"),
++        # a named lender giving money back is a refund, not new debt; still protected (R21)
++        ("IWOCA REFUND", 50.00, C.REFUND_IN, "v2:lender_refund"),
++        ("DD REPAYMENT REVERSAL IWOCA LTD", 450.00, C.REFUND_IN, "v2:lender_refund"),
++        ("BOOST CAPITAL REFUND", 60.00, C.REFUND_IN, "v2:lender_refund"),  # not director capital
++        ("IWOCA REFUND", -50.00, C.LOAN_REPAYMENT, "v2:lender_repayment"),  # money out stays debt service
++        ("UNPAID DD BRITISH GAS", 75.00, C.RETURNED_DD, "v2:returned_dd"),
++    ],
++    "explained_non_trading": [
++        ("INTEREST PAID", 3.10, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),
++        ("COUNCIL GRANT", 2500.00, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),
++        ("AVIVA INSURANCE CLAIM", 1800.00, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),
++        ("CASHBACK", 5.00, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),
++        ("COUNCIL GRANT INV 12", 2500.00, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),  # not a customer
++    ],
++    "director_and_shareholder": [
++        ("FPS CREDIT DIRECTOR CAPITAL INTRODUCED", 5000.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
++        ("FPS CREDIT A DIRECTOR LOAN ACCOUNT", 5000.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
++        ("J SMITH SHAREHOLDER INV 1234", 900.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
++        ("CAPITAL INJECTION", 900.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
++        # an explicit move from the applicant's own pot is not director money, whatever the pot is called
++        ("TFR FROM POT CAPITAL RESERVE", 300.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        # savings wording alone is not a pot move: a director's savings paid in is director funding
++        ("FPS CREDIT DIRECTOR SAVINGS", 300.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
++        ("DIRECTOR DRAWINGS", -900.00, C.OWNER_DRAWINGS, "v2:owner_drawings"),
++    ],
++    "defaults_and_invoices": [
++        ("FPS CREDIT ACME LTD INV1234", 1200.00, C.REVENUE_TRANSFER, "v2:invoice_transfer"),
++        ("FPS CREDIT ACME LTD", 1200.00, C.OTHER, "v2:default"),
++        ("CARD TESCO", -45.00, C.SUPPLIER, "v2:default"),
++        ("PAYROLL", -3000.00, C.PAYROLL, "v2:payroll"),
++        ("RENT", -1500.00, C.RENT, "v2:rent"),
++        ("BANK CHARGES", -15.00, C.BANK_FEES, "v2:bank_fees"),
++    ],
++}
++
++CASES = [(name, *case) for name, cases in LISTS.items() for case in cases]
++
++
++@pytest.mark.parametrize("name, desc, amount, category, rule_id", CASES,
++                         ids=[f"{c[0]}:{c[1]}:{'in' if c[2] > 0 else 'out'}" for c in CASES])
++def test_each_list_categorises_its_lines_and_records_the_rule(v2, name, desc, amount, category, rule_id):
++    s = categorise.categorise(Statement(account_name="a", transactions=[_t(desc, amount)]), v2)
++    line = s.transactions[0]
++    assert (line.category, line.rule_id) == (category, rule_id)
++    assert classify(_t(desc, amount), v2) == (category, rule_id)
++    assert categorise.categorise_one(_t(desc, amount), v2) == category
++
++
++def test_every_list_in_the_task_has_a_rule_in_v2(v2):
++    ids = {r.id for r in v2.rules}
++    assert {"card_acquirers", "payment_gateways", "marketplaces", "delivery_platforms", "lender_drawdown",
++            "lender_repayment", "own_pots_savings", "cash_paid_in", "cash_withdrawal", "hmrc_repayment",
++            "refunds", "explained_non_trading"} <= ids
++    # each list rule is exercised above, in the direction it applies to
++    exercised = {rid.split(":", 1)[1] for *_, rid in CASES}
++    assert ids <= exercised, ids - exercised
++
++
++def test_every_credit_category_v2_can_give_has_a_bucket(v2):
++    """A credit landing in a category with no bucket would be a reconciliation failure (R3)."""
++    for r in v2.rules:
++        if r.direction in ("in", "any"):
++            assert r.category in CREDIT_BUCKET, r.id
++    assert CREDIT_BUCKET[C.CASH_DEPOSIT] is Bucket.TRADING_RECEIPTS
++
++
++def test_ambiguous_wording_never_resolves_to_trading_receipts(v2):
++    """A refund, pot, grant or lender word with an acquirer name or an invoice reference is
++    not trading receipts: the rules that need judgement come first."""
++    trading = {C.REVENUE_CARD, C.REVENUE_TRANSFER}
++    for desc in ["STRIPE REFUND", "PAYPAL REVERSAL", "SUMUP INTEREST", "DELIVEROO GRANT", "EBAY TO SAVINGS",
++                 "STRIPE CAPITAL INV 1234", "AMAZON LENDING", "ACME LTD REFUND INV 99", "HMRC STRIPE"]:
++        assert classify(_t(desc, 100.0), v2)[0] not in trading, desc
++
++
++def _list(rule_id: str) -> list[str]:
++    data = yaml.safe_load(resources.files("cma.rules").joinpath("v2.yaml").read_bytes())
++    return next(r["names"] for r in data["rules"] if r["id"] == rule_id)
++
++
++@pytest.mark.contracts
++def test_overlaps_from_the_review_hold_for_every_listed_word(v2):
++    """The three review findings, generalised from one example to every word in the list:
++    an explicit pot move beats what the pot is for; explicit refund wording beats generic
++    loan or finance wording; a Post Office or PayPoint name without cash wording, or any
++    cash wording on an electronic payment, is never cash takings."""
++    for pot in _list("own_pots_savings"):
++        for purpose in ("RENT", "PAYROLL", "BANK CHARGES"):
++            assert classify(_t(f"TFR {pot} {purpose}", -100.0), v2) == \
++                (C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"), (pot, purpose)
++    for refund in _list("refunds"):
++        for generic in ("ACME RETAIL FINANCE", "LOAN"):
++            assert classify(_t(f"{refund} {generic}", 75.0), v2) == (C.REFUND_IN, "v2:refunds"), (refund, generic)
++    for provider in ("POST OFFICE LTD", "POST OFFICE COUNTERS", "POST OFFICE", "PAYPOINT PLC", "PAYPOINT"):
++        for rail in ("", "BACS CREDIT ", "FPS CREDIT "):
++            assert classify(_t(f"{rail}{provider}", 500.0), v2)[0] is C.OTHER, (rail, provider)
++    for cash in _list("cash_paid_in"):
++        # FPI, FP and BGC are rail codes UK banks print (BGC is in categorise.RAIL_PREFIX too)
++        for rail in ("FPS", "FPI", "FP", "BGC", "FASTER PAYMENT", "FASTER PAYMENTS", "BACS", "CHAPS", "TFR",
++                     "TRANSFER", "SO", "STO", "STANDING ORDER", "DIRECT CREDIT"):
++            # wherever the rail sits in the line
++            for desc in (f"{rail} {cash}", f"CREDIT {rail} {cash}", f"{cash} {rail}", f"{cash} BY {rail} REF 12"):
++                assert classify(_t(desc, 200.0), v2)[0] is not C.CASH_DEPOSIT, desc
++        assert classify(_t(f"{cash} HIGH ST", 200.0), v2) == (C.CASH_DEPOSIT, "v2:cash_paid_in"), cash
++
++
++@pytest.mark.contracts
++def test_a_named_lender_refund_is_a_protected_refund_for_every_lender_and_refund_word(v2):
++    """A named lender's explicit refund or reversal is money given back, not a new
++    drawdown, and stays protected: a profile name or firm rule cannot reclassify it (R21).
++    Money out to a lender is debt service whatever the wording."""
++    firm = [_firm("f", ".", "any", C.REVENUE_TRANSFER)]
++    profile = ProfileNames(directors=("IWOCA",), own_accounts=("IWOCA",))
++    for lender in _list("lender_drawdown"):
++        for refund in _list("refunds"):
++            for desc in (f"{refund} {lender}", f"{lender} {refund}", f"DD REPAYMENT {refund} {lender} LTD"):
++                assert classify(_t(desc, 75.0), v2, profile=profile, firm_rules=firm) == \
++                    (C.REFUND_IN, "v2:lender_refund"), desc
++                assert classify(_t(desc, -75.0), v2) == (C.LOAN_REPAYMENT, "v2:lender_repayment"), desc
++        assert classify(_t(lender, 75.0), v2) == (C.LOAN_DRAWDOWN, "v2:lender_drawdown"), lender
++
++
++POT_MOVES = ("POT TRANSFER", "TO POT", "FROM POT", "TO SPACE", "FROM SPACE", "VAT POT", "TAX POT")
++
++
++@pytest.mark.contracts
++def test_an_explicit_pot_move_beats_protected_wording_in_the_pot_name(v2):
++    """A move to or from the applicant's own pot or space is an own-account transfer in
++    either direction, even when the pot's name is protected wording (CAPITAL, DIRECTOR,
++    HMRC, a lender, LOAN)."""
++    protected_words = ["CAPITAL", "DIRECTOR", "DIRECTORS", "OWNER", "SHAREHOLDER", "HMRC", "HMRC VAT",
++                       "HMRC PAYE", "HM REVENUE", "LOAN", "FINANCE", "DIVIDEND", "OWNER DRAWINGS",
++                       *_list("lender_drawdown")]
++    for pot in POT_MOVES:
++        for word in protected_words:
++            for amount in (300.0, -300.0):
++                desc = f"TFR {pot} {word} RESERVE"
++                assert classify(_t(desc, amount), v2) == (C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"), \
++                    (desc, amount)
++    # every protected rule except a returned direct debit yields to an explicit pot move
++    assert {r.id for r in v2.protected if r.unless is None or not r.unless.search("TFR FROM POT X")} == \
++        {"returned_dd"}
++
++
++# --- precedence ----------------------------------------------------------------------
++
++
++def _firm(rid: str, pattern: str, direction: str, category: Category) -> Rule:
++    return Rule(rid, re.compile(pattern), direction, category)
++
++
++PROFILE = ProfileNames(directors=("Jane Doe",), own_accounts=("ACME HOLDINGS",))
++
++
++@pytest.mark.parametrize("desc, amount, kw, expected", [
++    # 1. an override beats everything, protected rules included
++    ("HMRC VAT REPAYMENT", 100.0, {"override": LineOverride(C.REVENUE_TRANSFER, "override:3")},
++     (C.REVENUE_TRANSFER, "override:3")),
++    # 2. a protected rule beats the profile and firm rules (R21)
++    ("IWOCA ACME HOLDINGS", 100.0, {"profile": PROFILE}, (C.LOAN_DRAWDOWN, "v2:lender_drawdown")),
++    ("HMRC", 100.0, {"firm_rules": [_firm("f1", "HMRC", "in", C.REVENUE_TRANSFER)]},
++     (C.HMRC_REPAYMENT, "v2:hmrc_repayment")),
++    ("FPS CREDIT DIRECTOR", 100.0, {"firm_rules": [_firm("f1", "DIRECTOR", "in", C.REVENUE_TRANSFER)]},
++     (C.DIRECTOR_FUNDING, "v2:director_funding")),
++    ("UNPAID DD ACME", 100.0, {"firm_rules": [_firm("f1", "ACME", "any", C.REVENUE_TRANSFER)]},
++     (C.RETURNED_DD, "v2:returned_dd")),
++    # 3. a profile director beats firm rules and an invoice reference (R5)
++    ("FPS CREDIT JANE DOE INV 1234", 100.0,
++     {"profile": PROFILE, "firm_rules": [_firm("f1", "JANE", "in", C.REVENUE_TRANSFER)]},
++     (C.DIRECTOR_FUNDING, "profile:director")),
++    # a director name on a debit is not funding; the table decides
++    ("FPS DEBIT JANE DOE", -100.0, {"profile": PROFILE}, (C.SUPPLIER, "v2:default")),
++    # own accounts, either direction (R6)
++    ("TFR ACME HOLDINGS", -100.0, {"profile": PROFILE}, (C.OWN_ACCOUNT_TRANSFER, "profile:own_account")),
++    ("TFR ACME HOLDINGS", 100.0, {"profile": PROFILE}, (C.OWN_ACCOUNT_TRANSFER, "profile:own_account")),
++    # a name matches whole words only
++    ("FPS CREDIT JANE DOERING INV 1", 100.0, {"profile": PROFILE}, (C.REVENUE_TRANSFER, "v2:invoice_transfer")),
++    # 4. a firm rule beats the rest of the table
++    ("ACME TRUST INV 99", 100.0, {"firm_rules": [_firm("trust", "ACME TRUST", "in", C.OTHER_EXPLAINED_IN)]},
++     (C.OTHER_EXPLAINED_IN, "firm:trust")),
++    ("STRIPE PAYOUT", 100.0, {"firm_rules": [_firm("s", "STRIPE", "out", C.SUPPLIER)]},
++     (C.REVENUE_CARD, "v2:payment_gateways")),  # a firm rule for the other direction does not apply
++    # 5. the default
++    ("SOMETHING ELSE", 100.0, {"profile": PROFILE}, (C.OTHER, "v2:default")),
++    ("SOMETHING ELSE", -100.0, {}, (C.SUPPLIER, "v2:default")),
++])
++def test_precedence(v2, desc, amount, kw, expected):
++    assert classify(_t(desc, amount), v2, **kw) == expected
++
++
++def test_categorise_applies_overrides_by_line_and_records_each_rule(v2):
++    s = Statement(account_name="a", transactions=[
++        _t("CASH PAID IN", 900.0, "T1"), _t("CASH PAID IN", 50.0, "T2"), _t("STRIPE PAYOUT", 10.0, "T3")])
++    categorise.categorise(s, v2, overrides={"T1": LineOverride(C.DIRECTOR_FUNDING, "override:1")})
++    assert [(t.category, t.rule_id) for t in s.transactions] == [
++        (C.DIRECTOR_FUNDING, "override:1"), (C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        (C.REVENUE_CARD, "v2:payment_gateways")]
++
++
++def test_round_trip_records_its_pass_and_leaves_higher_precedence_alone(v2):
++    lines = [_t("FPS DEBIT ACME LTD", -500.0, "T1"), _t("FPS CREDIT ACME LTD INV 7", 500.0, "T2"),
++             _t("FPS DEBIT BETA LTD", -10.0, "T3"), _t("FPS CREDIT BETA LTD INV 8", 10.0, "T4")]
++    s = categorise.categorise(Statement(account_name="a", transactions=lines), v2,
++                              overrides={"T4": LineOverride(C.REVENUE_TRANSFER, "override:9")})
++    by = s.by_id()
++    assert (by["T2"].category, by["T2"].rule_id) == (C.OTHER, "v2:round_trip")
++    assert (by["T4"].category, by["T4"].rule_id) == (C.REVENUE_TRANSFER, "override:9")
++
++
++def test_returned_dd_links_under_v2_and_keeps_its_rule(v2):
++    s = categorise.categorise(Statement(account_name="a", transactions=[
++        _t("DD IWOCA LTD", -450.0, "T1"), _t("UNPAID DD IWOCA LTD", 450.0, "T2")]), v2)
++    assert s.transactions[1].reverses == "T1" and s.transactions[1].rule_id == "v2:returned_dd"
++    assert s.transactions[0].category == C.LOAN_REPAYMENT
++
++
++def test_v1_lines_record_v1_rule_ids():
++    v1 = load_ruleset("v1")
++    s = categorise.categorise(Statement(account_name="a", transactions=[
++        _t("CARD ACQUIRER SETTLEMENT", 10.0, "T1"), _t("STRIPE PAYOUT", 10.0, "T2"), _t("CASH PAID IN", 9.0, "T3")]), v1)
++    assert [(t.category, t.rule_id) for t in s.transactions] == [
++        (C.REVENUE_CARD, "v1:card_settlement"), (C.OTHER, "v1:default"), (C.OTHER, "v1:default")]
++
++
++# --- the table as data -----------------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_v2_is_packaged_with_an_id_and_the_hash_of_its_file(v2):
++    raw = resources.files("cma.rules").joinpath("v2.yaml").read_bytes()
++    assert v2.id == "v2" and v2.sha256 == hashlib.sha256(raw).hexdigest()
++    data = yaml.safe_load(raw)
++    assert data["frozen"] is False
++    # the protected rules are the ones the design names, and they come first
++    flags = [r.protected for r in v2.rules]
++    assert flags == sorted(flags, reverse=True)
++    assert {r.id for r in v2.protected} == {"returned_dd", "hmrc_vat", "hmrc_paye", "hmrc_repayment",
++                                            "lender_repayment", "lender_refund", "lender_drawdown",
++                                            "loan_repayment",
++                                            "director_funding", "loan_drawdown", "owner_drawings"}
++
++
++GOOD = {"id": "card", "names": ["STRIPE"], "direction": "in", "category": "revenue_card_settlement"}
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("rules, match", [
++    ([{k: v for k, v in GOOD.items() if k != "names"}], "missing pattern"),
++    ([{**GOOD, "names": []}], "names must be"),
++    ([{**GOOD, "names": "STRIPE"}], "names must be"),
++    ([{**GOOD, "names": ["STRIPE", " "]}], "names must be"),
++    ([{**GOOD, "names": ["STRIPE", "stripe"]}], "listed twice"),
++    ([{**GOOD, "unless": "("}], "unless does not compile"),
++    ([{**GOOD, "unless": 3}], "unless 3 is not"),
++    ([{**GOOD, "requires": "("}], "requires does not compile"),
++    ([{**GOOD, "requires": ["REFUND"]}], "requires \\['REFUND'\\] is not"),
++    ([{**GOOD, "protected": "yes"}], "protected must be"),
++    ([GOOD, {**GOOD, "id": "p", "protected": True}], "protected rule must come before"),
++    # each part compiles alone, but a global flag is not allowed once the parts are joined
++    ([{**GOOD, "pattern": "(?i)stripe"}], "pattern and names do not compile together"),
++])
++def test_a_malformed_v2_rule_is_refused_naming_the_problem(rules, match):
++    with pytest.raises(RulesetError, match=match):
++        validate_ruleset({"id": "v2", "frozen": False, "rules": rules}, expected_id="v2", source="v2.yaml")
++
++
++def test_names_match_whole_words_with_any_spacing():
++    p = re.compile(categorise.names_pattern(["CHECKOUT.COM", "JUST EAT"]))
++    assert p.search("PAYOUT CHECKOUT.COM LTD") and p.search("JUST   EAT")
++    assert not p.search("CHECKOUTXCOM") and not p.search("JUSTEATS") and not p.search("XJUST EAT")
++
++
++@pytest.mark.contracts
++def test_cma_ruleset_v2_chooses_the_v2_table(monkeypatch):
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    assert categorise.active_ruleset().id == "v2"
++
++
++# --- cma run under CMA_RULESET=v2 ----------------------------------------------------------
++
++
++def _write(path: Path, rows: list[tuple[str, float]]) -> Path:
++    bal = 1000.0
++    with path.open("w", newline="") as f:
++        w = csv.writer(f)
++        w.writerow(["id", "date", "description", "amount", "balance"])
++        for i, (desc, amount) in enumerate(rows, start=1):
++            bal = round(bal + amount, 2)
++            w.writerow([f"T{i:03d}", (date(2026, 1, 1) + timedelta(days=5 * i)).isoformat(), desc,
++                        f"{amount:.2f}", f"{bal:.2f}"])
++    return path
++
++
++@pytest.mark.contracts
++def test_cma_run_under_v2_categorises_with_v2_and_records_each_lines_rule(tmp_path, monkeypatch):
++    from cma.cli import app
++
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    rows = [("STRIPE PAYMENTS UK LTD", 2000.0), ("CASH PAID IN", 640.0), ("IWOCA LTD", 5000.0),
++            ("DD IWOCA LTD", -450.0), ("POT TRANSFER OUT TAX", -300.0), ("CARD TESCO", -45.0)] * 6
++    path = _write(tmp_path / "s.csv", rows)
++    out = tmp_path / "memo.md"
++    r = CliRunner().invoke(app, ["run", str(path), "--yes", "--reviewer", "A", "--out", str(out)])
++    assert r.exit_code == 0, r.output
++    record = json.loads((tmp_path / "memo.evidence.json").read_text())
++    assert record["ruleset"] == {"id": "v2", "sha256": load_ruleset("v2").sha256}
++    lines = {d["id"]: d for d in record["lines"]}
++    s = ingest.load_csv(path)
++    assert len(lines) == len(s.transactions)
++    expect = {"STRIPE PAYMENTS UK LTD": ("revenue_card_settlement", "v2:payment_gateways"),
++              "CASH PAID IN": ("cash_deposit", "v2:cash_paid_in"),
++              "IWOCA LTD": ("loan_drawdown", "v2:lender_drawdown"),
++              "DD IWOCA LTD": ("loan_repayment", "v2:lender_repayment"),
++              "POT TRANSFER OUT TAX": ("own_account_transfer", "v2:own_pots_savings"),
++              "CARD TESCO": ("supplier", "v2:default")}
++    for t in s.transactions:
++        assert (lines[t.id]["category"], lines[t.id]["rule_id"]) == expect[t.description]
++    # the figures cma run reports use those categories: Stripe and cash are trading receipts
++    m = {x["id"]: x for x in record["metrics"]}
++    assert m["M2"]["value"] == pytest.approx(6 * (2000.0 + 640.0))
++    assert m["M8"]["value"] == pytest.approx(6 * 450.0)
++
++
++@pytest.mark.contracts
++def test_cma_run_under_v2_keeps_a_post_office_transfer_out_of_trading_receipts(tmp_path, monkeypatch):
++    """The review's repro: a BACS credit from Post Office Ltd is not cash paid in, so it is
++    not in M2 (or M18's cash) and stays unexplained for a person."""
++    from cma.cli import app
++
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    rows = [("STRIPE PAYMENTS UK LTD", 2000.0), ("BACS CREDIT POST OFFICE LTD", 500.0), ("CARD TESCO", -45.0)] * 4
++    path = _write(tmp_path / "s.csv", rows)
++    r = CliRunner().invoke(app, ["run", str(path), "--yes", "--reviewer", "A", "--out", str(tmp_path / "m.md")])
++    assert r.exit_code == 0, r.output
++    record = json.loads((tmp_path / "m.evidence.json").read_text())
++    ids = {t.id for t in ingest.load_csv(path).transactions if t.description == "BACS CREDIT POST OFFICE LTD"}
++    lines = {d["id"]: d for d in record["lines"]}
++    assert {(lines[i]["category"], lines[i]["rule_id"]) for i in ids} == {("other", "v2:default")}
++    m = {x["id"]: x for x in record["metrics"]}
++    assert m["M2"]["value"] == pytest.approx(4 * 2000.0)
++    assert not ids & set(m["M2"]["evidence"])
++
++
++@pytest.mark.contracts
++def test_cma_run_under_v2_records_the_second_review_repros_as_their_buckets(tmp_path, monkeypatch):
++    """The second review's repros end to end: a named lender's repayment reversal is a
++    refund, not a drawdown; a transfer from a pot called CAPITAL is an own-account
++    transfer, not director funding; a Faster Payment that names Post Office cash is not
++    cash and stays out of M2."""
++    from cma.cli import app
++
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    rows = [("STRIPE PAYMENTS UK LTD", 2000.0), ("DD REPAYMENT REVERSAL IWOCA LTD", 450.0),
++            ("TFR FROM POT CAPITAL RESERVE", 300.0), ("CREDIT FPS POST OFFICE CASH", 500.0),
++            ("CARD TESCO", -45.0)] * 4
++    path = _write(tmp_path / "s.csv", rows)
++    r = CliRunner().invoke(app, ["run", str(path), "--yes", "--reviewer", "A", "--out", str(tmp_path / "m.md")])
++    assert r.exit_code == 0, r.output
++    record = json.loads((tmp_path / "m.evidence.json").read_text())
++    lines = {d["id"]: d for d in record["lines"]}
++    expect = {"STRIPE PAYMENTS UK LTD": ("revenue_card_settlement", "v2:payment_gateways"),
++              "DD REPAYMENT REVERSAL IWOCA LTD": ("refund_in", "v2:lender_refund"),
++              "TFR FROM POT CAPITAL RESERVE": ("own_account_transfer", "v2:own_pots_savings"),
++              "CREDIT FPS POST OFFICE CASH": ("other", "v2:default"),
++              "CARD TESCO": ("supplier", "v2:default")}
++    txns = ingest.load_csv(path).transactions
++    for t in txns:
++        assert (lines[t.id]["category"], lines[t.id]["rule_id"]) == expect[t.description]
++    m = {x["id"]: x for x in record["metrics"]}
++    assert m["M2"]["value"] == pytest.approx(4 * 2000.0)
++    assert set(m["M2"]["evidence"]) == {t.id for t in txns if t.description == "STRIPE PAYMENTS UK LTD"}
++
++
++@pytest.mark.contracts
++def test_cma_run_under_v1_records_v1_rule_ids_and_keeps_old_evidence_keys(tmp_path, monkeypatch):
++    from cma.cli import app
++
++    monkeypatch.setenv("CMA_RULESET", "v1")
++    path = _write(tmp_path / "s.csv", [("CARD ACQUIRER SETTLEMENT", 100.0), ("STRIPE PAYOUT", 50.0)] * 3)
++    r = CliRunner().invoke(app, ["run", str(path), "--yes", "--reviewer", "A", "--out", str(tmp_path / "m.md")])
++    assert r.exit_code == 0, r.output
++    record = json.loads((tmp_path / "m.evidence.json").read_text())
++    assert {d["rule_id"] for d in record["lines"]} == {"v1:card_settlement", "v1:default"}
++    assert {"schema_version", "statement", "model", "ruleset", "metrics", "policy", "guard", "review"} <= set(record)
++
++
++# --- R10 / P7 under v2: M1-M16 move only on the lines v2 newly recognises ---------------------
++
++# Every line in the committed corpus (synthetic cases, the example, the test fixtures and
++# the single lines in the P7 golden) whose category v2 changes. The list is the change R10
++# asks for. On every committed statement M1-M16 stay exactly as v1 computed them: the lines
++# v2 names here are non-trading either way (metrics.NON_TRADING_IN). The director loan is
++# only a single line in the corpus, never part of a statement.
++NEWLY_RECOGNISED = {
++    ("BACS CREDIT HMRC VAT REPAYMENT", "in", "other", "hmrc_repayment"),
++    ("FPS CREDIT A DIRECTOR LOAN ACCOUNT", "in", "loan_drawdown", "director_funding"),
++    ("FPS CREDIT CAPITAL INJECTION", "in", "other", "director_funding"),
++    ("FPS CREDIT DIRECTOR CAPITAL INJECTION", "in", "other", "director_funding"),
++    ("FPS CREDIT DIRECTOR CAPITAL INTRODUCED", "in", "other", "director_funding"),
++    ("FPS CREDIT J SMITH CAPITAL INTRODUCED", "in", "other", "director_funding"),
++    ("FPS CREDIT MY SAVINGS POT", "in", "other", "own_account_transfer"),
++    ("FPS CREDIT SAVINGS ACCOUNT", "in", "other", "own_account_transfer"),
++    ("FPS DEBIT MY SAVINGS POT", "out", "supplier", "own_account_transfer"),
++    ("HMRC VAT REPAYMENT", "in", "other", "hmrc_repayment"),
++    ("POT TRANSFER OUT HOLIDAY POT", "out", "supplier", "own_account_transfer"),
++}
++
++
++def _golden() -> dict:
++    return json.loads(gzip.decompress(GOLDEN.read_bytes()))
++
++
++def _corpus_statements(tmp_path) -> list[tuple[str, Statement, object, list]]:
++    """(label, statement, vat_stagger, expected v1 metric rows) for every golden case."""
++    out = []
++    g = _golden()
++    for c in g["synthetic"]:
++        rows, truth = synth.generate(c["archetype"], c["profile"], seed=c["seed"], months=c["months"],
++                                     end=date.fromisoformat(c["end"]))
++        csv_path, _ = synth.write(rows, truth, tmp_path, stem=f"s{len(out)}")
++        for key, expected in c["metrics"].items():
++            out.append((f"{c['archetype']}-{c['profile']}", ingest.load_csv(csv_path),
++                        None if key == "None" else int(key), expected))
++    for e in g["examples"]:
++        for key, expected in e["metrics"].items():
++            out.append((e["path"], ingest.load_csv(Path(__file__).parents[1] / e["path"]),
++                        None if key == "None" else int(key), expected))
++    for f in g["fixtures"]:
++        s = Statement(account_name=f["account_name"], transactions=[
++            Transaction(id=i, date=date.fromisoformat(d), description=desc, amount=a, balance=b)
++            for i, d, desc, a, b, _, _ in f["lines"]])
++        out.append((f"fixture-{f['lines'][0][2]}", s, f["vat_stagger"], f["metrics"]))
++    return out
++
++
++def _rows(s: Statement, vat_stagger) -> list[dict]:
++    return [{"id": m.id, "unit": m.unit, "value": m.value, "evidence_n": len(m.evidence),
++             "evidence_sha256": hashlib.sha256("\n".join(m.evidence).encode()).hexdigest()}
++            for m in metrics.compute(s, vat_stagger=vat_stagger) if int(m.id[1:]) <= 16]
++
++
++@pytest.mark.dual_run
++@pytest.mark.invariants
++def test_p7_v2_changes_only_the_listed_lines_and_m1_m16_only_where_listed(tmp_path):
++    v1, v2 = load_ruleset("v1"), load_ruleset("v2")
++    changed: set[tuple] = set()
++    for label, s, stagger, expected in _corpus_statements(tmp_path):
++        a = categorise.categorise(s.model_copy(deep=True), v1)
++        b = categorise.categorise(s.model_copy(deep=True), v2)
++        diff = {(x.description, "in" if x.amount > 0 else "out", x.category.value, y.category.value)
++                for x, y in zip(a.transactions, b.transactions, strict=True) if x.category != y.category}
++        changed |= diff
++        assert _rows(a, stagger) == expected, f"{label}: v1 drifted from the baseline"
++        assert _rows(b, stagger) == expected, f"{label}: M1-M16 moved under v2"
++    for desc, amount, _ in _golden()["lines"]:
++        x, y = classify(_t(desc, amount), v1)[0], classify(_t(desc, amount), v2)[0]
++        if x != y:
++            changed.add((desc, "in" if amount > 0 else "out", x.value, y.value))
++    assert changed == NEWLY_RECOGNISED
++
++
++# --- hardening: idempotency, rollback, no descriptions in evidence, size ---------------
++
++
++def _mixed_lines(n: int) -> list[Transaction]:
++    descs = ["STRIPE PAYOUT", "CASH PAID IN", "FPS CREDIT ACME LTD INV 12", "CARD TESCO", "DD IWOCA LTD",
++             "FPS DEBIT ACME LTD", "UNPAID DD IWOCA LTD", "SOMETHING ELSE", "TFR ACME HOLDINGS", "FPS CREDIT JANE DOE"]
++    return [_t(descs[i % len(descs)], (1 if i % 3 else -1) * (10.0 + i % 97), f"T{i}") for i in range(n)]
++
++
++@pytest.mark.contracts
++def test_categorise_is_idempotent_under_v2_with_every_source(v2):
++    """Re-categorising a statement (as every recompute does) gives the same category, rule
++    id and reversal link on every line: nothing from the previous pass leaks in."""
++    s = Statement(account_name="a", transactions=_mixed_lines(200))
++    kw = {"profile": PROFILE, "overrides": {"T5": LineOverride(C.OTHER_EXPLAINED_IN, "override:1")},
++          "firm_rules": [_firm("f1", "SOMETHING ELSE", "in", C.OTHER_EXPLAINED_IN)]}
++    categorise.categorise(s, v2, **kw)
++    first = [(t.category, t.rule_id, t.reverses) for t in s.transactions]
++    categorise.categorise(s, v2, **kw)
++    assert [(t.category, t.rule_id, t.reverses) for t in s.transactions] == first
++    assert all(t.rule_id for t in s.transactions)
++
++
++@pytest.mark.dual_run
++def test_rollback_to_v1_after_v2_restores_v1_categories_and_rule_ids(v2):
++    """Switching CMA_RULESET back to v1 on a statement already categorised under v2 gives
++    exactly what v1 gives on a fresh copy: the rollback needs no data repair."""
++    v1 = load_ruleset("v1")
++    lines = _mixed_lines(100)
++    fresh = categorise.categorise(Statement(account_name="a", transactions=[t.model_copy() for t in lines]), v1)
++    s = categorise.categorise(Statement(account_name="a", transactions=lines), v2)
++    categorise.categorise(s, v1)
++    assert [(t.category, t.rule_id, t.reverses) for t in s.transactions] == \
++        [(t.category, t.rule_id, t.reverses) for t in fresh.transactions]
++
++
++@pytest.mark.contracts
++def test_evidence_lines_carry_ids_only_never_descriptions(tmp_path, monkeypatch):
++    """Payer-written text stays in the statement: the per-line provenance in the evidence
++    file has exactly id, category, rule_id and reverses."""
++    from cma.cli import app
++
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    path = _write(tmp_path / "s.csv", [("STRIPE PAYMENTS UK LTD", 2000.0), ("CASH PAID IN", 640.0),
++                                       ("CARD TESCO", -45.0)] * 4)
++    r = CliRunner().invoke(app, ["run", str(path), "--yes", "--reviewer", "A", "--out", str(tmp_path / "m.md")])
++    assert r.exit_code == 0, r.output
++    raw = (tmp_path / "m.evidence.json").read_text()
++    record = json.loads(raw)
++    assert all(set(d) == {"id", "category", "rule_id", "reverses"} for d in record["lines"])
++    assert "lines" in record and "STRIPE PAYMENTS" not in json.dumps(record["lines"])
++
++
++def test_categorise_10000_lines_under_v2_with_a_profile_is_fast(v2):
++    """The design's recompute target is 2 seconds at 10,000 lines; categorising is part of
++    it. This bounds the categoriser alone, not the whole recompute (figures, indicators,
++    policy check), which belongs to the workspace's own test (R52)."""
++    import time
++
++    s = Statement(account_name="a", transactions=_mixed_lines(10_000))
++    t0 = time.perf_counter()
++    categorise.categorise(s, v2, profile=ProfileNames(directors=("JANE DOE", "JOHN SMITH"),
++                                                      own_accounts=("ACME HOLDINGS",)))
++    assert time.perf_counter() - t0 < 2.0
+
+## claim — latest claim.json
+
+{
+  "task": "T03",
+  "claims": [
+    {
+      "text": "Mechanical tiers pass on the hardened branch (68646a2): ruff on the runner's configured paths and compileall.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && echo compile-ok",
+      "proof_output": "All checks passed!\ncompile-ok"
+    },
+    {
+      "text": "Full pytest suite passes, including the table-driven v2 cases per list with each line's rule id (tests/test_rules_v2.py::test_each_list_categorises_its_lines_and_records_the_rule).",
+      "proof_cmd": "python -m pytest -q",
+      "proof_output": "588 passed in 30.62s"
+    },
+    {
+      "text": "Marker tiers pass: contracts (v2 CLI provenance, evidence lines hold ids only, malformed tables refused), invariants (P7 under v2), dual_run (offline evals under v1 and v2, rollback v2->v1).",
+      "proof_cmd": "for m in contracts invariants dual_run; do python -m pytest -q -m $m | tail -1; done",
+      "proof_output": "contracts: 54 passed, 534 deselected\ninvariants: 66 passed, 522 deselected\ndual_run: 83 passed, 505 deselected"
+    },
+    {
+      "text": "Failure modes / idempotency: re-categorising a statement under v2 with overrides, profile and firm rules gives identical category, rule id and reversal link on every line; categorise writes no external state and makes no external call (no timeout or retry needed).",
+      "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k idempotent",
+      "proof_output": "passed (part of the 588 / contracts 54 above)"
+    },
+    {
+      "text": "Data / migration and rollback: additive (new v2.yaml, optional rule_id, new evidence key 'lines'); CMA_RULESET=v1 rollback reproduces fresh v1 categories and rule ids with no data repair; a pre-provenance checkpoint resumes and its lines' rule ids are inferred from v1 or left null; P7 shows M1-M16 unchanged under v2 on the committed corpus.",
+      "proof_cmd": "python -m pytest -q -m dual_run tests/test_evals_rulesets.py tests/test_rules_v2.py -k 'evals or rollback or p7'; python -m pytest -q tests/test_p7_history.py tests/test_rules.py",
+      "proof_output": "4 passed, 174 deselected (evals v1, evals v2, rollback, p7); history and legacy-checkpoint tests included in 588 passed"
+    },
+    {
+      "text": "Security / PII: per-line provenance in the evidence file carries exactly id, category, rule_id and reverses; no payer description is written. No new entry point, dependency or secret. Rule patterns are validated on load (compile errors, global flags joined with names, protected ordering).",
+      "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k 'evidence_lines_carry_ids_only or malformed_v2_rule'",
+      "proof_output": "passed (part of contracts 54 passed)"
+    },
+    {
+      "text": "Performance: categorising 10,000 lines under v2 with a profile stays under 2 s (the categoriser's share of the design's recompute target).",
+      "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k 10000",
+      "proof_output": "passed (part of 588 passed)"
+    },
+    {
+      "text": "Gap closed in hardening: the v2 cash rule now treats the FPI, FP and BGC rail codes as electronic and never as cash. BGC was already in categorise.RAIL_PREFIX but missing from the cash exclusion, which is the same class as review finding 3. The overlap test covers each code before, inside and after every cash phrase.",
+      "proof_cmd": "classify('BGC CASH DEPOSIT'|'FPI CASH DEPOSIT'|'FP CASH DEPOSIT REF', +100) under v2 at 88977ac vs 68646a2; python -m pytest -q tests/test_rules_v2.py -k overlaps_from_the_review",
+      "proof_output": "before: cash_deposit v2:cash_paid_in (BGC, FPI, FP); after: other v2:default for all three; 'CASH DEPOSIT BRANCH 30-11-22' still cash_deposit v2:cash_paid_in; test passed"
+    },
+    {
+      "text": "Observability and operability: evals summary line names the ruleset ('ruleset = v1|v2'); evidence records ruleset id+hash and each line's rule id; rollback is the CMA_RULESET env flag (v1 default), exercised by the dual_run rollback and evals tests.",
+      "proof_cmd": "python -m pytest -q tests/test_evals_rulesets.py",
+      "proof_output": "2 passed (asserts '9/9 memos fully grounded; model = fake; ruleset = v1' and '= v2')"
+    },
+    {
+      "text": "Docs: README documents v2's lists, precedence, per-line rule ids in evidence and CMA_RULESET=v1 rollback; the categorise.py module docstring and v2.yaml header document precedence and the pot-move and refund exceptions.",
+      "proof_cmd": "grep -n 'CMA_RULESET=v1 is the rollback\\|v1.yaml`, `v2.yaml' README.md",
+      "proof_output": "60:# the rule that set it (no descriptions). CMA_RULESET=v1 is the rollback.\n78:| Categoriser | `categorise.py` + `cma/rules/v1.yaml`, `v2.yaml` | Ordered regex rules and name lists ... Precedence: per-line override, protected rules ..., profile names, firm rules, the rest of the table, the default; each line records its rule id. ..."
+    }
+  ],
+  "files_changed": [
+    "src/cma/rules/v2.yaml",
+    "tests/test_rules_v2.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major: a named lender's explicit repayment reversal is recorded as a new drawdown (src/cma/rules/v2.yaml:92)",
+      "disposition": "reproduced",
+      "evidence": "At 88977ac 'DD REPAYMENT REVERSAL IWOCA LTD' +450 -> loan_drawdown v2:lender_drawdown. At 7adade9/68646a2 -> refund_in v2:lender_refund (a protected rule with requires: refund wording). Tests test_a_named_lender_refund_is_a_protected_refund_for_every_lender_and_refund_word and test_cma_run_under_v2_records_the_second_review_repros_as_their_buckets pass."
+    },
+    {
+      "finding": "major: an explicit transfer from the applicant's own pot is recorded as director funding when the pot name contains CAPITAL (src/cma/rules/v2.yaml:104)",
+      "disposition": "reproduced",
+      "evidence": "At 88977ac 'TFR FROM POT CAPITAL RESERVE' +300 -> director_funding v2:director_funding. Now -> own_account_transfer v2:own_pots_savings: every protected rule except returned_dd has unless: pot_move. test_an_explicit_pot_move_beats_protected_wording_in_the_pot_name passes for every pot phrase x protected word x direction."
+    },
+    {
+      "finding": "major: the electronic-payment exclusion applies only when a rail is the first word; a Faster Payment credit can be reported as cash (src/cma/rules/v2.yaml:187)",
+      "disposition": "reproduced",
+      "evidence": "At 88977ac 'CREDIT FPS POST OFFICE CASH' and 'CASH DEPOSIT VIA FASTER PAYMENT' -> cash_deposit. Now both -> other v2:default (the rail is excluded anywhere in the line). Hardening extended the exclusion to the FPI, FP and BGC codes, which still read as cash at 7adade9. test_overlaps_from_the_review_hold_for_every_listed_word passes."
+    }
+  ],
+  "notes": "Gaps for the owner, not coded (they need design or data): (1) Rail-code coverage is a list. Other bank-specific electronic codes not yet listed (for example BP and CR) would still let payer-typed cash wording count as cash. BP was left out on purpose because it collides with the BP fuel brand. A sample of the firm's real statement descriptions is needed to complete the list. (2) No alert exists for a misclassification by design (local tool, no remote alerting). The detection signals are the M18 and M26 figures and the cash indicators, and those land in later tasks (C2 indicators, C11 report). (3) The runbook entry and the changelog line for v2 are not written beyond the README; there is no CHANGELOG file in the repo. (4) `ruff check .` from the worktree root fails only on old helper scripts under .bridgie/runs/statement-review/implementer-02 and implementer-05, which are tracked in git. The runner's configured tier (ruff check src tests evals) passes. I left those files alone because they belong to other seats' runs."
+}
+
+## mechanical_results — test results (runner-run, read-only)
+
+### mechanical:1 · mechanical · pass
+Command: ruff check src tests evals
+Full log: /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/mechanical-1.log (read or grep it to confirm a named test ran; only the last 60 lines are shown here)
+
+```
+All checks passed!
+```
+
+### mechanical:2 · mechanical · pass
+Command: python -m compileall -q src
+Full log: /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/mechanical-2.log (read or grep it to confirm a named test ran; only the last 60 lines are shown here)
+
+```
+(empty log)
+```
+
+### specified:3 · specified · pass
+Command: python -m pytest -v -rs
+Full log: /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/specified-3.log (read or grep it to confirm a named test ran; only the last 60 lines are shown here)
+
+```
+tests/test_rules_v2.py::test_each_list_categorises_its_lines_and_records_the_rule[defaults_and_invoices:FPS CREDIT ACME LTD INV1234:in] PASSED [ 90%]
+tests/test_rules_v2.py::test_each_list_categorises_its_lines_and_records_the_rule[defaults_and_invoices:FPS CREDIT ACME LTD:in] PASSED [ 90%]
+tests/test_rules_v2.py::test_each_list_categorises_its_lines_and_records_the_rule[defaults_and_invoices:CARD TESCO:out] PASSED [ 90%]
+tests/test_rules_v2.py::test_each_list_categorises_its_lines_and_records_the_rule[defaults_and_invoices:PAYROLL:out] PASSED [ 90%]
+tests/test_rules_v2.py::test_each_list_categorises_its_lines_and_records_the_rule[defaults_and_invoices:RENT:out] PASSED [ 91%]
+tests/test_rules_v2.py::test_each_list_categorises_its_lines_and_records_the_rule[defaults_and_invoices:BANK CHARGES:out] PASSED [ 91%]
+tests/test_rules_v2.py::test_every_list_in_the_task_has_a_rule_in_v2 PASSED [ 91%]
+tests/test_rules_v2.py::test_every_credit_category_v2_can_give_has_a_bucket PASSED [ 91%]
+tests/test_rules_v2.py::test_ambiguous_wording_never_resolves_to_trading_receipts PASSED [ 91%]
+tests/test_rules_v2.py::test_overlaps_from_the_review_hold_for_every_listed_word PASSED [ 92%]
+tests/test_rules_v2.py::test_a_named_lender_refund_is_a_protected_refund_for_every_lender_and_refund_word PASSED [ 92%]
+tests/test_rules_v2.py::test_an_explicit_pot_move_beats_protected_wording_in_the_pot_name PASSED [ 92%]
+tests/test_rules_v2.py::test_precedence[HMRC VAT REPAYMENT-100.0-kw0-expected0] PASSED [ 92%]
+tests/test_rules_v2.py::test_precedence[IWOCA ACME HOLDINGS-100.0-kw1-expected1] PASSED [ 92%]
+tests/test_rules_v2.py::test_precedence[HMRC-100.0-kw2-expected2] PASSED [ 92%]
+tests/test_rules_v2.py::test_precedence[FPS CREDIT DIRECTOR-100.0-kw3-expected3] PASSED [ 93%]
+tests/test_rules_v2.py::test_precedence[UNPAID DD ACME-100.0-kw4-expected4] PASSED [ 93%]
+tests/test_rules_v2.py::test_precedence[FPS CREDIT JANE DOE INV 1234-100.0-kw5-expected5] PASSED [ 93%]
+tests/test_rules_v2.py::test_precedence[FPS DEBIT JANE DOE--100.0-kw6-expected6] PASSED [ 93%]
+tests/test_rules_v2.py::test_precedence[TFR ACME HOLDINGS--100.0-kw7-expected7] PASSED [ 93%]
+tests/test_rules_v2.py::test_precedence[TFR ACME HOLDINGS-100.0-kw8-expected8] PASSED [ 93%]
+tests/test_rules_v2.py::test_precedence[FPS CREDIT JANE DOERING INV 1-100.0-kw9-expected9] PASSED [ 94%]
+tests/test_rules_v2.py::test_precedence[ACME TRUST INV 99-100.0-kw10-expected10] PASSED [ 94%]
+tests/test_rules_v2.py::test_precedence[STRIPE PAYOUT-100.0-kw11-expected11] PASSED [ 94%]
+tests/test_rules_v2.py::test_precedence[SOMETHING ELSE-100.0-kw12-expected12] PASSED [ 94%]
+tests/test_rules_v2.py::test_precedence[SOMETHING ELSE--100.0-kw13-expected13] PASSED [ 94%]
+tests/test_rules_v2.py::test_categorise_applies_overrides_by_line_and_records_each_rule PASSED [ 94%]
+tests/test_rules_v2.py::test_round_trip_records_its_pass_and_leaves_higher_precedence_alone PASSED [ 95%]
+tests/test_rules_v2.py::test_returned_dd_links_under_v2_and_keeps_its_rule PASSED [ 95%]
+tests/test_rules_v2.py::test_v1_lines_record_v1_rule_ids PASSED          [ 95%]
+tests/test_rules_v2.py::test_v2_is_packaged_with_an_id_and_the_hash_of_its_file PASSED [ 95%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules0-missing pattern] PASSED [ 95%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules1-names must be] PASSED [ 95%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules2-names must be] PASSED [ 96%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules3-names must be] PASSED [ 96%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules4-listed twice] PASSED [ 96%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules5-unless does not compile] PASSED [ 96%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules6-unless 3 is not] PASSED [ 96%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules7-requires does not compile] PASSED [ 96%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules8-requires \\['REFUND'\\] is not] PASSED [ 97%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules9-protected must be] PASSED [ 97%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules10-protected rule must come before] PASSED [ 97%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules11-pattern and names do not compile together] PASSED [ 97%]
+tests/test_rules_v2.py::test_names_match_whole_words_with_any_spacing PASSED [ 97%]
+tests/test_rules_v2.py::test_cma_ruleset_v2_chooses_the_v2_table PASSED  [ 97%]
+tests/test_rules_v2.py::test_cma_run_under_v2_categorises_with_v2_and_records_each_lines_rule PASSED [ 98%]
+tests/test_rules_v2.py::test_cma_run_under_v2_keeps_a_post_office_transfer_out_of_trading_receipts PASSED [ 98%]
+tests/test_rules_v2.py::test_cma_run_under_v2_records_the_second_review_repros_as_their_buckets PASSED [ 98%]
+tests/test_rules_v2.py::test_cma_run_under_v1_records_v1_rule_ids_and_keeps_old_evidence_keys PASSED [ 98%]
+tests/test_rules_v2.py::test_p7_v2_changes_only_the_listed_lines_and_m1_m16_only_where_listed PASSED [ 98%]
+tests/test_rules_v2.py::test_categorise_is_idempotent_under_v2_with_every_source PASSED [ 98%]
+tests/test_rules_v2.py::test_rollback_to_v1_after_v2_restores_v1_categories_and_rule_ids PASSED [ 99%]
+tests/test_rules_v2.py::test_evidence_lines_carry_ids_only_never_descriptions PASSED [ 99%]
+tests/test_rules_v2.py::test_categorise_10000_lines_under_v2_with_a_profile_is_fast PASSED [ 99%]
+tests/test_synth.py::test_generation_is_deterministic PASSED             [ 99%]
+tests/test_synth.py::test_profiles_order_risk PASSED                     [ 99%]
+tests/test_synth.py::test_balance_walk_is_consistent PASSED              [100%]
+
+============================= 588 passed in 29.10s =============================
+```
+
+### contracts:4 · contracts · pass
+Command: python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -v -m contracts
+Full log: /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/contracts-4.log (read or grep it to confirm a named test ran; only the last 60 lines are shown here)
+
+```
+plugins: langsmith-0.14.17, anyio-4.15.1
+collecting ... collected 588 items / 534 deselected / 54 selected
+
+tests/test_cli.py::test_unknown_cma_ruleset_is_refused_not_blamed_on_the_model PASSED [  1%]
+tests/test_cli.py::test_written_evidence_records_the_ruleset[None] PASSED [  3%]
+tests/test_cli.py::test_written_evidence_records_the_ruleset[v1] PASSED  [  5%]
+tests/test_cli.py::test_a_refused_ruleset_leaves_a_durable_review_id_reusable PASSED [  7%]
+tests/test_models.py::test_a_pending_review_saved_before_the_new_fields_resumes PASSED [  9%]
+tests/test_models.py::test_a_checkpoint_written_before_the_new_fields_resumes PASSED [ 11%]
+tests/test_models.py::test_todays_evidence_keys_are_a_subset_of_the_new_record PASSED [ 12%]
+tests/test_models.py::test_the_committed_example_evidence_carries_todays_keys_and_a_schema_version PASSED [ 14%]
+tests/test_models.py::test_the_previous_release_loads_a_transaction_written_by_this_one PASSED [ 16%]
+tests/test_p7_history.py::test_a_review_left_pending_by_the_pre_change_version_resumes_here PASSED [ 18%]
+tests/test_p7_history.py::test_rollback_a_review_left_pending_here_resumes_under_the_pre_change_version PASSED [ 20%]
+tests/test_p7_history.py::test_the_built_wheel_carries_v1_byte_for_byte PASSED [ 22%]
+tests/test_p7_history.py::test_cma_run_refuses_when_the_rules_package_is_missing PASSED [ 24%]
+tests/test_previous_release.py::test_the_previous_release_is_really_the_old_code PASSED [ 25%]
+tests/test_previous_release.py::test_a_checkpoint_written_by_the_previous_release_resumes PASSED [ 27%]
+tests/test_previous_release.py::test_the_previous_release_loads_a_transaction_this_one_writes PASSED [ 29%]
+tests/test_previous_release.py::test_all_extras_are_installed PASSED     [ 31%]
+tests/test_previous_release.py::test_a_second_run_with_the_same_out_is_refused_and_leaves_the_record PASSED [ 33%]
+tests/test_rules.py::test_v1_is_packaged_with_an_id_and_the_hash_of_its_file PASSED [ 35%]
+tests/test_rules.py::test_cma_run_refuses_a_missing_table_rather_than_blaming_the_model PASSED [ 37%]
+tests/test_rules.py::test_v1_hash_is_pinned_in_code PASSED               [ 38%]
+tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[category: revenue_card_settlement-category: other] PASSED [ 40%]
+tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[direction: in\n-direction: any\n] PASSED [ 42%]
+tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[frozen: true-frozen: false] PASSED [ 44%]
+tests/test_rules.py::test_cma_run_refuses_a_changed_v1_and_writes_no_evidence PASSED [ 46%]
+tests/test_rules.py::test_an_unknown_ruleset_is_refused_naming_the_known_ones PASSED [ 48%]
+tests/test_rules.py::test_a_ruleset_id_cannot_name_a_path PASSED         [ 50%]
+tests/test_rules.py::test_evidence_records_the_ruleset PASSED            [ 51%]
+tests/test_rules.py::test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1 PASSED [ 53%]
+tests/test_rules.py::test_a_legacy_resume_with_a_damaged_table_is_refused_before_anything_is_recorded PASSED [ 55%]
+tests/test_rules.py::test_rule_tables_keep_lf_line_endings_on_every_checkout PASSED [ 57%]
+tests/test_rules_v2.py::test_overlaps_from_the_review_hold_for_every_listed_word PASSED [ 59%]
+tests/test_rules_v2.py::test_a_named_lender_refund_is_a_protected_refund_for_every_lender_and_refund_word PASSED [ 61%]
+tests/test_rules_v2.py::test_an_explicit_pot_move_beats_protected_wording_in_the_pot_name PASSED [ 62%]
+tests/test_rules_v2.py::test_v2_is_packaged_with_an_id_and_the_hash_of_its_file PASSED [ 64%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules0-missing pattern] PASSED [ 66%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules1-names must be] PASSED [ 68%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules2-names must be] PASSED [ 70%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules3-names must be] PASSED [ 72%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules4-listed twice] PASSED [ 74%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules5-unless does not compile] PASSED [ 75%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules6-unless 3 is not] PASSED [ 77%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules7-requires does not compile] PASSED [ 79%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules8-requires \\['REFUND'\\] is not] PASSED [ 81%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules9-protected must be] PASSED [ 83%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules10-protected rule must come before] PASSED [ 85%]
+tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules11-pattern and names do not compile together] PASSED [ 87%]
+tests/test_rules_v2.py::test_cma_ruleset_v2_chooses_the_v2_table PASSED  [ 88%]
+tests/test_rules_v2.py::test_cma_run_under_v2_categorises_with_v2_and_records_each_lines_rule PASSED [ 90%]
+tests/test_rules_v2.py::test_cma_run_under_v2_keeps_a_post_office_transfer_out_of_trading_receipts PASSED [ 92%]
+tests/test_rules_v2.py::test_cma_run_under_v2_records_the_second_review_repros_as_their_buckets PASSED [ 94%]
+tests/test_rules_v2.py::test_cma_run_under_v1_records_v1_rule_ids_and_keeps_old_evidence_keys PASSED [ 96%]
+tests/test_rules_v2.py::test_categorise_is_idempotent_under_v2_with_every_source PASSED [ 98%]
+tests/test_rules_v2.py::test_evidence_lines_carry_ids_only_never_descriptions PASSED [100%]
+
+===================== 54 passed, 534 deselected in 16.07s ======================
+```
+
+### invariants:5 · invariants · pass
+Command: python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -v -m invariants
+Full log: /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/invariants-5.log (read or grep it to confirm a named test ran; only the last 60 lines are shown here)
+
+```
+tests/test_rules.py::test_p7_v1_synthetic_cases_match_the_baseline[ecommerce-stretched-s7-m12] PASSED [ 15%]
+tests/test_rules.py::test_p7_v1_synthetic_cases_match_the_baseline[ecommerce-poor-s7-m12] PASSED [ 16%]
+tests/test_rules.py::test_p7_v1_synthetic_cases_match_the_baseline[cafe-stretched-s3-m12] PASSED [ 18%]
+tests/test_rules.py::test_p7_v1_synthetic_cases_match_the_baseline[cafe-good-s7-m3] PASSED [ 19%]
+tests/test_rules.py::test_p7_v1_synthetic_cases_match_the_baseline[cafe-poor-s7-m4] PASSED [ 21%]
+tests/test_rules.py::test_p7_v1_synthetic_cases_match_the_baseline[cafe-poor-s7-m2] PASSED [ 22%]
+tests/test_rules.py::test_p7_v1_committed_examples_match_the_baseline[examples/cafe_stretched.csv] PASSED [ 24%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-37-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 25%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-5-lines-POT TRANSFER OUT HOLIDAY] PASSED [ 27%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-3-lines-CARD LAPTOP SHOP] PASSED [ 28%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-2-lines-FPS CREDIT OAKFIELD PROP] PASSED [ 30%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-1-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 31%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-3-lines-A] PASSED [ 33%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-1-lines-A] PASSED [ 34%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-24-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 36%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-24-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 37%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-48-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 39%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-36-lines-FPS CREDIT OAKFIELD PROP] PASSED [ 40%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-60-lines-FPS CREDIT OAKFIELD PROP] PASSED [ 42%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-10-lines-FPS CREDIT OAKFIELD PROP] PASSED [ 43%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-12-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 45%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-3-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 46%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-16-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 48%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-16-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 50%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-16-lines-CARD ACQUIRER SETTLEMENT2] PASSED [ 51%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-16-lines-CARD ACQUIRER SETTLEMENT3] PASSED [ 53%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-16-lines-CARD ACQUIRER SETTLEMENT4] PASSED [ 54%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-12-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 56%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-12-lines-CARD ACQUIRER SETTLEMENT2] PASSED [ 57%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-5-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 59%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-4-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 60%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-11-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 62%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-2-lines-BREW SUPPLY CO DD] PASSED [ 63%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-48-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 65%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-49-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 66%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-49-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 68%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-49-lines-CARD ACQUIRER SETTLEMENT2] PASSED [ 69%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-49-lines-CARD ACQUIRER SETTLEMENT3] PASSED [ 71%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-49-lines-CARD ACQUIRER SETTLEMENT4] PASSED [ 72%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-72-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 74%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-72-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 75%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-49-lines-CARD ACQUIRER SETTLEMENT5] PASSED [ 77%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-2-lines-FPS DEBIT J SMITH] PASSED [ 78%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-365-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 80%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-365-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 81%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-346-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 83%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-362-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 84%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-351-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 86%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-7-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 87%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-7-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 89%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-48-lines-CARD ACQUIRER SETTLEMENT2] PASSED [ 90%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-2-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 92%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-90-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 93%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-389-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 95%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-2-lines-FPS CREDIT CLIENT A] PASSED [ 96%]
+tests/test_rules.py::test_p7_v1_single_lines_match_the_baseline PASSED   [ 98%]
+tests/test_rules_v2.py::test_p7_v2_changes_only_the_listed_lines_and_m1_m16_only_where_listed PASSED [100%]
+
+====================== 66 passed, 522 deselected in 8.21s ======================
+```
+
+### behavioural:6 · behavioural · pass
+Command: python evals/run_evals.py
+Full log: /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/behavioural-6.log (read or grep it to confirm a named test ran; only the last 60 lines are shown here)
+
+```
+case                   policy  grounded  rate   redrafts truth              s
+cafe/good              pass    True      1.0    0        ok              0.05
+cafe/stretched         refer   True      1.0    0        ok              0.03
+cafe/poor              fail    True      1.0    0        ok              0.04
+trades/good            refer   True      1.0    0        ok              0.03
+trades/stretched       refer   True      1.0    0        ok              0.03
+trades/poor            fail    True      1.0    0        ok              0.03
+ecommerce/good         refer   True      1.0    0        ok              0.03
+ecommerce/stretched    refer   True      1.0    0        ok              0.03
+ecommerce/poor         fail    True      1.0    0        ok              0.03
+
+9/9 memos fully grounded; model = fake; ruleset = v1
+```
+
+### dual_run:7 · dual_run · pass
+Command: python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -v -m dual_run
+Full log: /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/dual_run-7.log (read or grep it to confirm a named test ran; only the last 60 lines are shown here)
+
+```
+tests/test_rules.py::test_p7_v1_synthetic_cases_match_the_baseline[cafe-good-s7-m3] PASSED [ 32%]
+tests/test_rules.py::test_p7_v1_synthetic_cases_match_the_baseline[cafe-poor-s7-m4] PASSED [ 33%]
+tests/test_rules.py::test_p7_v1_synthetic_cases_match_the_baseline[cafe-poor-s7-m2] PASSED [ 34%]
+tests/test_rules.py::test_p7_v1_committed_examples_match_the_baseline[examples/cafe_stretched.csv] PASSED [ 36%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-37-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 37%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-5-lines-POT TRANSFER OUT HOLIDAY] PASSED [ 38%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-3-lines-CARD LAPTOP SHOP] PASSED [ 39%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-2-lines-FPS CREDIT OAKFIELD PROP] PASSED [ 40%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-1-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 42%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-3-lines-A] PASSED [ 43%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-1-lines-A] PASSED [ 44%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-24-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 45%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-24-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 46%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-48-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 48%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-36-lines-FPS CREDIT OAKFIELD PROP] PASSED [ 49%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-60-lines-FPS CREDIT OAKFIELD PROP] PASSED [ 50%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-10-lines-FPS CREDIT OAKFIELD PROP] PASSED [ 51%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-12-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 53%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-3-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 54%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-16-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 55%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-16-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 56%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-16-lines-CARD ACQUIRER SETTLEMENT2] PASSED [ 57%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-16-lines-CARD ACQUIRER SETTLEMENT3] PASSED [ 59%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-16-lines-CARD ACQUIRER SETTLEMENT4] PASSED [ 60%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-12-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 61%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-12-lines-CARD ACQUIRER SETTLEMENT2] PASSED [ 62%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-5-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 63%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-4-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 65%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-11-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 66%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-2-lines-BREW SUPPLY CO DD] PASSED [ 67%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-48-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 68%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-49-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 69%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-49-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 71%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-49-lines-CARD ACQUIRER SETTLEMENT2] PASSED [ 72%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-49-lines-CARD ACQUIRER SETTLEMENT3] PASSED [ 73%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-49-lines-CARD ACQUIRER SETTLEMENT4] PASSED [ 74%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-72-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 75%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-72-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 77%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-49-lines-CARD ACQUIRER SETTLEMENT5] PASSED [ 78%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-2-lines-FPS DEBIT J SMITH] PASSED [ 79%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-365-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 80%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-365-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 81%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-346-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 83%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-362-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 84%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-351-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 85%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-7-lines-CARD ACQUIRER SETTLEMENT0] PASSED [ 86%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-7-lines-CARD ACQUIRER SETTLEMENT1] PASSED [ 87%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-48-lines-CARD ACQUIRER SETTLEMENT2] PASSED [ 89%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-2-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 90%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-90-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 91%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-389-lines-CARD ACQUIRER SETTLEMENT] PASSED [ 92%]
+tests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-2-lines-FPS CREDIT CLIENT A] PASSED [ 93%]
+tests/test_rules.py::test_p7_v1_single_lines_match_the_baseline PASSED   [ 95%]
+tests/test_rules.py::test_dual_run_v1_yaml_is_the_old_rule_list PASSED   [ 96%]
+tests/test_rules.py::test_dual_run_every_known_and_fuzzed_description_categorises_the_same PASSED [ 97%]
+tests/test_rules_v2.py::test_p7_v2_changes_only_the_listed_lines_and_m1_m16_only_where_listed PASSED [ 98%]
+tests/test_rules_v2.py::test_rollback_to_v1_after_v2_restores_v1_categories_and_rule_ids PASSED [100%]
+
+===================== 83 passed, 505 deselected in 15.14s ======================
+```
+
+## repo_readonly — repository
+
+Repository root (read-only): /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T03-review
+Read any file you need to judge the work in context. Do not modify anything.
+
+## lane_attacks — lanes/engineering/attacks.md
+
+# Engineering attack list (reviewer)
+- Double submit: the same request or event arrives twice. Side effects once?
+- Concurrent update: two writers race on the same row or aggregate.
+- Boundary values: zero, negative, max, empty, null, unicode, very long.
+- Currency and timezone: minor units, zero-decimal currencies, DST, UTC vs local.
+- Partial failure: the first write succeeds and the second fails; the worker dies mid-batch.
+- Authz bypass: new endpoint or handler missing the scope or permission check.
+- Tenant isolation: a query without the tenant filter.
+- Changed contract consumers: every consumer of a changed DTO, field or event, including web, mobile, PDF, email.
+- Migration safety: reversible, additive first, backfill size.
+- Error paths: exceptions swallowed, retries without backoff, logs with secrets.
+
+## gotchas — gotchas (project, then lane)
+
+# Gotchas
+
+Dated one-line corrections learned in this project.
+- 2026-11-18 Mark tests so the runner runs them by name: a test that proves a correctness property P<n> gets `@pytest.mark.invariants` and has `p<n>` in its name; interface and data-format tests get `@pytest.mark.contracts`; tests comparing the v1 rule table with today's results get `@pytest.mark.dual_run`. The reviewer only accepts a test result the runner produced, and unmarked tests reach it only as an aggregate count.
+- 2026-11-18 In claim.json, claim only what the runner's configured tiers prove (ruff, compileall, the full pytest suite, the offline evals, the marker tiers). Leave out claims about wheel installs, historical replays or "no skips" unless a configured tier shows them; an unproven claim becomes a reviewer finding.
+- 2026-11-18 Keep helper scripts out of the run folder (.bridgie/runs/...). Put test helpers under tests/ in the worktree; anything a seat writes under .bridgie/ fails the run.
+- 2026-11-18 A requirement is done only when production code calls it: a building block with no caller yet (e.g. a case-log append that no command records into) is failed by the reviewer for that requirement.
+- 2026-11-18 Install the project with all extras before verifying (pip install -e ".[dev,mcp,durable,llm]"); without the durable extra the SQLite checkpoint tests are skipped and resume claims cannot be proven.
+
+
+# Engineering lane gotchas
+- 2026-08: a shared-contract field change ran seven review rounds without the web consumer ever appearing in the packet; always trace consumers with a command, not memory.
+- 2026-09: a diff packet that included the run directory grew to 3.1M characters and the reviewer refused it; packets exclude `.bridgie/runs/**`.
+- 2026-08: a QA seat without repository access invented a finding with a line number that did not exist; verifiers must read the repo or abort.
+
+# Output contract
+
+End your reply with exactly one fenced ```json block containing your evidence.json (or write it to /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/evidence.json).
+It must validate against this JSON Schema (/home/user/bridgie/schemas/evidence.json); use exactly these field names, and include every `required` field, at every level:
+
+```json
+{"type":"object","required":["task","criteria","findings","verdict","verifier"],"properties":{"task":{"type":"string"},"criteria":{"type":"array","items":{"type":"object","required":["id","tier","check","result"],"properties":{"id":{"type":"string"},"tier":{"type":"string","enum":["mechanical","specified","contracts","invariants","adversarial","behavioural","dual_run","human"]},"check":{"type":"string"},"result":{"type":"string","enum":["pass","fail","not_proven"]},"artifact":{"type":["string","null"]}}}},"findings":{"type":"array","items":{"type":"object","required":["severity","claim","repro"],"properties":{"severity":{"type":"string","enum":["blocker","major","minor"]},"file":{"type":["string","null"]},"line":{"type":["integer","null"]},"criterion":{"type":["string","null"]},"claim":{"type":"string"},"repro":{"type":"string"},"disposition":{"type":["string","null"]}}}},"verdict":{"type":"string","enum":["pass","fail","not_proven"]},"verifier":{"type":"object","required":["seat","adapter","model"],"properties":{"seat":{"type":"string"},"adapter":{"type":"string"},"model":{"type":"string"}}}}}
+```
+Write nothing anywhere else except the run directory.
+
+# Run directory
+
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23
+
+warning: Codex could not find bubblewrap on PATH. Install bubblewrap with your OS package manager. See the sandbox prerequisites: https://developers.openai.com/codex/concepts/sandboxing#prerequisites. Codex will use the bundled bubblewrap in the meantime.
+codex
+I’ll trace R4 through the rule table, CLI and evidence consumers, then check the runner logs against the producer’s claims.
+exec
+/bin/bash -lc "git log -4 --oneline
+rg -n 'id: |unless:' src/cma/rules/v2.yaml
+rg -n 'def |cat.categorise|rule_id' src/cma/graph.py
+rg -n 'evidence_record|rule_id|RAIL_PREFIX|def classify|def _direction_ok' src/cma
+rg -n 'test_offline_evals|test_categorise_10000|test_a_second_run|test_a_review_left_pending' /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/{specified-3,dual_run-7}.log" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T03-review
+ succeeded in 0ms:
+68646a2 T03 hardener: v2 cash rule excludes FPI, FP and BGC rail codes
+7adade9 bridgie: T03 implementer (run implementer-21)
+88977ac bridgie: T03 hardener (run hardener-19)
+25bf150 bridgie: T03 implementer (run implementer-20)
+18:# every protected rule but a returned DD has `unless: *pot_move` and leaves it to the own
+25:id: v2
+29:  - id: returned_dd
+34:  - id: hmrc_vat
+36:    unless: &pot_move '(?<![A-Z0-9])(?:POT\s+TRANSFER|(?:TO|FROM)\s+(?:POT|SPACE)|(?:VAT|TAX)\s+POT)(?![A-Z0-9])'
+40:  - id: hmrc_paye
+42:    unless: *pot_move
+47:  - id: hmrc_repayment
+49:    unless: *pot_move
+55:  - id: lender_repayment
+99:    unless: *pot_move
+105:  - id: lender_refund
+108:    unless: *pot_move
+112:  - id: lender_drawdown
+114:    unless: *pot_move
+118:  - id: loan_repayment
+120:    unless: *pot_move
+126:  - id: director_funding
+128:    unless: *pot_move
+135:  - id: loan_drawdown
+137:    unless: '(?<![A-Z0-9])(?:REFUND|REFUNDED|REVERSAL|REVERSED|RETURNED\s+PAYMENT|PAYMENT\s+RETURNED|CHARGEBACK|POT\s+TRANSFER|(?:TO|FROM)\s+(?:POT|SPACE)|(?:VAT|TAX)\s+POT)(?![A-Z0-9])'
+141:  - id: owner_drawings
+143:    unless: *pot_move
+151:  - id: own_pots_savings
+166:  - id: bank_fees
+170:  - id: payroll
+174:  - id: rent
+178:  - id: refunds
+183:  - id: explained_non_trading
+193:  - id: cash_paid_in
+212:    unless: '(?<![A-Z0-9])(?:CHEQUES?|CHQ|FPS|FPI|FP|BGC|FASTER\s+PAYMENTS?|BACS|CHAPS|TFR|TRANSFER|SO|STO|STANDING\s+ORDER|DIRECT\s+CREDIT)(?![A-Z0-9])'
+216:  - id: card_settlement
+220:  - id: card_acquirers
+254:  - id: payment_gateways
+270:  - id: marketplaces
+286:  - id: delivery_platforms
+298:  - id: invoice_transfer
+305:  - id: cash_withdrawal
+61:def _serde() -> JsonPlusSerializer:
+65:def default_checkpointer() -> MemorySaver:
+70:def sqlite_checkpointer(path: Path):
+119:def _review_problem(decision, grounded: bool) -> str | None:
+139:def _threshold(value: float | None, unit: str) -> str:
+143:def rules_table(p: PolicyResult) -> str:
+151:        lines.append(f"| {r.rule_id} | {r.description} | {r.metric_id} | {req} | {r.outcome.value} | {r.detail} |")
+155:def appendix(s: MemoState) -> str:
+175:def ruleset_used(s: MemoState) -> dict:
+188:def line_rule_ids(s: MemoState) -> list[str | None]:
+195:    if (recorded and not recorded.get("inferred")) or all(t.rule_id for t in txns):
+196:        return [t.rule_id for t in txns]
+197:    replay = cat.categorise(s["statement"].model_copy(deep=True), cat.load_ruleset("v1")).transactions
+198:    return [t.rule_id or (r.rule_id if r.category == t.category else None) for t, r in zip(txns, replay, strict=True)]
+201:def evidence_record(s: MemoState) -> dict:
+212:        "lines": [{"id": t.id, "category": t.category.value if t.category else None, "rule_id": rule_id,
+213:                   "reverses": t.reverses} for t, rule_id in zip(s["statement"].transactions, line_rule_ids(s),
+224:def build(llm: LLM | None = None, checkpointer=None):
+227:    def load(s: MemoState) -> MemoState:
+241:    def categorise(s: MemoState) -> MemoState:
+243:        return {"statement": cat.categorise(s["statement"], rules),
+246:    def metrics(s: MemoState) -> MemoState:
+249:    def policy(s: MemoState) -> MemoState:
+253:    def draft(s: MemoState) -> MemoState:
+266:    def guard(s: MemoState) -> MemoState:
+275:    def route_after_guard(s: MemoState) -> str:
+280:    def redraft(s: MemoState) -> MemoState:
+283:    def review(s: MemoState) -> MemoState:
+305:    def finalise(s: MemoState) -> MemoState:
+src/cma/models.py:91:    rule_id: str | None = Field(
+src/cma/models.py:160:    rule_id: str
+src/cma/graph.py:151:        lines.append(f"| {r.rule_id} | {r.description} | {r.metric_id} | {req} | {r.outcome.value} | {r.detail} |")
+src/cma/graph.py:188:def line_rule_ids(s: MemoState) -> list[str | None]:
+src/cma/graph.py:195:    if (recorded and not recorded.get("inferred")) or all(t.rule_id for t in txns):
+src/cma/graph.py:196:        return [t.rule_id for t in txns]
+src/cma/graph.py:198:    return [t.rule_id or (r.rule_id if r.category == t.category else None) for t, r in zip(txns, replay, strict=True)]
+src/cma/graph.py:201:def evidence_record(s: MemoState) -> dict:
+src/cma/graph.py:212:        "lines": [{"id": t.id, "category": t.category.value if t.category else None, "rule_id": rule_id,
+src/cma/graph.py:213:                   "reverses": t.reverses} for t, rule_id in zip(s["statement"].transactions, line_rule_ids(s),
+src/cma/policy.py:110:                rule_id=rule["id"], description=rule["description"], metric_id=m.id,
+src/cma/guard.py:163:    rules = {r.rule_id: r for r in policy.rules} if policy else {}
+src/cma/categorise.py:22:category in Transaction.rule_id: "<ruleset>:<rule id>", "<ruleset>:default",
+src/cma/categorise.py:281:def _direction_ok(direction: Direction, amount: float) -> bool:
+src/cma/categorise.py:316:def classify(
+src/cma/categorise.py:350:RAIL_PREFIX = re.compile(
+src/cma/categorise.py:360:    d = RAIL_PREFIX.sub("", description.upper())
+src/cma/categorise.py:410:        set_by_table = ruleset_id is None or (t.rule_id or "").startswith(f"{ruleset_id}:")
+src/cma/categorise.py:414:                t.rule_id = f"{ruleset_id}:round_trip"
+src/cma/categorise.py:429:        t.category, t.rule_id = classify(t, ruleset, override=overrides.get(t.id), profile=profile,
+src/cma/cli.py:20:from .graph import build, evidence_record, ruleset_used, sqlite_checkpointer
+src/cma/cli.py:229:        evidence.write_text(json.dumps(evidence_record({**final, "ruleset": ruleset}), indent=2, default=str))
+src/cma/cli.py:295:        t.add_row(f"{r.rule_id} {r.description}", f"[{colour[r.outcome.value]}]{r.outcome.value}[/]", r.detail)
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/dual_run-7.log:10:tests/test_evals_rulesets.py::test_offline_evals_pass_and_name_their_ruleset[v1] PASSED [  1%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/dual_run-7.log:11:tests/test_evals_rulesets.py::test_offline_evals_pass_and_name_their_ruleset[v2] PASSED [  2%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/dual_run-7.log:13:tests/test_p7_history.py::test_a_review_left_pending_by_the_pre_change_version_resumes_here PASSED [  4%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/specified-3.log:39:tests/test_evals_rulesets.py::test_offline_evals_pass_and_name_their_ruleset[v1] PASSED [  5%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/specified-3.log:40:tests/test_evals_rulesets.py::test_offline_evals_pass_and_name_their_ruleset[v2] PASSED [  5%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/specified-3.log:225:tests/test_p7_history.py::test_a_review_left_pending_by_the_pre_change_version_resumes_here PASSED [ 36%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/specified-3.log:287:tests/test_previous_release.py::test_a_second_run_with_the_same_out_is_refused_and_leaves_the_record PASSED [ 47%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/specified-3.log:594:tests/test_rules_v2.py::test_categorise_10000_lines_under_v2_with_a_profile_is_fast PASSED [ 99%]
+
+exec
+/bin/bash -lc "sed -n '225,250p' src/cma/graph.py
+sed -n '185,240p' src/cma/cli.py
+sed -n '310,390p' src/cma/categorise.py
+rg -n 'categoris|model_dump|description|currency|amount ==|amount "'!='"' src/cma/{mcp_server,ingest,models,metrics}.py
+rg -n 'test_an_explicit|test_overlaps|test_each_list|test_a_review_drafted' tests/test_rules*.py
+rg -n 'T03|adapter|model' /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23 -g '*.json' --max-count 2 --max-columns 200" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T03-review
+ exited 1 in 0ms:
+    llm = llm or get_llm()
+
+    def load(s: MemoState) -> MemoState:
+        path = Path(s["statement_path"])
+        statement = ingest.load_csv(path)
+        return {
+            "statement": statement,
+            "statement_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
+            # A run starts clean, even on a thread that has run before.
+            "redrafts": 0,
+            "guard_feedback": "",
+            "review": None,
+            "final_memo": None,
+        }
+
+    def categorise(s: MemoState) -> MemoState:
+        rules = cat.active_ruleset()
+        return {"statement": cat.categorise(s["statement"], rules),
+                "ruleset": {"id": rules.id, "sha256": rules.sha256}}
+
+    def metrics(s: MemoState) -> MemoState:
+        return {"metrics": met.compute(s["statement"], vat_stagger=s.get("vat_stagger"))}
+
+    def policy(s: MemoState) -> MemoState:
+        p = pol.load_policy(Path(s["policy_path"])) if s.get("policy_path") else None
+    # v1 table; if that fails after the decision is recorded, the memo has no evidence and
+    # the review can no longer be resumed. Refuse here instead, with nothing decided.
+    try:
+        ruleset = ruleset_used(state)
+    except RulesetError as e:
+        console.print(f"[red]Refused, nothing recorded.[/red] {e}")
+        raise typer.Exit(code=2) from e
+
+    _print_metrics(state["metrics"])
+    _print_policy(state["policy"])
+    console.rule("Draft memo")
+    console.print(Markdown(payload["memo"]))
+    console.rule("Grounding check")
+    grounded = payload["guard_grounded"]
+    if grounded:
+        console.print("[green]All figures trace to the metrics table or the policy.[/green]")
+    else:
+        console.print(f"[red]Unmatched numbers:[/red] {payload['guard_unmatched']}")
+        if payload["guard_missing_citations"]:
+            console.print(f"[red]Figures quoted without their tag:[/red] {payload['guard_missing_citations']}")
+
+    if yes:
+        if not grounded:
+            console.print("[red]--yes will not approve a memo that failed the grounding check. Review it interactively.[/red]")
+            raise typer.Exit(code=3)
+        decision = {"approved": True, "reviewer": reviewer, "mode": "automated",
+                    "notes": "Approved by script (--yes); the draft was not reviewed interactively."}
+    else:
+        decision = _ask(payload, grounded, reviewer)
+
+    final = _decide(graph, cfg, decision)
+    while "__interrupt__" in final:
+        payload = final["__interrupt__"][0].value
+        console.print(f"[red]Not accepted:[/red] {payload['error']}")
+        if yes:
+            raise typer.Exit(code=3)
+        decision = _ask(payload, grounded, reviewer)
+        final = _decide(graph, cfg, decision)
+
+    approved = final["review"].approved
+    if out:
+        target = out if approved else out.with_name(out.stem + ".rejected.md")
+        evidence = _evidence_path(target)
+        target.write_text(final["final_memo"])
+        evidence.write_text(json.dumps(evidence_record({**final, "ruleset": ruleset}), indent=2, default=str))
+        console.print(f"wrote {target} and {evidence}")
+    if not approved:
+        console.rule("Not approved")
+        console.print(Markdown(final["final_memo"]))
+        raise typer.Exit(code=1)
+    if not out:
+        console.rule("Final")
+        console.print(Markdown(final["final_memo"]))
+
+
+def _decide(graph, cfg, decision: dict) -> dict:
+
+def _names_in(names: Sequence[str], description: str) -> bool:
+    names = [n for n in names if n.strip()]
+    return bool(names) and re.search(names_pattern(names), description) is not None
+
+
+def classify(
+    t: Transaction,
+    ruleset: Ruleset | None = None,
+    *,
+    override: LineOverride | None = None,
+    profile: ProfileNames | None = None,
+    firm_rules: Sequence[Rule] = (),
+) -> tuple[Category, str]:
+    """The category of one line and the id of the rule that set it, in precedence order."""
+    ruleset = ruleset or active_ruleset()
+    if override is not None:
+        return override.category, override.ref
+    desc = t.description.upper()
+    for rule in ruleset.protected:
+        if rule_matches(rule, desc, t.amount):
+            return rule.category, f"{ruleset.id}:{rule.id}"
+    if profile is not None:
+        if t.amount > 0 and _names_in(profile.directors, desc):
+            return Category.DIRECTOR_FUNDING, "profile:director"
+        if t.amount != 0 and _names_in(profile.own_accounts, desc):
+            return Category.OWN_ACCOUNT_TRANSFER, "profile:own_account"
+    for rule in firm_rules:
+        if rule_matches(rule, desc, t.amount):
+            return rule.category, f"firm:{rule.id}"
+    for rule in ruleset.unprotected:
+        if rule_matches(rule, desc, t.amount):
+            return rule.category, f"{ruleset.id}:{rule.id}"
+    return (Category.SUPPLIER if t.amount < 0 else Category.OTHER), f"{ruleset.id}:default"
+
+
+def categorise_one(t: Transaction, ruleset: Ruleset | None = None) -> Category:
+    return classify(t, ruleset)[0]
+
+
+RAIL_PREFIX = re.compile(
+    r"^(?:UNPAID DD|FPS CREDIT|FPS DEBIT|BACS CREDIT|BACS DEBIT|DD REFUND|CARD REFUND|FPS|BACS|TFR|BGC|DD|SO|CARD)\s+"
+)
+REFERENCE_TOKEN = re.compile(rf"{INVOICE_REF.pattern}|\b\w*\d\w*\b")
+
+
+def counterparty(description: str) -> str:
+    """Who is on the other side of a line: the description without the payment rail,
+    a trailing " DD", invoice numbers or other references with digits in them. One
+    normaliser for reversal matching, round-trip detection and concentration (M15)."""
+    d = RAIL_PREFIX.sub("", description.upper())
+    d = re.sub(r"\s+DD$", "", d)
+    d = REFERENCE_TOKEN.sub(" ", d)
+    return " ".join(d.split()) or description.upper().strip()
+
+
+def link_reversals(statement: Statement) -> Statement:
+    """Point each returned DD credit at the most recent unreversed debit it undoes.
+
+    Same amount, same payee, on or before the reversal date. A returned DD with no
+    amount (some banks print a zero-value notice) or no matching debit stays unlinked:
+    it still counts in M7 but changes no sum.
+    """
+    taken: set[str] = set()
+    txns = statement.transactions
+    for i, r in enumerate(txns):
+        if r.category != Category.RETURNED_DD or r.amount <= 0:
+            continue
+        payee = counterparty(r.description)
+        for o in reversed(txns[:i]):
+            if (
+                o.id not in taken
+                and o.amount < 0
+                and o.category not in (Category.RETURNED_DD, None)
+                and abs(o.amount + r.amount) < 0.005
+                and counterparty(o.description) == payee
+            ):
+                r.reverses = o.id
+                taken.add(o.id)
+                break
+    return statement
+src/cma/metrics.py:8:Returned direct debits: the categoriser links each one to the debit it undoes. Sums
+src/cma/metrics.py:19:from .categorise import OUTGOING_TRANSFER, counterparty
+src/cma/metrics.py:109:        raise ValueError("categorise() must run before compute()")
+src/cma/metrics.py:186:        if t.amount < 0 and eff(t) not in FINANCING and OUTGOING_TRANSFER.search(t.description.upper()):
+src/cma/metrics.py:187:            sent[counterparty(t.description)] += -t.amount
+src/cma/metrics.py:190:        if t.amount > 0 and t.category in NON_TRADING_IN and counterparty(t.description) in sent:
+src/cma/metrics.py:191:            back[counterparty(t.description)].append(t)
+src/cma/metrics.py:210:        by_payer[counterparty(t.description)] += t.amount
+src/cma/mcp_server.py:13:Descriptions: statement descriptions are text the payer chose ("IGNORE PREVIOUS
+src/cma/mcp_server.py:25:from . import categorise, ingest, metrics, policy
+src/cma/mcp_server.py:77:    s = categorise.categorise(_statement(path))
+src/cma/mcp_server.py:78:    return [m.model_dump() for m in metrics.compute(s, vat_stagger=vat_stagger)]
+src/cma/mcp_server.py:84:    s = categorise.categorise(_statement(path))
+src/cma/mcp_server.py:86:    return policy.evaluate(metrics.compute(s, vat_stagger=vat_stagger), p).model_dump()
+src/cma/mcp_server.py:90:def transactions_for(path: str, ids: list[str], include_descriptions: bool = False) -> list[dict]:
+src/cma/mcp_server.py:93:    and then under `untrusted_description`."""
+src/cma/mcp_server.py:102:        if include_descriptions:
+src/cma/mcp_server.py:103:            row["untrusted_description"] = t.description
+src/cma/models.py:78:    description: str
+src/cma/models.py:79:    amount: float = Field(description="Signed. Credits positive, debits negative.")
+src/cma/models.py:80:    balance: float = Field(description="Running balance after this transaction.")
+src/cma/models.py:82:        default=None, description="Set by the categoriser; never read from the input file."
+src/cma/models.py:86:        description="For a returned direct debit: the id of the debit it undoes. Set by the categoriser.",
+src/cma/models.py:90:    account_key: str = Field(default="main", description="Which of the case's accounts the line is from.")
+src/cma/models.py:92:        default=None, description="The built-in rule, firm rule or override that set the category."
+src/cma/models.py:95:        default=None, description="The provider's own category. Untrusted; no figure reads it."
+src/cma/models.py:118:    id: str = Field(description="Stable citation key, e.g. M4.")
+src/cma/models.py:121:        description="None when the figure cannot be computed from this statement (say why in `method`)."
+src/cma/models.py:124:    method: str = Field(description="One sentence saying how it was computed.")
+src/cma/models.py:126:        default_factory=list, description="Transaction ids this figure was computed from."
+src/cma/models.py:161:    description: str
+src/cma/models.py:169:    unit: str = Field(default="", description="Unit of the metric the threshold applies to.")
+src/cma/models.py:180:    policy_sha256: str = Field(default="", description="Hash of the policy file the rules came from.")
+src/cma/models.py:192:        default_factory=list, description="Metric ids quoted without a [Mn] tag."
+src/cma/models.py:214:    reviewer: str = Field(min_length=1, description="Name of the person who decided.")
+src/cma/models.py:219:        description="True when approving a memo the guard did not ground; requires notes.",
+src/cma/models.py:223:        description="automated: approved by a script (--yes); stamped on the memo as no interactive review.",
+src/cma/ingest.py:3:Expected columns: id, date (ISO), description, amount (signed), balance.
+src/cma/ingest.py:24:REQUIRED = ("id", "date", "description", "amount", "balance")
+src/cma/ingest.py:49:    separators, currency signs, exponents and words are refused rather than guessed."""
+src/cma/ingest.py:113:        parsed.append((i, tid, d, (r["description"] or "").strip(), amount, balance))
+src/cma/ingest.py:138:    txns = [Transaction(id=tid, date=d, description=desc, amount=amount, balance=balance)
+tests/test_rules_v2.py:229:def test_each_list_categorises_its_lines_and_records_the_rule(v2, name, desc, amount, category, rule_id):
+tests/test_rules_v2.py:270:def test_overlaps_from_the_review_hold_for_every_listed_word(v2):
+tests/test_rules_v2.py:315:def test_an_explicit_pot_move_beats_protected_wording_in_the_pot_name(v2):
+tests/test_rules.py:318:def test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1(tmp_path, monkeypatch):
+
+exec
+/bin/bash -lc "ls -a /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23
+ls -a /home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-22
+sed -n '175,201p' src/cma/graph.py
+rg -n 'CREDIT_BUCKET|CASH_DEPOSIT|REVENUE_CATEGORIES' src/cma/models.py
+sed -n '120,168p' src/cma/rules/v2.yaml
+rg -n 'ruleset.*sha256' tests/test_rules.py
+rg -n 'def _refuse|exists\\(' src/cma/cli.py" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T03-review
+ succeeded in 0ms:
+.
+..
+.snapshot
+adapter.json
+adapter.log
+behavioural-6.log
+codex.log
+codex.log.err
+context.json
+contracts-4.log
+diff-stat.txt
+diff.patch
+dual_run-7.log
+files.txt
+inputs.json
+invariants-5.log
+mechanical-1.log
+mechanical-2.log
+mechanical.json
+prompt.md
+reply.txt
+specified-3.log
+.
+..
+behavioural-6.log
+contracts-4.log
+diff-stat.txt
+diff.patch
+dual_run-7.log
+evidence.json
+files.txt
+invariants-5.log
+mechanical-1.log
+mechanical-2.log
+mechanical.json
+specified-3.log
+def ruleset_used(s: MemoState) -> dict:
+    """The categorisation table the memo's figures came from. A review drafted before the
+    table moved to data (a pending checkpoint from an older version) has none in its state;
+    its lines were categorised by the table now packaged as v1, frozen and compared with
+    the old code (tests/test_rules.py, P7), so it is named as v1 and marked as inferred,
+    never null. That lookup reads the packaged table and can raise RulesetError, so the
+    CLI calls this before a decision is recorded, not after."""
+    if s.get("ruleset"):
+        return s["ruleset"]
+    v1 = cat.load_ruleset("v1")
+    return {"id": v1.id, "sha256": v1.sha256, "inferred": "pre-ruleset checkpoint"}
+
+
+def line_rule_ids(s: MemoState) -> list[str | None]:
+    """Each line's rule id. A checkpoint from before provenance holds none; its lines were
+    categorised by the table that is now v1 (P7), so v1 is replayed on a copy and its rule
+    id taken for each line whose saved category it reproduces. A line it does not
+    reproduce keeps None rather than a rule that did not set it."""
+    txns = s["statement"].transactions
+    recorded = s.get("ruleset")
+    if (recorded and not recorded.get("inferred")) or all(t.rule_id for t in txns):
+        return [t.rule_id for t in txns]
+    replay = cat.categorise(s["statement"].model_copy(deep=True), cat.load_ruleset("v1")).transactions
+    return [t.rule_id or (r.rule_id if r.category == t.category else None) for t, r in zip(txns, replay, strict=True)]
+
+
+def evidence_record(s: MemoState) -> dict:
+31:    CASH_DEPOSIT = "cash_deposit"
+54:CREDIT_BUCKET: dict[Category, Bucket] = {
+57:    Category.CASH_DEPOSIT: Bucket.TRADING_RECEIPTS,  # D31: cash takings are trading receipts
+68:REVENUE_CATEGORIES = {Category.REVENUE_CARD, Category.REVENUE_TRANSFER, Category.CASH_DEPOSIT}
+    unless: *pot_move
+    direction: out
+    category: loan_repayment
+    protected: true
+  # Money from a director, shareholder or owner, or capital introduced. Before the
+  # generic loan wording, so a director's loan to the business is director funding.
+  - id: director_funding
+    names: [DIRECTOR, DIRECTORS, OWNER, CAPITAL, SHAREHOLDER, SHAREHOLDERS]
+    unless: *pot_move
+    direction: in
+    category: director_funding
+    protected: true
+  # Generic loan or finance wording, unless the line says it is a refund or a reversal
+  # (the refund wording above, or a pot move): "CARD REFUND ACME RETAIL FINANCE" is money
+  # given back, not debt drawn, and goes to the refunds rule below.
+  - id: loan_drawdown
+    pattern: '\bLOAN\b|FINANCE\b'
+    unless: '(?<![A-Z0-9])(?:REFUND|REFUNDED|REVERSAL|REVERSED|RETURNED\s+PAYMENT|PAYMENT\s+RETURNED|CHARGEBACK|POT\s+TRANSFER|(?:TO|FROM)\s+(?:POT|SPACE)|(?:VAT|TAX)\s+POT)(?![A-Z0-9])'
+    direction: in
+    category: loan_drawdown
+    protected: true
+  - id: owner_drawings
+    pattern: 'OWNER DRAWINGS|DIRECTOR DRAWINGS|DIVIDEND'
+    unless: *pot_move
+    direction: out
+    category: owner_drawings
+    protected: true
+  # --- not protected: a profile name or a firm rule is tried before these ---------------
+  # Moves between the applicant's own pots, spaces and savings, either way. First of the
+  # unprotected rules, so an explicit move to a pot wins over what the pot is for:
+  # "TFR TO POT RENT" is an own-account transfer, not rent.
+  - id: own_pots_savings
+    names:
+      - POT TRANSFER
+      - TO POT
+      - FROM POT
+      - SAVINGS
+      - SAVER
+      - BUSINESS SAVER
+      - INSTANT ACCESS
+      - TO SPACE
+      - FROM SPACE
+      - VAT POT
+      - TAX POT
+    direction: any
+    category: own_account_transfer
+  - id: bank_fees
+    pattern: 'UNPAID ITEM FEE|ACCOUNT FEES|BANK CHARGES'
+    direction: out
+189:    assert load_ruleset("v1").sha256 == hashlib.sha256(lf).hexdigest()
+198:    assert load_ruleset("v1").sha256 == categorise.FROZEN_SHA256["v1"]
+290:    other = categorise.ruleset_from_data(data, expected_id="v1", source="test", sha256="x")
+314:    assert record["ruleset"] == {"id": "v1", "sha256": load_ruleset("v1").sha256}
+344:        "id": "v1", "sha256": load_ruleset("v1").sha256, "inferred": "pre-ruleset checkpoint"}
+611:    assert record["ruleset"] == {"id": "v1", "sha256": load_ruleset("v1").sha256, "inferred": "pre-ruleset checkpoint"}
+113:    if not checkpoint_db.exists():
+146:def _refuse_to_overwrite(out: Path | None) -> None:
+150:    taken = [p for p in _outputs(out) if p.exists()]
+
+exec
+/bin/bash -lc "cat /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/adapter.json
+sed -n '1,12p' /home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-22/evidence.json
+rg -n 'idempotent|payee|description' src/cma/importers/monzo.py" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T03-review
+ succeeded in 0ms:
+{"vendor":"openai","reads_repo":true,"reads_web":true}
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped acquirers, gateways, marketplaces and delivery platforms to src/cma/rules/v2.yaml:195,229,245,261, lenders and MCA providers in both directions to :45,92, own pots and savings to :127, HMRC credits to :38, refunds and reversals to :154, and counter and machine deposits to :168. src/cma/graph.py:227 applies the selected table, src/cma/categorise.py:426 assigns provenance, and src/cma/graph.py:199 exports it. The specified runner log confirms the table-driven cases, overlap regression and v2 CLI provenance tests passed. Code inspection found explicit reversals and own-pot transfers misclassified by earlier rules, and electronic credits counted as cash when the rail appears after the first word. Reviewed double submission, concurrent updates, partial failure, error paths, input and sign boundaries, currency and timezone, authorization, tenant isolation, and CLI, checkpoint and MCP consumers. The runner confirmed sequential duplicate-output refusal and legacy resume compatibility. The categoriser introduces no new write path, authorization boundary, tenant query, currency conversion or timezone handling. No tests were run during review.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-22/specified-3.log"
+    },
+    {
+      "id": "mechanical:1",
+16:- carries invoice references from Notes and Description into the description, so a
+18:- builds a bank-style description from Type, direction and Name (for example
+93:    """A bank-statement style description from Monzo's Type, Name and direction."""
+192:        out_rows.append({"id": tid, "date": d.isoformat(), "description": desc,
+197:        w = csv.DictWriter(f, fieldnames=["id", "date", "description", "amount", "balance"])
+
+exec
+/bin/bash -lc "rg -A5 '\"verifier\"' /home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-22/evidence.json
+rg -n 'ruleset|checkpoint' src/cma/cli.py
+sed -n '90,121p' src/cma/importers/monzo.py
+rg -n 'def test_categorise_10000|def test_cma_run_under_v2_records' tests/test_rules_v2.py" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T03-review
+ succeeded in 0ms:
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
+19:from .categorise import RulesetError, active_ruleset
+20:from .graph import build, evidence_record, ruleset_used, sqlite_checkpointer
+64:    checkpoint_db: Path | None = typer.Option(
+75:        # Refuse a bad CMA_RULESET before the graph checkpoints anything: a refusal after the first
+76:        # checkpoint would leave the review id taken, so a corrected retry could not reuse it.
+77:        active_ruleset()
+82:    with _checkpointer(checkpoint_db) as saver:
+83:        graph = build(get_llm(llm), checkpointer=saver)
+86:            console.print(f"[red]Review id {thread_id} is already used in {checkpoint_db}. Pick a new --thread.[/red]")
+100:        if checkpoint_db:
+101:            console.print(f"review id: {thread_id} (kept in {checkpoint_db}; `cma resume {thread_id}` picks it up)")
+107:    thread: str = typer.Argument(..., help="The review id printed by `cma run --checkpoint-db`."),
+108:    checkpoint_db: Path = typer.Option(..., help="The SQLite file the review was kept in."),
+113:    if not checkpoint_db.exists():
+114:        console.print(f"[red]{checkpoint_db} does not exist.[/red]")
+117:    with _checkpointer(checkpoint_db) as saver:
+118:        graph = build(get_llm("fake"), checkpointer=saver)  # the draft is already made; no model call
+166:def _checkpointer(path: Path | None):
+171:        with sqlite_checkpointer(path) as saver:
+188:        ruleset = ruleset_used(state)
+229:        evidence.write_text(json.dumps(evidence_record({**final, "ruleset": ruleset}), indent=2, default=str))
+243:    Two people can open the same pending review from a shared --checkpoint-db. If
+
+
+def describe(kind: str, name: str, amount: float, extra: str = "") -> str:
+    """A bank-statement style description from Monzo's Type, Name and direction."""
+    k = kind.strip().lower()
+    who = " ".join(f"{name} {extra}".split()).upper() or "UNKNOWN"
+    incoming = amount > 0
+    if "flex" in k or "MONZO FLEX" in who:
+        # Monzo Flex is credit: money in is a drawdown, money out is a repayment.
+        prefix = "LOAN DRAWDOWN" if incoming else "LOAN REPAYMENT"
+        if "FLEX" not in who:
+            who = f"MONZO FLEX {who}"
+    elif ("faster payment" in k or "monzo-to-monzo" in k or k == "p2p_payment"
+          or "bank transfer" in k):
+        prefix = "FPS CREDIT" if incoming else "FPS DEBIT"
+    elif "bacs" in k:
+        prefix = "BACS CREDIT" if incoming else "BACS DEBIT"
+    elif "direct debit" in k:
+        prefix = "DD REFUND" if incoming else "DD"
+    elif "standing order" in k:
+        prefix = "SO"
+    elif "card" in k:
+        prefix = "CARD REFUND" if incoming else "CARD"
+    elif "pot" in k:
+        prefix = "POT TRANSFER IN" if incoming else "POT TRANSFER OUT"
+    elif "interest" in k:
+        prefix = "INTEREST"
+    else:
+        prefix = k.upper() or "OTHER"
+    return f"{prefix} {who}".strip()
+
+
+533:def test_cma_run_under_v2_records_the_second_review_repros_as_their_buckets(tmp_path, monkeypatch):
+703:def test_categorise_10000_lines_under_v2_with_a_profile_is_fast(v2):
+
+codex
+```json
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped acquirers, gateways, marketplaces and delivery platforms to src/cma/rules/v2.yaml:220,254,270,286, lenders and MCA providers to src/cma/rules/v2.yaml:55,112, own pots and savings to src/cma/rules/v2.yaml:151, HMRC credits to src/cma/rules/v2.yaml:47, refunds and reversals to src/cma/rules/v2.yaml:105,178, and counter and machine deposits to src/cma/rules/v2.yaml:193. The graph applies the selected table at src/cma/graph.py:241, assigns rule IDs through src/cma/categorise.py:429 and exports them at src/cma/graph.py:212. Runner logs confirm the table-driven cases, all three prior repros and the CLI provenance tests passed. Static inspection found explicit savings transfers and refund credits that still select the wrong category. Reviewed sign and text boundaries, repeat categorisation, double submission, concurrent updates, partial failure, error paths, currency and timezone, authorisation, tenant isolation and the CLI, checkpoint and MCP consumers. The categoriser adds no persistent writer, access boundary or currency or timezone conversion. Review used repository reads and runner results.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-23/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/rules/v2.yaml",
+      "line": 126,
+      "criterion": "R4",
+      "claim": "An explicit transfer from the applicant's own savings is classified as director funding when the savings account name contains CAPITAL. The exception recognises pot and space wording, while explicit savings transfers still reach the protected funding rule first.",
+      "repro": "Run a balanced statement under CMA_RULESET=v2 with a +300.00 credit described as TFR FROM SAVINGS CAPITAL RESERVE. The credit gets director_funding and v2:director_funding instead of own_account_transfer."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/rules/v2.yaml",
+      "line": 126,
+      "criterion": "R4",
+      "claim": "A card purchase refund from a merchant with CAPITAL in its name is classified as director funding. The protected funding rule has no exception for explicit refund wording.",
+      "repro": "Run a balanced statement under CMA_RULESET=v2 with a +75.00 credit described as CARD REFUND CAPITAL OFFICE SUPPLIES. The credit gets director_funding and v2:director_funding instead of refund_in."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 195,
+      "criterion": "R4",
+      "claim": "The checkpoint migration claim misses the previous release's checkpoint format that already stored the v1 ruleset ID and hash. These checkpoints resume with null line rule IDs even when replaying v1 would reproduce their saved categories.",
+      "repro": "Save a pending review with the T02 code using a statement containing CARD ACQUIRER SETTLEMENT, then resume that thread with T03 and supply --out. Inspect the settlement in the resulting evidence JSON. The recorded v1 ruleset triggers the early return and the line's rule_id remains null."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
+```
+tokens used
+56,276
