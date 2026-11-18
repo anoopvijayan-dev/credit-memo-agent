@@ -410,8 +410,15 @@ class CaseLog:
                 if self._lock_depth == 0:
                     fd, self._lock_fd, self._owner = self._lock_fd, None, None
                     if fd is not None:
-                        _unlock(fd)
-                        os.close(fd)
+                        # Closing the descriptor releases the lock on every platform, so it
+                        # runs even when the explicit unlock fails; skipping it would leave
+                        # the lock held and block later appends until the process exits.
+                        try:
+                            _unlock(fd)
+                        except OSError:
+                            pass
+                        finally:
+                            os.close(fd)
 
     def append(self, event: str, data: dict[str, Any], *, expected: int) -> Entry:
         """Append one entry if the log is intact and still at `expected` entries."""

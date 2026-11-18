@@ -284,6 +284,33 @@ def test_p15_a_contended_lock_still_reads_as_another_writer(tmp_path, monkeypatc
         pass
 
 
+@pytest.mark.invariants
+def test_p15_a_failed_unlock_still_releases_the_lock(tmp_path, monkeypatch):
+    # T12 review: if the explicit unlock raised, the descriptor was never closed, so the
+    # lock stayed held and blocked later appends until the process exited.
+    import errno
+    log = _log(tmp_path, 1)
+    closed = []
+    real_close = os.close
+
+    def broken_unlock(fd):
+        raise OSError(errno.EIO, "unlock failed")
+
+    def tracking_close(fd):
+        closed.append(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(case, "_unlock", broken_unlock)
+    monkeypatch.setattr(case.os, "close", tracking_close)
+    with log.writer():
+        held = log._lock_fd
+    assert held in closed and log._lock_fd is None
+    monkeypatch.undo()
+    other = case.CaseLog(log.path)  # a fresh handle, as another command would open
+    other.append("override", {}, expected=1)
+    assert len(other.entries()) == 2
+
+
 def test_torn_last_entry_blocks_appends_until_dropped(tmp_path, monkeypatch):
     log = _log(tmp_path, 2)
     lines = _lines(log)
