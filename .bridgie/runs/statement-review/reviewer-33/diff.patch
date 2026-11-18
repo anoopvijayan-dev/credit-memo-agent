@@ -1,0 +1,1755 @@
+diff --git a/README.md b/README.md
+index ffb31b7..5352308 100644
+--- a/README.md
++++ b/README.md
+@@ -51,6 +51,10 @@ cma resume case-7 --checkpoint-db private/reviews.sqlite
+ # (git-ignored, as are *.csv, memo files, evidence files and databases anywhere).
+ cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out private/mine.csv
+ 
++# Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
++# first entry that was changed, removed, reordered or left half written.
++cma case check private/cma/cases/<id>
++
+ # Use a real model instead of the offline one.
+ export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
+ cma run examples/cafe_stretched.csv --llm anthropic
+diff --git a/src/cma/case.py b/src/cma/case.py
+new file mode 100644
+index 0000000..2740d7b
+--- /dev/null
++++ b/src/cma/case.py
+@@ -0,0 +1,625 @@
++"""The case log: an append-only, hash-chained record of everything done to a case (R42, R43).
++
++One JSON object per line, written in a single write that ends with its newline:
++
++    {"seq": 3, "prev": "<hash of entry 2>", "at": "2026-11-16T10:04:01.123456Z",
++     "event": "override", "data": {...}, "hash": "<sha256 of the other five fields>"}
++
++The first entry's `prev` is GENESIS. Each entry carries the hash of the entry before it
++and its own hash, so a changed, removed, inserted or reordered entry anywhere before the
++head breaks the chain on the next load, and `verify` names the first entry that does not
++hold. A line is read strictly: it must be exactly the canonical bytes the writer
++produces, so a repeated member, a number no float can hold, or reformatting is named as
++a bad entry rather than reinterpreted or raised.
++
++The chain alone cannot see a history rewritten from some entry onwards with every hash
++recomputed, nor the head entry removed. So each append, after its line is on disk, also
++replaces a head file beside the log (`log.jsonl.head`: {"count": n, "hash": h,
++"hashes": [the hash of every entry, in order]}), and every load compares the chain with
++it entry by entry: the first entry whose hash is not the one recorded is named as the
++first bad entry, even when every link after it was recomputed, and a chain that ends
++before or after the recorded count is broken there. Rewriting the log and the head file
++together is not detectable from these files; a sign-off or pack pins the head it saw.
++
++An append can stop half way. A last line without its newline, or a complete last line
++the head file does not yet record (power lost between the two writes), is a torn entry:
++reported as incomplete, not as tampering, and in the way of appends and sign-off until
++someone confirms dropping it (`drop_torn_entry`), which is itself logged. A reader that
++does not hold the lock may catch a writer between the two writes, so it looks again
++briefly and then takes the lock to read once more. If another writer still holds the
++lock, that writer's append is in progress: the reader reports the log as recorded (the
++intact entries, `in_progress` set) and never asks anyone to drop a live append. Only a
++reader that holds the lock, or that could take it, reports a torn entry.
++
++One writer at a time: every append takes an exclusive, non-blocking lock on a sibling
++lock file and re-reads the log under it, and the caller states the position it last
++saw. A second tab or terminal that read an older position gets LogConflict and reloads;
++one that tries while another holds the lock gets CaseLocked, including another thread
++using the same CaseLog object. The operating system drops the lock when its holder
++dies, so a crash never leaves the case locked.
++
++Messages name entries by number only and never quote their content: data holds case
++details, and errors end up in terminals and logs.
++"""
++
++from __future__ import annotations
++
++import errno
++import hashlib
++import json
++import os
++import threading
++import time
++import weakref
++from collections.abc import Iterator
++from contextlib import contextmanager
++from dataclasses import asdict, dataclass, field
++from datetime import UTC, datetime
++from pathlib import Path
++from typing import Any
++
++GENESIS = "0" * 64
++HASHED_FIELDS = ("seq", "prev", "at", "event", "data")
++ENTRY_FIELDS = frozenset((*HASHED_FIELDS, "hash"))
++TORN_DROPPED = "torn_entry_dropped"
++HEAD_FIELDS = frozenset(("count", "hash", "hashes"))
++READ_RETRIES, READ_PAUSE = 5, 0.02  # seconds; a writer paused for longer is handled in verify
++_UNREADABLE = object()
++
++
++class CaseLogError(Exception):
++    """Base for case-log refusals."""
++
++
++class CaseLogBroken(CaseLogError):
++    """The chain does not hold, or the last entry is incomplete. Nothing may be appended
++    and no sign-off accepted until it is resolved."""
++
++    def __init__(self, path: Path, first_bad: int, reason: str, torn: bool):
++        self.first_bad = first_bad
++        self.torn = torn
++        self.reason = reason
++        super().__init__(f"{path}: case log entry {first_bad} {reason}")
++
++
++class LogConflict(CaseLogError):
++    """The writer's view of the log is stale: someone appended since it last read."""
++
++    def __init__(self, expected: int, actual: int):
++        self.expected = expected
++        self.actual = actual
++        super().__init__(
++            f"case log is at entry {actual}, not {expected}: it changed since you loaded it; reload"
++        )
++
++
++class CaseLocked(CaseLogError):
++    """Another writer holds the case."""
++
++
++@dataclass(frozen=True)
++class Entry:
++    seq: int
++    prev: str
++    at: str
++    event: str
++    data: dict[str, Any]
++    hash: str
++
++
++@dataclass(frozen=True)
++class Head:
++    """Where the intact log ends: `position` entries, the last with hash `hash`."""
++
++    position: int
++    hash: str
++
++
++@dataclass(frozen=True)
++class LogCheck:
++    head: Head  # the end of the intact prefix
++    entries: list[Entry] = field(repr=False)
++    first_bad: int | None = None  # 1-based entry number; None when the log is intact
++    reason: str = ""
++    torn: bool = False
++    intact_bytes: int = field(default=0, repr=False)
++    in_progress: bool = False  # another writer is appending; `head` is the log as recorded
++    recorded: int | None = field(default=None, repr=False)  # entries the head file records
++
++    def as_recorded(self) -> LogCheck:
++        """The log as the head file records it, for a failure that lies wholly after the
++        recorded entries (which were all walked and matched): what a reader reports while
++        another writer's append is landing."""
++        k = self.recorded or 0
++        kept = self.entries[:k]
++        return LogCheck(Head(k, kept[-1].hash if kept else GENESIS), kept,
++                        intact_bytes=sum(len(_line(e)) for e in kept), in_progress=True, recorded=k)
++
++    @property
++    def past_recorded(self) -> bool:
++        """The first failure is after every entry the head file records."""
++        return self.recorded is not None and self.first_bad is not None and self.first_bad > self.recorded
++
++    @property
++    def ok(self) -> bool:
++        return self.first_bad is None
++
++
++def _canonical(obj: Any) -> bytes:
++    # allow_nan=False: NaN and Infinity are not JSON, and another reader of the log
++    # (verify, a future hosted version) must be able to recompute every hash.
++    return json.dumps(
++        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
++    ).encode("utf-8")
++
++
++def _line(entry: Entry) -> bytes:
++    """The exact line the writer produced for an entry that was read back intact."""
++    return _canonical(asdict(entry)) + b"\n"
++
++
++def entry_hash(entry: dict[str, Any]) -> str:
++    """sha256 over the canonical JSON of the hashed fields (everything but `hash`)."""
++    return hashlib.sha256(_canonical({k: entry.get(k) for k in HASHED_FIELDS})).hexdigest()
++
++
++def _utc_now() -> str:
++    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
++
++
++def _unique_members(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
++    obj = dict(pairs)
++    if len(obj) != len(pairs):
++        raise ValueError("duplicate member")
++    return obj
++
++
++def _no_constant(token: str) -> Any:
++    raise ValueError(f"{token} is not JSON")
++
++
++def _decode(line: bytes) -> Any:
++    """The entry a line holds, read strictly: no duplicate members, no NaN or Infinity,
++    and the line must be exactly the canonical bytes the writer produces. Anything a
++    lenient decoder would quietly reinterpret (a repeated member, 1e999 read as
++    infinity, other spacing or key order) is therefore not the entry that was hashed."""
++    obj = json.loads(line.decode("utf-8"), object_pairs_hook=_unique_members,
++                     parse_constant=_no_constant)
++    if _canonical(obj) != line:
++        raise ValueError("not in canonical form")
++    return obj
++
++
++def _parse(line: bytes, n: int, prev: str) -> tuple[Entry | None, str]:
++    """Check one complete line as entry number `n` following hash `prev`."""
++    try:
++        obj = _decode(line)
++    except (UnicodeDecodeError, ValueError, TypeError, RecursionError):
++        return None, "is not a readable entry: it is not exactly what the log writes"
++    if not isinstance(obj, dict) or set(obj) != ENTRY_FIELDS:
++        return None, "has missing or extra fields"
++    seq, hsh = obj["seq"], obj["hash"]
++    if not isinstance(seq, int) or isinstance(seq, bool) or not isinstance(hsh, str) \
++            or not isinstance(obj["prev"], str) or not isinstance(obj["at"], str) \
++            or not isinstance(obj["event"], str) or not isinstance(obj["data"], dict):
++        return None, "has a field of the wrong type"
++    if entry_hash(obj) != hsh:
++        return None, "was changed: its hash does not match its content"
++    if seq != n:
++        return None, f"is out of place: it says it is entry {seq}; an entry is missing, added or reordered"
++    if obj["prev"] != prev:
++        return None, f"does not follow entry {n - 1}: the hash it carries for it does not match"
++    return Entry(**obj), ""
++
++
++def _is_hash(value: Any) -> bool:
++    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
++
++
++def _read_head(path: Path) -> list[str] | object | None:
++    """The hash of every entry the head file records, in order; None if there is no head
++    file; _UNREADABLE if it cannot be read or is not exactly what the writer produces."""
++    try:
++        raw = path.read_bytes()
++    except FileNotFoundError:
++        return None
++    except OSError:  # a directory in its place, no permission: it cannot vouch for the log
++        return _UNREADABLE
++    try:
++        if not raw.endswith(b"\n"):
++            raise ValueError("no newline")
++        obj = _decode(raw[:-1])
++    except (UnicodeDecodeError, ValueError, TypeError, RecursionError):
++        return _UNREADABLE
++    if not isinstance(obj, dict) or set(obj) != HEAD_FIELDS:
++        return _UNREADABLE
++    count, hsh, hashes = obj["count"], obj["hash"], obj["hashes"]
++    if not isinstance(count, int) or isinstance(count, bool) or not isinstance(hashes, list) \
++            or len(hashes) != count or not all(_is_hash(h) for h in hashes) \
++            or hsh != (hashes[-1] if hashes else GENESIS):
++        return _UNREADABLE
++    return hashes
++
++
++def _head_bytes(hashes: list[str]) -> bytes:
++    return _canonical({"count": len(hashes), "hash": hashes[-1] if hashes else GENESIS,
++                       "hashes": hashes}) + b"\n"
++
++
++def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
++    """Walk the chain in `raw` to the first entry that does not hold, compare every entry
++    walked with the head file's record, and name the earlier of the two failures."""
++    if raw is None:
++        return LogCheck(Head(0, GENESIS), [], 1, "cannot be read: the log file cannot be opened", False, 0)
++    pieces = raw.split(b"\n")
++    complete, tail = pieces[:-1], pieces[-1]  # tail is non-empty only if torn
++    entries: list[Entry] = []
++    ends = [0]  # ends[k]: bytes up to and including entry k's newline
++    prev = GENESIS
++    chain_bad, chain_reason = None, ""
++    for n, line in enumerate(complete, start=1):
++        entry, reason = _parse(line, n, prev)
++        if entry is None:
++            chain_bad, chain_reason = n, reason
++            break
++        entries.append(entry)
++        prev = entry.hash
++        ends.append(ends[-1] + len(line) + 1)
++
++    hashes: list[str] = recorded if isinstance(recorded, list) else []  # none yet: empty
++    n, count = len(entries), len(hashes)
++
++    def at(k: int) -> Head:
++        return Head(k, entries[k - 1].hash if k else GENESIS)
++
++    def failed(first_bad: int, reason: str, torn: bool = False) -> LogCheck:
++        return LogCheck(at(first_bad - 1), entries[: first_bad - 1], first_bad, reason, torn,
++                        ends[first_bad - 1], recorded=None if recorded is _UNREADABLE else count)
++
++    if recorded is _UNREADABLE:
++        return failed(1, "cannot be trusted: the head file beside the log is unreadable")
++    same = 0
++    while same < min(n, count) and entries[same].hash == hashes[same]:
++        same += 1
++    if same < min(n, count):
++        return failed(same + 1, "does not match the head file: the log was rewritten from "
++                                "this entry on")
++    if chain_bad is not None:
++        return failed(chain_bad, chain_reason)
++    if n == count and not tail:
++        return LogCheck(at(n), entries, intact_bytes=ends[-1], recorded=count)
++    if n == count:
++        return failed(n + 1, "is incomplete: the write did not finish (the process or power "
++                             "stopped); confirm dropping it before anything else is recorded "
++                             "or signed off", torn=True)
++    if n == count + 1 and not tail:
++        return failed(n, "is incomplete: it was written but the head file was not updated (the "
++                         "process or power stopped); confirm dropping it before anything else "
++                         "is recorded or signed off", torn=True)
++    if recorded is None:  # entries on disk, and no torn first append explains them
++        return failed(1, "cannot be trusted: the head file beside the log is missing")
++    if n < count:
++        return failed(n + 1, f"is missing: the head file records {count} entries and the log "
++                             f"holds {n}")
++    return failed(count + 1, f"was added after the head the head file records (entry {count})")
++
++
++def _holder_id() -> tuple[int, int]:
++    """Who holds a writer lock: the process and the thread. The thread ident alone
++    survives a fork, so a child would pass for its parent and append unlocked."""
++    return os.getpid(), threading.get_ident()
++
++
++# Every live CaseLog, so a forked child can replace their thread locks (below).
++_LIVE: weakref.WeakSet[CaseLog] = weakref.WeakSet()
++
++
++def _after_fork_in_child() -> None:
++    # Another thread of the parent may have held an instance's state lock at the fork; in
++    # the child that thread does not exist and the lock would never be released.
++    for log in list(_LIVE):
++        log._state = threading.Lock()
++
++
++if hasattr(os, "register_at_fork"):
++    os.register_at_fork(after_in_child=_after_fork_in_child)
++
++
++class CaseLog:
++    def __init__(self, path: Path | str):
++        self.path = Path(path)
++        self.lock_path = self.path.with_name(self.path.name + ".lock")
++        self.head_path = self.path.with_name(self.path.name + ".head")
++        self._state = threading.Lock()  # guards the three fields below, never held long
++        self._lock_fd: int | None = None
++        self._owner: tuple[int, int] | None = None  # (process id, thread ident) of the holder
++        self._lock_depth = 0
++        _LIVE.add(self)
++
++    def _forget_inherited_lock(self) -> None:
++        """In a forked child, drop the writer state inherited from the parent (call under
++        _state). The lock is the parent's: closing the child's copy of the descriptor
++        releases nothing while the parent's stays open, and an explicit unlock would
++        release it on the shared open file under a parent that still writes. The child
++        then takes a lock of its own, which contends with the parent's like any process."""
++        if self._owner is not None and self._owner[0] != os.getpid():
++            fd, self._lock_fd, self._owner, self._lock_depth = self._lock_fd, None, None, 0
++            if fd is not None:
++                os.close(fd)
++
++    # --- reading -----------------------------------------------------------------------
++
++    def verify(self) -> LogCheck:
++        """Walk the chain from the start, stop at the first entry that does not hold, and
++        compare every entry with the head file."""
++        with self._state:
++            holder = self._owner == _holder_id()
++        if holder:  # nothing else can write: one read is the truth
++            return _check(self._read_log(), _read_head(self.head_path))
++        for attempt in range(READ_RETRIES):
++            if attempt:
++                time.sleep(READ_PAUSE)
++            # The head file first: a writer replaces it only after its line is on disk, so
++            # the log read next is never behind it, and a writer caught between the two
++            # writes looks like a torn entry. Look again before believing one.
++            before = _read_head(self.head_path)
++            check = _check(self._read_log(), before)
++            if not check.torn and _read_head(self.head_path) == before:
++                return check
++        # Still torn, or the head kept moving. Under the lock nothing moves, so if the lock
++        # is free, one read there is the truth.
++        try:
++            with self.writer():
++                return _check(self._read_log(), _read_head(self.head_path))
++        except CaseLocked:
++            pass
++        except OSError:  # the lock cannot be taken or tested: no writer is known, the read stands
++            return check
++        # Another writer holds the lock. The log is only ever appended to, so the log read
++        # after a head holds every entry that head records; those entries were walked and
++        # matched, and a failure before or among them is real whatever moved since. A
++        # failure only after them (a torn line, or entries appended after that head was
++        # read) is that writer's appends landing: report the log as recorded.
++        return check.as_recorded() if check.past_recorded else check
++
++    def _read_log(self) -> bytes | None:
++        try:
++            return self.path.read_bytes()
++        except FileNotFoundError:
++            return b""
++        except OSError:  # a directory in its place, no permission
++            return None
++
++    def require_intact(self) -> Head:
++        """The head of an intact log, or CaseLogBroken naming the first bad entry. Every
++        append goes through it; sign-off (T27) must call it and refuse on the exception (R43)."""
++        check = self.verify()
++        if not check.ok:
++            raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
++        return check.head
++
++    def entries(self) -> list[Entry]:
++        """Every entry of an intact log; CaseLogBroken otherwise."""
++        check = self.verify()
++        if not check.ok:
++            raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
++        return check.entries
++
++    # --- writing -----------------------------------------------------------------------
++
++    @contextmanager
++    def writer(self) -> Iterator[CaseLog]:
++        """Hold the case's single-writer lock; refuses at once if another writer has it.
++
++        The thread that holds it may nest (a sign-off holds the lock across its checks and
++        its append). Any other writer is refused, whether it is another process, another
++        CaseLog on the same file, or another thread using this same instance: the lock
++        belongs to a thread, not to the object. A forked child is another process even
++        though it inherits its parent's thread ident, so it never enters on its parent's
++        lock."""
++        me = _holder_id()
++        with self._state:
++            self._forget_inherited_lock()
++            if self._owner == me:
++                self._lock_depth += 1
++            elif self._owner is not None:
++                raise CaseLocked(f"{self.path}: another window or command is writing to this case")
++            else:
++                self.path.parent.mkdir(parents=True, exist_ok=True)
++                fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
++                try:
++                    _lock(fd)
++                except OSError as e:
++                    os.close(fd)
++                    # Only contention means another writer holds the lock. Any other lock
++                    # error (no locks available, an I/O error) is not evidence of a writer:
++                    # it propagates, so a reader falls back to the plain read and a torn
++                    # entry is reported, never excused as some writer's append.
++                    if e.errno in _CONTENDED:
++                        raise CaseLocked(f"{self.path}: another window or command is writing to this case") from e
++                    raise
++                self._lock_fd, self._owner, self._lock_depth = fd, me, 1
++        try:
++            yield self
++        finally:
++            with self._state:
++                if self._owner is None or self._owner[0] != os.getpid():
++                    # A forked child leaving a writer block it inherited (its state is
++                    # dropped here, or was when it took a lock of its own): not its lock.
++                    self._forget_inherited_lock()
++                else:
++                    self._release_one_level()
++
++    def _release_one_level(self) -> None:
++        """Leave one level of this process's writer lock (call under _state)."""
++        self._lock_depth -= 1
++        if self._lock_depth == 0:
++            fd, self._lock_fd, self._owner = self._lock_fd, None, None
++            if fd is not None:
++                # Closing the descriptor releases the lock on every platform, so it runs
++                # even when the explicit unlock fails; skipping it would leave the lock
++                # held and block later appends until the process exits.
++                try:
++                    _unlock(fd)
++                except OSError:
++                    pass
++                finally:
++                    os.close(fd)
++
++    def append(self, event: str, data: dict[str, Any], *, expected: int) -> Entry:
++        """Append one entry if the log is intact and still at `expected` entries."""
++        if not isinstance(event, str) or not event.strip():
++            raise ValueError("event must be a non-empty string")
++        if not isinstance(data, dict):
++            raise ValueError("data must be a mapping")
++        try:
++            # Plain JSON only: json.dumps would quietly turn a tuple into a list and a 1,
++            # True or None key into a string, so the Entry returned here would differ from
++            # the one every later reader sees.
++            blob = _canonical(data)
++            same = json.loads(blob) == data
++        except (TypeError, ValueError, RecursionError) as e:
++            raise ValueError(f"data is not plain JSON: {e}") from e
++        if not same:
++            raise ValueError("data is not plain JSON: it would not read back unchanged "
++                             "(use lists, not tuples, and string keys)")
++        # From here on only the copy read back from those bytes is used: the caller's dict
++        # may be shared, and a change to it between hashing and writing must not reach the log.
++        snapshot = json.loads(blob)
++        with self.writer():
++            check = self.verify()
++            if not check.ok:
++                raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
++            if check.head.position != expected:
++                raise LogConflict(expected, check.head.position)
++            return self._write(event, snapshot, check)
++
++    def drop_torn_entry(self, *, expected: int, by: str) -> Entry:
++        """Cut an incomplete last entry off and record who confirmed it. `expected` is the
++        intact position the person was shown. Refused if the last entry is not torn, or
++        if the chain is broken before it (that is tampering, not a torn write)."""
++        if not isinstance(by, str) or not by.strip():
++            raise ValueError("a name is required to drop a torn entry")
++        with self.writer():
++            check = self.verify()
++            if not check.torn:
++                if check.ok:
++                    raise CaseLogBroken(self.path, check.head.position + 1, "does not exist: nothing is torn", False)
++                raise CaseLogBroken(self.path, check.first_bad, check.reason, False)
++            if check.head.position != expected:
++                raise LogConflict(expected, check.head.position)
++            # Write the intact prefix plus the drop entry to a temporary file and rename it
++            # over the log, so a crash leaves either the torn log or the repaired one, never
++            # a truncated log with no record of who dropped the entry. A crash after the
++            # rename and before the head file is replaced leaves the drop entry itself
++            # unrecorded: the log loads as torn at the same entry, and dropping it again
++            # repairs it.
++            intact = self.path.read_bytes()[: check.intact_bytes]
++            entry, line = self._encode(TORN_DROPPED, {"seq": check.first_bad, "by": by.strip()}, check.head)
++            tmp = self.path.with_name(self.path.name + ".tmp")
++            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
++            try:
++                _write_all(fd, intact + line)
++                os.fsync(fd)
++            finally:
++                os.close(fd)
++            try:
++                os.replace(tmp, self.path)
++            except OSError:
++                tmp.unlink(missing_ok=True)
++                raise
++            _fsync_dir(self.path.parent)
++            self._write_head([*(e.hash for e in check.entries), entry.hash])
++            return entry
++
++    @staticmethod
++    def _encode(event: str, data: dict[str, Any], head: Head) -> tuple[Entry, bytes]:
++        """The entry and its line. The line is checked as every reader will check it, so
++        the hash is over exactly the bytes written, and the Entry returned is the one read
++        back from them."""
++        body = {"seq": head.position + 1, "prev": head.hash, "at": _utc_now(), "event": event, "data": data}
++        line = _canonical({**body, "hash": entry_hash(body)})
++        entry, reason = _parse(line, head.position + 1, head.hash)
++        if entry is None:  # pragma: no cover - only if the encoder and the reader disagree
++            raise CaseLogError(f"{reason}; nothing was written")
++        return entry, line + b"\n"
++
++    def _write_head(self, hashes: list[str]) -> None:
++        """Replace the head file in one rename, after the last entry it names is on disk."""
++        tmp = self.head_path.with_name(self.head_path.name + ".tmp")
++        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
++        try:
++            _write_all(fd, _head_bytes(hashes))
++            os.fsync(fd)
++        finally:
++            os.close(fd)
++        try:
++            os.replace(tmp, self.head_path)
++        except OSError:
++            tmp.unlink(missing_ok=True)
++            raise
++        _fsync_dir(self.head_path.parent)
++
++    def _write(self, event: str, data: dict[str, Any], check: LogCheck) -> Entry:
++        entry, line = self._encode(event, data, check.head)
++        created = not self.path.exists()
++        fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
++        try:
++            _write_all(fd, line)
++            os.fsync(fd)
++        finally:
++            os.close(fd)
++        if created:
++            _fsync_dir(self.path.parent)  # make the new file's name durable too
++        self._write_head([*(e.hash for e in check.entries), entry.hash])
++        return entry
++
++
++def _write_all(fd: int, data: bytes) -> None:
++    view = memoryview(data)
++    while view:  # one call in practice; loop on a short write
++        view = view[os.write(fd, view):]
++
++
++def _fsync_dir(path: Path) -> None:
++    if os.name == "nt":  # pragma: no cover - Windows cannot open a directory for fsync
++        return
++    fd = os.open(path, os.O_RDONLY)
++    try:
++        os.fsync(fd)
++    finally:
++        os.close(fd)
++
++
++if os.name == "nt":  # pragma: no cover - exercised on Windows only
++    import msvcrt
++
++    # msvcrt.locking reports a region another process holds as EACCES or EDEADLOCK.
++    _CONTENDED = {errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)}
++
++    def _lock(fd: int) -> None:
++        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
++
++    def _unlock(fd: int) -> None:
++        os.lseek(fd, 0, os.SEEK_SET)
++        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
++
++else:
++    import fcntl
++
++    # flock with LOCK_NB reports a lock another process holds as EWOULDBLOCK (EAGAIN).
++    _CONTENDED = {errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES}
++
++    def _lock(fd: int) -> None:
++        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
++
++    def _unlock(fd: int) -> None:
++        fcntl.flock(fd, fcntl.LOCK_UN)
++
++
++LOG_NAME = "log.jsonl"
++
++
++def for_case(folder: Path | str) -> CaseLog:
++    """The case log of a case folder (cases/<id>/log.jsonl)."""
++    return CaseLog(Path(folder) / LOG_NAME)
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index 671ee6d..29b6535 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -24,6 +24,8 @@ from .policy import PolicyError
+ app = typer.Typer(no_args_is_help=True, add_completion=False)
+ import_app = typer.Typer(no_args_is_help=True, help="Convert a bank export into a statement CSV.")
+ app.add_typer(import_app, name="import")
++case_app = typer.Typer(no_args_is_help=True, help="Work with a case folder.")
++app.add_typer(case_app, name="case")
+ console = Console()
+ 
+ 
+@@ -303,6 +305,26 @@ def import_monzo(
+     console.print("Check the closing balance against your Monzo app before trusting any metric.")
+ 
+ 
++@case_app.command("check")
++def case_check(folder: Path = typer.Argument(..., help="The case folder (cases/<id>).")):
++    """Load a case's log and check its hash chain against its head file (R43).
++
++    Exit 0 when it is intact, 3 when an entry was changed, removed, reordered or not
++    finished, naming the first bad entry. Entries are named by number, never quoted."""
++    from . import case
++
++    if not folder.is_dir():
++        console.print(f"[red]No case folder at {folder}.[/red]")
++        raise typer.Exit(code=2)
++    check = case.for_case(folder).verify()
++    if not check.ok:
++        console.print(f"[red]Case log broken:[/red] entry {check.first_bad} {check.reason}.")
++        console.print("Nothing may be recorded or signed off on this case until it is resolved.")
++        raise typer.Exit(code=3)
++    note = "; another window or command is appending" if check.in_progress else ""
++    console.print(f"case log intact: {check.head.position} entries, head {check.head.hash[:12]}{note}")
++
++
+ @app.command()
+ def truth(path: Path):
+     """Print the ground truth for a generated statement."""
+diff --git a/tests/test_case_log.py b/tests/test_case_log.py
+new file mode 100644
+index 0000000..528ab06
+--- /dev/null
++++ b/tests/test_case_log.py
+@@ -0,0 +1,1063 @@
++"""The case log: hash-chained, append-only, one writer at a time (R42, R43; property P15).
++
++P15: for any case log, changing, removing or reordering any entry before the head is
++detected on the next load. The logs here are small enough to try every entry and every
++kind of tamper exhaustively, which is the property over all logs of those sizes.
++"""
++
++import json
++import os
++
++import pytest
++
++from cma import case
++
++EVENTS = ["import", "profile_change", "override", "preview", "pack_write", "sign_off"]
++
++
++def _log(tmp_path, n):
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    for i in range(n):
++        log.append(EVENTS[i % len(EVENTS)], {"n": i, "file": f"h{i}"}, expected=i)
++    return log
++
++
++def _lines(log):
++    return log.path.read_text(encoding="utf-8").splitlines(keepends=True)
++
++
++def _write(log, lines):
++    log.path.write_text("".join(lines), encoding="utf-8")
++
++
++def _write_head(log, hashes):
++    log.head_path.write_text(json.dumps({"count": len(hashes), "hash": hashes[-1] if hashes else case.GENESIS,
++                                         "hashes": hashes}, sort_keys=True,
++                                        separators=(",", ":")) + "\n", encoding="utf-8")
++
++
++def _crash_mid_append(log, monkeypatch, cut):
++    """Append one more entry, losing power after `cut` bytes of its line reach the disk:
++    the line has no newline and the head file was never updated."""
++    real = case._write_all
++
++    def torn(fd, data):
++        real(fd, data[:cut])
++        raise OSError("power lost")
++
++    monkeypatch.setattr(case, "_write_all", torn)
++    with pytest.raises(OSError):
++        log.append("override", {"n": 99}, expected=log.require_intact().position)
++    monkeypatch.undo()
++
++
++# --- appending -------------------------------------------------------------------------
++
++
++def test_each_entry_carries_the_hash_of_the_entry_before_it(tmp_path):
++    log = _log(tmp_path, 3)
++    entries = [json.loads(line) for line in _lines(log)]
++    assert [e["seq"] for e in entries] == [1, 2, 3]
++    assert entries[0]["prev"] == case.GENESIS
++    assert entries[1]["prev"] == entries[0]["hash"]
++    assert entries[2]["prev"] == entries[1]["hash"]
++    head = log.require_intact()
++    assert (head.position, head.hash) == (3, entries[2]["hash"])
++
++
++def test_append_returns_the_new_head_and_stamps_utc_time(tmp_path):
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    entry = log.append("import", {"file": "abc"}, expected=0)
++    assert entry.seq == 1 and entry.event == "import" and entry.data == {"file": "abc"}
++    assert entry.at.endswith("Z")
++    assert log.verify().head.position == 1
++
++
++def test_empty_or_missing_log_is_intact_at_position_zero(tmp_path):
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    head = log.require_intact()
++    assert (head.position, head.hash) == (0, case.GENESIS)
++
++
++def test_stale_expected_position_is_a_conflict_and_writes_nothing(tmp_path):
++    log = _log(tmp_path, 2)
++    before = log.path.read_bytes()
++    with pytest.raises(case.LogConflict) as e:
++        log.append("override", {"line": "T1"}, expected=1)
++    assert (e.value.expected, e.value.actual) == (1, 2)
++    assert log.path.read_bytes() == before
++
++
++def test_a_second_writer_is_refused_while_the_lock_is_held(tmp_path):
++    log = _log(tmp_path, 1)
++    other = case.CaseLog(log.path)
++    with log.writer(), pytest.raises(case.CaseLocked):
++        other.append("override", {}, expected=1)
++    other.append("override", {}, expected=1)  # released
++    assert log.require_intact().position == 2
++
++
++def test_append_refuses_a_broken_log(tmp_path):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    _write(log, [lines[0], lines[2]])
++    with pytest.raises(case.CaseLogBroken):
++        log.append("override", {}, expected=2)
++
++
++def test_event_and_data_are_checked(tmp_path):
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    with pytest.raises(ValueError):
++        log.append("", {}, expected=0)
++    with pytest.raises(ValueError):
++        log.append("import", ["not", "a", "dict"], expected=0)
++    assert not log.path.exists() or log.path.read_bytes() == b""
++
++
++# --- P15: tamper anywhere before the head is detected, and the first bad entry named ---
++
++
++def _change(entry, field):
++    e = dict(entry)
++    if field == "data":
++        e["data"] = {**e["data"], "n": e["data"]["n"] + 1000}
++    elif field == "event":
++        e["event"] = "sign_off" if e["event"] != "sign_off" else "import"
++    elif field == "at":
++        e["at"] = "2000-01-01T00:00:00Z"
++    elif field == "prev":
++        e["prev"] = "f" * 64
++    elif field == "seq":
++        e["seq"] = e["seq"] + 7
++    elif field == "hash":
++        e["hash"] = "0" * 63 + "1"
++    return e
++
++
++def _dump(entry):
++    return json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
++
++
++SIZES = range(2, 7)
++FIELDS = ["data", "event", "at", "prev", "seq", "hash"]
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("n", SIZES)
++@pytest.mark.parametrize("field", FIELDS)
++def test_p15_changing_any_entry_before_the_head_is_detected(tmp_path, n, field):
++    log = _log(tmp_path, n)
++    original = _lines(log)
++    for k in range(n - 1):  # every entry before the head
++        lines = list(original)
++        lines[k] = _dump(_change(json.loads(lines[k]), field))
++        _write(log, lines)
++        check = case.CaseLog(log.path).verify()
++        assert not check.ok and not check.torn
++        assert check.first_bad == k + 1, (field, k)
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("n", SIZES)
++def test_p15_changing_an_entry_and_recomputing_its_hash_is_detected_at_that_entry(tmp_path, n):
++    log = _log(tmp_path, n)
++    original = _lines(log)
++    for k in range(n - 1):
++        e = json.loads(original[k])
++        e["data"] = {"n": -1}
++        e["hash"] = case.entry_hash(e)
++        lines = list(original)
++        lines[k] = _dump(e)
++        _write(log, lines)
++        check = log.verify()
++        assert not check.ok
++        assert check.first_bad == k + 1  # its hash is not the one the head file recorded
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("n", SIZES)
++def test_p15_removing_any_entry_before_the_head_is_detected(tmp_path, n):
++    log = _log(tmp_path, n)
++    original = _lines(log)
++    for k in range(n - 1):
++        _write(log, original[:k] + original[k + 1:])
++        check = log.verify()
++        assert not check.ok and not check.torn
++        assert check.first_bad == k + 1
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("n", SIZES)
++def test_p15_reordering_any_entries_before_the_head_is_detected(tmp_path, n):
++    log = _log(tmp_path, n)
++    original = _lines(log)
++    for i in range(n):
++        for j in range(i + 1, n):
++            lines = list(original)
++            lines[i], lines[j] = lines[j], lines[i]
++            _write(log, lines)
++            check = log.verify()
++            assert not check.ok
++            assert check.first_bad == i + 1, (i, j)
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("n", SIZES)
++def test_p15_inserting_an_entry_before_the_head_is_detected(tmp_path, n):
++    log = _log(tmp_path, n)
++    original = _lines(log)
++    for k in range(n):
++        lines = [*original[:k], original[k], *original[k:]]  # a duplicated entry
++        _write(log, lines)
++        check = log.verify()
++        assert not check.ok
++        assert check.first_bad == k + 2
++
++
++def test_a_garbled_line_before_the_head_is_broken_not_torn(tmp_path):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    _write(log, [lines[0], "{not json\n", lines[2]])
++    check = log.verify()
++    assert not check.ok and not check.torn and check.first_bad == 2
++
++
++def test_the_message_names_the_first_bad_entry_and_holds_no_entry_content(tmp_path):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    e = json.loads(lines[1])
++    e["data"] = {"secret": "ACME LTD"}
++    _write(log, [lines[0], _dump(e), lines[2]])
++    with pytest.raises(case.CaseLogBroken) as err:
++        log.require_intact()
++    assert err.value.first_bad == 2
++    assert "entry 2" in str(err.value)
++    assert "ACME" not in str(err.value)
++
++
++# --- a torn last entry (power lost mid-write) ------------------------------------------
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("cut", [1, 10, -2, -1])
++def test_p15_torn_last_entry_is_detected_and_named(tmp_path, monkeypatch, cut):
++    log = _log(tmp_path, 2)
++    _crash_mid_append(log, monkeypatch, cut)  # no newline: the write never finished
++    check = log.verify()
++    assert not check.ok and check.torn and check.first_bad == 3
++    assert check.head.position == 2  # the intact part
++    with pytest.raises(case.CaseLogBroken) as err:
++        log.require_intact()
++    assert err.value.torn and "entry 3" in str(err.value) and "incomplete" in str(err.value)
++
++
++@pytest.mark.invariants
++def test_p15_a_lock_error_is_not_a_live_writer_so_a_torn_entry_is_still_reported(tmp_path, monkeypatch):
++    # T12 review verify-28: a lock subsystem error (here ENOLCK) was treated as another
++    # writer holding the lock, so a torn log was reported as its intact prefix.
++    import errno
++    log = _log(tmp_path, 2)
++    _crash_mid_append(log, monkeypatch, 5)
++    monkeypatch.setattr(case, "READ_PAUSE", 0)
++
++    def broken_lock(fd):
++        raise OSError(errno.ENOLCK, "no locks available")
++
++    monkeypatch.setattr(case, "_lock", broken_lock)
++    with pytest.raises(OSError) as err, log.writer():
++        pass
++    assert not isinstance(err.value, case.CaseLocked)
++    check = log.verify()
++    assert not check.ok and check.torn and check.first_bad == 3
++
++
++@pytest.mark.invariants
++def test_p15_a_contended_lock_still_reads_as_another_writer(tmp_path, monkeypatch):
++    import errno
++    log = _log(tmp_path, 1)
++
++    def held(fd):
++        raise OSError(errno.EWOULDBLOCK, "held")
++
++    monkeypatch.setattr(case, "_lock", held)
++    with pytest.raises(case.CaseLocked), log.writer():
++        pass
++
++
++@pytest.mark.invariants
++def test_p15_a_failed_unlock_still_releases_the_lock(tmp_path, monkeypatch):
++    # T12 review: if the explicit unlock raised, the descriptor was never closed, so the
++    # lock stayed held and blocked later appends until the process exited.
++    import errno
++    log = _log(tmp_path, 1)
++    closed = []
++    real_close = os.close
++
++    def broken_unlock(fd):
++        raise OSError(errno.EIO, "unlock failed")
++
++    def tracking_close(fd):
++        closed.append(fd)
++        real_close(fd)
++
++    monkeypatch.setattr(case, "_unlock", broken_unlock)
++    monkeypatch.setattr(case.os, "close", tracking_close)
++    with log.writer():
++        held = log._lock_fd
++    assert held in closed and log._lock_fd is None
++    monkeypatch.undo()
++    other = case.CaseLog(log.path)  # a fresh handle, as another command would open
++    other.append("override", {}, expected=1)
++    assert len(other.entries()) == 2
++
++
++@pytest.mark.invariants
++@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX only")
++def test_p15_a_forked_child_cannot_write_on_its_parents_lock(tmp_path):
++    # T12 review: the owner was the thread ident alone, which a forked child inherits,
++    # so the child entered the writer without a lock and both could append at seq 2.
++    log = _log(tmp_path, 1)
++    with log.writer():
++        pid = os.fork()
++        if pid == 0:  # the child: report through the exit code only
++            try:
++                with log.writer():
++                    os._exit(1)
++            except case.CaseLocked:
++                os._exit(0)
++            except BaseException:
++                os._exit(2)
++        _, status = os.waitpid(pid, 0)
++    assert os.waitstatus_to_exitcode(status) == 0
++    assert len(log.entries()) == 1
++
++
++@pytest.mark.invariants
++@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX only")
++def test_p15_a_forked_child_leaving_the_writer_does_not_release_its_parents_lock(tmp_path):
++    # T12 review: a child forked inside a writer block ran the block's cleanup on the way
++    # out and unlocked the shared open file, so the parent wrote on without its lock.
++    log = _log(tmp_path, 1)
++    pid = None
++    try:
++        with log.writer():
++            pid = os.fork()
++            if pid:
++                _, status = os.waitpid(pid, 0)
++                assert os.waitstatus_to_exitcode(status) == 0
++                with pytest.raises(case.CaseLocked), case.CaseLog(log.path).writer():
++                    pass
++    finally:
++        if pid == 0:  # the child left the block normally; report and stop here
++            os._exit(0)
++    with case.CaseLog(log.path).writer():  # released once the parent leaves
++        pass
++
++
++@pytest.mark.invariants
++@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX only")
++def test_p15_a_forked_child_writes_once_its_parent_has_released_the_lock(tmp_path):
++    # Ownership inherited from the parent is dropped in the child, so it is not refused
++    # for ever: it takes its own lock, which is free once the parent has left.
++    log = _log(tmp_path, 1)
++    go_r, go_w = os.pipe()
++    with log.writer():
++        pid = os.fork()
++        if pid == 0:
++            code = 2
++            try:
++                os.close(go_w)
++                os.read(go_r, 1)  # wait until the parent has released
++                log.append("override", {}, expected=1)
++                code = 0
++            finally:
++                os._exit(code)
++        os.close(go_r)
++    os.write(go_w, b"x")
++    os.close(go_w)
++    _, status = os.waitpid(pid, 0)
++    assert os.waitstatus_to_exitcode(status) == 0
++    assert len(log.entries()) == 2
++
++
++@pytest.mark.invariants
++@pytest.mark.skipif(not hasattr(os, "register_at_fork"), reason="fork is POSIX only")
++def test_p15_a_fork_while_another_thread_holds_the_state_lock_does_not_hang_the_child(tmp_path):
++    import signal
++    log = _log(tmp_path, 1)
++    log._state.acquire()  # as another thread would, mid-check, at the moment of the fork
++    try:
++        pid = os.fork()
++        if pid == 0:
++            code = 2
++            try:
++                signal.alarm(5)  # a hang ends the child with SIGALRM instead of passing
++                log.append("override", {}, expected=1)
++                code = 0
++            finally:
++                os._exit(code)
++    finally:
++        log._state.release()
++    _, status = os.waitpid(pid, 0)
++    assert os.waitstatus_to_exitcode(status) == 0
++    assert len(log.entries()) == 2
++
++
++def test_torn_last_entry_blocks_appends_until_dropped(tmp_path, monkeypatch):
++    log = _log(tmp_path, 2)
++    lines = _lines(log)
++    _crash_mid_append(log, monkeypatch, 15)
++    with pytest.raises(case.CaseLogBroken):
++        log.append("override", {}, expected=2)
++    log.drop_torn_entry(expected=2, by="A. Underwriter")
++    head = log.require_intact()
++    entries = log.entries()
++    assert head.position == 3
++    assert entries[-1].event == "torn_entry_dropped"
++    assert entries[-1].data == {"seq": 3, "by": "A. Underwriter"}
++    assert entries[-1].prev == json.loads(lines[1])["hash"]
++
++
++def test_drop_torn_entry_refuses_when_nothing_is_torn_or_the_chain_is_broken(tmp_path):
++    log = _log(tmp_path, 3)
++    with pytest.raises(case.CaseLogBroken):
++        log.drop_torn_entry(expected=3, by="A")
++    lines = _lines(log)
++    _write(log, [lines[1], lines[0], lines[2][:5]])  # broken before the torn tail
++    _write_head(log, [])
++    with pytest.raises(case.CaseLogBroken) as err:
++        log.drop_torn_entry(expected=0, by="A")
++    assert not err.value.torn and err.value.first_bad == 1
++
++
++def test_a_crash_before_the_rename_while_dropping_leaves_the_torn_log_unchanged(tmp_path, monkeypatch):
++    log = _log(tmp_path, 2)
++    _crash_mid_append(log, monkeypatch, 15)
++    before = log.path.read_bytes()
++
++    def crash(*_a, **_k):
++        raise OSError("power lost")
++
++    monkeypatch.setattr(case.os, "replace", crash)
++    with pytest.raises(OSError):
++        log.drop_torn_entry(expected=2, by="A. Underwriter")
++    assert log.path.read_bytes() == before  # still torn, still names entry 3
++    assert log.verify().torn and log.verify().first_bad == 3
++    assert not (tmp_path / "log.jsonl.tmp").exists()
++    monkeypatch.undo()
++    log.drop_torn_entry(expected=2, by="A. Underwriter")
++    assert log.require_intact().position == 3
++
++
++def test_data_that_is_not_strict_json_is_refused(tmp_path):
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    for bad in ({"x": float("nan")}, {"x": float("inf")}, {"x": object()}):
++        with pytest.raises(ValueError):
++            log.append("override", bad, expected=0)
++    assert not log.path.exists()
++
++
++def test_new_log_and_lock_files_are_private_to_their_owner(tmp_path):
++    import stat
++
++    if os.name == "nt":
++        pytest.skip("POSIX permissions")
++    log = _log(tmp_path, 1)
++    assert stat.S_IMODE(log.path.stat().st_mode) & 0o077 == 0
++    assert stat.S_IMODE(log.lock_path.stat().st_mode) & 0o077 == 0
++    assert stat.S_IMODE(log.head_path.stat().st_mode) & 0o077 == 0
++
++
++# --- hardener round 17 -----------------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_retrying_an_append_that_already_succeeded_writes_nothing_twice(tmp_path):
++    # The expected position is the idempotency key: a client that lost the reply and
++    # retries the same write gets a conflict, not a second copy of the entry.
++    log = _log(tmp_path, 1)
++    log.append("override", {"line": "T1"}, expected=1)
++    before = (log.path.read_bytes(), log.head_path.read_bytes())
++    with pytest.raises(case.LogConflict):
++        log.append("override", {"line": "T1"}, expected=1)
++    assert (log.path.read_bytes(), log.head_path.read_bytes()) == before
++
++
++def test_data_with_text_that_is_not_utf8_encodable_is_refused(tmp_path):
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    with pytest.raises(ValueError):
++        log.append("override", {"reason": "\ud800"}, expected=0)
++    assert not log.path.exists()
++
++
++@pytest.mark.invariants
++def test_p15_a_complete_last_entry_without_its_newline_is_still_torn(tmp_path, monkeypatch):
++    log = _log(tmp_path, 1)
++    _crash_mid_append(log, monkeypatch, -1)
++    check = log.verify()
++    assert check.torn and check.first_bad == 2
++
++
++def test_the_lock_holds_against_another_process(tmp_path):
++    import subprocess
++    import sys
++
++    log = _log(tmp_path, 1)
++    script = (
++        "import sys; from cma import case\n"
++        "try:\n"
++        "    case.CaseLog(sys.argv[1]).append('override', {}, expected=1)\n"
++        "except case.CaseLocked:\n"
++        "    sys.exit(3)\n"
++    )
++    # The child must import this checkout's cma, not whatever is installed: put the
++    # directory that holds the imported package first on its path.
++    from pathlib import Path
++
++    env = {**os.environ, "PYTHONPATH": os.pathsep.join(
++        [str(Path(case.__file__).resolve().parents[1]), os.environ.get("PYTHONPATH", "")])}
++    run = [sys.executable, "-c", script, str(log.path)]
++    with log.writer():
++        held = subprocess.run(run, check=False, env=env, capture_output=True, text=True)
++    assert held.returncode == 3, held.stderr
++    free = subprocess.run(run, check=False, env=env, capture_output=True, text=True)
++    assert free.returncode == 0, free.stderr
++    assert log.require_intact().position == 2
++
++
++# --- findings from verification round 3 ------------------------------------------------
++
++
++def _sharing_threads_race(log, gate_name):
++    """Two threads share one CaseLog at position 1; the first pauses inside the lock."""
++    import threading
++
++    inside, release = threading.Event(), threading.Event()
++    real = getattr(log, gate_name)
++
++    def paused(*a, **k):
++        if threading.current_thread().name == "first":
++            inside.set()
++            release.wait(5)
++        return real(*a, **k)
++
++    setattr(log, gate_name, paused)
++    results = {}
++
++    def go(name):
++        try:
++            results[name] = log.append("override", {"by": name}, expected=1)
++        except case.CaseLogError as e:
++            results[name] = e
++
++    first = threading.Thread(target=go, args=("first",), name="first")
++    first.start()
++    assert inside.wait(5)
++    second = threading.Thread(target=go, args=("second",), name="second")
++    second.start()
++    second.join(5)
++    release.set()
++    first.join(5)
++    return results
++
++
++def test_threads_sharing_one_instance_do_not_share_the_lock(tmp_path):
++    log = _log(tmp_path, 1)
++    results = _sharing_threads_race(log, "_write")
++    assert isinstance(results["first"], case.Entry)
++    assert isinstance(results["second"], case.CaseLocked)
++    check = log.verify()
++    assert check.ok and check.head.position == 2
++
++
++def test_a_lock_held_by_one_thread_is_not_reentered_by_another(tmp_path):
++    import threading
++
++    log = _log(tmp_path, 1)
++    got = {}
++    with log.writer():
++        t = threading.Thread(target=lambda: got.setdefault("r", _try_append(log)))
++        t.start()
++        t.join(5)
++        log.append("override", {}, expected=1)  # the holder may still nest
++    assert isinstance(got["r"], case.CaseLocked)
++    assert log.require_intact().position == 2
++
++
++def _try_append(log):
++    try:
++        return log.append("override", {}, expected=1)
++    except case.CaseLogError as e:
++        return e
++
++
++@pytest.mark.invariants
++def test_p15_a_duplicate_member_hiding_a_change_before_the_head_is_detected(tmp_path):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    # A second "event" member placed before the real one: a lenient decoder keeps the
++    # last value, so the hash still matches, but the bytes say something else first.
++    lines[1] = lines[1].replace('"event":', '"event":"sign_off","event":', 1)
++    _write(log, lines)
++    check = log.verify()
++    assert not check.ok and not check.torn and check.first_bad == 2
++
++
++@pytest.mark.parametrize("token", ["1e999", "-1e999", "NaN", "Infinity", "-Infinity"])
++def test_a_non_finite_number_in_a_complete_entry_is_named_not_raised(tmp_path, token):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    e = json.loads(lines[1])
++    lines[1] = _dump({**e, "data": {"x": 0}}).replace('{"x":0}', '{"x":' + token + "}")
++    _write(log, lines)
++    check = log.verify()
++    assert not check.ok and not check.torn and check.first_bad == 2
++    with pytest.raises(case.CaseLogBroken) as err:
++        log.require_intact()
++    assert err.value.first_bad == 2
++
++
++def test_deeply_nested_data_in_a_complete_entry_is_named_not_raised(tmp_path):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    e = json.loads(lines[1])
++    deep = "[" * 100_000 + "]" * 100_000
++    lines[1] = _dump({**e, "data": {"x": 0}}).replace('{"x":0}', '{"x":' + deep + "}")
++    _write(log, lines)
++    check = log.verify()
++    assert not check.ok and check.first_bad == 2
++
++
++def test_an_entry_not_in_canonical_form_is_named(tmp_path):
++    log = _log(tmp_path, 3)
++    lines = _lines(log)
++    e = json.loads(lines[1])
++    lines[1] = json.dumps(e, sort_keys=True) + "\n"  # same members, other spacing
++    _write(log, lines)
++    check = log.verify()
++    assert not check.ok and not check.torn and check.first_bad == 2
++
++
++# --- hardener round 9 ----------------------------------------------------------------
++
++
++@pytest.mark.parametrize("bad", [{"a": (1, 2)}, {"m": {1: "z"}}, {"m": {True: "z"}}, {"m": {None: 1}}])
++def test_data_that_would_not_read_back_unchanged_is_refused(tmp_path, bad):
++    # json.dumps quietly turns tuples into lists and 1/True/None keys into strings, so the
++    # Entry append returned would not be the entry every later reader sees.
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    with pytest.raises(ValueError):
++        log.append("override", bad, expected=0)
++    assert not log.path.exists()
++
++
++def test_the_entry_append_returns_is_the_entry_read_back(tmp_path):
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    written = log.append("override", {"a": [1, 2.5, None, True], "m": {"k": "v"}, "s": "é"}, expected=0)
++    assert log.entries() == [written]
++
++
++# --- the head file (head hash and count), compared on load -----------------------------
++
++
++def test_each_append_records_the_head_hash_and_count(tmp_path):
++    log = _log(tmp_path, 3)
++    head = json.loads(log.head_path.read_text(encoding="utf-8"))
++    hashes = [json.loads(line)["hash"] for line in _lines(log)]
++    assert head == {"count": 3, "hash": hashes[2], "hashes": hashes}
++
++
++def _rebuild(entries):
++    """Rewrite a chain from scratch so every hash and every link is consistent again."""
++    out, prev = [], case.GENESIS
++    for seq, e in enumerate(entries, start=1):
++        body = {"seq": seq, "prev": prev, "at": e["at"], "event": e["event"], "data": e["data"]}
++        body["hash"] = case.entry_hash(body)
++        out.append(_dump(body))
++        prev = body["hash"]
++    return out
++
++
++def _chain_alone_holds(lines, tmp_path):
++    """The rebuilt lines, with a head file of their own, load as an intact log."""
++    alone = case.CaseLog(tmp_path / "alone" / "log.jsonl")
++    alone.path.parent.mkdir(exist_ok=True)
++    _write(alone, lines)
++    _write_head(alone, [json.loads(line)["hash"] for line in lines])
++    return alone.verify().ok
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("n", SIZES)
++def test_p15_a_rebuilt_chain_that_does_not_match_the_head_file_is_detected(tmp_path, n):
++    log = _log(tmp_path, n)
++    original = [json.loads(line) for line in _lines(log)]
++    for k in range(n - 1):  # change, remove, or reorder at entry k+1, then rebuild
++        changed = [dict(e) for e in original]
++        changed[k]["data"] = {"n": -1}
++        removed = original[:k] + original[k + 1:]
++        reordered = list(original)
++        reordered[k], reordered[k + 1] = reordered[k + 1], reordered[k]
++        for kind, entries in (("changed", changed), ("removed", removed), ("reordered", reordered)):
++            rebuilt = _rebuild(entries)
++            assert _chain_alone_holds(rebuilt, tmp_path), (kind, k)  # every link is consistent
++            _write(log, rebuilt)
++            check = case.CaseLog(log.path).verify()
++            assert not check.ok and not check.torn, (kind, k)
++            # The history diverges at entry k+1: that entry is named, and only the entries
++            # before it, unchanged, are returned as the intact prefix.
++            assert check.first_bad == k + 1, (kind, k)
++            assert check.head.position == k, (kind, k)
++            assert [e.hash for e in check.entries] == [e["hash"] for e in original[:k]], (kind, k)
++            with pytest.raises(case.CaseLogBroken) as err:
++                case.CaseLog(log.path).require_intact()
++            assert err.value.first_bad == k + 1 and "head file" in str(err.value), (kind, k)
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("n", SIZES)
++def test_p15_a_rebuilt_chain_with_any_entry_removed_names_that_entry(tmp_path, n):
++    # The reviewer's case: remove entry k, renumber and rehash the survivors, leave the
++    # head file alone. The log is one entry short, but the first bad entry is k, not n.
++    log = _log(tmp_path, n)
++    original = [json.loads(line) for line in _lines(log)]
++    for k in range(n):
++        _write(log, _rebuild(original[:k] + original[k + 1:]))
++        check = case.CaseLog(log.path).verify()
++        expected = k + 1  # entry k+1 now holds what was entry k+2, or is missing if k was last
++        assert not check.ok and not check.torn and check.first_bad == expected, k
++        assert len(check.entries) == k
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("n", SIZES)
++def test_p15_removing_the_head_entry_is_detected_against_the_head_file(tmp_path, n):
++    log = _log(tmp_path, n)
++    _write(log, _lines(log)[:-1])
++    check = case.CaseLog(log.path).verify()
++    assert not check.ok and not check.torn and check.first_bad == n
++
++
++@pytest.mark.invariants
++def test_p15_an_entry_added_after_the_recorded_head_is_detected(tmp_path):
++    log = _log(tmp_path, 3)
++    _write_head(log, [json.loads(_lines(log)[0])["hash"]])
++    check = log.verify()
++    assert not check.ok and not check.torn and check.first_bad == 2
++
++
++@pytest.mark.invariants
++def test_p15_a_missing_or_unreadable_head_file_is_detected(tmp_path):
++    log = _log(tmp_path, 3)
++    log.head_path.unlink()
++    check = log.verify()
++    assert not check.ok and not check.torn and check.first_bad == 1
++    assert "head file" in check.reason and "missing" in check.reason
++    log.head_path.write_text("{not json\n", encoding="utf-8")
++    check = log.verify()
++    assert not check.ok and "head file" in check.reason
++
++
++@pytest.mark.invariants
++def test_p15_an_entry_written_but_not_recorded_in_the_head_file_is_torn(tmp_path, monkeypatch):
++    # Power lost after the line reached the disk but before the head file was replaced.
++    log = _log(tmp_path, 2)
++    monkeypatch.setattr(case.CaseLog, "_write_head", lambda *_a: (_ for _ in ()).throw(OSError("power lost")))
++    with pytest.raises(OSError):
++        log.append("override", {"n": 99}, expected=2)
++    monkeypatch.undo()
++    check = log.verify()
++    assert check.torn and check.first_bad == 3 and check.head.position == 2
++    log.drop_torn_entry(expected=2, by="A. Underwriter")
++    entries = log.entries()
++    assert len(entries) == 3 and entries[-1].event == case.TORN_DROPPED
++
++
++def test_a_reader_during_an_append_does_not_report_a_torn_entry(tmp_path, monkeypatch):
++    # The line is on disk, the head file not yet: another reader retries rather than alarm.
++    import threading
++
++    log = _log(tmp_path, 2)
++    reader = case.CaseLog(log.path)
++    real = case.CaseLog._write_head
++    seen = {}
++
++    def slow_head(self, head):
++        t = threading.Thread(target=lambda: seen.setdefault("check", reader.verify()))
++        t.start()
++        t.join(0.03)  # the reader runs while the head file is still behind
++        real(self, head)
++        t.join(5)
++
++    monkeypatch.setattr(case.CaseLog, "_write_head", slow_head)
++    log.append("override", {"n": 99}, expected=2)
++    assert seen["check"].ok and seen["check"].head.position == 3
++
++
++def test_data_changed_by_another_thread_mid_append_cannot_break_the_entry(tmp_path, monkeypatch):
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    shared = {"v": 1}
++    real = case.entry_hash
++
++    def racing(entry):
++        h = real(entry)
++        shared["v"] = 2  # another thread changes the caller's dict after hashing
++        return h
++
++    monkeypatch.setattr(case, "entry_hash", racing)
++    written = log.append("override", shared, expected=0)
++    monkeypatch.undo()
++    assert log.require_intact().position == 1
++    assert log.entries() == [written] and written.data == {"v": 1}
++
++
++# --- findings from verification round 19 -----------------------------------------------
++
++
++def test_a_reader_never_reports_a_live_append_as_torn_however_long_the_writer_pauses(tmp_path, monkeypatch):
++    # The writer's line is on disk and its head file is not, and it stays paused far past
++    # the reader's retry window while still holding the lock.
++    import threading
++
++    log = _log(tmp_path, 2)
++    reader = case.CaseLog(log.path)
++    real = case.CaseLog._write_head
++    on_disk, release = threading.Event(), threading.Event()
++
++    def paused_head(self, hashes):
++        on_disk.set()
++        release.wait(10)
++        real(self, hashes)
++
++    monkeypatch.setattr(case.CaseLog, "_write_head", paused_head)
++    writer = threading.Thread(target=lambda: log.append("override", {"n": 99}, expected=2))
++    writer.start()
++    try:
++        assert on_disk.wait(5)
++        for _ in range(3):  # each verify waits out its whole retry window, the writer still paused
++            check = reader.verify()
++            assert check.ok and not check.torn and check.in_progress
++            assert check.head.position == 2  # the log as recorded
++            reader.require_intact()  # no CaseLogBroken, so nobody is asked to drop it
++    finally:
++        release.set()
++        writer.join(5)
++    check = reader.verify()
++    assert check.ok and not check.in_progress and check.head.position == 3
++
++
++@pytest.mark.invariants
++def test_p15_a_torn_entry_with_the_lock_free_is_still_reported_by_a_reader(tmp_path, monkeypatch):
++    log = _log(tmp_path, 2)
++    _crash_mid_append(log, monkeypatch, 10)
++    check = case.CaseLog(log.path).verify()  # no writer: the reader takes the lock and looks
++    assert check.torn and check.first_bad == 3 and not check.in_progress
++
++
++def test_a_lock_holder_still_sees_a_torn_entry_while_a_reader_sees_it_recorded(tmp_path, monkeypatch):
++    # Sign-off holds the lock: for it a torn entry is torn, whoever else is reading.
++    log = _log(tmp_path, 2)
++    _crash_mid_append(log, monkeypatch, 10)
++    with log.writer():
++        assert log.verify().torn
++        with pytest.raises(case.CaseLogBroken):
++            log.require_intact()
++        assert case.CaseLog(log.path).verify().in_progress
++
++
++def test_a_crash_after_the_rename_while_dropping_leaves_a_torn_log_that_drops_again(tmp_path, monkeypatch):
++    log = _log(tmp_path, 2)
++    _crash_mid_append(log, monkeypatch, 15)
++    monkeypatch.setattr(case.CaseLog, "_write_head", lambda *_a: (_ for _ in ()).throw(OSError("power lost")))
++    with pytest.raises(OSError):
++        log.drop_torn_entry(expected=2, by="A. Underwriter")
++    monkeypatch.undo()
++    # The log bytes changed (the drop entry is on disk), the head file did not: the drop
++    # entry is itself an unrecorded entry 3, still torn and still in the way of appends.
++    check = log.verify()
++    assert check.torn and check.first_bad == 3 and check.head.position == 2
++    with pytest.raises(case.CaseLogBroken):
++        log.append("override", {}, expected=2)
++    log.drop_torn_entry(expected=2, by="A. Underwriter")
++    entries = log.entries()
++    assert len(entries) == 3 and entries[-1].event == case.TORN_DROPPED
++
++
++@pytest.mark.invariants
++def test_p15_a_head_file_that_cannot_be_read_is_named_not_raised(tmp_path):
++    log = _log(tmp_path, 3)
++    log.head_path.unlink()
++    log.head_path.mkdir()  # a read error, not malformed bytes
++    with pytest.raises(case.CaseLogBroken) as err:
++        log.require_intact()
++    assert err.value.first_bad == 1 and "head file" in str(err.value)
++
++
++def test_a_log_file_that_cannot_be_read_is_named_not_raised(tmp_path):
++    log = case.CaseLog(tmp_path / "log.jsonl")
++    log.path.mkdir()
++    with pytest.raises(case.CaseLogBroken) as err:
++        log.require_intact()
++    assert err.value.first_bad == 1
++
++
++@pytest.mark.invariants
++def test_p15_a_head_file_whose_hashes_disagree_with_its_count_or_head_is_unreadable(tmp_path):
++    log = _log(tmp_path, 2)
++    hashes = [json.loads(line)["hash"] for line in _lines(log)]
++    for bad in ({"count": 3, "hash": hashes[1], "hashes": hashes},
++                {"count": 2, "hash": hashes[0], "hashes": hashes},
++                {"count": 2, "hash": hashes[1]}):
++        log.head_path.write_text(json.dumps(bad, sort_keys=True, separators=(",", ":")) + "\n",
++                                 encoding="utf-8")
++        check = log.verify()
++        assert not check.ok and check.first_bad == 1 and "head file" in check.reason
++
++
++# --- findings from verification round 26 -----------------------------------------------
++
++
++def test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing(tmp_path, monkeypatch):
++    # Every read attempt sees a head, then two more committed appends before it reads the
++    # log; on the last attempt another writer also holds the lock, so the reader cannot
++    # take it to look under it. Each extra entry is a complete, recorded append.
++    from contextlib import ExitStack
++
++    log = _log(tmp_path, 2)
++    reader = case.CaseLog(log.path)
++    other, holder = case.CaseLog(log.path), case.CaseLog(log.path)
++    real = case.CaseLog._read_log
++    calls = {"n": 0}
++
++    def busy(self):
++        if self is reader:
++            calls["n"] += 1
++            for _ in range(2):
++                other.append("override", {"n": calls["n"]}, expected=other.require_intact().position)
++            if calls["n"] == case.READ_RETRIES:
++                stack.enter_context(holder.writer())
++        return real(self)
++
++    with ExitStack() as stack:
++        monkeypatch.setattr(case.CaseLog, "_read_log", busy)
++        check = reader.verify()
++    monkeypatch.undo()
++    assert check.ok and not check.torn and check.in_progress
++    assert 2 <= check.head.position <= 2 + 2 * case.READ_RETRIES
++    assert [e.seq for e in check.entries] == list(range(1, check.head.position + 1))
++    assert reader.verify().ok  # once the writers are gone, the whole log is intact
++
++
++def test_a_torn_log_is_still_named_when_the_reader_cannot_create_the_lock_file(tmp_path, monkeypatch):
++    log = _log(tmp_path, 2)
++    _crash_mid_append(log, monkeypatch, 10)
++    log.lock_path.unlink()
++    real_open = case.os.open
++
++    def no_create(path, flags, *a):
++        if os.fspath(path) == os.fspath(log.lock_path):
++            raise PermissionError(13, "Permission denied", os.fspath(path))
++        return real_open(path, flags, *a)
++
++    monkeypatch.setattr(case.os, "open", no_create)
++    with pytest.raises(case.CaseLogBroken) as err:
++        case.CaseLog(log.path).require_intact()
++    assert err.value.first_bad == 3 and err.value.torn
++
++
++# --- loading a case: the production path (cma case check) -------------------------------
++
++
++def _case_dir(tmp_path, n):
++    folder = tmp_path / "cases" / "c1"
++    folder.mkdir(parents=True)
++    log = case.for_case(folder)
++    for i in range(n):
++        log.append(EVENTS[i % len(EVENTS)], {"n": i, "secret": "ACME LTD"}, expected=i)
++    return folder, log
++
++
++def _check_cli(folder):
++    from typer.testing import CliRunner
++
++    from cma.cli import app
++
++    return CliRunner().invoke(app, ["case", "check", str(folder)])
++
++
++def test_loading_a_case_opens_its_log_beside_the_profile(tmp_path):
++    folder, log = _case_dir(tmp_path, 2)
++    assert log.path == folder / "log.jsonl"
++    r = _check_cli(folder)
++    assert r.exit_code == 0, r.output
++    assert "intact" in r.output and "2 entries" in r.output
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("tamper", ["change", "remove", "reorder", "rebuild"])
++def test_p15_loading_a_case_detects_a_tampered_log_and_names_the_first_bad_entry(tmp_path, tamper):
++    folder, log = _case_dir(tmp_path, 4)
++    lines = _lines(log)
++    if tamper == "change":
++        lines[1] = lines[1].replace('"n":1', '"n":7')
++    elif tamper == "remove":
++        del lines[1]
++    elif tamper == "reorder":
++        lines[1], lines[2] = lines[2], lines[1]
++    else:  # every hash and link recomputed with entry 2 changed: only the head file sees it
++        entries = [json.loads(line) for line in lines]
++        entries[1]["data"]["n"] = 7
++        lines = _rebuild(entries)
++    _write(log, lines)
++    r = _check_cli(folder)
++    assert r.exit_code == 3, r.output
++    assert "entry 2" in r.output
++    assert "ACME" not in r.output  # entries are named by number, never quoted
++
++
++@pytest.mark.invariants
++def test_p15_loading_a_case_with_a_torn_last_entry_names_it_and_says_to_confirm_dropping_it(tmp_path, monkeypatch):
++    folder, log = _case_dir(tmp_path, 2)
++    _crash_mid_append(log, monkeypatch, 10)
++    r = _check_cli(folder)
++    assert r.exit_code == 3, r.output
++    assert "entry 3" in r.output and "incomplete" in r.output
++
++
++def test_loading_a_folder_that_is_not_a_case_is_refused(tmp_path):
++    r = _check_cli(tmp_path / "nope")
++    assert r.exit_code == 2
++
++
++# --- hardener round 23: the `cma case check` exit-code contract --------------------------
++
++
++@pytest.mark.contracts
++def test_case_check_exit_codes_are_0_intact_2_not_a_case_3_broken(tmp_path):
++    # A new case folder with no log yet is intact at entry 0 and the check writes nothing.
++    folder = tmp_path / "cases" / "c0"
++    folder.mkdir(parents=True)
++    r = _check_cli(folder)
++    assert r.exit_code == 0 and "0 entries" in r.output, r.output
++    assert sorted(p.name for p in folder.iterdir()) == []
++    # A log that cannot be read is broken (exit 3), named by entry number, not raised.
++    (folder / case.LOG_NAME).mkdir()
++    r = _check_cli(folder)
++    assert r.exit_code == 3 and "entry 1" in r.output, r.output
++    # A path that is a file, not a case folder, is refused (exit 2).
++    stray = tmp_path / "stray.txt"
++    stray.write_text("x", encoding="utf-8")
++    assert _check_cli(stray).exit_code == 2
++
++
++@pytest.mark.contracts
++def test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break(tmp_path, monkeypatch):
++    # A torn tail while another command holds the lock is that command's append landing.
++    folder, log = _case_dir(tmp_path, 2)
++    _crash_mid_append(log, monkeypatch, 10)
++    with case.for_case(folder).writer():
++        r = _check_cli(folder)
++    assert r.exit_code == 0, r.output
++    assert "2 entries" in r.output and "appending" in r.output
++    r = _check_cli(folder)  # the lock free again: the torn entry is named
++    assert r.exit_code == 3 and "entry 3" in r.output and "incomplete" in r.output

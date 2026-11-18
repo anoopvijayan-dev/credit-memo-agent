@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 59,
+  "next_id": 60,
   "decisions": [
     {
       "id": "D1",
@@ -1248,6 +1248,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-18T22:00:17.830Z"
+    },
+    {
+      "id": "D59",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: major: Exiting an inherited writer context can release a lock acquired by another thread in the child. Cleanup checks the current owner's PID against the current process, so it can decrement a lock acquired after the fork by a different context. at src/cma/case.py:446; major: A surviving forked child can retain the writer lock after the writer process dies. The fork hook resets the thread mutex but leaves the child's copy of the flock descriptor open. at src/cma/case.py:320; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-18T22:16:26.314Z"
     }
   ]
 }

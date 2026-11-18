@@ -146,12 +146,12 @@
         "P15"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T12",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-31/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: major: A forked child can release the parent's writer lock by exiting an inherited writer context. The process identity check guards context entry, but the cleanup calls LOCK_UN on the shared open file description without checking the process identity. The parent still considers itself the lock owner. The fork regression test at tests/test_case_log.py:316 uses os._exit and skips this cleanup path. at src/cma/case.py:425; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-33/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: major: Exiting an inherited writer context can release a lock acquired by another thread in the child. Cleanup checks the current owner's PID against the current process, so it can decrement a lock acquired after the fork by a different context. at src/cma/case.py:446; major: A surviving forked child can retain the writer lock after the writer process dies. The fork hook resets the thread mutex but leaves the child's copy of the flock descriptor open. at src/cma/case.py:320; reviewer verdict fail"
     },
     {
       "id": "T13",

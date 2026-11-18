@@ -1,0 +1,44 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "With the recorded head preserved, src/cma/case.py:260 detects invalid hashes, sequence numbers and links. The comparison at src/cma/case.py:282 detects rebuilt histories and identifies the first differing entry. The production CLI calls verification at src/cma/cli.py:319 and exits 3 on failure. Runner tier invariants:5 passed the named change, removal, reorder and rebuild tests, including all four CLI variants. The single-writer and CLI contract findings are separate from this property.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-33/invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 446,
+      "criterion": "P15",
+      "claim": "Exiting an inherited writer context can release a lock acquired by another thread in the child. Cleanup checks the current owner's PID against the current process, so it can decrement a lock acquired after the fork by a different context.",
+      "repro": "Fork inside log.writer(). Let the parent leave its writer block and signal the child. In the child, have a worker thread acquire log.writer() on the inherited instance and pause inside it. Let the child main thread exit the inherited writer block. A fresh CaseLog for the same path can now acquire the lock while the child worker is still in its writer block. The passing fork test at tests/test_case_log.py:337 leaves the inherited block without any child thread acquiring a replacement lock."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 320,
+      "criterion": "P15",
+      "claim": "A surviving forked child can retain the writer lock after the writer process dies. The fork hook resets the thread mutex but leaves the child's copy of the flock descriptor open.",
+      "repro": "On POSIX, acquire log.writer(), fork a child that waits without calling CaseLog, and terminate the parent without running writer cleanup. A third process opening the same log receives CaseLocked until the child exits or closes its inherited descriptor. This contradicts the crash-release guarantee at src/cma/case.py:38."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 316,
+      "criterion": "P15",
+      "claim": "The documented exit-code claim says a path that is not a case folder exits 2. The implementation accepts any directory, and the passing contract test at tests/test_case_log.py:1036 checks a regular file as the invalid-path example.",
+      "repro": "Run cma case check on an existing unrelated directory with no log or head file. It exits 0 and reports an intact log with zero entries."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
