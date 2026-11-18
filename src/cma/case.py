@@ -303,6 +303,12 @@ def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
     return failed(count + 1, f"was added after the head the head file records (entry {count})")
 
 
+def _holder_id() -> tuple[int, int]:
+    """Who holds a writer lock: the process and the thread. The thread ident alone
+    survives a fork, so a child would pass for its parent and append unlocked."""
+    return os.getpid(), threading.get_ident()
+
+
 class CaseLog:
     def __init__(self, path: Path | str):
         self.path = Path(path)
@@ -310,7 +316,7 @@ class CaseLog:
         self.head_path = self.path.with_name(self.path.name + ".head")
         self._state = threading.Lock()  # guards the three fields below, never held long
         self._lock_fd: int | None = None
-        self._owner: int | None = None  # thread ident of the holder
+        self._owner: tuple[int, int] | None = None  # (process id, thread ident) of the holder
         self._lock_depth = 0
 
     # --- reading -----------------------------------------------------------------------
@@ -319,7 +325,7 @@ class CaseLog:
         """Walk the chain from the start, stop at the first entry that does not hold, and
         compare every entry with the head file."""
         with self._state:
-            holder = self._owner == threading.get_ident()
+            holder = self._owner == _holder_id()
         if holder:  # nothing else can write: one read is the truth
             return _check(self._read_log(), _read_head(self.head_path))
         for attempt in range(READ_RETRIES):
@@ -380,8 +386,10 @@ class CaseLog:
         The thread that holds it may nest (a sign-off holds the lock across its checks and
         its append). Any other writer is refused, whether it is another process, another
         CaseLog on the same file, or another thread using this same instance: the lock
-        belongs to a thread, not to the object."""
-        me = threading.get_ident()
+        belongs to a thread, not to the object. A forked child is another process even
+        though it inherits its parent's thread ident, so it never enters on its parent's
+        lock."""
+        me = _holder_id()
         with self._state:
             if self._owner == me:
                 self._lock_depth += 1

@@ -311,6 +311,27 @@ def test_p15_a_failed_unlock_still_releases_the_lock(tmp_path, monkeypatch):
     assert len(other.entries()) == 2
 
 
+@pytest.mark.invariants
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX only")
+def test_p15_a_forked_child_cannot_write_on_its_parents_lock(tmp_path):
+    # T12 review: the owner was the thread ident alone, which a forked child inherits,
+    # so the child entered the writer without a lock and both could append at seq 2.
+    log = _log(tmp_path, 1)
+    with log.writer():
+        pid = os.fork()
+        if pid == 0:  # the child: report through the exit code only
+            try:
+                with log.writer():
+                    os._exit(1)
+            except case.CaseLocked:
+                os._exit(0)
+            except BaseException:
+                os._exit(2)
+        _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0
+    assert len(log.entries()) == 1
+
+
 def test_torn_last_entry_blocks_appends_until_dropped(tmp_path, monkeypatch):
     log = _log(tmp_path, 2)
     lines = _lines(log)
