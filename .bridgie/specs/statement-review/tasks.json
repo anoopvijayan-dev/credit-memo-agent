@@ -40,12 +40,12 @@
         "T01",
         "T02"
       ],
-      "status": "verify",
+      "status": "failed",
       "attempts": 1,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T03",
-      "evidence": null,
-      "escalation": null
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-21/evidence.json",
+      "escalation": "attempt 1 of 3 fail: R4 fail (Mapped acquirers, gateways, marketplaces and delivery platforms to src/cma/rules/v2.yaml:182,216,232,248, lenders and MCA providers in both directions to :45,92, own pots and savings to :133, HMRC to :38, refunds and reversals to :148, and counter and machine cash deposits to :159. src/cma/graph.py:227 selects and applies the ruleset, src/cma/categorise.py:415 sets per-line provenance, and src/cma/graph.py:199 exports it. The runner log confirms the list cases, rule coverage and CLI evidence assertions ran and passed. Overlapping rules still misclassify own-account transfers and refund credits, and provider-only wording can count a bank transfer as cash trading receipts. Reviewed double submission, concurrent updates, sign and text boundaries, currency and timezone, partial failure, authorization, tenant isolation, migration and error paths, and the CLI, checkpoint and MCP consumers. The categoriser adds no storage, network handler, currency conversion or timezone logic. The runner covered sequential duplicate output and legacy resumes.); major: The rent rule wins over an explicit transfer to an applicant's own pot. at src/cma/rules/v2.yaml:128; major: Generic finance wording takes precedence over an explicit refund and records debt the applicant did not draw. at src/cma/rules/v2.yaml:110; major: The Post Office name alone is enough to turn an electronic transfer into a cash deposit and inflate trading receipts. at src/cma/rules/v2.yaml:172; reviewer verdict fail"
     },
     {
       "id": "T04",
