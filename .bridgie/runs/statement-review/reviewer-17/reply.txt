@@ -1,0 +1,38 @@
+```json
+{
+  "task": "T02",
+  "criteria": [
+    {
+      "id": "R53",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:31–75 adds six categories, the credit bucket map, and cash deposits to revenue. src/cma/models.py:88–96 defaults the three transaction fields. src/cma/graph.py:174–189 adds schema_version and retains the existing evidence fields. cma run and cma resume retain their options and share the writer at src/cma/cli.py:207–212. cma generate and cma import monzo retain their options and dispatch at src/cma/cli.py:31–41 and :283–303. MCP tools retain their signatures and explicitly shape their responses at src/cma/mcp_server.py:61–105. Contracts row 4 confirms the legacy evidence keys on live run output, resume of an untouched SQLite checkpoint from the archived base source, imports for the optional runtime dependencies, and sequential duplicate-output refusal. Specified row 3 records passing model, CLI, Monzo, and MCP tests. Dual-run row 7 confirms metric IDs, units, values, and evidence IDs across the synthetic matrix and committed example. The concurrent decision and two-file write paths at src/cma/cli.py:207–240 are unchanged and retain their existing race and partial-write windows. Date, currency, and numeric parsing are unchanged. The MCP data-directory boundary at src/cma/mcp_server.py:37–48 is unchanged, and the new transaction fields stay out of evidence and MCP responses.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/contracts-4.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 70,
+      "criterion": "R53",
+      "claim": "The claim says the SQLite-writing child asserts that it imported the archived package. The child relies on PYTHONPATH precedence and checks the stored field shape afterward. The import-path assertion runs in a separate child.",
+      "repro": "Trace test_a_checkpoint_written_by_the_previous_release_resumes into tests/previous_release.py:30–34. The child command imports cma.cli and invokes app(). The cma.__file__ assertion is in the separate helper at tests/previous_release.py:37–46, which the checkpoint-writing test never calls."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 61,
+      "criterion": "R53",
+      "claim": "The claimed compilation of src and tests with compileall is not_proven. Mechanical row 2 covers src only. The passing pytest run establishes that the collected tests ran.",
+      "repro": "Compare the producer's compile command with mechanical row 2. A runner result for `python -m compileall -q src tests` would prove the exact compilation claim."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
+```

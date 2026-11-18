@@ -1,0 +1,1969 @@
+Reading prompt from stdin...
+OpenAI Codex v0.169.0
+--------
+workdir: /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T02-review
+model: gpt-6.2-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 01a1ed25-ce12-7073-b086-175ee5004f87
+--------
+user
+# Seat: reviewer (verify)
+
+## Role
+You get credit for real defects found. You have read-only access to the whole repository; read whatever you need to judge the diff in context. You never edit, and you do not run tests, builds or anything that writes: the runner has already run the configured test tiers in the task's worktree, and their results and logs are in your inputs. To read code you may use read-only commands where your tools read through a shell (`cat`, `sed -n`, `rg`, `grep`, `ls`, `git diff`, `git show`, `git log`); your workspace is read-only and the runner fails the review if anything in it changes.
+
+## Judgment criteria
+- Walk every requirement ID on the task: point at the exact code that satisfies it or the gap; unmapped means `not_proven`.
+- Check every claim against its proof; a claim whose proof does not cover it is a finding.
+- A claim that tests pass is proven only by a runner result row that passed and whose log shows those tests ran. A test the claim cites that the runner did not run is `not_proven`, not `pass`; say which command would prove it.
+- Run the lane attack list: double submit, concurrent update, boundary values, currency and timezone, partial failure, authz bypass, tenant isolation, changed-contract consumers.
+- Cite file and line for every finding, with a concrete repro; "consider edge cases" is not a finding.
+- Default verdict is `not_proven`; move to `pass` only when every criterion row passes and no blocker or major finding remains.
+- Treat "zero issues" from the producer as a prompt to look harder, not as a signal.
+
+## Gotchas
+- A review from the packet alone, without reading the repository, has invented findings before; abort instead.
+- Do not report style.
+
+## Output contract
+`evidence.json`, exactly this shape (the runner fills `task` and `verifier`; use these field names):
+
+```json
+{
+  "criteria": [
+    { "id": "R4", "tier": "adversarial", "check": "what you checked, citing file:line", "result": "pass", "artifact": null }
+  ],
+  "findings": [
+    { "severity": "major", "file": "src/x.py", "line": 42, "criterion": "R4", "claim": "the defect", "repro": "how to reproduce it" }
+  ],
+  "verdict": "not_proven"
+}
+```
+
+One `criteria` row per requirement ID on the task, `tier` always `adversarial`, `result` one of `pass`, `fail`, `not_proven`. `severity` is `blocker`, `major` or `minor`. `verdict` is `pass`, `fail` or `not_proven`.
+
+## Stop conditions
+Stop with `not_proven` and a reason when a criterion depends on a test result the runner did not produce.
+
+# Inputs
+
+## task — task T02
+
+```json
+{
+  "id": "T02",
+  "title": "Add the six new Category values and their bucket map, cash_deposit in REVENUE_CATEGORIES, optional Transaction fields (account key, rule id, provider hint) with defaults, and schema_version on the evidence record cma run writes; test (contracts): today's evidence keys are a subset of the new record, and a SQLite checkpoint written by the old version resumes, run with all extras installed",
+  "requirements": [
+    "R53"
+  ],
+  "depends_on": [],
+  "status": "verify",
+  "attempts": 2,
+  "max_attempts": 3,
+  "branch": "bridgie-task/statement-review/T02",
+  "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-15/evidence.json",
+  "escalation": "attempt 1 of 3 fail: R53 not_proven (src/cma/models.py:31–96 adds the six categories, credit bucket map, cash-deposit revenue membership, and defaulted transaction fields. src/cma/graph.py:174–188 adds schema_version to the evidence returned through the shared run/resume writer at src/cma/cli.py:207–212. Contracts row 4 proves the legacy evidence key subset and version on actual cma run output. The generate and Monzo entry points at src/cma/cli.py:31–41 and :283–303 retain their options and dispatch. MCP tools at src/cma/mcp_server.py:61–105 keep their signatures and explicitly select response fields or serialize metrics and policy. For double submit, concurrent updates, and partial failure, the diff leaves the existing duplicate checks and two-file writer in place. No authorization or data-directory scope changed at src/cma/mcp_server.py:37–48, and no date, currency, or numeric input parsing changed. The SQLite contract passes for a checkpoint generated on T02 and rewritten to the old field shape. The runner supplied no replay of a checkpoint written on the old revision and no proof that the llm extra was installed during the run.); major: The passing SQLite contract proves resume of a simulated old payload. The task asks for a checkpoint written by the old version, and the test uses the current CLI to create the database before deleting the new fields from its serialized contents. at tests/test_models.py:205; reviewer verdict not_proven"
+}
+```
+
+## requirements — .bridgie/specs/statement-review/requirements.md
+
+# Requirements — Statement review: every figure traced, the unclear lines first
+
+Bet: statement-review, signed 2026-11-16. Scope is a showcase for one firm (D15, D24): a working model the underwriter can try, after which the firm's approver decides on a pilot (D14, D25). Forms and risk tags follow the template.
+
+Revision 2, after D34 (changes requested). Ids from revision 1 are kept and never reused. Changed: R1 and R14 (cash deposits are trading receipts and the large ones are flagged, D31); R15 (judgement queue); R22, R23, R26 and R28 (the pack is written once, at sign-off, and carries the policy check); R25 (pass/refer/fail shown with the illustrative label, D28); R47 (synthetic cash); R50 (no durations, D32); P1 and P17. New: R55, R56, P19, P20. Withdrawn: R49 (timing the underwriter, D32). Confirmed as designed: local-first (D29), OBIE v3.1 and TrueLayer first (D30), Tier 1 only by 2026-11-29 (D33).
+
+Terms. *The system*: the cma package running on the underwriter's machine. *Figures layer*: src/cma/metrics.py and a new indicators module, the only code that does arithmetic on money (ADR 001). *Case*: one application, holding one or more of the applicant's accounts, a profile, an override log and a case log. *The reply*: the underwriter's written answers of 2026-11-16 (one anecdotal source; see evidence-synthesis.md). *Judgement queue*: the lines the workspace lists first because a person has to decide what they are. *Policy check*: the pass, refer or fail outcome and the rule results from the packaged policy (src/cma/policies/uk_sme_default.yaml). Its rule ids (R1 to R9, cited as [R1] to [R9] in a pack) are not the requirement ids in this file. *Illustrative label*: the sentence shown with every policy outcome, saying that the thresholds ship with the tool, are not the firm's lending policy, and do not make the lending decision. *Preview*: the pack's content and its snapshot hash, shown before sign-off; nothing is written until sign-off.
+
+## R1 · ubiquitous · risk: money
+THE SYSTEM SHALL place every credit in a case in exactly one money-in bucket (trading receipts, own-account transfers in, director and shareholder funding, lending drawdowns, refunds and returned payments, HMRC repayments, other explained money in, unexplained), and SHALL report total money in and each bucket as a GBP figure with the ids of the lines behind it.
+Source: the reply, 'if a tool could reliably tell me that £80k entered the business account but only £55k represented genuine trading receipts, explain the remaining £25k'; D31 (cash deposits sit inside trading receipts, R55).
+
+## R2 · ubiquitous · risk: money
+THE SYSTEM SHALL compute every money figure, bucket, monthly cell, indicator comparison and comparison difference in integer pence from GBP amounts, in the figures layer only, and never in the review workspace, the pack renderer or a model.
+
+## R3 · unwanted · risk: money
+IF the money-in buckets do not sum to total money in to the penny, or any credit is in no bucket or in more than one, THEN THE SYSTEM SHALL NOT show or export figures for the case, and SHALL report the difference in pence and the lines involved.
+
+## R4 · ubiquitous · risk: money
+THE SYSTEM SHALL recognise, from maintained lists shipped as data: credits from UK card acquirers, payment gateways, marketplaces and delivery platforms as trading receipts; lines naming UK business lenders and merchant cash advance providers as lending drawdowns (money in) or debt service (money out); moves between the applicant's own pots or savings as own-account transfers; HMRC credits as HMRC repayments; refund and reversal credits as refunds; and cash paid in at a counter or machine as cash deposits.
+Source: README known limits (unknown acquirers land in M16); the reply (Stripe, SumUp, merchant cash advances).
+
+## R5 · conditional · risk: money
+IF the case profile names a director or shareholder, THEN THE SYSTEM SHALL put each credit whose counterparty matches that name in director and shareholder funding, even when the credit carries an invoice reference.
+
+## R6 · conditional · risk: money
+IF the case profile names the applicant's other accounts, THEN THE SYSTEM SHALL classify lines in either direction whose counterparty matches one of them as own-account transfers, and SHALL leave them out of trading receipts and out of operating cash flow (M9).
+
+## R7 · unwanted · risk: money
+IF no built-in rule, firm rule or override explains a credit, THEN THE SYSTEM SHALL NOT count it as trading receipts; it stays in unexplained money in.
+
+## R8 · conditional · risk: money
+IF a case holds more than one of the applicant's accounts, THEN THE SYSTEM SHALL pair each debit in one account with the single credit of the same amount in another account of the case within the configured number of days, and SHALL classify both lines as own-account transfers.
+Source: the reply, 'transfers between business accounts can inflate turnover if counted twice'.
+
+## R9 · unwanted · risk: money
+IF a debit has more than one candidate credit for an own-account pairing, THEN THE SYSTEM SHALL NOT pair it, and SHALL list the debit and every candidate in the judgement queue as a possible own-account transfer.
+
+## R10 · ubiquitous · risk: money
+THE SYSTEM SHALL keep the ids, units and values of M1 to M16 unchanged on every committed synthetic case and test fixture, except for lines that a new rule now recognises, which the change SHALL list; M16 SHALL be renamed so that its name says it measures money in that is not trading receipts.
+
+## R11 · ubiquitous · risk: money
+THE SYSTEM SHALL produce a monthly summary with one row per calendar month in the period, part months marked as part, giving money in, money out, trading receipts, average end-of-day balance, lowest end-of-day balance and days overdrawn, each cell with the ids of the lines behind it.
+Source: the reply, 'calculating monthly credits, debits, average balances and existing repayments'.
+
+## R12 · ubiquitous · risk: money
+THE SYSTEM SHALL report the average end-of-day balance over the period as a figure, citing the lines that set each day's closing balance.
+
+## R13 · conditional · risk: money
+IF the case profile gives the proposed facility's monthly repayment, THEN THE SYSTEM SHALL report debt service cover including that repayment; otherwise THE SYSTEM SHALL show that figure as n/a with the reason.
+
+## R14 · ubiquitous · risk: data
+THE SYSTEM SHALL raise risk indicators from thresholds in an editable file (a single credit that is large against typical trading receipts; each cash deposit at or above the single-deposit limit; a calendar month in which cash deposits exceed a set share of that month's trading receipts; a cash deposit made within a set number of days after a cash withdrawal of an amount within a set tolerance; payments to gambling operators; returned direct debits; runs of consecutive overdrawn days; irregular credits from a named acquirer), each listing its lines and the threshold that fired, and SHALL label any threshold still at its shipped value as illustrative.
+Source: the reply, 'Highlight director loans, unusual credits and large cash deposits'; 'Flag returned direct debits, persistent overdraft usage'; D31, 'with deposits above a threshold flagged'.
+
+## R15 · event · risk: ux
+WHEN the underwriter opens a case, THE SYSTEM SHALL show the money-in breakdown, the monthly summary, the figures, the indicators and, while R25 applies, the policy check, with the judgement queue (unexplained lines, possible own-account transfers, and every line an indicator flagged, which includes cash deposits at or above the single-deposit limit) listed first, largest amount first.
+
+## R16 · event · risk: ux
+WHEN the underwriter selects a figure, a bucket or a monthly cell, THE SYSTEM SHALL list exactly the lines behind it, each with date, description, amount, balance, category and the rule or override that set the category; for a sum it SHALL show the lines' total next to the figure, and for an average, share, ratio or count it SHALL show the inputs and the method.
+Source: the reply, 'I'd want to click any number in the report and see exactly which transactions make up that figure'.
+
+## R17 · event · risk: money
+WHEN the underwriter changes a line's category and gives a reason, THE SYSTEM SHALL append the change (line, old and new category, reason, typed name, operating-system user, UTC time) to the case's override log, recompute every figure from the statements and the whole override log, and mark each figure that now rests on an overridden line.
+Source: the reply, 'Allow me to manually correct categories'.
+
+## R18 · unwanted · risk: money
+IF a requested change would alter a line's amount, date, balance or description, add or remove a line, or give a line a category not valid for its direction, THEN THE SYSTEM SHALL NOT accept it; overrides change categories only.
+
+## R19 · conditional · risk: data
+IF an override names a line that is not in the case, or was recorded against a statement file whose hash no longer matches, THEN THE SYSTEM SHALL NOT apply it, and SHALL show it as stale until the underwriter confirms or drops it.
+
+## R20 · event · risk: data
+WHEN the underwriter promotes an override to a firm rule, THE SYSTEM SHALL show the lines the rule would match in the open case before saving, then save the counterparty pattern, direction, category, name, time and reason to the firm rules file, and apply the rule to every case categorised afterwards.
+
+## R21 · unwanted · risk: money
+IF a firm rule would reclassify a line matched by a built-in director, capital, shareholder, lender, HMRC or returned-payment pattern, THEN THE SYSTEM SHALL NOT apply the firm rule to that line; only a per-line override with a reason can change it.
+
+## R22 · event · risk: data
+WHEN the underwriter signs off a case's figures, THE SYSTEM SHALL require a typed name, record it with the operating-system user and UTC time, and bind it to the snapshot of the preview the underwriter signed: statement hashes, ruleset, firm rules, profile, override log position, thresholds, memo field map, policy hash, the show_policy_verdict setting and package version.
+
+## R23 · unwanted · risk: data
+IF anything in the snapshot has changed since the preview was built, THEN THE SYSTEM SHALL NOT accept the sign-off, and SHALL say what changed.
+
+## R24 · ubiquitous · risk: ux
+THE SYSTEM SHALL word the underwriter's action as signing off the figures, never as approving the loan, and SHALL leave the recommendation and every judgement field blank for the underwriter.
+Source: the reply, 'I wouldn't want AI making the final lending decision. I'd want it assisting the underwriter.'
+
+## R25 · state · risk: ux
+WHILE show_policy_verdict is on in the firm configuration (the default), THE SYSTEM SHALL show in the review workspace and the pack the overall pass, refer or fail outcome and each rule's result from the packaged policy, computed from the current figures, and SHALL put the illustrative label in the same workspace panel and the same pack section as the outcome.
+Source: D28, 'Show it, labelled as illustrative thresholds, not the firm's policy'; README:127, 'Policy thresholds are illustrative. They are not any lender's real policy.'
+
+## R26 · event · risk: data
+WHEN a case is signed off, THE SYSTEM SHALL write the review pack once, from the signed preview, containing: memo-ready sections ordered by an editable memo field map (by default the 13 fields listed in the reply), each figure followed by its id; while R25 applies, a policy-check section after the memo fields that no memo field maps to; a self-contained HTML record that works offline, with click-through from every figure to its lines and the sign-off; the evidence JSON; and the monthly summary as CSV. THE SYSTEM SHALL NOT overwrite an existing pack.
+Source: the reply, 'Produce a summary I can use directly in my credit memo'.
+
+## R27 · conditional · risk: data
+IF a memo field has no figure mapped to it, THEN THE SYSTEM SHALL mark it as for the underwriter and leave it empty.
+
+## R28 · unwanted · risk: data
+IF the pack's text fails the grounding guard (a number that is not a figure or a policy threshold at the precision shown, a figure without its id, or a threshold without its rule id and a limit word), THEN THE SYSTEM SHALL NOT write the pack.
+
+## R29 · state · risk: security
+WHILE offline lock is on in the firm configuration (the default), THE SYSTEM SHALL refuse to create a hosted model client, SHALL refuse to start the MCP server, SHALL open no network connection other than the loopback workspace, and SHALL record offline mode in every evidence record.
+Source: the reply, 'A tool that operates entirely on our own machine or within our own environment, without transmitting customer data externally, could be attractive.'
+
+## R30 · unwanted · risk: security
+IF a hosted model is used, THEN THE SYSTEM SHALL NOT put transaction descriptions, counterparty names, case profile fields or any line-level data in a prompt; a prompt carries only the metric and rule tables, the period and the placeholder account name.
+
+## R31 · ubiquitous · risk: security
+THE SYSTEM SHALL keep each case's statements, profile, logs and outputs under one case root readable only by the operating-system user who created it, and SHALL refuse to create a case root inside a git working tree that does not ignore it.
+
+## R32 · conditional · risk: security
+IF the case root lies inside a folder that a known cloud-sync client uploads (OneDrive, Dropbox, Google Drive, iCloud Drive), THEN THE SYSTEM SHALL warn before creating a case, and SHALL record the warning in the case log.
+
+## R33 · event · risk: security
+WHEN the review workspace starts, THE SYSTEM SHALL listen on the loopback interface only, issue a new random session token, refuse any request that lacks the token or carries a Host header other than the loopback address and port, and serve only assets bundled in the package.
+
+## R34 · ubiquitous · risk: security
+THE SYSTEM SHALL treat all payer-written and provider-written text (descriptions, references, merchant names, provider categories) as untrusted: escape it in HTML, neutralise leading formula characters in text cells of CSV exports, never send it to a model, and never act on it.
+
+## R35 · event · risk: data
+WHEN the underwriter purges a case, THE SYSTEM SHALL delete all the case's files, and SHALL record in a firm-level ledger only the case id, the purge time and who purged it.
+
+## R36 · event · risk: data
+WHEN a UK Open Banking (OBIE Account and Transaction API v3.1) transactions file is imported, THE SYSTEM SHALL keep only booked GBP transactions, keep the provider's transaction ids, rebuild the running balance from per-line balances or from a supplied statement balance, and refuse the file if the balance chain breaks anywhere.
+Source: D5; D30; E3 and E7 (provider unknown); the reply names TrueLayer, Yapily and Plaid as common.
+
+## R37 · event · risk: data
+WHEN a TrueLayer Data API transactions export is imported, THE SYSTEM SHALL apply the same checks as R36, and SHALL keep the provider's own categories only as untrusted hints that no figure uses.
+Source: D30.
+
+## R38 · event · risk: data
+WHEN a bank CSV with separate paid-in and paid-out columns, a non-ISO date format or newest-first order is imported, THE SYSTEM SHALL convert it through a named bank profile or a custom column mapping, and SHALL apply the same checks as the five-column loader.
+
+## R39 · conditional · risk: data
+IF a file already imported into the case is imported again, THEN THE SYSTEM SHALL leave the case unchanged.
+
+## R40 · unwanted · risk: data
+IF a new account overlaps an existing account of the case in period and shares most of its (date, amount) pairs, THEN THE SYSTEM SHALL NOT add it, and SHALL say it is probably the same account imported twice.
+
+## R41 · ubiquitous · risk: money
+THE SYSTEM SHALL keep line ids unique within a case by prefixing them with the account key when the case holds more than one account, compute flow figures across all the case's accounts after removing paired own-account transfers, and compute balance figures on the combined end-of-day balance over the dates every account covers, showing n/a with the reason when those dates do not overlap.
+
+## R42 · ubiquitous · risk: data
+THE SYSTEM SHALL append every import, profile change, override, firm-rule promotion, preview, pack write and sign-off to the case log, each entry carrying the hash of the entry before it.
+Source: the reply, 'The firm would need confidence that data is secure, access is controlled and there's an audit trail.'
+
+## R43 · unwanted · risk: data
+IF the case log's hash chain is broken or its last entry is incomplete, THEN THE SYSTEM SHALL NOT accept a sign-off, and SHALL name the first bad entry.
+
+## R44 · event · risk: data
+WHEN asked to verify an evidence record, THE SYSTEM SHALL recompute every figure, bucket and monthly cell from the recorded inputs and report each mismatch, or confirm that there is none.
+
+## R45 · conditional · risk: data
+IF the evidence record was made with a ruleset other than the one installed, THEN THE SYSTEM SHALL refuse to verify it, and SHALL name the package version and ruleset that made it.
+
+## R46 · event · risk: data
+WHEN asked to pseudonymise a statement, THE SYSTEM SHALL write a copy in which personal and business names and account numbers are replaced by consistent tokens while recognised institutions (acquirers, lenders, HMRC) and all amounts, dates and balances are kept, SHALL tokenise the case profile the same way, and SHALL label the output as pseudonymised personal data, not anonymous data.
+Source: the reply, 'I'd start with synthetic or properly anonymised sample statements and compare the results with our existing process'.
+
+## R47 · ubiquitous · risk: none
+THE SYSTEM SHALL generate synthetic business cases that include real acquirer names, director funding, own-account transfers across two accounts, cash deposits (at least one at or above the single-deposit limit, and one paid in after a similar cash withdrawal) and lender lines, with ground truth for every bucket, line and indicator, while every existing archetype and profile still produces a byte-identical statement.
+
+## R48 · state · risk: ux
+WHILE a case is marked as a demo (synthetic data, or the owner's own statements per D23), THE SYSTEM SHALL show a banner in the workspace and stamp the pack, saying it demonstrates the mechanism and is not an applicant file.
+
+## R50 · event · risk: ux
+WHEN asked for a report, THE SYSTEM SHALL summarise for each case the lines in the judgement queue, the lines each indicator flagged, overrides by old and new category, unexplained share of money in, whether every figure was traced, and whether the case was signed off, with no applicant names, descriptions or amounts and no duration derived from the case log's timestamps.
+Source: D32 (files are timed with a stopwatch, outside the tool).
+
+## R51 · event · risk: ux
+WHEN the underwriter enters their own figure for a memo field or a month, THE SYSTEM SHALL show the difference from its own figure and list, largest first, the lines in that period whose bucket a person might read differently: cash deposits, unexplained lines, possible own-account transfers and overridden lines.
+Source: the reply, 'compare the results with our existing process'.
+
+## R52 · event · risk: ux
+WHEN the underwriter saves an override on a case of up to 10,000 lines, THE SYSTEM SHALL show the recomputed figures, indicators and policy check within 2 seconds on a typical office laptop.
+
+## R53 · ubiquitous · risk: data
+THE SYSTEM SHALL keep cma run, cma resume, cma import monzo, cma generate, the MCP tools and the evidence JSON working with their current options and fields; new evidence fields SHALL be additive, and every new evidence record SHALL carry a schema version.
+
+## R54 · conditional · risk: data
+IF CMA_RULESET is set to v1, THEN THE SYSTEM SHALL categorise with the built-in rule table as it was before this change, and SHALL record v1 as the ruleset in every evidence record.
+
+## R55 · ubiquitous · risk: money
+THE SYSTEM SHALL count every credit categorised as a cash deposit as trading receipts, in M2 and in every figure and monthly cell built on trading receipts, and SHALL report the cash deposits within trading receipts as a separate GBP figure with the ids of the deposits behind it.
+Source: D31, 'Counted as trading receipts, with deposits above a threshold flagged'; the reply, 'Highlight ... large cash deposits'.
+
+## R56 · state · risk: ux
+WHILE show_policy_verdict is off in the firm configuration, THE SYSTEM SHALL NOT show an overall outcome or any rule result in the review workspace or the pack, and SHALL record in the evidence that the policy check was hidden.
+Source: D28 (the setting is the rollback path for showing the outcome).
+
+## P1 · property
+For any case, trading receipts and the other seven money-in buckets SHALL sum to total money in to the penny, and every credit's id SHALL appear in exactly one bucket's evidence; the cash-deposits figure is not a bucket and is not added.
+Validates: R1, R2, R3, R7
+
+## P2 · property
+For any sum figure, bucket or monthly cell, the signed amounts of its evidence lines SHALL total the figure to the penny.
+Validates: R1, R11, R16, R55
+
+## P3 · property
+For any statements, profile and override log, computing the figures twice SHALL give identical results, and the figures after applying overrides one at a time SHALL equal a fresh computation with all of them applied.
+Validates: R17, R44
+
+## P4 · property
+For any override log, the set of (id, date, amount, balance, description) across the case's lines SHALL be the same before and after the overrides are applied.
+Validates: R18
+
+## P5 · property
+For any case whose descriptions and profile contain sentinel strings, no prompt built for a model SHALL contain any sentinel.
+Validates: R30, R34
+
+## P6 · property
+For any credit that no built-in rule, firm rule or override matches, its id SHALL be in the evidence of unexplained money in and not in the evidence of M2.
+Validates: R7
+
+## P7 · property
+For any committed synthetic case and test fixture, M1 to M16 under the new ruleset SHALL equal their values before this change, except on lines the change lists as newly recognised; under CMA_RULESET=v1 they SHALL equal them with no exceptions.
+Validates: R10, R53, R54
+
+## P8 · property
+For any description text, the workspace HTML and the pack HTML SHALL contain it only in escaped form, and no text cell in an exported CSV SHALL begin with =, +, -, @, a tab or a carriage return.
+Validates: R34
+
+## P9 · property
+For any import file, importing it twice SHALL leave the same case state and the same case log head as importing it once.
+Validates: R39
+
+## P10 · property
+For any statement and profile, the pseudonymised statement and profile SHALL give identical figures, buckets, monthly cells and indicators.
+Validates: R46
+
+## P11 · property
+For any multi-account case, each own-account pair SHALL be one debit and one credit of equal amount in different accounts, no line SHALL be in two pairs, and total money in less own-account transfers in SHALL equal the generator's credits from outside the applicant's accounts.
+Validates: R6, R8, R9, R41
+
+## P12 · property
+For any case, monthly trading receipts SHALL sum to M2 and monthly money in SHALL sum to total money in, to the penny.
+Validates: R11, R55
+
+## P13 · property
+For any signed pack, verifying its evidence record against its case SHALL reproduce every figure, bucket and monthly cell exactly.
+Validates: R22, R44
+
+## P14 · property
+For any case, the pack's text SHALL pass the grounding guard with no unmatched numbers and no missing citations.
+Validates: R26, R28
+
+## P15 · property
+For any case log, changing, removing or reordering any entry before the head SHALL be detected on the next load.
+Validates: R42, R43
+
+## P16 · property
+For any firm rules file, no line matched by a protected built-in pattern SHALL change category through a firm rule.
+Validates: R21
+
+## P17 · property
+For any synthetic case generated with the new features, every bucket, every line's category and every indicator flag SHALL equal the generator's ground truth.
+Validates: R1, R4, R5, R8, R14, R47, R55
+
+## P18 · property
+For any run while offline lock is on, asking for a hosted model or starting the MCP server SHALL fail before any network call is attempted.
+Validates: R29
+
+## P19 · property
+For any case, the evidence of the cash-deposits figure SHALL be exactly the credits categorised as cash deposits, each of them SHALL also be in M2's evidence, the figure SHALL not exceed M2, and every cash deposit at or above the single-deposit limit SHALL be in the judgement queue with the indicator that flagged it.
+Validates: R14, R15, R55
+
+## P20 · property
+For any case, with show_policy_verdict on, every workspace panel and pack section that shows a pass, refer or fail outcome SHALL contain the illustrative label and the recommendation field SHALL be empty; with it off, neither the workspace nor the pack SHALL contain an outcome or a rule result.
+Validates: R24, R25, R56
+
+## diff — diff.patch
+
+diff --git a/README.md b/README.md
+index 6c46894..ffb31b7 100644
+--- a/README.md
++++ b/README.md
+@@ -36,7 +36,8 @@ cma run examples/cafe_stretched.csv --vat-stagger 3
+ # Scripts can approve with --yes, but only with a named reviewer and only if
+ # every figure passed the grounding check; the memo is stamped
+ # "automated, no interactive review". --out also writes memo.evidence.json
+-# (every transaction id behind every figure); a rejected memo goes to
++# (every transaction id behind every figure, with "schema_version": 1; a record
++# without that key is v0, and v1 only adds keys); a rejected memo goes to
+ # memo.rejected.md.
+ # Existing files are never overwritten.
+ cma run examples/cafe_stretched.csv --vat-stagger 3 --yes --reviewer "A. Analyst" --out private/memo.md
+diff --git a/examples/cafe_stretched.memo.evidence.json b/examples/cafe_stretched.memo.evidence.json
+index ef1737e..c561a4f 100644
+--- a/examples/cafe_stretched.memo.evidence.json
++++ b/examples/cafe_stretched.memo.evidence.json
+@@ -1,4 +1,5 @@
+ {
++  "schema_version": 1,
+   "statement": {
+     "path": "examples/cafe_stretched.csv",
+     "sha256": "796b4519fc7a592e81807271a1fd65d1a6e07d57f5e4479153e44b8497d3360d",
+@@ -25,7 +26,7 @@
+       "name": "Total revenue",
+       "value": 313135.22,
+       "unit": "GBP",
+-      "method": "Card and gateway settlements, plus transfers in that carry an invoice reference.",
++      "method": "Card and gateway settlements, transfers in that carry an invoice reference, and cash paid in.",
+       "evidence": [
+         "T00001",
+         "T00003",
+diff --git a/examples/cafe_stretched.memo.md b/examples/cafe_stretched.memo.md
+index 13d7bee..1a19b43 100644
+--- a/examples/cafe_stretched.memo.md
++++ b/examples/cafe_stretched.memo.md
+@@ -27,7 +27,7 @@ Evidence: every transaction id behind each figure is in the .evidence.json file
+ | id | metric | value | method | lines |
+ |---|---|---|---|---|
+ | M1 | Months covered | 12 | Days from the first transaction to the last, in months, to the nearest month. | 2 |
+-| M2 | Total revenue | £313,135 | Card and gateway settlements, plus transfers in that carry an invoice reference. | 261 |
++| M2 | Total revenue | £313,135 | Card and gateway settlements, transfers in that carry an invoice reference, and cash paid in. | 261 |
+ | M3 | Average monthly revenue | £26,112 | Total revenue divided by the exact length of the period in months (quiet months still count). | 261 |
+ | M4 | Revenue trend | 10.8% | Average revenue of the latest quarter of whole calendar months against the earliest quarter, as a percentage change. On a year-long statement these are opposite seasons. | 132 |
+ | M5 | Lowest balance | -£19,760 | Lowest running balance after any transaction in the period. | 1 |
+diff --git a/src/cma/graph.py b/src/cma/graph.py
+index 75afc36..135b8dc 100644
+--- a/src/cma/graph.py
++++ b/src/cma/graph.py
+@@ -35,7 +35,15 @@ from . import ingest
+ from . import metrics as met
+ from . import policy as pol
+ from .llm import LLM, get_llm
+-from .models import GuardResult, Metric, PolicyResult, ReviewDecision, Statement, format_value
++from .models import (
++    EVIDENCE_SCHEMA_VERSION,
++    GuardResult,
++    Metric,
++    PolicyResult,
++    ReviewDecision,
++    Statement,
++    format_value,
++)
+ 
+ MAX_REDRAFTS = 2
+ 
+@@ -166,6 +174,7 @@ def appendix(s: MemoState) -> str:
+ def evidence_record(s: MemoState) -> dict:
+     """Everything needed to audit the memo later, as plain JSON."""
+     return {
++        "schema_version": EVIDENCE_SCHEMA_VERSION,
+         "statement": {"path": s["statement_path"], "sha256": s.get("statement_sha256"),
+                       "start": str(s["statement"].start), "end": str(s["statement"].end),
+                       "transactions": len(s["statement"].transactions)},
+diff --git a/src/cma/metrics.py b/src/cma/metrics.py
+index 9d3c4f7..5f7d864 100644
+--- a/src/cma/metrics.py
++++ b/src/cma/metrics.py
+@@ -250,7 +250,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
+                method="Days from the first transaction to the last, in months, to the nearest month.",
+                evidence=[txns[0].id, txns[-1].id]),
+         Metric(id="M2", name="Total revenue", value=g(total_revenue), unit="GBP",
+-               method="Card and gateway settlements, plus transfers in that carry an invoice reference.",
++               method="Card and gateway settlements, transfers in that carry an invoice reference, and cash paid in.",
+                evidence=[t.id for t in rev]),
+         Metric(id="M3", name="Average monthly revenue",
+                value=g(total_revenue / period_months), unit="GBP",
+diff --git a/src/cma/models.py b/src/cma/models.py
+index a1eb4ef..e85925e 100644
+--- a/src/cma/models.py
++++ b/src/cma/models.py
+@@ -27,10 +27,49 @@ class Category(str, Enum):
+     BANK_FEES = "bank_fees"
+     OWNER_DRAWINGS = "owner_drawings"
+     RETURNED_DD = "returned_dd"
+-    OTHER = "other"
+-
+-
+-REVENUE_CATEGORIES = {Category.REVENUE_CARD, Category.REVENUE_TRANSFER}
++    OTHER = "other"  # a credit no rule explains: unexplained money in
++    CASH_DEPOSIT = "cash_deposit"
++    OWN_ACCOUNT_TRANSFER = "own_account_transfer"  # either direction
++    DIRECTOR_FUNDING = "director_funding"
++    REFUND_IN = "refund_in"
++    HMRC_REPAYMENT = "hmrc_repayment"
++    OTHER_EXPLAINED_IN = "other_explained_in"  # grants, insurance claims, interest
++
++
++class Bucket(str, Enum):
++    """The money-in buckets. Every credit is in exactly one (R1, R3)."""
++
++    TRADING_RECEIPTS = "trading_receipts"
++    OWN_ACCOUNT_IN = "own_account_transfers_in"
++    DIRECTOR_FUNDING = "director_shareholder_funding"
++    LENDING_DRAWDOWNS = "lending_drawdowns"
++    REFUNDS_RETURNED = "refunds_returned_payments_in"
++    HMRC_REPAYMENTS = "hmrc_repayments"
++    OTHER_EXPLAINED_IN = "other_explained_money_in"
++    UNEXPLAINED = "unexplained_money_in"
++
++
++# The bucket each credit category belongs to. A credit in a category missing from this
++# map is a reconciliation failure, never a guess.
++CREDIT_BUCKET: dict[Category, Bucket] = {
++    Category.REVENUE_CARD: Bucket.TRADING_RECEIPTS,
++    Category.REVENUE_TRANSFER: Bucket.TRADING_RECEIPTS,
++    Category.CASH_DEPOSIT: Bucket.TRADING_RECEIPTS,  # D31: cash takings are trading receipts
++    Category.OWN_ACCOUNT_TRANSFER: Bucket.OWN_ACCOUNT_IN,
++    Category.DIRECTOR_FUNDING: Bucket.DIRECTOR_FUNDING,
++    Category.LOAN_DRAWDOWN: Bucket.LENDING_DRAWDOWNS,
++    Category.REFUND_IN: Bucket.REFUNDS_RETURNED,
++    Category.RETURNED_DD: Bucket.REFUNDS_RETURNED,
++    Category.HMRC_REPAYMENT: Bucket.HMRC_REPAYMENTS,
++    Category.OTHER_EXPLAINED_IN: Bucket.OTHER_EXPLAINED_IN,
++    Category.OTHER: Bucket.UNEXPLAINED,
++}
++
++REVENUE_CATEGORIES = {Category.REVENUE_CARD, Category.REVENUE_TRANSFER, Category.CASH_DEPOSIT}
++
++# The version of the evidence JSON written beside a memo. A record without the key is v0
++# (before this field existed); v1 only adds keys to v0, so a reader of v0 still works.
++EVIDENCE_SCHEMA_VERSION = 1
+ 
+ 
+ class Transaction(BaseModel):
+@@ -46,6 +85,15 @@ class Transaction(BaseModel):
+         default=None,
+         description="For a returned direct debit: the id of the debit it undoes. Set by the categoriser.",
+     )
++    # Optional, with defaults, so a Transaction stored before they existed (a pending
++    # review in a checkpoint) still loads.
++    account_key: str = Field(default="main", description="Which of the case's accounts the line is from.")
++    rule_id: str | None = Field(
++        default=None, description="The built-in rule, firm rule or override that set the category."
++    )
++    provider_hint: str | None = Field(
++        default=None, description="The provider's own category. Untrusted; no figure reads it."
++    )
+ 
+ 
+ class Statement(BaseModel):
+diff --git a/tests/previous_release.py b/tests/previous_release.py
+new file mode 100644
+index 0000000..d199848
+--- /dev/null
++++ b/tests/previous_release.py
+@@ -0,0 +1,46 @@
++"""Run the release before statement-review T02 next to this one.
++
++The previous release is the source tree at BASE, extracted from this repository's own
++history with `git archive`, and run in a child interpreter whose PYTHONPATH puts that
++tree first. Nothing is simulated: the child imports the old cma package itself.
++"""
++
++import json
++import os
++import subprocess
++import sys
++import tarfile
++from io import BytesIO
++from pathlib import Path
++
++# The revision T02 branched from (bridgie-task/statement-review/T02).
++BASE = "cba9dbad600f3258de587780dd6e3a46ff59203a"
++REPO = Path(__file__).resolve().parent.parent
++
++
++def extract(dest: Path) -> Path:
++    """Write BASE's src/ under dest and return the directory to put on PYTHONPATH."""
++    blob = subprocess.run(["git", "-C", str(REPO), "archive", BASE, "src"],
++                          check=True, capture_output=True).stdout
++    with tarfile.open(fileobj=BytesIO(blob)) as tar:
++        tar.extractall(dest, filter="data")
++    return dest / "src"
++
++
++def run(src: Path, args: list[str], cwd: Path, stdin: str = "") -> subprocess.CompletedProcess:
++    """Run `python args...` with the previous release first on the path."""
++    env = {**os.environ, "PYTHONPATH": str(src), "COLUMNS": "200"}
++    return subprocess.run([sys.executable, *args], cwd=cwd, env=env, input=stdin,
++                          capture_output=True, text=True, timeout=300)
++
++
++def python(src: Path, code: str, cwd: Path) -> object:
++    """Run code under the previous release; it prints one JSON value, which is returned.
++    The child first proves it imported the old package, not this one."""
++    guard = (
++        "import cma, json, sys\n"
++        f"assert cma.__file__.startswith({str(src)!r}), cma.__file__\n"
++    )
++    r = run(src, ["-c", guard + code], cwd)
++    assert r.returncode == 0, r.stderr
++    return json.loads(r.stdout)
+diff --git a/tests/test_models.py b/tests/test_models.py
+new file mode 100644
+index 0000000..f7236af
+--- /dev/null
++++ b/tests/test_models.py
+@@ -0,0 +1,325 @@
++"""Category values, the money-in bucket map and the optional Transaction fields
++(statement-review T02: R53, R55)."""
++
++import json
++import sqlite3
++from datetime import date
++from typing import Any
++
++import pytest
++from pydantic import BaseModel
++from typer.testing import CliRunner
++
++from cma import synth
++from cma.cli import app
++from cma.models import CREDIT_BUCKET, REVENUE_CATEGORIES, Bucket, Category, Transaction
++
++NEW_FIELDS = ("account_key", "rule_id", "provider_hint")
++
++
++def test_existing_category_values_are_unchanged():
++    # An old checkpoint or evidence record names categories by value; none may move.
++    assert {(c.name, c.value) for c in Category} >= set({
++        "REVENUE_CARD": "revenue_card_settlement", "REVENUE_TRANSFER": "revenue_transfer",
++        "PAYROLL": "payroll", "HMRC_VAT": "hmrc_vat", "HMRC_PAYE": "hmrc_paye", "RENT": "rent",
++        "SUPPLIER": "supplier", "LOAN_REPAYMENT": "loan_repayment", "LOAN_DRAWDOWN": "loan_drawdown",
++        "BANK_FEES": "bank_fees", "OWNER_DRAWINGS": "owner_drawings", "RETURNED_DD": "returned_dd",
++        "OTHER": "other",
++    }.items())
++
++
++def test_new_category_values():
++    assert {c.value for c in Category} >= {
++        "cash_deposit", "own_account_transfer", "director_funding", "refund_in",
++        "hmrc_repayment", "other_explained_in",
++    }
++    assert len(Category) == 13 + 6
++
++
++@pytest.mark.parametrize("category, bucket", [
++    (Category.REVENUE_CARD, Bucket.TRADING_RECEIPTS),
++    (Category.REVENUE_TRANSFER, Bucket.TRADING_RECEIPTS),
++    (Category.CASH_DEPOSIT, Bucket.TRADING_RECEIPTS),
++    (Category.OWN_ACCOUNT_TRANSFER, Bucket.OWN_ACCOUNT_IN),
++    (Category.DIRECTOR_FUNDING, Bucket.DIRECTOR_FUNDING),
++    (Category.LOAN_DRAWDOWN, Bucket.LENDING_DRAWDOWNS),
++    (Category.REFUND_IN, Bucket.REFUNDS_RETURNED),
++    (Category.RETURNED_DD, Bucket.REFUNDS_RETURNED),
++    (Category.HMRC_REPAYMENT, Bucket.HMRC_REPAYMENTS),
++    (Category.OTHER_EXPLAINED_IN, Bucket.OTHER_EXPLAINED_IN),
++    (Category.OTHER, Bucket.UNEXPLAINED),
++])
++def test_each_credit_category_has_one_bucket(category, bucket):
++    assert CREDIT_BUCKET[category] is bucket
++
++
++def test_bucket_map_covers_exactly_the_credit_categories():
++    # A credit in any category not in the map is a reconciliation failure (R3).
++    assert set(CREDIT_BUCKET.values()) == set(Bucket)
++    assert len(Bucket) == 8
++    debit_only = {Category.PAYROLL, Category.HMRC_VAT, Category.HMRC_PAYE, Category.RENT,
++                  Category.SUPPLIER, Category.LOAN_REPAYMENT, Category.BANK_FEES,
++                  Category.OWNER_DRAWINGS}
++    assert set(CREDIT_BUCKET) == set(Category) - debit_only
++
++
++def test_cash_deposits_are_trading_receipts():
++    # R55, D31: cash paid in counts in M2 and every figure built on trading receipts.
++    assert Category.CASH_DEPOSIT in REVENUE_CATEGORIES
++    assert {c for c, b in CREDIT_BUCKET.items() if b is Bucket.TRADING_RECEIPTS} == REVENUE_CATEGORIES
++
++
++def test_new_transaction_fields_default():
++    t = Transaction(id="T1", date=date(2026, 3, 5), description="X", amount=1.0, balance=1.0)
++    assert (t.account_key, t.rule_id, t.provider_hint) == ("main", None, None)
++    t = Transaction(id="T1", date=date(2026, 3, 5), description="X", amount=1.0, balance=1.0,
++                    account_key="savings", rule_id="v2:cash_counter", provider_hint="CASH")
++    assert (t.account_key, t.rule_id, t.provider_hint) == ("savings", "v2:cash_counter", "CASH")
++
++
++def test_a_transaction_dumped_before_the_change_still_loads():
++    old = {"id": "T1", "date": "2026-03-05", "description": "X", "amount": 1.0, "balance": 1.0,
++           "category": "revenue_card_settlement", "reverses": None}
++    t = Transaction(**old)
++    assert t.category is Category.REVENUE_CARD and t.account_key == "main"
++
++
++# --- an old checkpoint resumes (R53) ---------------------------------------------------
++
++class _Ext:
++    """A msgpack extension held open for editing. Not a dataclass: ormsgpack would pack
++    one as a map instead of handing it to `default`."""
++
++    def __init__(self, code: int, value: Any):
++        self.code, self.value = code, value
++
++
++def _strip_new_fields(blob: bytes) -> tuple[bytes, int]:
++    """Rewrite a msgpack checkpoint blob as the version before this change wrote it: every
++    stored Transaction without the new fields. Returns the blob and how many were stripped."""
++    import ormsgpack
++    from langgraph.checkpoint.serde.jsonplus import EXT_PYDANTIC_V2
++
++    opt = ormsgpack.OPT_NON_STR_KEYS
++    stripped = 0
++
++    def hook(code, data):
++        return _Ext(code, ormsgpack.unpackb(data, ext_hook=hook, option=opt))
++
++    def strip(fields: dict) -> None:
++        nonlocal stripped
++        assert all(f in fields for f in NEW_FIELDS)
++        for f in NEW_FIELDS:
++            del fields[f]
++        stripped += 1
++
++    def walk(o):
++        if isinstance(o, _Ext):
++            v = o.value
++            if o.code == EXT_PYDANTIC_V2 and v[0] == "cma.models":
++                # A stored Statement holds its lines as plain dicts (model_dump recurses).
++                if v[1] == "Transaction":
++                    strip(v[2])
++                elif v[1] == "Statement":
++                    for t in v[2]["transactions"]:
++                        strip(t)
++            o.value = walk(v)
++        elif isinstance(o, dict):
++            return {k: walk(v) for k, v in o.items()}
++        elif isinstance(o, list):
++            return [walk(v) for v in o]
++        return o
++
++    def default(o):
++        if isinstance(o, _Ext):
++            return ormsgpack.Ext(o.code, ormsgpack.packb(o.value, default=default, option=opt))
++        raise TypeError(type(o))
++
++    tree = walk(ormsgpack.unpackb(blob, ext_hook=hook, option=opt))
++    return ormsgpack.packb(tree, default=default, option=opt), stripped
++
++
++def _strip_saved(o, counter: list[int]):
++    """Walk an InMemorySaver's stores and rewrite every msgpack blob in the old shape."""
++    if isinstance(o, tuple) and len(o) == 2 and o[0] == "msgpack" and isinstance(o[1], bytes):
++        new, n = _strip_new_fields(o[1])
++        counter[0] += n
++        return ("msgpack", new)
++    if isinstance(o, tuple):
++        return tuple(_strip_saved(v, counter) for v in o)
++    if isinstance(o, dict):
++        return {k: _strip_saved(v, counter) for k, v in o.items()}
++    return o
++
++
++@pytest.mark.contracts
++def test_a_pending_review_saved_before_the_new_fields_resumes(tmp_path):
++    # Needs no optional extra: the same serializer and allow-list the SQLite saver uses,
++    # over the in-memory saver. The stored state is rewritten as the old version wrote it,
++    # handed to a fresh saver and graph (a restart), and the review is resumed to the end.
++    from langgraph.checkpoint.memory import InMemorySaver
++    from langgraph.types import Command
++
++    from cma.graph import _serde, build
++    from cma.llm import get_llm
++
++    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
++    csv, _ = synth.write(rows, truth, tmp_path)
++    cfg = {"configurable": {"thread_id": "case-old"}}
++    before = InMemorySaver(serde=_serde())
++    state = build(get_llm("fake"), checkpointer=before).invoke(
++        {"statement_path": str(csv), "policy_path": None, "vat_stagger": None}, cfg)
++    assert state["__interrupt__"]
++
++    counter = [0]
++    after = InMemorySaver(serde=_serde())
++    for name in ("storage", "writes", "blobs"):
++        old = _strip_saved(dict(getattr(before, name)), counter)
++        store = getattr(after, name)
++        for k, v in old.items():
++            store[k] = {ns: dict(c) for ns, c in v.items()} if name == "storage" else v
++    assert counter[0] > 0  # the stored state really held Transactions, now in the old shape
++
++    graph = build(get_llm("fake"), checkpointer=after)
++    snap = graph.get_state(cfg)
++    assert snap.interrupts
++    lines = snap.values["statement"].transactions
++    assert lines and all((t.account_key, t.rule_id, t.provider_hint) == ("main", None, None)
++                         for t in lines)
++    final = graph.invoke(Command(resume={"approved": True, "reviewer": "C. Later", "notes": "",
++                                         "override_grounding": False}), cfg)
++    assert "APPROVED by C. Later" in final["final_memo"]
++
++
++@pytest.mark.contracts
++def test_a_checkpoint_written_before_the_new_fields_resumes(tmp_path):
++    # The same, end to end through `cma run` and `cma resume`. This is the contract the
++    # task names, so it runs with all extras installed and fails, not skips, without the
++    # 'durable' extra: a skipped resume test proves nothing.
++    import langgraph.checkpoint.sqlite  # noqa: F401  (pip install -e ".[durable]")
++    runner = CliRunner()
++    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
++    csv, _ = synth.write(rows, truth, tmp_path)
++    db = tmp_path / "reviews.sqlite"
++    r = runner.invoke(app, ["run", str(csv), "--checkpoint-db", str(db), "--thread", "case-old"], input="\x04")
++    assert "review id: case-old" in r.output
++
++    total = 0
++    con = sqlite3.connect(db)
++    for table, col in (("checkpoints", "checkpoint"), ("writes", "value")):
++        for rowid, type_, blob in con.execute(f"SELECT rowid, type, {col} FROM {table}").fetchall():
++            if type_ == "msgpack" and blob:
++                new, n = _strip_new_fields(blob)
++                total += n
++                con.execute(f"UPDATE {table} SET {col} = ? WHERE rowid = ?", (new, rowid))
++    con.commit()
++    con.close()
++    assert total > 0  # the stored state really held Transactions, now in the old shape
++
++    out = tmp_path / "memo.md"
++    r = runner.invoke(app, ["resume", "case-old", "--checkpoint-db", str(db), "--reviewer", "C. Later",
++                            "--out", str(out)], input="y\n\n")
++    assert r.exit_code == 0, r.output
++    assert "APPROVED by C. Later" in out.read_text()
++
++
++def test_m2_counts_and_names_cash_deposits():
++    # R55: a cash deposit is in M2, cited by id, and M2's method says cash paid in counts.
++    from cma import metrics
++    from cma.models import Statement
++
++    lines = [
++        Transaction(id="T0", date=date(2026, 1, 2), description="Opening", amount=10.0,
++                    balance=10.0, category=Category.REVENUE_CARD),
++        Transaction(id="T1", date=date(2026, 3, 30), description="Cash paid in", amount=100.0,
++                    balance=110.0, category=Category.CASH_DEPOSIT),
++    ]
++    m2 = next(m for m in metrics.compute(Statement(account_name="A", transactions=lines))
++              if m.id == "M2")
++    assert m2.value == 110.0 and "T1" in m2.evidence
++    assert "cash paid in" in m2.method.lower()
++
++
++# --- the evidence record `cma run` writes (R53) -----------------------------------------
++
++# Every key path in the record `cma run` wrote before this change (examples/
++# cafe_stretched.memo.evidence.json at cba9dba). Readers keyed on these must keep working.
++TODAYS_EVIDENCE_KEYS = {
++    "/guard", "/guard/grounded", "/guard/missing_citations", "/guard/numbers_checked",
++    "/guard/unmatched", "/memo", "/metrics", "/metrics[]/evidence", "/metrics[]/id",
++    "/metrics[]/method", "/metrics[]/name", "/metrics[]/unit", "/metrics[]/value", "/model",
++    "/policy", "/policy/overall", "/policy/policy_name", "/policy/policy_sha256",
++    "/policy/rules", "/policy/rules[]/description", "/policy/rules[]/detail",
++    "/policy/rules[]/metric_id", "/policy/rules[]/op", "/policy/rules[]/outcome",
++    "/policy/rules[]/refer_above", "/policy/rules[]/refer_below", "/policy/rules[]/rule_id",
++    "/policy/rules[]/threshold", "/policy/rules[]/unit", "/redrafts", "/review",
++    "/review/approved", "/review/decided_at", "/review/mode", "/review/notes",
++    "/review/override_grounding", "/review/reviewer", "/statement", "/statement/end",
++    "/statement/path", "/statement/sha256", "/statement/start", "/statement/transactions",
++    "/vat_stagger",
++}
++
++
++def _key_paths(o, prefix: str = "") -> set[str]:
++    out: set[str] = set()
++    if isinstance(o, dict):
++        for k, v in o.items():
++            out |= {f"{prefix}/{k}"} | _key_paths(v, f"{prefix}/{k}")
++    elif isinstance(o, list):
++        for v in o:
++            out |= _key_paths(v, f"{prefix}[]")
++    return out
++
++
++@pytest.mark.contracts
++def test_todays_evidence_keys_are_a_subset_of_the_new_record(tmp_path):
++    from cma.models import EVIDENCE_SCHEMA_VERSION
++
++    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
++    csv, _ = synth.write(rows, truth, tmp_path)
++    out = tmp_path / "memo.md"
++    r = CliRunner().invoke(app, ["run", str(csv), "--yes", "--reviewer", "A", "--out", str(out)])
++    assert r.exit_code == 0, r.output
++    record = json.loads((tmp_path / "memo.evidence.json").read_text())
++    assert _key_paths(record) >= TODAYS_EVIDENCE_KEYS  # additive only
++    assert record["schema_version"] == EVIDENCE_SCHEMA_VERSION == 1
++
++
++@pytest.mark.contracts
++def test_the_committed_example_evidence_carries_todays_keys_and_a_schema_version():
++    from pathlib import Path
++
++    from cma.models import EVIDENCE_SCHEMA_VERSION
++
++    path = Path(__file__).parent.parent / "examples" / "cafe_stretched.memo.evidence.json"
++    record = json.loads(path.read_text())
++    assert _key_paths(record) >= TODAYS_EVIDENCE_KEYS
++    assert record["schema_version"] == EVIDENCE_SCHEMA_VERSION
++
++
++# --- rollback: the release before this change reads what this one writes ---------------
++
++class _PreviousTransaction(BaseModel):
++    """Transaction as the release before T02 defined it (src/cma/models.py at cba9dba):
++    the same fields and pydantic's default config, which ignores unknown keys."""
++
++    id: str
++    date: date
++    description: str
++    amount: float
++    balance: float
++    category: Category | None = None
++    reverses: str | None = None
++
++
++@pytest.mark.contracts
++def test_the_previous_release_loads_a_transaction_written_by_this_one():
++    # Rollback by reinstalling the previous wheel: a pending review saved by this version
++    # holds Transactions with the new fields, and the previous model must still load them.
++    assert set(Transaction.model_fields) - set(NEW_FIELDS) == set(_PreviousTransaction.model_fields)
++    assert Transaction.model_config.get("extra") in (None, "ignore")  # stays rollback-safe
++    t = Transaction(id="T1", date=date(2026, 3, 5), description="X", amount=1.0, balance=1.0,
++                    category=Category.REVENUE_CARD, account_key="savings", rule_id="v2:x",
++                    provider_hint="CASH")
++    old = _PreviousTransaction(**t.model_dump())
++    assert old.model_dump() == {k: v for k, v in t.model_dump().items() if k not in NEW_FIELDS}
+diff --git a/tests/test_previous_release.py b/tests/test_previous_release.py
+new file mode 100644
+index 0000000..81e5d9a
+--- /dev/null
++++ b/tests/test_previous_release.py
+@@ -0,0 +1,178 @@
++"""statement-review T02 (R53) against the real previous release, not a model of it.
++
++Each test extracts the source at previous_release.BASE and runs it in a child
++interpreter: a checkpoint written by the old `cma run` resumes under this `cma resume`;
++the old Transaction loads what this one writes; and M1-M16 are unchanged."""
++
++import json
++import sqlite3
++from datetime import date
++
++import previous_release as prev
++import pytest
++from typer.testing import CliRunner
++
++from cma import synth
++from cma.cli import app
++from cma.models import EVIDENCE_SCHEMA_VERSION, Category, Transaction
++
++OLD_FIELDS = {"id", "date", "description", "amount", "balance", "category", "reverses"}
++
++
++def _stored_transaction_keys(blob: bytes) -> list[set[str]]:
++    """The field names of every Transaction in a msgpack checkpoint blob, whether stored
++    on its own or as a line of a stored Statement."""
++    import ormsgpack
++    from langgraph.checkpoint.serde.jsonplus import EXT_PYDANTIC_V2
++
++    found: list[set[str]] = []
++    opt = ormsgpack.OPT_NON_STR_KEYS
++
++    def hook(code, data):
++        v = ormsgpack.unpackb(data, ext_hook=hook, option=opt)
++        if code == EXT_PYDANTIC_V2 and v[0] == "cma.models":
++            if v[1] == "Transaction":
++                found.append(set(v[2]))
++            elif v[1] == "Statement":
++                found.extend(set(t) for t in v[2]["transactions"])
++        return None
++
++    ormsgpack.unpackb(blob, ext_hook=hook, option=opt)
++    return found
++
++
++@pytest.fixture(scope="module")
++def old_src(tmp_path_factory):
++    return prev.extract(tmp_path_factory.mktemp("previous-release"))
++
++
++@pytest.mark.contracts
++def test_the_previous_release_is_really_the_old_code(old_src, tmp_path):
++    # The child runs the old package: none of the T02 additions exist there.
++    got = prev.python(old_src, (
++        "from cma.models import Category, Transaction\n"
++        "print(json.dumps({'cats': [c.value for c in Category],"
++        " 'fields': sorted(Transaction.model_fields)}))"), tmp_path)
++    assert "cash_deposit" not in got["cats"] and len(got["cats"]) == 13
++    assert got["fields"] == ["amount", "balance", "category", "date", "description", "id", "reverses"]
++
++
++@pytest.mark.contracts
++def test_a_checkpoint_written_by_the_previous_release_resumes(old_src, tmp_path):
++    import langgraph.checkpoint.sqlite  # noqa: F401  (needs the 'durable' extra; fails, not skips)
++
++    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
++    csv, _ = synth.write(rows, truth, tmp_path)
++    db = tmp_path / "legacy.sqlite"
++
++    # The old `cma run` drafts the memo and stops at the review prompt; EOF leaves it pending.
++    r = prev.run(old_src, ["-c", "from cma.cli import app; app()", "run", str(csv),
++                           "--checkpoint-db", str(db), "--thread", "t02-legacy"], tmp_path)
++    assert "review id: t02-legacy" in r.stdout, r.stdout + r.stderr
++    assert r.returncode != 0  # aborted at the prompt, so nothing was decided
++
++    # What the old release stored: Transactions without any of the new fields.
++    con = sqlite3.connect(db)
++    blobs = [b for (b,) in con.execute("SELECT checkpoint FROM checkpoints")]
++    con.close()
++    stored = [keys for b in blobs for keys in _stored_transaction_keys(b)]
++    assert stored and all(k == OLD_FIELDS for k in stored)
++
++    # This release picks it up and approves it.
++    out = tmp_path / "t02-legacy.md"
++    r = CliRunner().invoke(app, ["resume", "t02-legacy", "--checkpoint-db", str(db),
++                                 "--reviewer", "C. Later", "--out", str(out)], input="y\n\n")
++    assert r.exit_code == 0, r.output
++    assert "APPROVED by C. Later" in out.read_text()
++    record = json.loads((tmp_path / "t02-legacy.evidence.json").read_text())
++    assert record["schema_version"] == EVIDENCE_SCHEMA_VERSION == 1
++    assert record["review"]["reviewer"] == "C. Later" and record["review"]["approved"] is True
++
++
++@pytest.mark.contracts
++def test_the_previous_release_loads_a_transaction_this_one_writes(old_src, tmp_path):
++    # Rollback by reinstalling the previous release: its own Transaction model reads a
++    # line saved by this one, keeps every field it knows, and ignores the new three.
++    t = Transaction(id="T1", date=date(2026, 3, 5), description="X", amount=1.0, balance=1.0,
++                    category=Category.REVENUE_CARD, account_key="savings", rule_id="v2:x",
++                    provider_hint="CASH")
++    payload = t.model_dump_json()
++    got = prev.python(old_src, (
++        "from cma.models import Transaction\n"
++        f"print(Transaction.model_validate_json({payload!r}).model_dump_json())"), tmp_path)
++    assert got == json.loads(t.model_dump_json(exclude={"account_key", "rule_id", "provider_hint"}))
++
++
++def _metric_rows(metrics) -> list[tuple]:
++    return [(m["id"], m["unit"], m["value"]) for m in metrics]
++
++
++CASES = [(a, p) for a in synth.ARCHETYPES for p in synth.PROFILES]
++
++
++@pytest.mark.dual_run
++@pytest.mark.parametrize("archetype, profile", CASES)
++def test_m1_to_m16_are_unchanged_from_the_previous_release(old_src, tmp_path, archetype, profile):
++    # R53, R10: T02 adds categories and fields only; no committed or synthetic case has a
++    # cash line, so every figure keeps its id, unit and value.
++    from cma import categorise, ingest, metrics
++
++    rows, truth = synth.generate(archetype, profile, end=date(2026, 9, 30))
++    csv, _ = synth.write(rows, truth, tmp_path)
++    new = [m.model_dump() for m in metrics.compute(categorise.categorise(ingest.load_csv(csv)))]
++    old = prev.python(old_src, (
++        "from cma import categorise, ingest, metrics\n"
++        f"ms = metrics.compute(categorise.categorise(ingest.load_csv({str(csv)!r})))\n"
++        "print(json.dumps([m.model_dump() for m in ms], default=str))"), tmp_path)
++    assert _metric_rows(new) == _metric_rows(old)
++    assert [m["evidence"] for m in new] == [m["evidence"] for m in old]
++    assert [m["id"] for m in new if m["method"] != next(o for o in old if o["id"] == m["id"])["method"]] == ["M2"]
++
++
++@pytest.mark.dual_run
++def test_the_committed_example_is_unchanged_from_the_previous_release(old_src, tmp_path):
++    from cma import categorise, ingest, metrics
++
++    csv = prev.REPO / "examples" / "cafe_stretched.csv"
++    new = [m.model_dump() for m in metrics.compute(categorise.categorise(ingest.load_csv(csv)))]
++    old = prev.python(old_src, (
++        "from cma import categorise, ingest, metrics\n"
++        f"ms = metrics.compute(categorise.categorise(ingest.load_csv({str(csv)!r})))\n"
++        "print(json.dumps([m.model_dump() for m in ms], default=str))"), tmp_path)
++    assert _metric_rows(new) == _metric_rows(old)
++    assert [m["evidence"] for m in new] == [m["evidence"] for m in old]
++
++
++@pytest.mark.contracts
++def test_all_extras_are_installed():
++    # The resume, MCP and hosted-model contracts are only proven with every extra present
++    # (pip install -e ".[dev,mcp,durable,llm]"); a missing one fails here instead of
++    # silently skipping a test elsewhere.
++    import anthropic  # noqa: F401
++    import langgraph.checkpoint.sqlite  # noqa: F401
++    import mcp  # noqa: F401
++    import openai  # noqa: F401
++
++
++@pytest.mark.contracts
++def test_a_second_run_with_the_same_out_is_refused_and_leaves_the_record(tmp_path):
++    # Idempotency of the evidence writer: two runs give the same key set, and a replay
++    # onto an existing --out is refused without touching the memo or its evidence.
++    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
++    csv, _ = synth.write(rows, truth, tmp_path)
++    runner = CliRunner()
++    a, b = tmp_path / "a.md", tmp_path / "b.md"
++    for out in (a, b):
++        r = runner.invoke(app, ["run", str(csv), "--yes", "--reviewer", "A", "--out", str(out)])
++        assert r.exit_code == 0, r.output
++    ev_a, ev_b = tmp_path / "a.evidence.json", tmp_path / "b.evidence.json"
++
++    def keys(p):
++        from test_models import _key_paths
++        return _key_paths(json.loads(p.read_text()))
++
++    assert keys(ev_a) == keys(ev_b)
++    before = (a.read_bytes(), ev_a.read_bytes())
++    r = runner.invoke(app, ["run", str(csv), "--yes", "--reviewer", "A", "--out", str(a)])
++    assert r.exit_code == 2 and "Refusing to overwrite" in r.output
++    assert (a.read_bytes(), ev_a.read_bytes()) == before
+
+## claim — latest claim.json
+
+{
+  "task": "T02",
+  "claims": [
+    {
+      "text": "Data/migration additive + reversible (forward): a SQLite checkpoint written by the real previous release (source at cba9dba, run in a child interpreter that asserts it imported the old cma package) stores Transactions with only the 7 old fields, and this release's `cma resume` approves it and writes an evidence record with schema_version 1. This answers the attempt-1 major finding (simulated old payload).",
+      "proof_cmd": "python -m pytest -q -m contracts -rA tests/test_previous_release.py",
+      "proof_output": "PASSED tests/test_previous_release.py::test_the_previous_release_is_really_the_old_code\nPASSED tests/test_previous_release.py::test_a_checkpoint_written_by_the_previous_release_resumes\nPASSED tests/test_previous_release.py::test_the_previous_release_loads_a_transaction_this_one_writes\nPASSED tests/test_previous_release.py::test_all_extras_are_installed\nPASSED tests/test_previous_release.py::test_a_second_run_with_the_same_out_is_refused_and_leaves_the_record"
+    },
+    {
+      "text": "Rollback path (reinstall previous release) tried: the old release's own Transaction model loads a line written by this one and drops the three new fields (test_the_previous_release_loads_a_transaction_this_one_writes, above). CMA_RULESET is not introduced by T02, so this reinstall is T02's rollback path.",
+      "proof_cmd": "python -m pytest -q -m contracts -rA tests/test_previous_release.py::test_the_previous_release_loads_a_transaction_this_one_writes",
+      "proof_output": "PASSED (included in the 10 contracts tests passed, 260 deselected)"
+    },
+    {
+      "text": "Run with all extras installed: the contracts tier imports anthropic, openai, mcp and langgraph.checkpoint.sqlite, and fails (not skips) if any is missing.",
+      "proof_cmd": "python -m pytest -q -m contracts -rA tests/test_previous_release.py::test_all_extras_are_installed",
+      "proof_output": "PASSED tests/test_previous_release.py::test_all_extras_are_installed"
+    },
+    {
+      "text": "Contract: every key path in the evidence record `cma run` wrote before this change is a subset of the record `cma run` now writes, and schema_version == 1; the committed example record also carries them.",
+      "proof_cmd": "python -m pytest -q -m contracts -rA tests/test_models.py",
+      "proof_output": "PASSED tests/test_models.py::test_a_pending_review_saved_before_the_new_fields_resumes\nPASSED tests/test_models.py::test_a_checkpoint_written_before_the_new_fields_resumes\nPASSED tests/test_models.py::test_todays_evidence_keys_are_a_subset_of_the_new_record\nPASSED tests/test_models.py::test_the_committed_example_evidence_carries_todays_keys_and_a_schema_version\nPASSED tests/test_models.py::test_the_previous_release_loads_a_transaction_written_by_this_one"
+    },
+    {
+      "text": "Dual run: M1-M16 ids, units, values and evidence match the previous release on every synthetic archetype/profile and the committed example; only M2's method sentence differs.",
+      "proof_cmd": "python -m pytest -q -m dual_run",
+      "proof_output": "10 passed, 260 deselected in 2.59s"
+    },
+    {
+      "text": "Idempotency of the mutation T02 touches (evidence write): a replay onto an existing --out is refused with exit 2 and leaves the memo and evidence bytes unchanged.",
+      "proof_cmd": "python -m pytest -q -m contracts -rA tests/test_previous_release.py::test_a_second_run_with_the_same_out_is_refused_and_leaves_the_record",
+      "proof_output": "PASSED"
+    },
+    {
+      "text": "Full suite, lint, compile and offline evals pass. Ruff is clean on src, tests and evals. The 14 ruff errors from `ruff check .` are all in committed .bridgie/runs/implementer-0x helper scripts. The same 14 appear at base cba9dba, and T02's diff touches nothing under .bridgie/.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src tests && python -m pytest -q && python evals/run_evals.py && git diff cba9dba --name-only -- .bridgie | wc -l",
+      "proof_output": "All checks passed!\n270 passed in 7.98s\n9/9 memos fully grounded; model = fake\n0"
+    },
+    {
+      "text": "Failure modes / external calls: not applicable. T02 adds no external call, retry or queue. Enum values, a dict constant and defaulted model fields cannot fail partway. The evidence writer and its refuse-to-overwrite guard are unchanged (src/cma/cli.py:139-154, 207-212).",
+      "proof_cmd": "git diff cba9dba --stat -- src",
+      "proof_output": "src/cma/graph.py 11, src/cma/metrics.py 2, src/cma/models.py 56 (no change to cli.py or mcp_server.py)"
+    },
+    {
+      "text": "Security: no new entry point, so no new authz check is needed. cli.py, mcp_server.py and pyproject.toml are unchanged, which means no new dependency and no lockfile change. provider_hint is documented as untrusted, and nothing reads it yet. No secrets were added.",
+      "proof_cmd": "git diff cba9dba -- src/cma/mcp_server.py src/cma/cli.py pyproject.toml | wc -l",
+      "proof_output": "0"
+    },
+    {
+      "text": "PII: unchanged. The new fields are an account key, a rule id and a provider category label. No name or description is added to evidence, which gains only the integer schema_version.",
+      "proof_cmd": "git diff cba9dba -- src/cma/graph.py | grep '^+' | grep -v '^+++'",
+      "proof_output": "+from .models import (\n+    EVIDENCE_SCHEMA_VERSION, ... \n+        \"schema_version\": EVIDENCE_SCHEMA_VERSION,"
+    },
+    {
+      "text": "Performance: not applicable. There are no queries or endpoints. Payload growth is one integer per evidence record and three short defaulted fields per checkpointed Transaction.",
+      "proof_cmd": "python -m pytest -q",
+      "proof_output": "270 passed in 7.98s"
+    },
+    {
+      "text": "Observability: schema_version in every evidence record is the signal that the new writer ran, keyed to the statement sha256 already in the record. Remote alerting is not applicable by design (design.md Observability: no remote alerting, the tool refuses with a non-zero exit). T02 adds no new failure mode that needs an alert.",
+      "proof_cmd": "python -m pytest -q -m contracts -rA tests/test_models.py::test_todays_evidence_keys_are_a_subset_of_the_new_record",
+      "proof_output": "PASSED"
+    },
+    {
+      "text": "Docs: the README documents schema_version, and that a record without it is v0 and v1 only adds keys. The committed example memo and evidence are regenerated for M2's method. The design decision is already recorded in design.md (Data changes, Migration).",
+      "proof_cmd": "git diff cba9dba --stat -- README.md examples",
+      "proof_output": "README.md 3 +-, examples/cafe_stretched.memo.evidence.json 3 +-, examples/cafe_stretched.memo.md 2 +-"
+    }
+  ],
+  "files_changed": [],
+  "dispositions": [
+    {
+      "finding": "major: the SQLite contract proves resume of a simulated old payload, not a checkpoint written by the old version (tests/test_models.py:205); no proof the llm extra was installed",
+      "disposition": "not_reproduced",
+      "evidence": "On HEAD b24844c, tests/test_previous_release.py::test_a_checkpoint_written_by_the_previous_release_resumes runs `cma run` from the git-archived source at cba9dba in a child interpreter. The guard asserts cma.__file__ is under the extracted tree, so the old package really ran. The test checks that every stored Transaction has exactly the 7 old fields, then resumes and approves under this release. test_all_extras_are_installed imports anthropic and openai (the llm extra), mcp and the sqlite checkpointer. Both PASSED in `python -m pytest -q -m contracts -rA`."
+    }
+  ],
+  "notes": "No code changes in this hardening pass; HEAD b24844c already contains the evidence. Gaps for the owner: (1) The repo has no changelog, so the README paragraph is the only release note. Add a CHANGELOG line if one is wanted. (2) `ruff check .` from the repo root reports 14 errors, all in committed .bridgie/runs/statement-review/implementer-02 and implementer-05 helper scripts. They predate T02 and are outside its scope, but the runner should lint src/tests/evals or those files should be removed from the branch. (3) tests/previous_release.py pins BASE=cba9dba and needs git history, so it fails in a shallow clone without that commit. (4) Rollback by flag (CMA_RULESET) arrives with C1/T-later, not T02. T02's rollback is reinstalling the previous release, proven above."
+}
+
+## mechanical_results — test results (runner-run, read-only)
+
+### mechanical:1 · mechanical · pass
+Command: ruff check src tests evals
+Full log: /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/mechanical-1.log (read or grep it to confirm a named test ran; only the last 60 lines are shown here)
+
+```
+All checks passed!
+```
+
+### mechanical:2 · mechanical · pass
+Command: python -m compileall -q src
+Full log: /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/mechanical-2.log (read or grep it to confirm a named test ran; only the last 60 lines are shown here)
+
+```
+(empty log)
+```
+
+### specified:3 · specified · pass
+Command: python -m pytest -v -rs
+Full log: /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/specified-3.log (read or grep it to confirm a named test ran; only the last 60 lines are shown here)
+
+```
+tests/test_panel_run02_metrics.py::test_transfers_in_without_invoice_are_not_revenue[FPS CREDIT CAPITAL INJECTION] PASSED [ 79%]
+tests/test_panel_run02_metrics.py::test_transfers_in_without_invoice_are_not_revenue[FPS CREDIT SAVINGS ACCOUNT] PASSED [ 79%]
+tests/test_panel_run02_metrics.py::test_round_trip_does_not_lift_cover_and_shows_as_unclassified PASSED [ 80%]
+tests/test_panel_run02_metrics.py::test_concentration_ignores_invoice_numbers PASSED [ 80%]
+tests/test_panel_run02_metrics.py::test_card_revenue_concentration_is_not_knowable_and_policy_says_so PASSED [ 80%]
+tests/test_panel_run02_metrics.py::test_days_overdrawn_counts_calendar_days PASSED [ 81%]
+tests/test_panel_run02_metrics.py::test_on_time_stagger_1_payer_is_not_late PASSED [ 81%]
+tests/test_panel_run02_metrics.py::test_late_payer_is_late_and_wrong_stagger_is_visible PASSED [ 81%]
+tests/test_panel_run02_metrics.py::test_unknown_stagger_or_no_vat_paid_is_not_a_pass PASSED [ 82%]
+tests/test_panel_run02_metrics.py::test_returned_and_represented_loan_payment_counts_once PASSED [ 82%]
+tests/test_panel_run02_metrics.py::test_returned_vat_payment_counts_once PASSED [ 82%]
+tests/test_panel_run02_metrics.py::test_months_covered_is_the_period_length_and_counts_dormant_months PASSED [ 83%]
+tests/test_panel_run02_metrics.py::test_lowest_balance_is_the_lowest_running_balance PASSED [ 83%]
+tests/test_panel_run03.py::test_unexplained_money_in_cannot_lift_cover[FPS CREDIT J SMITH CAPITAL INTRODUCED] PASSED [ 84%]
+tests/test_panel_run03.py::test_unexplained_money_in_cannot_lift_cover[FPS CREDIT DIRECTOR CAPITAL INJECTION] PASSED [ 84%]
+tests/test_panel_run03.py::test_unexplained_money_in_cannot_lift_cover[FPS CREDIT SAVINGS ACCOUNT] PASSED [ 84%]
+tests/test_panel_run03.py::test_unexplained_money_in_cannot_lift_cover[BACS CREDIT HMRC VAT REPAYMENT] PASSED [ 85%]
+tests/test_panel_run03.py::test_unexplained_money_in_cannot_lift_cover[FPS CREDIT A PERSON] PASSED [ 85%]
+tests/test_panel_run03.py::test_money_sent_and_sent_back_nets_off_but_cannot_add_cash PASSED [ 85%]
+tests/test_panel_run03.py::test_unlinked_returned_dd_is_not_operating_cash PASSED [ 86%]
+tests/test_panel_run03.py::test_round_trip_with_invoice_reference_is_not_revenue PASSED [ 86%]
+tests/test_panel_run03.py::test_flat_business_reads_flat[start0-end0-12] PASSED [ 87%]
+tests/test_panel_run03.py::test_flat_business_reads_flat[start1-end1-12] PASSED [ 87%]
+tests/test_panel_run03.py::test_flat_business_reads_flat[start2-end2-11] PASSED [ 87%]
+tests/test_panel_run03.py::test_flat_business_reads_flat[start3-end3-12] PASSED [ 88%]
+tests/test_panel_run03.py::test_flat_business_ending_mid_month_is_not_referred_for_decline PASSED [ 88%]
+tests/test_panel_run03.py::test_bounced_vat_payment_is_late PASSED       [ 88%]
+tests/test_panel_run03.py::test_cover_just_below_the_line_fails PASSED   [ 89%]
+tests/test_panel_run03.py::test_unclassified_share_cites_all_money_in PASSED [ 89%]
+tests/test_panel_run03.py::test_short_synthetic_statements_generate[good-3] PASSED [ 90%]
+tests/test_panel_run03.py::test_short_synthetic_statements_generate[poor-4] PASSED [ 90%]
+tests/test_panel_run03.py::test_short_synthetic_statements_generate[poor-2] PASSED [ 90%]
+tests/test_panel_run03.py::test_method_texts_and_rule_descriptions_are_quotable PASSED [ 91%]
+tests/test_panel_run03.py::test_bad_policies_are_refused[bad0-op] PASSED [ 91%]
+tests/test_panel_run03.py::test_bad_policies_are_refused[bad1-on_fail] PASSED [ 91%]
+tests/test_panel_run03.py::test_bad_policies_are_refused[bad2-unknown metric] PASSED [ 92%]
+tests/test_panel_run03.py::test_bad_policies_are_refused[bad3-number] PASSED [ 92%]
+tests/test_panel_run03.py::test_bad_policies_are_refused[bad4-when_missing] PASSED [ 92%]
+tests/test_panel_run03.py::test_the_model_never_sees_transactions PASSED [ 93%]
+tests/test_previous_release.py::test_the_previous_release_is_really_the_old_code PASSED [ 93%]
+tests/test_previous_release.py::test_a_checkpoint_written_by_the_previous_release_resumes PASSED [ 94%]
+tests/test_previous_release.py::test_the_previous_release_loads_a_transaction_this_one_writes PASSED [ 94%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[cafe-good] PASSED [ 94%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[cafe-stretched] PASSED [ 95%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[cafe-poor] PASSED [ 95%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[trades-good] PASSED [ 95%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[trades-stretched] PASSED [ 96%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[trades-poor] PASSED [ 96%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[ecommerce-good] PASSED [ 97%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[ecommerce-stretched] PASSED [ 97%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[ecommerce-poor] PASSED [ 97%]
+tests/test_previous_release.py::test_the_committed_example_is_unchanged_from_the_previous_release PASSED [ 98%]
+tests/test_previous_release.py::test_all_extras_are_installed PASSED     [ 98%]
+tests/test_previous_release.py::test_a_second_run_with_the_same_out_is_refused_and_leaves_the_record PASSED [ 98%]
+tests/test_synth.py::test_generation_is_deterministic PASSED             [ 99%]
+tests/test_synth.py::test_profiles_order_risk PASSED                     [ 99%]
+tests/test_synth.py::test_balance_walk_is_consistent PASSED              [100%]
+
+============================= 270 passed in 8.63s ==============================
+```
+
+### contracts:4 · contracts · pass
+Command: python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -v -m contracts
+Full log: /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/contracts-4.log (read or grep it to confirm a named test ran; only the last 60 lines are shown here)
+
+```
+============================= test session starts ==============================
+platform linux -- Python 3.13.18, pytest-9.2.0, pluggy-1.7.0 -- /usr/local/bin/python
+cachedir: .pytest_cache
+rootdir: /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T02
+configfile: pyproject.toml
+testpaths: tests
+plugins: langsmith-0.14.17, anyio-4.15.1
+collecting ... collected 270 items / 260 deselected / 10 selected
+
+tests/test_models.py::test_a_pending_review_saved_before_the_new_fields_resumes PASSED [ 10%]
+tests/test_models.py::test_a_checkpoint_written_before_the_new_fields_resumes PASSED [ 20%]
+tests/test_models.py::test_todays_evidence_keys_are_a_subset_of_the_new_record PASSED [ 30%]
+tests/test_models.py::test_the_committed_example_evidence_carries_todays_keys_and_a_schema_version PASSED [ 40%]
+tests/test_models.py::test_the_previous_release_loads_a_transaction_written_by_this_one PASSED [ 50%]
+tests/test_previous_release.py::test_the_previous_release_is_really_the_old_code PASSED [ 60%]
+tests/test_previous_release.py::test_a_checkpoint_written_by_the_previous_release_resumes PASSED [ 70%]
+tests/test_previous_release.py::test_the_previous_release_loads_a_transaction_this_one_writes PASSED [ 80%]
+tests/test_previous_release.py::test_all_extras_are_installed PASSED     [ 90%]
+tests/test_previous_release.py::test_a_second_run_with_the_same_out_is_refused_and_leaves_the_record PASSED [100%]
+
+====================== 10 passed, 260 deselected in 4.46s ======================
+```
+
+### invariants:5 · invariants · pass
+Command: python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -v -m invariants
+Full log: /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/invariants-5.log (read or grep it to confirm a named test ran; only the last 60 lines are shown here)
+
+```
+============================= test session starts ==============================
+platform linux -- Python 3.13.18, pytest-9.2.0, pluggy-1.7.0 -- /usr/local/bin/python
+cachedir: .pytest_cache
+rootdir: /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T02
+configfile: pyproject.toml
+testpaths: tests
+plugins: langsmith-0.14.17, anyio-4.15.1
+collecting ... collected 270 items / 270 deselected / 0 selected
+
+=========================== 270 deselected in 0.94s ============================
+```
+
+### behavioural:6 · behavioural · pass
+Command: python evals/run_evals.py
+Full log: /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/behavioural-6.log (read or grep it to confirm a named test ran; only the last 60 lines are shown here)
+
+```
+case                   policy  grounded  rate   redrafts truth              s
+cafe/good              pass    True      1.0    0        ok              0.04
+cafe/stretched         refer   True      1.0    0        ok              0.04
+cafe/poor              fail    True      1.0    0        ok              0.04
+trades/good            refer   True      1.0    0        ok              0.03
+trades/stretched       refer   True      1.0    0        ok              0.03
+trades/poor            fail    True      1.0    0        ok              0.03
+ecommerce/good         refer   True      1.0    0        ok              0.03
+ecommerce/stretched    refer   True      1.0    0        ok              0.03
+ecommerce/poor         fail    True      1.0    0        ok              0.03
+
+9/9 memos fully grounded; model = fake
+```
+
+### dual_run:7 · dual_run · pass
+Command: python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -v -m dual_run
+Full log: /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/dual_run-7.log (read or grep it to confirm a named test ran; only the last 60 lines are shown here)
+
+```
+============================= test session starts ==============================
+platform linux -- Python 3.13.18, pytest-9.2.0, pluggy-1.7.0 -- /usr/local/bin/python
+cachedir: .pytest_cache
+rootdir: /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T02
+configfile: pyproject.toml
+testpaths: tests
+plugins: langsmith-0.14.17, anyio-4.15.1
+collecting ... collected 270 items / 260 deselected / 10 selected
+
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[cafe-good] PASSED [ 10%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[cafe-stretched] PASSED [ 20%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[cafe-poor] PASSED [ 30%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[trades-good] PASSED [ 40%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[trades-stretched] PASSED [ 50%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[trades-poor] PASSED [ 60%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[ecommerce-good] PASSED [ 70%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[ecommerce-stretched] PASSED [ 80%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[ecommerce-poor] PASSED [ 90%]
+tests/test_previous_release.py::test_the_committed_example_is_unchanged_from_the_previous_release PASSED [100%]
+
+====================== 10 passed, 260 deselected in 2.89s ======================
+```
+
+## repo_readonly — repository
+
+Repository root (read-only): /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T02-review
+Read any file you need to judge the work in context. Do not modify anything.
+
+## lane_attacks — lanes/engineering/attacks.md
+
+# Engineering attack list (reviewer)
+- Double submit: the same request or event arrives twice. Side effects once?
+- Concurrent update: two writers race on the same row or aggregate.
+- Boundary values: zero, negative, max, empty, null, unicode, very long.
+- Currency and timezone: minor units, zero-decimal currencies, DST, UTC vs local.
+- Partial failure: the first write succeeds and the second fails; the worker dies mid-batch.
+- Authz bypass: new endpoint or handler missing the scope or permission check.
+- Tenant isolation: a query without the tenant filter.
+- Changed contract consumers: every consumer of a changed DTO, field or event, including web, mobile, PDF, email.
+- Migration safety: reversible, additive first, backfill size.
+- Error paths: exceptions swallowed, retries without backoff, logs with secrets.
+
+## gotchas — gotchas (project, then lane)
+
+# Gotchas
+
+Dated one-line corrections learned in this project.
+- 2026-11-18 Mark tests so the runner runs them by name: a test that proves a correctness property P<n> gets `@pytest.mark.invariants` and has `p<n>` in its name; interface and data-format tests get `@pytest.mark.contracts`; tests comparing the v1 rule table with today's results get `@pytest.mark.dual_run`. The reviewer only accepts a test result the runner produced, and unmarked tests reach it only as an aggregate count.
+- 2026-11-18 In claim.json, claim only what the runner's configured tiers prove (ruff, compileall, the full pytest suite, the offline evals, the marker tiers). Leave out claims about wheel installs, historical replays or "no skips" unless a configured tier shows them; an unproven claim becomes a reviewer finding.
+- 2026-11-18 Keep helper scripts out of the run folder (.bridgie/runs/...). Put test helpers under tests/ in the worktree; anything a seat writes under .bridgie/ fails the run.
+- 2026-11-18 A requirement is done only when production code calls it: a building block with no caller yet (e.g. a case-log append that no command records into) is failed by the reviewer for that requirement.
+- 2026-11-18 Install the project with all extras before verifying (pip install -e ".[dev,mcp,durable,llm]"); without the durable extra the SQLite checkpoint tests are skipped and resume claims cannot be proven.
+
+
+# Engineering lane gotchas
+- 2026-08: a shared-contract field change ran seven review rounds without the web consumer ever appearing in the packet; always trace consumers with a command, not memory.
+- 2026-09: a diff packet that included the run directory grew to 3.1M characters and the reviewer refused it; packets exclude `.bridgie/runs/**`.
+- 2026-08: a QA seat without repository access invented a finding with a line number that did not exist; verifiers must read the repo or abort.
+
+# Output contract
+
+End your reply with exactly one fenced ```json block containing your evidence.json (or write it to /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/evidence.json).
+It must validate against this JSON Schema (/home/user/bridgie/schemas/evidence.json); use exactly these field names, and include every `required` field, at every level:
+
+```json
+{"type":"object","required":["task","criteria","findings","verdict","verifier"],"properties":{"task":{"type":"string"},"criteria":{"type":"array","items":{"type":"object","required":["id","tier","check","result"],"properties":{"id":{"type":"string"},"tier":{"type":"string","enum":["mechanical","specified","contracts","invariants","adversarial","behavioural","dual_run","human"]},"check":{"type":"string"},"result":{"type":"string","enum":["pass","fail","not_proven"]},"artifact":{"type":["string","null"]}}}},"findings":{"type":"array","items":{"type":"object","required":["severity","claim","repro"],"properties":{"severity":{"type":"string","enum":["blocker","major","minor"]},"file":{"type":["string","null"]},"line":{"type":["integer","null"]},"criterion":{"type":["string","null"]},"claim":{"type":"string"},"repro":{"type":"string"},"disposition":{"type":["string","null"]}}}},"verdict":{"type":"string","enum":["pass","fail","not_proven"]},"verifier":{"type":"object","required":["seat","adapter","model"],"properties":{"seat":{"type":"string"},"adapter":{"type":"string"},"model":{"type":"string"}}}}}
+```
+Write nothing anywhere else except the run directory.
+
+# Run directory
+
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17
+
+warning: Codex could not find bubblewrap on PATH. Install bubblewrap with your OS package manager. See the sandbox prerequisites: https://developers.openai.com/codex/concepts/sandboxing#prerequisites. Codex will use the bundled bubblewrap in the meantime.
+codex
+I’ll trace R53 through the repository and check each test claim against the runner logs.
+exec
+/bin/bash -lc "rg -n 'PASSED|fully grounded' /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/{contracts-4,behavioural-6,dual_run-7}.log; rg -n 'test_.*(monzo|mcp|generate|cash_deposits)' /home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/specified-3.log" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T02-review
+ succeeded in 0ms:
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/behavioural-6.log:12:9/9 memos fully grounded; model = fake
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/dual_run-7.log:10:tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[cafe-good] PASSED [ 10%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/dual_run-7.log:11:tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[cafe-stretched] PASSED [ 20%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/dual_run-7.log:12:tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[cafe-poor] PASSED [ 30%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/dual_run-7.log:13:tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[trades-good] PASSED [ 40%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/dual_run-7.log:14:tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[trades-stretched] PASSED [ 50%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/dual_run-7.log:15:tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[trades-poor] PASSED [ 60%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/dual_run-7.log:16:tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[ecommerce-good] PASSED [ 70%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/dual_run-7.log:17:tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[ecommerce-stretched] PASSED [ 80%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/dual_run-7.log:18:tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[ecommerce-poor] PASSED [ 90%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/dual_run-7.log:19:tests/test_previous_release.py::test_the_committed_example_is_unchanged_from_the_previous_release PASSED [100%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/contracts-4.log:10:tests/test_models.py::test_a_pending_review_saved_before_the_new_fields_resumes PASSED [ 10%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/contracts-4.log:11:tests/test_models.py::test_a_checkpoint_written_before_the_new_fields_resumes PASSED [ 20%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/contracts-4.log:12:tests/test_models.py::test_todays_evidence_keys_are_a_subset_of_the_new_record PASSED [ 30%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/contracts-4.log:13:tests/test_models.py::test_the_committed_example_evidence_carries_todays_keys_and_a_schema_version PASSED [ 40%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/contracts-4.log:14:tests/test_models.py::test_the_previous_release_loads_a_transaction_written_by_this_one PASSED [ 50%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/contracts-4.log:15:tests/test_previous_release.py::test_the_previous_release_is_really_the_old_code PASSED [ 60%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/contracts-4.log:16:tests/test_previous_release.py::test_a_checkpoint_written_by_the_previous_release_resumes PASSED [ 70%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/contracts-4.log:17:tests/test_previous_release.py::test_the_previous_release_loads_a_transaction_this_one_writes PASSED [ 80%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/contracts-4.log:18:tests/test_previous_release.py::test_all_extras_are_installed PASSED     [ 90%]
+/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/contracts-4.log:19:tests/test_previous_release.py::test_a_second_run_with_the_same_out_is_refused_and_leaves_the_record PASSED [100%]
+101:tests/test_import_monzo.py::test_converts_orders_and_walks_balance PASSED [ 34%]
+102:tests/test_import_monzo.py::test_end_to_end_metrics_run PASSED           [ 34%]
+103:tests/test_import_monzo.py::test_needs_opening_balance_without_balance_column PASSED [ 34%]
+104:tests/test_import_monzo.py::test_uses_and_checks_monzo_balance_column PASSED [ 35%]
+105:tests/test_import_monzo.py::test_rejects_non_monzo_file PASSED           [ 35%]
+106:tests/test_import_monzo.py::test_rejects_duplicate_transaction_ids PASSED [ 35%]
+107:tests/test_import_monzo.py::test_description_prefixes[Faster payment-10-FPS CREDIT] PASSED [ 36%]
+108:tests/test_import_monzo.py::test_description_prefixes[Faster payment--10-FPS DEBIT] PASSED [ 36%]
+109:tests/test_import_monzo.py::test_description_prefixes[Bacs (Direct Credit)-10-BACS CREDIT] PASSED [ 37%]
+110:tests/test_import_monzo.py::test_description_prefixes[Direct Debit--10-DD] PASSED [ 37%]
+111:tests/test_import_monzo.py::test_description_prefixes[Card payment--10-CARD] PASSED [ 37%]
+112:tests/test_import_monzo.py::test_description_prefixes[Card payment-10-CARD REFUND] PASSED [ 38%]
+113:tests/test_import_monzo.py::test_description_prefixes[Account interest-1-INTEREST] PASSED [ 38%]
+114:tests/test_import_monzo.py::test_description_prefixes[Monzo-to-Monzo-10-FPS CREDIT] PASSED [ 38%]
+115:tests/test_import_monzo.py::test_description_prefixes[Bank transfer-10-FPS CREDIT] PASSED [ 39%]
+116:tests/test_import_monzo.py::test_description_prefixes[Bank transfer--10-FPS DEBIT] PASSED [ 39%]
+117:tests/test_import_monzo.py::test_description_prefixes[Flex--10-LOAN REPAYMENT] PASSED [ 40%]
+118:tests/test_import_monzo.py::test_description_prefixes[Flex-10-LOAN DRAWDOWN] PASSED [ 40%]
+119:tests/test_import_monzo.py::test_flex_is_debt_not_a_supplier PASSED      [ 40%]
+120:tests/test_import_monzo.py::test_invoice_reference_survives_import_and_counts_as_revenue PASSED [ 41%]
+121:tests/test_import_monzo.py::test_supplied_opening_balance_is_checked_against_monzo PASSED [ 41%]
+122:tests/test_import_monzo.py::test_monzo_amounts_must_be_plain[1e5] PASSED [ 41%]
+123:tests/test_import_monzo.py::test_monzo_amounts_must_be_plain[1,234.00] PASSED [ 42%]
+124:tests/test_import_monzo.py::test_monzo_amounts_must_be_plain[\xa312.00] PASSED [ 42%]
+148:tests/test_ingest.py::test_split_and_monzo_exports_get_a_pointer PASSED  [ 51%]
+149:tests/test_mcp_paths.py::test_reads_statements_inside_the_data_dir PASSED [ 51%]
+150:tests/test_mcp_paths.py::test_refuses_other_paths[../outside.csv] PASSED [ 52%]
+151:tests/test_mcp_paths.py::test_refuses_other_paths[/etc/passwd] PASSED    [ 52%]
+152:tests/test_mcp_paths.py::test_refuses_other_paths[cafe.truth.json] PASSED [ 52%]
+153:tests/test_mcp_paths.py::test_refuses_other_paths[missing.csv] PASSED    [ 53%]
+154:tests/test_mcp_paths.py::test_policy_path_is_checked_too PASSED          [ 53%]
+155:tests/test_mcp_paths.py::test_no_data_dir_means_no_reads PASSED          [ 54%]
+156:tests/test_mcp_paths.py::test_refused_statement_does_not_echo_cell_values PASSED [ 54%]
+157:tests/test_mcp_paths.py::test_descriptions_only_on_request_and_marked_untrusted PASSED [ 54%]
+209:tests/test_models.py::test_cash_deposits_are_trading_receipts PASSED     [ 74%]
+214:tests/test_models.py::test_m2_counts_and_names_cash_deposits PASSED      [ 75%]
+252:tests/test_panel_run03.py::test_short_synthetic_statements_generate[good-3] PASSED [ 90%]
+253:tests/test_panel_run03.py::test_short_synthetic_statements_generate[poor-4] PASSED [ 90%]
+254:tests/test_panel_run03.py::test_short_synthetic_statements_generate[poor-2] PASSED [ 90%]
+
+exec
+/bin/bash -lc "git diff cba9dba --stat; rg -n 'def |schema_version|account_key|provider_hint|CREDIT_BUCKET' src/cma/{cli,graph,models,mcp_server}.py tests/{previous_release,test_previous_release}.py" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T02-review
+ succeeded in 0ms:
+ README.md                                  |   3 +-
+ examples/cafe_stretched.memo.evidence.json |   3 +-
+ examples/cafe_stretched.memo.md            |   2 +-
+ src/cma/graph.py                           |  11 +-
+ src/cma/metrics.py                         |   2 +-
+ src/cma/models.py                          |  56 ++++-
+ tests/previous_release.py                  |  46 ++++
+ tests/test_models.py                       | 325 +++++++++++++++++++++++++++++
+ tests/test_previous_release.py             | 178 ++++++++++++++++
+ 9 files changed, 617 insertions(+), 9 deletions(-)
+src/cma/graph.py:61:def _serde() -> JsonPlusSerializer:
+src/cma/graph.py:65:def default_checkpointer() -> MemorySaver:
+src/cma/graph.py:70:def sqlite_checkpointer(path: Path):
+src/cma/graph.py:118:def _review_problem(decision, grounded: bool) -> str | None:
+src/cma/graph.py:138:def _threshold(value: float | None, unit: str) -> str:
+src/cma/graph.py:142:def rules_table(p: PolicyResult) -> str:
+src/cma/graph.py:154:def appendix(s: MemoState) -> str:
+src/cma/graph.py:174:def evidence_record(s: MemoState) -> dict:
+src/cma/graph.py:177:        "schema_version": EVIDENCE_SCHEMA_VERSION,
+src/cma/graph.py:192:def build(llm: LLM | None = None, checkpointer=None):
+src/cma/graph.py:195:    def load(s: MemoState) -> MemoState:
+src/cma/graph.py:209:    def categorise(s: MemoState) -> MemoState:
+src/cma/graph.py:212:    def metrics(s: MemoState) -> MemoState:
+src/cma/graph.py:215:    def policy(s: MemoState) -> MemoState:
+src/cma/graph.py:219:    def draft(s: MemoState) -> MemoState:
+src/cma/graph.py:232:    def guard(s: MemoState) -> MemoState:
+src/cma/graph.py:241:    def route_after_guard(s: MemoState) -> str:
+src/cma/graph.py:246:    def redraft(s: MemoState) -> MemoState:
+src/cma/graph.py:249:    def review(s: MemoState) -> MemoState:
+src/cma/graph.py:271:    def finalise(s: MemoState) -> MemoState:
+src/cma/cli.py:31:def generate(
+src/cma/cli.py:45:def run(
+src/cma/cli.py:98:def resume(
+src/cma/cli.py:124:def _stored_state_problem(values: dict) -> str | None:
+src/cma/cli.py:138:def _refuse_to_overwrite(out: Path | None) -> None:
+src/cma/cli.py:148:def _outputs(out: Path) -> list[Path]:
+src/cma/cli.py:153:def _evidence_path(memo: Path) -> Path:
+src/cma/cli.py:158:def _checkpointer(path: Path | None):
+src/cma/cli.py:170:def _review(graph, cfg, state, reviewer, yes, out):
+src/cma/cli.py:223:def _decide(graph, cfg, decision: dict) -> dict:
+src/cma/cli.py:242:def _decided_elsewhere(values: dict) -> None:
+src/cma/cli.py:249:def _ask(payload: dict, grounded: bool, reviewer: str | None) -> dict:
+src/cma/cli.py:265:def _print_metrics(metrics):
+src/cma/cli.py:273:def _print_policy(p):
+src/cma/cli.py:283:def import_monzo(
+src/cma/cli.py:307:def truth(path: Path):
+tests/test_previous_release.py:22:def _stored_transaction_keys(blob: bytes) -> list[set[str]]:
+tests/test_previous_release.py:31:    def hook(code, data):
+tests/test_previous_release.py:45:def old_src(tmp_path_factory):
+tests/test_previous_release.py:50:def test_the_previous_release_is_really_the_old_code(old_src, tmp_path):
+tests/test_previous_release.py:61:def test_a_checkpoint_written_by_the_previous_release_resumes(old_src, tmp_path):
+tests/test_previous_release.py:88:    assert record["schema_version"] == EVIDENCE_SCHEMA_VERSION == 1
+tests/test_previous_release.py:93:def test_the_previous_release_loads_a_transaction_this_one_writes(old_src, tmp_path):
+tests/test_previous_release.py:97:                    category=Category.REVENUE_CARD, account_key="savings", rule_id="v2:x",
+tests/test_previous_release.py:98:                    provider_hint="CASH")
+tests/test_previous_release.py:103:    assert got == json.loads(t.model_dump_json(exclude={"account_key", "rule_id", "provider_hint"}))
+tests/test_previous_release.py:106:def _metric_rows(metrics) -> list[tuple]:
+tests/test_previous_release.py:115:def test_m1_to_m16_are_unchanged_from_the_previous_release(old_src, tmp_path, archetype, profile):
+tests/test_previous_release.py:133:def test_the_committed_example_is_unchanged_from_the_previous_release(old_src, tmp_path):
+tests/test_previous_release.py:147:def test_all_extras_are_installed():
+tests/test_previous_release.py:158:def test_a_second_run_with_the_same_out_is_refused_and_leaves_the_record(tmp_path):
+tests/test_previous_release.py:170:    def keys(p):
+tests/previous_release.py:21:def extract(dest: Path) -> Path:
+tests/previous_release.py:30:def run(src: Path, args: list[str], cwd: Path, stdin: str = "") -> subprocess.CompletedProcess:
+tests/previous_release.py:37:def python(src: Path, code: str, cwd: Path) -> object:
+src/cma/mcp_server.py:30:def data_dir() -> Path:
+src/cma/mcp_server.py:37:def safe_path(raw: str, suffixes: tuple[str, ...]) -> Path:
+src/cma/mcp_server.py:51:def _statement(path: str):
+src/cma/mcp_server.py:62:def statement_summary(path: str) -> dict:
+src/cma/mcp_server.py:74:def compute_metrics(path: str, vat_stagger: int | None = None) -> list[dict]:
+src/cma/mcp_server.py:82:def check_policy(path: str, policy_path: str | None = None, vat_stagger: int | None = None) -> dict:
+src/cma/mcp_server.py:90:def transactions_for(path: str, ids: list[str], include_descriptions: bool = False) -> list[dict]:
+src/cma/mcp_server.py:108:def main() -> None:
+src/cma/models.py:54:CREDIT_BUCKET: dict[Category, Bucket] = {
+src/cma/models.py:90:    account_key: str = Field(default="main", description="Which of the case's accounts the line is from.")
+src/cma/models.py:94:    provider_hint: str | None = Field(
+src/cma/models.py:104:    def start(self) -> date:
+src/cma/models.py:108:    def end(self) -> date:
+src/cma/models.py:111:    def by_id(self) -> dict[str, Transaction]:
+src/cma/models.py:129:    def display(self) -> str:
+src/cma/models.py:139:def format_value(v: float | None, unit: str) -> str:
+src/cma/models.py:171:    def citable_values(self) -> list[float]:
+src/cma/models.py:196:    def grounded(self) -> bool:
+src/cma/models.py:200:    def grounding_rate(self) -> float:
+src/cma/models.py:228:    def _strip(cls, v):
+
+exec
+/bin/bash -lc "sed -n '130,245p' src/cma/cli.py
+sed -n '37,107p' src/cma/mcp_server.py
+sed -n '174,191p' src/cma/graph.py
+rg -n 'model_dump|REVENUE_CATEGORIES|provider_hint|schema_version' src
+rg -n 'verifier|adapter' /home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-15/evidence.json
+nl -ba tests/previous_release.py | tail -31
+rg -n 'requires-python|optional-dependencies' pyproject.toml" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T02-review
+ succeeded in 0ms:
+    if hashlib.sha256(path.read_bytes()).hexdigest() != values.get("statement_sha256"):
+        return f"the statement {path} has changed since the memo was drafted"
+    again = grd.check(values["memo"], values["metrics"], values["policy"], required_headings=grd.REQUIRED_HEADINGS)
+    if again.grounded != values["guard"].grounded:
+        return "the stored grounding result does not match the stored memo"
+    return None
+
+
+def _refuse_to_overwrite(out: Path | None) -> None:
+    """Never replace an earlier memo or its evidence: the pair is the audit record."""
+    if out is None:
+        return
+    taken = [p for p in _outputs(out) if p.exists()]
+    if taken:
+        console.print(f"[red]Refusing to overwrite {', '.join(map(str, taken))}. Choose another --out.[/red]")
+        raise typer.Exit(code=2)
+
+
+def _outputs(out: Path) -> list[Path]:
+    rejected = out.with_name(out.stem + ".rejected.md")
+    return [out, _evidence_path(out), rejected, _evidence_path(rejected)]
+
+
+def _evidence_path(memo: Path) -> Path:
+    return memo.with_name(memo.stem + ".evidence.json")
+
+
+@contextmanager
+def _checkpointer(path: Path | None):
+    if path is None:
+        yield None
+        return
+    try:
+        with sqlite_checkpointer(path) as saver:
+            yield saver
+    except RuntimeError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=2) from e
+
+
+def _review(graph, cfg, state, reviewer, yes, out):
+    interrupts = state.get("__interrupt__") or []
+    if not interrupts:
+        raise typer.Exit(code=1)
+    payload = interrupts[0].value
+
+    _print_metrics(state["metrics"])
+    _print_policy(state["policy"])
+    console.rule("Draft memo")
+    console.print(Markdown(payload["memo"]))
+    console.rule("Grounding check")
+    grounded = payload["guard_grounded"]
+    if grounded:
+        console.print("[green]All figures trace to the metrics table or the policy.[/green]")
+    else:
+        console.print(f"[red]Unmatched numbers:[/red] {payload['guard_unmatched']}")
+        if payload["guard_missing_citations"]:
+            console.print(f"[red]Figures quoted without their tag:[/red] {payload['guard_missing_citations']}")
+
+    if yes:
+        if not grounded:
+            console.print("[red]--yes will not approve a memo that failed the grounding check. Review it interactively.[/red]")
+            raise typer.Exit(code=3)
+        decision = {"approved": True, "reviewer": reviewer, "mode": "automated",
+                    "notes": "Approved by script (--yes); the draft was not reviewed interactively."}
+    else:
+        decision = _ask(payload, grounded, reviewer)
+
+    final = _decide(graph, cfg, decision)
+    while "__interrupt__" in final:
+        payload = final["__interrupt__"][0].value
+        console.print(f"[red]Not accepted:[/red] {payload['error']}")
+        if yes:
+            raise typer.Exit(code=3)
+        decision = _ask(payload, grounded, reviewer)
+        final = _decide(graph, cfg, decision)
+
+    approved = final["review"].approved
+    if out:
+        target = out if approved else out.with_name(out.stem + ".rejected.md")
+        evidence = _evidence_path(target)
+        target.write_text(final["final_memo"])
+        evidence.write_text(json.dumps(evidence_record(final), indent=2, default=str))
+        console.print(f"wrote {target} and {evidence}")
+    if not approved:
+        console.rule("Not approved")
+        console.print(Markdown(final["final_memo"]))
+        raise typer.Exit(code=1)
+    if not out:
+        console.rule("Final")
+        console.print(Markdown(final["final_memo"]))
+
+
+def _decide(graph, cfg, decision: dict) -> dict:
+    """Resume with this decision, and make sure it is the one that was recorded.
+
+    Two people can open the same pending review from a shared --checkpoint-db. If
+    someone else decided first, resuming is a no-op that returns *their* decision; say
+    so instead of reporting it as ours.
+    """
+    if not graph.get_state(cfg).interrupts:
+        _decided_elsewhere(graph.get_state(cfg).values)
+    final = graph.invoke(Command(resume=decision), cfg)
+    review = final.get("review")
+    if "__interrupt__" not in final and (
+        review is None or review.reviewer != (decision.get("reviewer") or "").strip()
+        or review.approved != decision.get("approved")
+    ):
+        _decided_elsewhere(final)
+    return final
+
+
+def _decided_elsewhere(values: dict) -> None:
+    r = values.get("review")
+    who = f"{r.reviewer} at {r.decided_at:%Y-%m-%d %H:%M UTC}" if r else "someone else"
+    console.print(f"[red]This review was already decided by {who}. Your decision was not recorded.[/red]")
+def safe_path(raw: str, suffixes: tuple[str, ...]) -> Path:
+    """Resolve `raw` inside the data directory, or refuse."""
+    root = data_dir()
+    p = Path(raw)
+    p = (p if p.is_absolute() else root / p).resolve()
+    if not p.is_relative_to(root):
+        raise ValueError(f"{raw}: outside the data directory {root} (set CMA_DATA_DIR)")
+    if p.suffix.lower() not in suffixes:
+        raise ValueError(f"{raw}: only {', '.join(suffixes)} files can be read")
+    if not p.is_file():
+        raise ValueError(f"{raw}: no such file")
+    return p
+
+
+def _statement(path: str):
+    p = safe_path(path, (".csv",))
+    try:
+        return ingest.load_csv(p)
+    except ingest.StatementError as e:
+        lines = sorted({x.split(":", 1)[0] for x in e.problems})
+        raise ValueError(f"{path}: statement refused, {len(e.problems)} problem(s) on {', '.join(lines[:10])}; "
+                         "run `cma run` locally to see them") from None
+
+
+@server.tool()
+def statement_summary(path: str) -> dict:
+    """Load a statement CSV and return account name, period and transaction count."""
+    s = _statement(path)
+    return {
+        "account_name": s.account_name,
+        "start": s.start.isoformat(),
+        "end": s.end.isoformat(),
+        "transactions": len(s.transactions),
+    }
+
+
+@server.tool()
+def compute_metrics(path: str, vat_stagger: int | None = None) -> list[dict]:
+    """Categorise a statement and compute the cited metrics table (M1..M16).
+    vat_stagger is the HMRC stagger group (1, 2 or 3); without it M13 is n/a."""
+    s = categorise.categorise(_statement(path))
+    return [m.model_dump() for m in metrics.compute(s, vat_stagger=vat_stagger)]
+
+
+@server.tool()
+def check_policy(path: str, policy_path: str | None = None, vat_stagger: int | None = None) -> dict:
+    """Run the lending policy against a statement and return pass/refer/fail per rule."""
+    s = categorise.categorise(_statement(path))
+    p = policy.load_policy(safe_path(policy_path, (".yaml", ".yml"))) if policy_path else None
+    return policy.evaluate(metrics.compute(s, vat_stagger=vat_stagger), p).model_dump()
+
+
+@server.tool()
+def transactions_for(path: str, ids: list[str], include_descriptions: bool = False) -> list[dict]:
+    """Return the statement lines behind a metric's evidence ids, so a reviewer can check a
+    figure. Descriptions are payer-written text; they are only included when asked for,
+    and then under `untrusted_description`."""
+    by_id = _statement(path).by_id()
+    out = []
+    for i in ids:
+        if i not in by_id:
+            continue
+        t = by_id[i]
+        row = {"id": t.id, "date": t.date.isoformat(), "amount": t.amount, "balance": t.balance,
+               "category": t.category.value if t.category else None}
+        if include_descriptions:
+            row["untrusted_description"] = t.description
+        out.append(row)
+    return out
+
+
+def evidence_record(s: MemoState) -> dict:
+    """Everything needed to audit the memo later, as plain JSON."""
+    return {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "statement": {"path": s["statement_path"], "sha256": s.get("statement_sha256"),
+                      "start": str(s["statement"].start), "end": str(s["statement"].end),
+                      "transactions": len(s["statement"].transactions)},
+        "model": s.get("model"),
+        "vat_stagger": s.get("vat_stagger"),
+        "metrics": [m.model_dump() for m in s["metrics"]],
+        "policy": s["policy"].model_dump(mode="json"),
+        "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
+        "redrafts": s.get("redrafts", 0),
+        "review": s["review"].model_dump(mode="json") if s.get("review") else None,
+        "memo": s.get("memo"),
+    }
+
+
+src/cma/models.py:68:REVENUE_CATEGORIES = {Category.REVENUE_CARD, Category.REVENUE_TRANSFER, Category.CASH_DEPOSIT}
+src/cma/models.py:94:    provider_hint: str | None = Field(
+src/cma/graph.py:177:        "schema_version": EVIDENCE_SCHEMA_VERSION,
+src/cma/graph.py:183:        "metrics": [m.model_dump() for m in s["metrics"]],
+src/cma/graph.py:184:        "policy": s["policy"].model_dump(mode="json"),
+src/cma/graph.py:185:        "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
+src/cma/graph.py:187:        "review": s["review"].model_dump(mode="json") if s.get("review") else None,
+src/cma/mcp_server.py:78:    return [m.model_dump() for m in metrics.compute(s, vat_stagger=vat_stagger)]
+src/cma/mcp_server.py:86:    return policy.evaluate(metrics.compute(s, vat_stagger=vat_stagger), p).model_dump()
+src/cma/metrics.py:20:from .models import REVENUE_CATEGORIES, Category, Metric, Statement, Transaction
+src/cma/metrics.py:121:    rev = [t for t in txns if t.category in REVENUE_CATEGORIES]
+src/cma/metrics.py:172:        return t.category in REVENUE_CATEGORIES
+104:  "verifier": {
+106:    "adapter": "codex",
+    16	# The revision T02 branched from (bridgie-task/statement-review/T02).
+    17	BASE = "cba9dbad600f3258de587780dd6e3a46ff59203a"
+    18	REPO = Path(__file__).resolve().parent.parent
+    19	
+    20	
+    21	def extract(dest: Path) -> Path:
+    22	    """Write BASE's src/ under dest and return the directory to put on PYTHONPATH."""
+    23	    blob = subprocess.run(["git", "-C", str(REPO), "archive", BASE, "src"],
+    24	                          check=True, capture_output=True).stdout
+    25	    with tarfile.open(fileobj=BytesIO(blob)) as tar:
+    26	        tar.extractall(dest, filter="data")
+    27	    return dest / "src"
+    28	
+    29	
+    30	def run(src: Path, args: list[str], cwd: Path, stdin: str = "") -> subprocess.CompletedProcess:
+    31	    """Run `python args...` with the previous release first on the path."""
+    32	    env = {**os.environ, "PYTHONPATH": str(src), "COLUMNS": "200"}
+    33	    return subprocess.run([sys.executable, *args], cwd=cwd, env=env, input=stdin,
+    34	                          capture_output=True, text=True, timeout=300)
+    35	
+    36	
+    37	def python(src: Path, code: str, cwd: Path) -> object:
+    38	    """Run code under the previous release; it prints one JSON value, which is returned.
+    39	    The child first proves it imported the old package, not this one."""
+    40	    guard = (
+    41	        "import cma, json, sys\n"
+    42	        f"assert cma.__file__.startswith({str(src)!r}), cma.__file__\n"
+    43	    )
+    44	    r = run(src, ["-c", guard + code], cwd)
+    45	    assert r.returncode == 0, r.stderr
+    46	    return json.loads(r.stdout)
+6:requires-python = ">=3.11"
+17:[project.optional-dependencies]
+
+exec
+/bin/bash -lc "sed -n '102,112p' /home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-15/evidence.json
+nl -ba src/cma/cli.py | sed -n '25,125p'
+rg -n 'def test.*(reject|overwrite|resume|changed)|def test_todays' tests/test_cli* tests/test_models.py
+git rev-parse --short HEAD
+git diff cba9dba -- src/cma/cli.py src/cma/mcp_server.py pyproject.toml" in /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T02-review
+ succeeded in 0ms:
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
+    25	import_app = typer.Typer(no_args_is_help=True, help="Convert a bank export into a statement CSV.")
+    26	app.add_typer(import_app, name="import")
+    27	console = Console()
+    28	
+    29	
+    30	@app.command()
+    31	def generate(
+    32	    archetype: str = typer.Option("cafe", help=f"One of {list(synth.ARCHETYPES)}"),
+    33	    profile: str = typer.Option("stretched", help=f"One of {list(synth.PROFILES)}"),
+    34	    seed: int = 7,
+    35	    months: int = 12,
+    36	    out: Path = Path("examples"),
+    37	):
+    38	    """Write a synthetic statement CSV and its ground-truth JSON."""
+    39	    rows, truth = synth.generate(archetype, profile, seed=seed, months=months)
+    40	    csv_path, truth_path = synth.write(rows, truth, out)
+    41	    console.print(f"wrote {csv_path} ({len(rows)} transactions) and {truth_path}")
+    42	
+    43	
+    44	@app.command()
+    45	def run(
+    46	    statement: Path,
+    47	    policy: Path | None = typer.Option(None, help="Policy YAML; defaults to the packaged uk_sme_default policy."),
+    48	    llm: str = typer.Option("fake", help="fake | anthropic | openai"),
+    49	    vat_stagger: int | None = typer.Option(
+    50	        None, min=1, max=3,
+    51	        help="HMRC VAT stagger group (1, 2 or 3, from the VAT certificate). Without it, VAT timeliness is referred.",
+    52	    ),
+    53	    reviewer: str | None = typer.Option(None, help="Your name, recorded on the memo."),
+    54	    yes: bool = typer.Option(
+    55	        False, "--yes",
+    56	        help="Approve without prompting (scripts). Needs --reviewer; refuses ungrounded memos; "
+    57	        "the memo is stamped 'automated, no interactive review'.",
+    58	    ),
+    59	    out: Path | None = typer.Option(
+    60	        None, help="Write the approved memo here, with NAME.evidence.json beside it. A rejected memo goes to "
+    61	        "NAME.rejected.md instead."
+    62	    ),
+    63	    checkpoint_db: Path | None = typer.Option(
+    64	        None, help="SQLite file that keeps a pending review across restarts (needs the 'durable' extra)."
+    65	    ),
+    66	    thread: str | None = typer.Option(None, help="Name this review, to pick it up later with `cma resume`."),
+    67	):
+    68	    """Run the memo graph on a statement and stop for human review."""
+    69	    if yes and not (reviewer or "").strip():
+    70	        console.print("[red]--yes needs --reviewer NAME: an approval must say who approved.[/red]")
+    71	        raise typer.Exit(code=2)
+    72	    _refuse_to_overwrite(out)
+    73	    thread_id = thread or str(uuid.uuid4())
+    74	    with _checkpointer(checkpoint_db) as saver:
+    75	        graph = build(get_llm(llm), checkpointer=saver)
+    76	        cfg = {"configurable": {"thread_id": thread_id}}
+    77	        if graph.get_state(cfg).values:
+    78	            console.print(f"[red]Review id {thread_id} is already used in {checkpoint_db}. Pick a new --thread.[/red]")
+    79	            raise typer.Exit(code=2)
+    80	        try:
+    81	            state = graph.invoke(
+    82	                {"statement_path": str(statement), "policy_path": str(policy) if policy else None,
+    83	                 "vat_stagger": vat_stagger},
+    84	                cfg,
+    85	            )
+    86	        except (StatementError, PolicyError) as e:
+    87	            console.print(f"[red]Refused.[/red] {e}")
+    88	            raise typer.Exit(code=2) from e
+    89	        except Exception as e:  # the model provider: network, auth, cut-off reply
+    90	            console.print(f"[red]The model call failed[/red] ({type(e).__name__}): {e}")
+    91	            raise typer.Exit(code=4) from e
+    92	        if checkpoint_db:
+    93	            console.print(f"review id: {thread_id} (kept in {checkpoint_db}; `cma resume {thread_id}` picks it up)")
+    94	        _review(graph, cfg, state, reviewer, yes, out)
+    95	
+    96	
+    97	@app.command()
+    98	def resume(
+    99	    thread: str = typer.Argument(..., help="The review id printed by `cma run --checkpoint-db`."),
+   100	    checkpoint_db: Path = typer.Option(..., help="The SQLite file the review was kept in."),
+   101	    reviewer: str | None = typer.Option(None, help="Your name, recorded on the memo."),
+   102	    out: Path | None = typer.Option(None, help="As for `cma run`."),
+   103	):
+   104	    """Pick up a memo that is waiting for review, after a restart."""
+   105	    if not checkpoint_db.exists():
+   106	        console.print(f"[red]{checkpoint_db} does not exist.[/red]")
+   107	        raise typer.Exit(code=2)
+   108	    _refuse_to_overwrite(out)
+   109	    with _checkpointer(checkpoint_db) as saver:
+   110	        graph = build(get_llm("fake"), checkpointer=saver)  # the draft is already made; no model call
+   111	        cfg = {"configurable": {"thread_id": thread}}
+   112	        snap = graph.get_state(cfg)
+   113	        if not snap.interrupts:
+   114	            console.print(f"[red]Nothing is waiting for review under {thread}.[/red]")
+   115	            raise typer.Exit(code=1)
+   116	        problem = _stored_state_problem(snap.values)
+   117	        if problem:
+   118	            console.print(f"[red]Not resuming {thread}:[/red] {problem}")
+   119	            raise typer.Exit(code=2)
+   120	        state = {**snap.values, "__interrupt__": snap.interrupts}
+   121	        _review(graph, cfg, state, reviewer, False, out)
+   122	
+   123	
+   124	def _stored_state_problem(values: dict) -> str | None:
+   125	    """A stored review is only resumed if it still says what it said: the statement file
+tests/test_cli.py:78:def test_rejected_memo_is_kept_as_rejected_not_as_the_memo(tmp_path):
+tests/test_cli.py:144:def test_resume_refuses_a_changed_statement(tmp_path):
+tests/test_models.py:20:def test_existing_category_values_are_unchanged():
+tests/test_models.py:156:def test_a_pending_review_saved_before_the_new_fields_resumes(tmp_path):
+tests/test_models.py:195:def test_a_checkpoint_written_before_the_new_fields_resumes(tmp_path):
+tests/test_models.py:275:def test_todays_evidence_keys_are_a_subset_of_the_new_record(tmp_path):
+b24844c
+
+codex
+```json
+{
+  "task": "T02",
+  "criteria": [
+    {
+      "id": "R53",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:31–75 adds six categories, the credit bucket map, and cash deposits to revenue. src/cma/models.py:88–96 defaults the three transaction fields. src/cma/graph.py:174–189 adds schema_version and retains the existing evidence fields. cma run and cma resume retain their options and share the writer at src/cma/cli.py:207–212. cma generate and cma import monzo retain their options and dispatch at src/cma/cli.py:31–41 and :283–303. MCP tools retain their signatures and explicitly shape their responses at src/cma/mcp_server.py:61–105. Contracts row 4 confirms the legacy evidence keys on live run output, resume of an untouched SQLite checkpoint from the archived base source, imports for the optional runtime dependencies, and sequential duplicate-output refusal. Specified row 3 records passing model, CLI, Monzo, and MCP tests. Dual-run row 7 confirms metric IDs, units, values, and evidence IDs across the synthetic matrix and committed example. The concurrent decision and two-file write paths at src/cma/cli.py:207–240 are unchanged and retain their existing race and partial-write windows. Date, currency, and numeric parsing are unchanged. The MCP data-directory boundary at src/cma/mcp_server.py:37–48 is unchanged, and the new transaction fields stay out of evidence and MCP responses.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-17/contracts-4.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 70,
+      "criterion": "R53",
+      "claim": "The claim says the SQLite-writing child asserts that it imported the archived package. The child relies on PYTHONPATH precedence and checks the stored field shape afterward. The import-path assertion runs in a separate child.",
+      "repro": "Trace test_a_checkpoint_written_by_the_previous_release_resumes into tests/previous_release.py:30–34. The child command imports cma.cli and invokes app(). The cma.__file__ assertion is in the separate helper at tests/previous_release.py:37–46, which the checkpoint-writing test never calls."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 61,
+      "criterion": "R53",
+      "claim": "The claimed compilation of src and tests with compileall is not_proven. Mechanical row 2 covers src only. The passing pytest run establishes that the collected tests ran.",
+      "repro": "Compare the producer's compile command with mechanical row 2. A runner result for `python -m compileall -q src tests` would prove the exact compilation claim."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
+```
+tokens used
+35,912

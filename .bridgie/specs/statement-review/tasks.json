@@ -23,12 +23,12 @@
         "R53"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "passed",
       "attempts": 2,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T02",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-15/evidence.json",
-      "escalation": "attempt 1 of 3 fail: R53 not_proven (src/cma/models.py:31–96 adds the six categories, credit bucket map, cash-deposit revenue membership, and defaulted transaction fields. src/cma/graph.py:174–188 adds schema_version to the evidence returned through the shared run/resume writer at src/cma/cli.py:207–212. Contracts row 4 proves the legacy evidence key subset and version on actual cma run output. The generate and Monzo entry points at src/cma/cli.py:31–41 and :283–303 retain their options and dispatch. MCP tools at src/cma/mcp_server.py:61–105 keep their signatures and explicitly select response fields or serialize metrics and policy. For double submit, concurrent updates, and partial failure, the diff leaves the existing duplicate checks and two-file writer in place. No authorization or data-directory scope changed at src/cma/mcp_server.py:37–48, and no date, currency, or numeric input parsing changed. The SQLite contract passes for a checkpoint generated on T02 and rewritten to the old field shape. The runner supplied no replay of a checkpoint written on the old revision and no proof that the llm extra was installed during the run.); major: The passing SQLite contract proves resume of a simulated old payload. The task asks for a checkpoint written by the old version, and the test uses the current CLI to create the database before deleting the new fields from its serialized contents. at tests/test_models.py:205; reviewer verdict not_proven"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-17/evidence.json",
+      "escalation": null
     },
     {
       "id": "T03",
