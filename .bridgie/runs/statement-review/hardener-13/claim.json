@@ -1,0 +1,41 @@
+{
+  "task": "T01",
+  "claims": [
+    {
+      "text": "P7 escalation (verify-11): the newest-first and byte-order-mark fixtures in tests/test_ingest.py:82-91, which are only loaded and never categorised, are now in the golden and are replayed under v1. They are fixture-3-lines-A and fixture-1-lines-A, and test_p7_golden_covers_every_case asserts their rows. The golden is rebuilt from fd7b64c with the capture plugin, which now also hooks ingest.load_csv, and the rebuild equals the committed file on every key.",
+      "proof_cmd": "python -m pytest -v -m 'invariants or dual_run' | grep -E 'history|covers_every|fixture-3-lines-A|fixture-1-lines-A|passed|failed'",
+      "proof_output": "tests/test_p7_history.py::test_p7_golden_is_rebuilt_exactly_from_the_pre_change_commit PASSED\ntests/test_p7_history.py::test_a_review_left_pending_by_the_pre_change_version_resumes_here PASSED\ntests/test_p7_history.py::test_rollback_a_review_left_pending_here_resumes_under_the_pre_change_version PASSED\ntests/test_rules.py::test_p7_golden_covers_every_case PASSED\ntests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-3-lines-A] PASSED\ntests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-1-lines-A] PASSED\n67 passed, 295 deselected"
+    },
+    {
+      "text": "Operability/data, rollback path. A review left pending in a --checkpoint-db by this code, whose state now carries `ruleset`, resumes and finishes under the pre-change commit fd7b64c, which stands in for reinstalling the previous wheel. The memo is approved, and the evidence is grounded without the ruleset key. The test was added in this seat: tests/test_p7_history.py::test_rollback_a_review_left_pending_here_resumes_under_the_pre_change_version, marked contracts and dual_run. The forward direction, a pre-change pending review resumed here, is covered by test_a_review_left_pending_by_the_pre_change_version_resumes_here.",
+      "proof_cmd": "python -m pytest -q -m contracts",
+      "proof_output": "8 passed, 354 deselected"
+    },
+    {
+      "text": "Security/input validation at the new entry point, CMA_RULESET. Only ids in the RULESETS allow-list load, so an id cannot name a path. The table is loaded with a SafeLoader subclass that refuses duplicate keys. Every field is type-checked, and patterns that do not compile (re.error, OverflowError, RecursionError) are refused. A damaged or missing table gives a refusal with exit 2 and is never reported as a model failure (exit 4). No new dependency: pyyaml>=6 was already in pyproject.toml:12. No secrets are added. The evidence gains only the ruleset id and hash, so it adds no personal data.",
+      "proof_cmd": "python -m pytest -q",
+      "proof_output": "362 passed"
+    },
+    {
+      "text": "Static checks pass on the changed code, and the offline evals stay fully grounded under the default v1.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src tests && echo compile-ok; python evals/run_evals.py | tail -1",
+      "proof_output": "All checks passed!\ncompile-ok\n9/9 memos fully grounded; model = fake"
+    },
+    {
+      "text": "Observability, R54. `cma run` records the ruleset id and SHA-256 in the evidence JSON. A review drafted before T01 is recorded as v1 and marked inferred, never null. The tests are test_written_evidence_records_the_ruleset, test_evidence_records_the_ruleset and test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1. The failure mode that matters most, a damaged table or an unknown CMA_RULESET, refuses with a named problem and a non-zero exit. That refusal is the alerting the design specifies for a local tool with no remote alerting.",
+      "proof_cmd": "python -m pytest -q -m contracts",
+      "proof_output": "8 passed, 354 deselected"
+    }
+  ],
+  "files_changed": [
+    "tests/test_p7_history.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "verify-11 major: the P7 golden omits valid pre-change statement fixtures that are loaded but never categorised or passed to metrics.compute (newest-first and BOM fixtures, tests/test_ingest.py:82-91); capture_plugin.py:46",
+      "disposition": "not_reproduced",
+      "evidence": "At ab234e3, capture_plugin.py hooks ingest.load_csv and records statements as loaded=True. make_p7_baseline.py categorises them with the rule table. The golden rebuilt from fd7b64c equals the committed file: test_p7_golden_is_rebuilt_exactly_from_the_pre_change_commit PASSED. test_p7_golden_covers_every_case asserts the 3-line newest-first rows and the 1-line BOM rows, and fixture-3-lines-A and fixture-1-lines-A pass under `python -m pytest -v -m 'invariants or dual_run'`, with 67 passed."
+    }
+  ],
+  "notes": "Checklist dispositions not proven by a configured tier:\n- Failure modes: no external calls; the table is a packaged file read once and cached (lru_cache). Retries and a dead-letter path are not applicable: this is a local CLI with no queue. Categorisation is pure, so re-running it is idempotent.\n- Data: the migration is additive (an optional MemoState.ruleset and a new evidence key). It is reversible in both directions, as the two contracts tests show. No backfill. Personal data is unchanged.\n- Performance: measured ad hoc, outside the tiers, on a 228-line synthetic statement averaged over 50 runs. The pre-change rule list took 0.65 ms per statement and v1.yaml 0.56 ms. No N+1, queries or endpoints apply.\n- Dashboards: not applicable (local tool; design Observability section).\n- Changelog: GAP. The repo has no CHANGELOG file. A release-note line for the owner: 'Categorisation rules now live in src/cma/rules/v1.yaml; CMA_RULESET chooses the table and every evidence file names it; M16 is renamed Non-trading money in (share), with the same value.' The README covers usage.\n- Runbook: README documents CMA_RULESET and refusal behaviour; the rollback step (reinstall the previous wheel; pending reviews still resume) is now tested but not written in the README. Owner may want one line there.\n- Ruff run from the worktree root reports 14 errors, all in tracked files under .bridgie/runs/statement-review/implementer-02 and implementer-05 (helper scripts committed by earlier seats). None is in the T01 diff (`ruff check src tests` passes). If the runner's ruff tier lints the repository root, the owner needs to exclude .bridgie/ in ruff config or remove those files; this seat does not write under .bridgie/runs of other seats.\n- The wheel-install and historical-replay tests run inside the configured pytest tiers (contracts, dual_run), and they need git with fd7b64c and pip; CI sets fetch-depth: 0."
+}

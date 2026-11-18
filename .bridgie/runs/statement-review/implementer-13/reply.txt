@@ -1,0 +1,70 @@
+I fixed all three findings from the last review, and the full suite (361 tests), lint, compileall on `src` and the offline evals (9 of 9 grounded) pass. The work is committed as `ab234e3`, and the claim is in the run directory.
+
+- **Major (P7 missing fixtures):** the capture against the pre-change commit `fd7b64c` now also records every statement the loader returns. Before, a statement that was only loaded, never categorised or passed to `metrics.compute`, was skipped. I rebuilt the golden from `fd7b64c` and it went from 43 to 46 fixtures. The three new ones are the newest-first file, the byte-order-mark file and the single "CARD ACQUIRER SETTLEMENT" line from `tests/test_ingest.py`. Nothing already in the golden changed.
+- **Minor (bad YAML value):** a rule table holding a value PyYAML cannot build, such as the date `2026-02-30`, now gets the normal "not valid YAML" refusal instead of being reported as a model failure. A new test failed before the fix and passes after it.
+- **Minor (compileall scope):** the claim now names exactly the command the runner ran, `python -m compileall -q src`.
+
+`python -m pytest -v -m 'invariants or dual_run'` gives 66 passed. That includes the rebuild-from-history test and the three new fixture comparisons, whose test ids now start with each fixture's first description so they can be picked out in the log.
+
+```json
+{
+  "task": "T01",
+  "claims": [
+    {
+      "text": "P7: the historical capture now also records every statement ingest.load_csv returns, marked loaded and categorised by the pre-change rule table. The golden was rebuilt from fd7b64c and gained 3 fixtures (43 -> 46): the newest-first file, the byte-order-mark file and the CARD ACQUIRER SETTLEMENT single line from tests/test_ingest.py. All 43 earlier fixtures and all single lines are unchanged. Under v1 each one matches M1-M16 and categories, and the rebuild-from-history test passes.",
+      "proof_cmd": "python -m pytest -v -m 'invariants or dual_run'",
+      "proof_output": "tests/test_p7_history.py::test_p7_golden_is_rebuilt_exactly_from_the_pre_change_commit PASSED\ntests/test_rules.py::test_p7_golden_covers_every_case PASSED\ntests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-1-lines-CARD ACQUIRER SETTLEMENT] PASSED\ntests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-3-lines-A] PASSED\ntests/test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-1-lines-A] PASSED\n====================== 66 passed, 295 deselected in 8.22s ======================"
+    },
+    {
+      "text": "R54: a YAML scalar the loader cannot build (category: 2026-02-30 raises ValueError) is now refused as RulesetError 'not valid YAML', so it takes the refusal path rather than the model-failure path.",
+      "proof_cmd": "python -m pytest -q tests/test_rules.py::test_a_scalar_yaml_cannot_construct_is_refused_as_invalid_yaml",
+      "proof_output": "1 passed in 0.09s"
+    },
+    {
+      "text": "Full suite passes.",
+      "proof_cmd": "python -m pytest -q -rs",
+      "proof_output": "361 passed in 16.94s"
+    },
+    {
+      "text": "Lint passes.",
+      "proof_cmd": "ruff check src tests evals",
+      "proof_output": "All checks passed!"
+    },
+    {
+      "text": "src compiles.",
+      "proof_cmd": "python -m compileall -q src",
+      "proof_output": "(no output, exit 0)"
+    },
+    {
+      "text": "Offline evals pass.",
+      "proof_cmd": "python evals/run_evals.py",
+      "proof_output": "9/9 memos fully grounded; model = fake"
+    }
+  ],
+  "files_changed": [
+    "src/cma/categorise.py",
+    "tests/golden/p7_tools/capture_plugin.py",
+    "tests/golden/p7_tools/make_p7_baseline.py",
+    "tests/golden/p7_v1_baseline.json.gz",
+    "tests/test_rules.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major tests/golden/p7_tools/capture_plugin.py:46: the golden omits valid pre-change fixtures that are loaded but never categorised or computed on",
+      "disposition": "reproduced",
+      "evidence": "Reproduced: test_p7_golden_covers_every_case gained asserts for the newest-first rows (T1 A 100/100, T2 B 100/200, T3 C -50/150), the BOM row (T1 A 100/100) and the CARD ACQUIRER SETTLEMENT row, and it failed against the old golden. Fix: capture_plugin.py wraps ingest.load_csv and records each statement it returns with loaded=true. make_p7_baseline.py skips the hand-categorised check for those statements, since they have no categories yet. The golden was rebuilt from fd7b64c and test_p7_history replays the same steps. The covers test passes and the three fixtures are compared under v1 (see claim 1)."
+    },
+    {
+      "finding": "minor src/cma/categorise.py:170: a ValueError from PyYAML scalar construction escapes the RulesetError refusal path",
+      "disposition": "reproduced",
+      "evidence": "The new test test_a_scalar_yaml_cannot_construct_is_refused_as_invalid_yaml failed before the fix (ValueError) and passes after it. load_ruleset now wraps ValueError, TypeError and OverflowError as RulesetError 'not valid YAML'."
+    },
+    {
+      "finding": "minor claim.json:15: the compileall claim includes tests, but the runner only compiled src",
+      "disposition": "reproduced",
+      "evidence": "This claim now states exactly the runner's command, python -m compileall -q src."
+    }
+  ],
+  "notes": "In the rebuilt golden, only the fixtures key changed (43 -> 46 entries, all additions). The synthetic, examples and lines keys and made_at_commit equal the previous golden. Statements the loader returns that match an already-captured case (synthetic, Monzo, example) are deduplicated by their lines and VAT stagger. The golden is gzipped with mtime=0. Commit ab234e3."
+}
+```
