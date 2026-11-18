@@ -126,7 +126,8 @@ LISTS = {
         ("POT TRANSFER OUT HOLIDAY POT", -200.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
         ("TFR TO SAVINGS", -1000.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
         # savings wording with no move is tried after the director wording
-        ("FPS CREDIT SAVINGS ACCOUNT", 1000.00, C.OWN_ACCOUNT_TRANSFER, "v2:savings_wording"),
+        # a bare SAVINGS word is not a move: it stays for a person, unless the profile names the account
+        ("FPS CREDIT SAVINGS ACCOUNT", 1000.00, C.OTHER, "v2:default"),
         # an explicit move from the applicant's savings beats protected wording in its name
         ("TFR FROM SAVINGS CAPITAL RESERVE", 300.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
         ("TRANSFER TO SAVINGS DIRECTOR", -300.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
@@ -500,7 +501,7 @@ def test_v2_is_packaged_with_an_id_and_the_hash_of_its_file(v2):
     assert flags == sorted(flags, reverse=True)
     # line type first, then the protected name lists
     assert [r.id for r in v2.protected] == ["returned_dd", "own_pots_savings", "hmrc_vat", "hmrc_paye",
-                                            "hmrc_repayment", "refunds", "explained_non_trading", "cash_paid_in",
+                                            "hmrc_repayment", "refunds", "cash_paid_in",
                                             "lender_repayment", "lender_drawdown", "loan_repayment",
                                             "director_funding", "loan_drawdown", "owner_drawings"]
 
@@ -687,9 +688,6 @@ NEWLY_RECOGNISED = {
     ("FPS CREDIT DIRECTOR CAPITAL INJECTION", "in", "other", "director_funding"),
     ("FPS CREDIT DIRECTOR CAPITAL INTRODUCED", "in", "other", "director_funding"),
     ("FPS CREDIT J SMITH CAPITAL INTRODUCED", "in", "other", "director_funding"),
-    ("FPS CREDIT MY SAVINGS POT", "in", "other", "own_account_transfer"),
-    ("FPS CREDIT SAVINGS ACCOUNT", "in", "other", "own_account_transfer"),
-    ("FPS DEBIT MY SAVINGS POT", "out", "supplier", "own_account_transfer"),
     ("HMRC VAT REPAYMENT", "in", "other", "hmrc_repayment"),
     ("POT TRANSFER OUT HOLIDAY POT", "out", "supplier", "own_account_transfer"),
 }
@@ -818,8 +816,17 @@ def test_categorise_10000_lines_under_v2_with_a_profile_is_fast(v2):
 
 @pytest.mark.invariants
 @pytest.mark.parametrize("desc, amount, category, rule_id", [
-    # verify-24: a counter cash deposit at a branch called CAPITAL is not director funding
-    ("COUNTER DEPOSIT CAPITAL ST BRANCH", 500.00, C.OTHER, "v2:conflict:cash_paid_in+director_funding"),
+    # verify-24/25: a counter cash deposit at a branch called CAPITAL is cash: CAPITAL alone is
+    # not director funding, only capital introduced, injected or contributed is
+    ("COUNTER DEPOSIT CAPITAL ST BRANCH", 500.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
+    ("CAPITAL INTRODUCED J SMITH", 5000.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
+    # verify-25: SAVINGS in an HMRC payment's reference does not stop HMRC recognition
+    ("HMRC VAT REPAYMENT REF SAVINGS", 1200.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),
+    # verify-25: an explicit card refund wins over a generic explained word in the merchant
+    ("CARD REFUND GRANT STATIONERY", 25.00, C.REFUND_IN, "v2:refunds"),
+    ("REFUND INTEREST BOOKS LTD", 25.00, C.REFUND_IN, "v2:refunds"),
+    # verify-25: SAVINGS in an outside payer's name is not the applicant moving money
+    ("FPS CREDIT SAVINGS AND LOANS LTD", 900.00, C.OTHER, "v2:default"),
     # verify-24: a bare pot name in the merchant on an explicit card refund is a refund
     ("CARD REFUND TAX POT STATIONERY", 25.00, C.REFUND_IN, "v2:refunds"),
     ("CARD REFUND VAT POT SUPPLIES", 25.00, C.REFUND_IN, "v2:refunds"),
@@ -835,7 +842,7 @@ def test_two_line_type_cues_in_different_buckets_are_a_judgement_unless_one_is_t
     from cma.models import CREDIT_BUCKET
     cues = [r for r in v2.rules if r.stage == "line_type" and r.direction in ("in", "any")]
     samples = {"own_pots_savings": "FROM POT", "hmrc_repayment": "HMRC", "refunds": "REFUND",
-               "explained_non_trading": "COMPENSATION", "returned_dd": "UNPAID DD"}
+               "returned_dd": "UNPAID DD"}
     checked = 0
     for a in cues:
         for b in cues:
@@ -856,13 +863,13 @@ def test_two_line_type_cues_in_different_buckets_are_a_judgement_unless_one_is_t
             else:
                 assert got[0] == C.OTHER and got[1].startswith("v2:conflict:"), (desc, got)
             checked += 1
-    assert checked >= 6
+    assert checked >= 4
 
 
 @pytest.mark.invariants
 def test_no_name_list_makes_a_credit_trading_receipts_when_another_says_otherwise(v2):
     from cma.models import CREDIT_BUCKET, Bucket
-    non_trading = ["DIRECTOR", "CAPITAL", "SHAREHOLDER", "IWOCA", "LOAN"]
+    non_trading = ["DIRECTOR", "CAPITAL INTRODUCED", "SHAREHOLDER", "IWOCA", "LOAN"]
     trading = ["CASH DEPOSIT", "COUNTER DEPOSIT"]
     for tr in trading:
         for nt in non_trading:

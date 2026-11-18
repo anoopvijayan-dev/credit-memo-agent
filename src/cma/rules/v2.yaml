@@ -29,15 +29,19 @@
 #
 # Protected rules come first and win over the case profile and firm rules; only a
 # per-line override changes a line they match (R21). They are the line-type rules (returned
-# DD, own pot or savings move, HMRC, refund) and the protected name lists (lender, director,
-# capital, shareholder, generic loan wording). The precedence is in src/cma/categorise.py.
+# DD, own pot or savings move, HMRC, refund) and the protected name lists (cash paid in,
+# lender, director, capital introduced, shareholder, generic loan wording). The precedence is in src/cma/categorise.py.
 # A rule may also have `requires`, a pattern that must match too.
 #
-# Savings wording without a move ("DIRECTOR SAVINGS") is not a line-type cue: it is tried
-# after the director wording, so a director's savings paid in stays director funding.
+# Bare words are not evidence. SAVINGS, SAVER or POT alone (a payer called "SAVINGS AND
+# LOANS", an HMRC reference) is not a move between the applicant's own accounts: only
+# move wording ("TO SAVINGS", "FROM POT", "POT TRANSFER") or an own account named in the
+# case profile is. CAPITAL alone (a branch, a pot, a merchant) is not director funding:
+# only capital introduced, injected or contributed is. Generic explained words (interest,
+# grant, cashback, compensation) are a name list, so an explicit refund wins over them.
 #
-# Ambiguous wording never resolves to trading receipts: refunds, own pots and explained
-# non-trading credits are tried before the acquirer lists, so "PAYPAL REFUND" is a
+# Ambiguous wording never resolves to trading receipts: refunds, own-pot moves and
+# explained non-trading credits are tried before the acquirer lists, so "PAYPAL REFUND" is a
 # refund and "STRIPE CAPITAL" a drawdown. Cash paid in is trading receipts (D31).
 id: v2
 frozen: false
@@ -98,7 +102,7 @@ rules:
   # wording: an HMRC refund is an HMRC repayment, its own bucket.
   - id: hmrc_repayment
     names: [HMRC, HM REVENUE]
-    unless: '(?<![A-Z0-9])(?:POT|SPACE|SAVINGS|SAVER|INSTANT\s+ACCESS)(?![A-Z0-9])'
+    unless: '(?<![A-Z0-9])(?:(?:TO|FROM|TFR)\s+(?:(?:TAX|VAT)\s+)?(?:POT|SPACE|SAVINGS|SAVER|BUSINESS\s+SAVER|INSTANT\s+ACCESS)|POT\s+TRANSFER|SAVINGS\s+(?:TRANSFER|TFR)|(?:TFR|TRANSFER)\s+SAVINGS)(?![A-Z0-9])'
     direction: in
     category: hmrc_repayment
     protected: true
@@ -111,13 +115,6 @@ rules:
     unless: '(?<![A-Z0-9])(?:HMRC|HM\s+REVENUE)(?![A-Z0-9])'
     direction: in
     category: refund_in
-    protected: true
-    stage: line_type
-  # Explained, but not trading: grants, insurance claims, interest, cashback.
-  - id: explained_non_trading
-    names: [INTEREST, GRANT, INSURANCE CLAIM, INSURANCE PAYOUT, INSURANCE SETTLEMENT, CASHBACK, COMPENSATION]
-    direction: in
-    category: other_explained_in
     protected: true
     stage: line_type
   # --- stage 2, name lists ---------------------------------------------------------
@@ -216,7 +213,7 @@ rules:
   # Money from a director, shareholder or owner, or capital introduced. Before the
   # generic loan wording, so a director's loan to the business is director funding.
   - id: director_funding
-    names: [DIRECTOR, DIRECTORS, OWNER, CAPITAL, SHAREHOLDER, SHAREHOLDERS]
+    names: [DIRECTOR, DIRECTORS, OWNER, SHAREHOLDER, SHAREHOLDERS, CAPITAL INTRODUCED, CAPITAL INJECTION, CAPITAL CONTRIBUTION]
     direction: in
     category: director_funding
     protected: true
@@ -233,17 +230,16 @@ rules:
     category: owner_drawings
     protected: true
     stage: names
+  # Explained, but not trading: grants, insurance claims, interest, cashback.
+  - id: explained_non_trading
+    names: [INTEREST, GRANT, INSURANCE CLAIM, INSURANCE PAYOUT, INSURANCE SETTLEMENT, CASHBACK, COMPENSATION]
+    direction: in
+    category: other_explained_in
+    stage: names
   # Bare pot names with no move wording ("TAX POT", "VAT POT"): a name, not a line type,
   # so explicit wording such as a refund comes first. An own-account transfer otherwise.
   - id: pot_names
     names: [VAT POT, TAX POT]
-    direction: any
-    category: own_account_transfer
-    stage: names
-  # Savings wording with no move ("FPS CREDIT SAVINGS ACCOUNT"): the applicant's own
-  # savings, after the director wording, so "DIRECTOR SAVINGS" stays director funding.
-  - id: savings_wording
-    names: [SAVINGS, SAVER, BUSINESS SAVER, INSTANT ACCESS]
     direction: any
     category: own_account_transfer
     stage: names
