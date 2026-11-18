@@ -162,6 +162,7 @@ Every answer and decision, dated.
 - 2026-11-18 D52 (approve_design): request changes — D49 (owner, after T03 review): amend R4 only. Add the ambiguity policy: a credit whose wording is ambiguous or conflicting (it matches more than one money-in bucket, or its line-type cues disagree) goes to the judgement queue (R15) and is never counted as trading receipts. Keep every other requirement, property and id as they are. → changes requested: D49 (owner, after T03 review): amend R4 only. Add the ambiguity policy: a credit whose wording is ambiguous or conflicting (it matches more than one money-in bucket, or its line-type cues disagree) goes to the judgement queue (R15) and is never counted as trading receipts. Keep every other requirement, property and id as they are.; re-run bridgie shape statement-review [Anoop Vijayan]
 - 2026-11-18 D51 (unblock): take over manually — Owner: take over with the prepared fix. writer() always closes the lock descriptor, even when the explicit unlock fails (closing releases the lock); invariants test p15 proves a failed unlock leaves the lock free. → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 - 2026-11-18 D53 (question): Cues that agree outrank names (design default, follows D46 and D48) → recorded [Anoop Vijayan]
+- 2026-11-18 D54 (question): An override, a profile name or a pairing; never a firm rule (design default, keeps R5, R6 and R8) → recorded [Anoop Vijayan]
 
 ## Idea
 
