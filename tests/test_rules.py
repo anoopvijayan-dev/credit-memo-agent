@@ -592,3 +592,22 @@ def test_a_legacy_resume_with_a_damaged_table_is_refused_before_anything_is_reco
     record = json.loads((tmp_path / "memo.evidence.json").read_text())
     assert record["ruleset"] == {"id": "v1", "sha256": load_ruleset("v1").sha256, "inferred": "pre-ruleset checkpoint"}
     assert "APPROVED by C" in out.read_text()
+
+
+@pytest.mark.contracts
+def test_rule_tables_keep_lf_line_endings_on_every_checkout():
+    """The v1 pin hashes the file's bytes, so a CRLF checkout (Windows, core.autocrlf=true) must not
+    rewrite it: .gitattributes fixes eol=lf for the rule tables, and the shipped file has no CR."""
+    import subprocess
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    table = root / "src" / "cma" / "rules" / "v1.yaml"
+    assert b"\r" not in table.read_bytes()
+    out = subprocess.run(
+        ["git", "-C", str(root), "check-attr", "eol", "--", "src/cma/rules/v1.yaml"],
+        capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        pytest.skip("not a git checkout")
+    assert out.stdout.strip().endswith("eol: lf"), out.stdout
