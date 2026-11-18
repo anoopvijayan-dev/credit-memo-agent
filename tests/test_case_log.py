@@ -760,3 +760,118 @@ def test_p15_a_head_file_whose_hashes_disagree_with_its_count_or_head_is_unreada
                                  encoding="utf-8")
         check = log.verify()
         assert not check.ok and check.first_bad == 1 and "head file" in check.reason
+
+
+# --- findings from verification round 26 -----------------------------------------------
+
+
+def test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing(tmp_path, monkeypatch):
+    # Every read attempt sees a head, then two more committed appends before it reads the
+    # log; on the last attempt another writer also holds the lock, so the reader cannot
+    # take it to look under it. Each extra entry is a complete, recorded append.
+    from contextlib import ExitStack
+
+    log = _log(tmp_path, 2)
+    reader = case.CaseLog(log.path)
+    other, holder = case.CaseLog(log.path), case.CaseLog(log.path)
+    real = case.CaseLog._read_log
+    calls = {"n": 0}
+
+    def busy(self):
+        if self is reader:
+            calls["n"] += 1
+            for _ in range(2):
+                other.append("override", {"n": calls["n"]}, expected=other.require_intact().position)
+            if calls["n"] == case.READ_RETRIES:
+                stack.enter_context(holder.writer())
+        return real(self)
+
+    with ExitStack() as stack:
+        monkeypatch.setattr(case.CaseLog, "_read_log", busy)
+        check = reader.verify()
+    monkeypatch.undo()
+    assert check.ok and not check.torn and check.in_progress
+    assert 2 <= check.head.position <= 2 + 2 * case.READ_RETRIES
+    assert [e.seq for e in check.entries] == list(range(1, check.head.position + 1))
+    assert reader.verify().ok  # once the writers are gone, the whole log is intact
+
+
+def test_a_torn_log_is_still_named_when_the_reader_cannot_create_the_lock_file(tmp_path, monkeypatch):
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    log.lock_path.unlink()
+    real_open = case.os.open
+
+    def no_create(path, flags, *a):
+        if os.fspath(path) == os.fspath(log.lock_path):
+            raise PermissionError(13, "Permission denied", os.fspath(path))
+        return real_open(path, flags, *a)
+
+    monkeypatch.setattr(case.os, "open", no_create)
+    with pytest.raises(case.CaseLogBroken) as err:
+        case.CaseLog(log.path).require_intact()
+    assert err.value.first_bad == 3 and err.value.torn
+
+
+# --- loading a case: the production path (cma case check) -------------------------------
+
+
+def _case_dir(tmp_path, n):
+    folder = tmp_path / "cases" / "c1"
+    folder.mkdir(parents=True)
+    log = case.for_case(folder)
+    for i in range(n):
+        log.append(EVENTS[i % len(EVENTS)], {"n": i, "secret": "ACME LTD"}, expected=i)
+    return folder, log
+
+
+def _check_cli(folder):
+    from typer.testing import CliRunner
+
+    from cma.cli import app
+
+    return CliRunner().invoke(app, ["case", "check", str(folder)])
+
+
+def test_loading_a_case_opens_its_log_beside_the_profile(tmp_path):
+    folder, log = _case_dir(tmp_path, 2)
+    assert log.path == folder / "log.jsonl"
+    r = _check_cli(folder)
+    assert r.exit_code == 0, r.output
+    assert "intact" in r.output and "2 entries" in r.output
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("tamper", ["change", "remove", "reorder", "rebuild"])
+def test_p15_loading_a_case_detects_a_tampered_log_and_names_the_first_bad_entry(tmp_path, tamper):
+    folder, log = _case_dir(tmp_path, 4)
+    lines = _lines(log)
+    if tamper == "change":
+        lines[1] = lines[1].replace('"n":1', '"n":7')
+    elif tamper == "remove":
+        del lines[1]
+    elif tamper == "reorder":
+        lines[1], lines[2] = lines[2], lines[1]
+    else:  # every hash and link recomputed with entry 2 changed: only the head file sees it
+        entries = [json.loads(line) for line in lines]
+        entries[1]["data"]["n"] = 7
+        lines = _rebuild(entries)
+    _write(log, lines)
+    r = _check_cli(folder)
+    assert r.exit_code == 3, r.output
+    assert "entry 2" in r.output
+    assert "ACME" not in r.output  # entries are named by number, never quoted
+
+
+@pytest.mark.invariants
+def test_p15_loading_a_case_with_a_torn_last_entry_names_it_and_says_to_confirm_dropping_it(tmp_path, monkeypatch):
+    folder, log = _case_dir(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    r = _check_cli(folder)
+    assert r.exit_code == 3, r.output
+    assert "entry 3" in r.output and "incomplete" in r.output
+
+
+def test_loading_a_folder_that_is_not_a_case_is_refused(tmp_path):
+    r = _check_cli(tmp_path / "nope")
+    assert r.exit_code == 2

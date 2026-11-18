@@ -24,6 +24,8 @@ from .policy import PolicyError
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 import_app = typer.Typer(no_args_is_help=True, help="Convert a bank export into a statement CSV.")
 app.add_typer(import_app, name="import")
+case_app = typer.Typer(no_args_is_help=True, help="Work with a case folder.")
+app.add_typer(case_app, name="case")
 console = Console()
 
 
@@ -301,6 +303,26 @@ def import_monzo(
         + (f"; skipped {r.skipped_non_gbp} non-GBP rows" if r.skipped_non_gbp else "")
     )
     console.print("Check the closing balance against your Monzo app before trusting any metric.")
+
+
+@case_app.command("check")
+def case_check(folder: Path = typer.Argument(..., help="The case folder (cases/<id>).")):
+    """Load a case's log and check its hash chain against its head file (R43).
+
+    Exit 0 when it is intact, 3 when an entry was changed, removed, reordered or not
+    finished, naming the first bad entry. Entries are named by number, never quoted."""
+    from . import case
+
+    if not folder.is_dir():
+        console.print(f"[red]No case folder at {folder}.[/red]")
+        raise typer.Exit(code=2)
+    check = case.for_case(folder).verify()
+    if not check.ok:
+        console.print(f"[red]Case log broken:[/red] entry {check.first_bad} {check.reason}.")
+        console.print("Nothing may be recorded or signed off on this case until it is resolved.")
+        raise typer.Exit(code=3)
+    note = "; another window or command is appending" if check.in_progress else ""
+    console.print(f"case log intact: {check.head.position} entries, head {check.head.hash[:12]}{note}")
 
 
 @app.command()

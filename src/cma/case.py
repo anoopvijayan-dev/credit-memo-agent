@@ -51,7 +51,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -61,7 +61,7 @@ HASHED_FIELDS = ("seq", "prev", "at", "event", "data")
 ENTRY_FIELDS = frozenset((*HASHED_FIELDS, "hash"))
 TORN_DROPPED = "torn_entry_dropped"
 HEAD_FIELDS = frozenset(("count", "hash", "hashes"))
-READ_RETRIES, READ_PAUSE = 5, 0.02  # seconds; a writer's two writes take far less
+READ_RETRIES, READ_PAUSE = 5, 0.02  # seconds; a writer paused for longer is handled in verify
 _UNREADABLE = object()
 
 
@@ -122,6 +122,21 @@ class LogCheck:
     torn: bool = False
     intact_bytes: int = field(default=0, repr=False)
     in_progress: bool = False  # another writer is appending; `head` is the log as recorded
+    recorded: int | None = field(default=None, repr=False)  # entries the head file records
+
+    def as_recorded(self) -> LogCheck:
+        """The log as the head file records it, for a failure that lies wholly after the
+        recorded entries (which were all walked and matched): what a reader reports while
+        another writer's append is landing."""
+        k = self.recorded or 0
+        kept = self.entries[:k]
+        return LogCheck(Head(k, kept[-1].hash if kept else GENESIS), kept,
+                        intact_bytes=sum(len(_line(e)) for e in kept), in_progress=True, recorded=k)
+
+    @property
+    def past_recorded(self) -> bool:
+        """The first failure is after every entry the head file records."""
+        return self.recorded is not None and self.first_bad is not None and self.first_bad > self.recorded
 
     @property
     def ok(self) -> bool:
@@ -134,6 +149,11 @@ def _canonical(obj: Any) -> bytes:
     return json.dumps(
         obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
     ).encode("utf-8")
+
+
+def _line(entry: Entry) -> bytes:
+    """The exact line the writer produced for an entry that was read back intact."""
+    return _canonical(asdict(entry)) + b"\n"
 
 
 def entry_hash(entry: dict[str, Any]) -> str:
@@ -244,17 +264,18 @@ def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
         prev = entry.hash
         ends.append(ends[-1] + len(line) + 1)
 
+    hashes: list[str] = recorded if isinstance(recorded, list) else []  # none yet: empty
+    n, count = len(entries), len(hashes)
+
     def at(k: int) -> Head:
         return Head(k, entries[k - 1].hash if k else GENESIS)
 
     def failed(first_bad: int, reason: str, torn: bool = False) -> LogCheck:
         return LogCheck(at(first_bad - 1), entries[: first_bad - 1], first_bad, reason, torn,
-                        ends[first_bad - 1])
+                        ends[first_bad - 1], recorded=None if recorded is _UNREADABLE else count)
 
     if recorded is _UNREADABLE:
         return failed(1, "cannot be trusted: the head file beside the log is unreadable")
-    hashes: list[str] = recorded if isinstance(recorded, list) else []  # none yet: empty
-    n, count = len(entries), len(hashes)
     same = 0
     while same < min(n, count) and entries[same].hash == hashes[same]:
         same += 1
@@ -264,7 +285,7 @@ def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
     if chain_bad is not None:
         return failed(chain_bad, chain_reason)
     if n == count and not tail:
-        return LogCheck(at(n), entries, intact_bytes=ends[-1])
+        return LogCheck(at(n), entries, intact_bytes=ends[-1], recorded=count)
     if n == count:
         return failed(n + 1, "is incomplete: the write did not finish (the process or power "
                              "stopped); confirm dropping it before anything else is recorded "
@@ -310,16 +331,21 @@ class CaseLog:
             check = _check(self._read_log(), before)
             if not check.torn and _read_head(self.head_path) == before:
                 return check
-        # Still torn (or the head kept moving). Under the lock nothing moves, so if the lock
-        # is free, one read there is the truth. If another writer holds it, that writer has
-        # an append on the way: report the log as recorded, never a live append as torn.
+        # Still torn, or the head kept moving. Under the lock nothing moves, so if the lock
+        # is free, one read there is the truth.
         try:
             with self.writer():
                 return _check(self._read_log(), _read_head(self.head_path))
         except CaseLocked:
-            if check.torn:
-                return replace(check, first_bad=None, reason="", torn=False, in_progress=True)
+            pass
+        except OSError:  # cannot create or open the lock file: nobody can be writing
             return check
+        # Another writer holds the lock. The log is only ever appended to, so the log read
+        # after a head holds every entry that head records; those entries were walked and
+        # matched, and a failure before or among them is real whatever moved since. A
+        # failure only after them (a torn line, or entries appended after that head was
+        # read) is that writer's appends landing: report the log as recorded.
+        return check.as_recorded() if check.past_recorded else check
 
     def _read_log(self) -> bytes | None:
         try:
@@ -523,3 +549,11 @@ else:
 
     def _unlock(fd: int) -> None:
         fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+LOG_NAME = "log.jsonl"
+
+
+def for_case(folder: Path | str) -> CaseLog:
+    """The case log of a case folder (cases/<id>/log.jsonl)."""
+    return CaseLog(Path(folder) / LOG_NAME)

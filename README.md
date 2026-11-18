@@ -51,6 +51,10 @@ cma resume case-7 --checkpoint-db private/reviews.sqlite
 # (git-ignored, as are *.csv, memo files, evidence files and databases anywhere).
 cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out private/mine.csv
 
+# Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
+# first entry that was changed, removed, reordered or left half written.
+cma case check private/cma/cases/<id>
+
 # Use a real model instead of the offline one.
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
 cma run examples/cafe_stretched.csv --llm anthropic
