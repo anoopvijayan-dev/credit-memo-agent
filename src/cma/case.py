@@ -50,6 +50,7 @@ import json
 import os
 import threading
 import time
+import weakref
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -309,6 +310,21 @@ def _holder_id() -> tuple[int, int]:
     return os.getpid(), threading.get_ident()
 
 
+# Every live CaseLog, so a forked child can replace their thread locks (below).
+_LIVE: weakref.WeakSet[CaseLog] = weakref.WeakSet()
+
+
+def _after_fork_in_child() -> None:
+    # Another thread of the parent may have held an instance's state lock at the fork; in
+    # the child that thread does not exist and the lock would never be released.
+    for log in list(_LIVE):
+        log._state = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
+
+
 class CaseLog:
     def __init__(self, path: Path | str):
         self.path = Path(path)
@@ -318,6 +334,18 @@ class CaseLog:
         self._lock_fd: int | None = None
         self._owner: tuple[int, int] | None = None  # (process id, thread ident) of the holder
         self._lock_depth = 0
+        _LIVE.add(self)
+
+    def _forget_inherited_lock(self) -> None:
+        """In a forked child, drop the writer state inherited from the parent (call under
+        _state). The lock is the parent's: closing the child's copy of the descriptor
+        releases nothing while the parent's stays open, and an explicit unlock would
+        release it on the shared open file under a parent that still writes. The child
+        then takes a lock of its own, which contends with the parent's like any process."""
+        if self._owner is not None and self._owner[0] != os.getpid():
+            fd, self._lock_fd, self._owner, self._lock_depth = self._lock_fd, None, None, 0
+            if fd is not None:
+                os.close(fd)
 
     # --- reading -----------------------------------------------------------------------
 
@@ -391,6 +419,7 @@ class CaseLog:
         lock."""
         me = _holder_id()
         with self._state:
+            self._forget_inherited_lock()
             if self._owner == me:
                 self._lock_depth += 1
             elif self._owner is not None:
@@ -414,19 +443,28 @@ class CaseLog:
             yield self
         finally:
             with self._state:
-                self._lock_depth -= 1
-                if self._lock_depth == 0:
-                    fd, self._lock_fd, self._owner = self._lock_fd, None, None
-                    if fd is not None:
-                        # Closing the descriptor releases the lock on every platform, so it
-                        # runs even when the explicit unlock fails; skipping it would leave
-                        # the lock held and block later appends until the process exits.
-                        try:
-                            _unlock(fd)
-                        except OSError:
-                            pass
-                        finally:
-                            os.close(fd)
+                if self._owner is None or self._owner[0] != os.getpid():
+                    # A forked child leaving a writer block it inherited (its state is
+                    # dropped here, or was when it took a lock of its own): not its lock.
+                    self._forget_inherited_lock()
+                else:
+                    self._release_one_level()
+
+    def _release_one_level(self) -> None:
+        """Leave one level of this process's writer lock (call under _state)."""
+        self._lock_depth -= 1
+        if self._lock_depth == 0:
+            fd, self._lock_fd, self._owner = self._lock_fd, None, None
+            if fd is not None:
+                # Closing the descriptor releases the lock on every platform, so it runs
+                # even when the explicit unlock fails; skipping it would leave the lock
+                # held and block later appends until the process exits.
+                try:
+                    _unlock(fd)
+                except OSError:
+                    pass
+                finally:
+                    os.close(fd)
 
     def append(self, event: str, data: dict[str, Any], *, expected: int) -> Entry:
         """Append one entry if the log is intact and still at `expected` entries."""

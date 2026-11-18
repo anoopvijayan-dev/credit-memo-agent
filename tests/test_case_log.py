@@ -332,6 +332,77 @@ def test_p15_a_forked_child_cannot_write_on_its_parents_lock(tmp_path):
     assert len(log.entries()) == 1
 
 
+@pytest.mark.invariants
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX only")
+def test_p15_a_forked_child_leaving_the_writer_does_not_release_its_parents_lock(tmp_path):
+    # T12 review: a child forked inside a writer block ran the block's cleanup on the way
+    # out and unlocked the shared open file, so the parent wrote on without its lock.
+    log = _log(tmp_path, 1)
+    pid = None
+    try:
+        with log.writer():
+            pid = os.fork()
+            if pid:
+                _, status = os.waitpid(pid, 0)
+                assert os.waitstatus_to_exitcode(status) == 0
+                with pytest.raises(case.CaseLocked), case.CaseLog(log.path).writer():
+                    pass
+    finally:
+        if pid == 0:  # the child left the block normally; report and stop here
+            os._exit(0)
+    with case.CaseLog(log.path).writer():  # released once the parent leaves
+        pass
+
+
+@pytest.mark.invariants
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX only")
+def test_p15_a_forked_child_writes_once_its_parent_has_released_the_lock(tmp_path):
+    # Ownership inherited from the parent is dropped in the child, so it is not refused
+    # for ever: it takes its own lock, which is free once the parent has left.
+    log = _log(tmp_path, 1)
+    go_r, go_w = os.pipe()
+    with log.writer():
+        pid = os.fork()
+        if pid == 0:
+            code = 2
+            try:
+                os.close(go_w)
+                os.read(go_r, 1)  # wait until the parent has released
+                log.append("override", {}, expected=1)
+                code = 0
+            finally:
+                os._exit(code)
+        os.close(go_r)
+    os.write(go_w, b"x")
+    os.close(go_w)
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0
+    assert len(log.entries()) == 2
+
+
+@pytest.mark.invariants
+@pytest.mark.skipif(not hasattr(os, "register_at_fork"), reason="fork is POSIX only")
+def test_p15_a_fork_while_another_thread_holds_the_state_lock_does_not_hang_the_child(tmp_path):
+    import signal
+    log = _log(tmp_path, 1)
+    log._state.acquire()  # as another thread would, mid-check, at the moment of the fork
+    try:
+        pid = os.fork()
+        if pid == 0:
+            code = 2
+            try:
+                signal.alarm(5)  # a hang ends the child with SIGALRM instead of passing
+                log.append("override", {}, expected=1)
+                code = 0
+            finally:
+                os._exit(code)
+    finally:
+        log._state.release()
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0
+    assert len(log.entries()) == 2
+
+
 def test_torn_last_entry_blocks_appends_until_dropped(tmp_path, monkeypatch):
     log = _log(tmp_path, 2)
     lines = _lines(log)
