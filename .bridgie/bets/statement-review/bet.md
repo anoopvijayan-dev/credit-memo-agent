@@ -175,6 +175,7 @@ Every answer and decision, dated.
 - Cash paid in is not protected (move it to the unprotected names); a profile director outranks cash wording.
 - Precedence as C1 lists it, (1) to (7). Debits keep first-match order; v1 is untouched (R54).
 The four verify-27 findings must each become a test with the R4 outcome: HMRC credit with savings wording -> ambiguous (HMRC vs own-account cues); counter cash at a branch whose name holds a generic explained word -> ambiguous, not trading and not explained; a bare pot label in an external payment -> not own-account (no move wording); a card refund from a merchant named with savings-transfer wording -> ambiguous (refund and own-account move cues disagree): unexplained with both candidates recorded and listed in the queue. Add a test that shuffles the order of lists within a stage and gets the same verdict for every case (design Rollout). → task T03 gets one more attempt [Anoop Vijayan]
+- 2026-11-18 D57 (unblock): take over manually — Owner: take over with the prepared fix covering the fork case as a whole. A forked child never unlocks its parent's lock: it drops inherited writer state (closing only its copy of the descriptor) and takes its own lock, refused while the parent holds it and granted once released; a fork hook gives every live CaseLog a fresh state lock in the child. The release moved out of the finally (no return in finally). Four invariants p15 fork tests. → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 
 ## Idea
 
