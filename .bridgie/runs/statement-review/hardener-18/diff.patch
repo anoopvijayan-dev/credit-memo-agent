@@ -1,0 +1,1123 @@
+diff --git a/src/cma/categorise.py b/src/cma/categorise.py
+index 91fa734..2e18edb 100644
+--- a/src/cma/categorise.py
++++ b/src/cma/categorise.py
+@@ -9,8 +9,19 @@ The rule table is data, not code: src/cma/rules/<id>.yaml, validated on load lik
+ policy (a key repeated in a mapping is refused), with an id and the SHA-256 of the
+ file's bytes. CMA_RULESET chooses the table (default v1). v1 is the table as it was
+ when it lived here, frozen: its hash is pinned in FROZEN_SHA256 and any other bytes are
+-refused, so CMA_RULESET=v1 always reproduces those categories. The
+-matching passes below (reversals, round trips) stay in code.
++refused, so CMA_RULESET=v1 always reproduces those categories. v2 adds the maintained
++lists of R4 (acquirers, gateways, marketplaces, delivery platforms, lenders and merchant
++cash advance providers, own pots and savings, cash paid in, cash-withdrawal wording,
++HMRC, refunds, explained non-trading money in). The matching passes below (reversals,
++round trips) stay in code.
++
++Precedence, first match wins: a per-line override; the table's protected rules (returned
++DD, HMRC, lenders, director, capital, shareholder); the case profile's names (directors
++and shareholders, own accounts); firm rules; the rest of the table; the default (a debit
++is supplier, a credit is OTHER, unexplained). Every line records the rule that set its
++category in Transaction.rule_id: "<ruleset>:<rule id>", "<ruleset>:default",
++"<ruleset>:round_trip", "profile:director", "profile:own_account", "firm:<rule id>" or
++the override's own reference.
+ 
+ Revenue is claimed narrowly. A card or gateway settlement is trading income. A bank
+ transfer in is only counted as a customer payment when it carries an invoice
+@@ -30,6 +41,7 @@ from __future__ import annotations
+ import hashlib
+ import os
+ import re
++from collections.abc import Mapping, Sequence
+ from dataclasses import dataclass
+ from functools import lru_cache
+ from importlib import resources
+@@ -44,11 +56,14 @@ Direction = Literal["in", "out", "any"]
+ INVOICE_REF = re.compile(r"\bINV(?:OICE)?\s*[-#:]?\s*\d+")
+ 
+ RULESET_ENV = "CMA_RULESET"
+-RULESETS = ("v1",)
++RULESETS = ("v1", "v2")
+ DEFAULT_RULESET = "v1"
+ DIRECTIONS = ("in", "out", "any")
+ TABLE_KEYS = {"id", "frozen", "rules"}
+-RULE_KEYS = {"id", "pattern", "direction", "category"}
++RULE_KEYS = {"id", "direction", "category"}  # required, plus a pattern or names
++MATCH_KEYS = {"pattern", "names"}
++OPTIONAL_KEYS = {"unless", "protected"}
++ALL_RULE_KEYS = RULE_KEYS | MATCH_KEYS | OPTIONAL_KEYS
+ # A frozen table's SHA-256, pinned here. A file that validates but differs from these
+ # bytes (a rule recategorised, CRLF line ends, frozen switched off) is refused, so the id
+ # v1 in an evidence record always means this exact table.
+@@ -65,6 +80,8 @@ class Rule:
+     pattern: re.Pattern[str]
+     direction: Direction
+     category: Category
++    protected: bool = False  # wins over profile names and firm rules (R21)
++    unless: re.Pattern[str] | None = None  # the rule does not match when this does
+ 
+ 
+ @dataclass(frozen=True)
+@@ -73,6 +90,32 @@ class Ruleset:
+     sha256: str
+     rules: tuple[Rule, ...]
+ 
++    @property
++    def protected(self) -> tuple[Rule, ...]:
++        return tuple(r for r in self.rules if r.protected)
++
++    @property
++    def unprotected(self) -> tuple[Rule, ...]:
++        return tuple(r for r in self.rules if not r.protected)
++
++
++def names_pattern(names: Sequence[str]) -> str:
++    """A pattern matching any of `names` as whole words in an upper-cased description,
++    with any run of spaces between words. A name's other characters (".", "-", "&",
++    digits) are matched literally."""
++    alts = sorted({r"\s+".join(re.escape(w) for w in n.upper().split()) for n in names}, key=lambda a: (-len(a), a))
++    return r"(?<![A-Z0-9])(?:" + "|".join(alts) + r")(?![A-Z0-9])"
++
++
++def _compile_problem(pattern: str) -> str | None:
++    # re.error is not the only way a pattern fails to compile: a repeat count past
++    # the engine's limit raises OverflowError, deep nesting RecursionError.
++    try:
++        re.compile(pattern)
++    except (re.error, OverflowError, RecursionError, MemoryError) as e:
++        return f"{e.__class__.__name__}: {e}"
++    return None
++
+ 
+ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> None:
+     if not isinstance(data, dict):
+@@ -98,13 +141,27 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
+             continue
+         for key in sorted(RULE_KEYS - set(r)):
+             problems.append(f"{where}: missing {key}")
+-        for key in sorted(set(r) - RULE_KEYS, key=repr):
++        if not MATCH_KEYS & set(r):
++            problems.append(f"{where}: missing pattern (or names)")
++        for key in sorted(set(r) - ALL_RULE_KEYS, key=repr):
+             problems.append(f"{where}: unknown key {key!r}")
+         # Every field is a string. Checking the type first means a list, a mapping, a
+         # number or null is reported here, not raised later as a TypeError.
+-        for key in sorted(RULE_KEYS & set(r)):
++        for key in sorted((RULE_KEYS | {"pattern", "unless"}) & set(r)):
+             if not isinstance(r[key], str) or not r[key]:
+                 problems.append(f"{where}: {key} {r[key]!r} is not a non-empty string")
++        if "names" in r:
++            names = r["names"]
++            if not isinstance(names, list) or not names or not all(isinstance(n, str) and n.strip() for n in names):
++                problems.append(f"{where}: names must be a non-empty list of non-empty strings")
++            elif len({" ".join(n.upper().split()) for n in names}) != len(names):
++                problems.append(f"{where}: a name is listed twice")
++        if "protected" in r:
++            if not isinstance(r["protected"], bool):
++                problems.append(f"{where}: protected must be true or false")
++            elif r["protected"] and any(not isinstance(p, dict) or not p.get("protected") for p in rules[:i - 1]):
++                # One ordered pass and the precedence agree only if the protected rules come first.
++                problems.append(f"{where}: a protected rule must come before every rule that is not")
+         if isinstance(r.get("id"), str):
+             if r["id"] in seen:
+                 problems.append(f"{where}: duplicate id")
+@@ -113,17 +170,20 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
+             problems.append(f"{where}: direction {r['direction']!r} is not one of {list(DIRECTIONS)}")
+         if isinstance(r.get("category"), str) and r["category"] not in categories:
+             problems.append(f"{where}: category {r['category']!r} is not a category")
+-        if isinstance(r.get("pattern"), str) and r["pattern"]:
+-            # re.error is not the only way a pattern fails to compile: a repeat count past
+-            # the engine's limit raises OverflowError, deep nesting RecursionError.
+-            try:
+-                re.compile(r["pattern"])
+-            except (re.error, OverflowError, RecursionError, MemoryError) as e:
+-                problems.append(f"{where}: pattern does not compile ({e.__class__.__name__}: {e})")
++        for key in ("pattern", "unless"):
++            if isinstance(r.get(key), str) and r[key]:
++                problem = _compile_problem(r[key])
++                if problem:
++                    problems.append(f"{where}: {key} does not compile ({problem})")
+     if problems:
+         raise RulesetError(f"{source}: " + "; ".join(problems))
+ 
+ 
++def _rule_pattern(r: dict) -> re.Pattern[str]:
++    parts = [p for p in (r.get("pattern"), names_pattern(r["names"]) if "names" in r else None) if p]
++    return re.compile(parts[0] if len(parts) == 1 else "|".join(f"(?:{p})" for p in parts))
++
++
+ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) -> Ruleset:
+     validate_ruleset(data, expected_id, source)
+     assert isinstance(data, dict)
+@@ -131,7 +191,9 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str)
+         id=data["id"],
+         sha256=sha256,
+         rules=tuple(
+-            Rule(r["id"], re.compile(r["pattern"]), r["direction"], Category(r["category"]))
++            Rule(r["id"], _rule_pattern(r), r["direction"], Category(r["category"]),
++                 protected=r.get("protected", False),
++                 unless=re.compile(r["unless"]) if "unless" in r else None)
+             for r in data["rules"]
+         ),
+     )
+@@ -209,14 +271,66 @@ def _direction_ok(direction: Direction, amount: float) -> bool:
+     return amount > 0 if direction == "in" else amount < 0
+ 
+ 
+-def categorise_one(t: Transaction, ruleset: Ruleset | None = None) -> Category:
++def rule_matches(rule: Rule, description: str, amount: float) -> bool:
++    """`description` upper-cased."""
++    return (_direction_ok(rule.direction, amount) and rule.pattern.search(description) is not None
++            and (rule.unless is None or rule.unless.search(description) is None))
++
++
++@dataclass(frozen=True)
++class LineOverride:
++    """A person's category for one line, with the reference recorded as its rule id."""
++
++    category: Category
++    ref: str
++
++
++@dataclass(frozen=True)
++class ProfileNames:
++    """Names from the case profile: directors and shareholders, and the applicant's other
++    accounts. Matched as whole words in the upper-cased description."""
++
++    directors: tuple[str, ...] = ()
++    own_accounts: tuple[str, ...] = ()
++
++
++def _names_in(names: Sequence[str], description: str) -> bool:
++    names = [n for n in names if n.strip()]
++    return bool(names) and re.search(names_pattern(names), description) is not None
++
++
++def classify(
++    t: Transaction,
++    ruleset: Ruleset | None = None,
++    *,
++    override: LineOverride | None = None,
++    profile: ProfileNames | None = None,
++    firm_rules: Sequence[Rule] = (),
++) -> tuple[Category, str]:
++    """The category of one line and the id of the rule that set it, in precedence order."""
++    ruleset = ruleset or active_ruleset()
++    if override is not None:
++        return override.category, override.ref
+     desc = t.description.upper()
+-    for rule in (ruleset or active_ruleset()).rules:
+-        if rule.pattern.search(desc) and _direction_ok(rule.direction, t.amount):
+-            return rule.category
+-    if t.amount < 0:
+-        return Category.SUPPLIER
+-    return Category.OTHER
++    for rule in ruleset.protected:
++        if rule_matches(rule, desc, t.amount):
++            return rule.category, f"{ruleset.id}:{rule.id}"
++    if profile is not None:
++        if t.amount > 0 and _names_in(profile.directors, desc):
++            return Category.DIRECTOR_FUNDING, "profile:director"
++        if t.amount != 0 and _names_in(profile.own_accounts, desc):
++            return Category.OWN_ACCOUNT_TRANSFER, "profile:own_account"
++    for rule in firm_rules:
++        if rule_matches(rule, desc, t.amount):
++            return rule.category, f"firm:{rule.id}"
++    for rule in ruleset.unprotected:
++        if rule_matches(rule, desc, t.amount):
++            return rule.category, f"{ruleset.id}:{rule.id}"
++    return (Category.SUPPLIER if t.amount < 0 else Category.OTHER), f"{ruleset.id}:default"
++
++
++def categorise_one(t: Transaction, ruleset: Ruleset | None = None) -> Category:
++    return classify(t, ruleset)[0]
+ 
+ 
+ RAIL_PREFIX = re.compile(
+@@ -265,25 +379,40 @@ def link_reversals(statement: Statement) -> Statement:
+ OUTGOING_TRANSFER = re.compile(r"^(?:FPS DEBIT|BACS DEBIT|TFR)\b")
+ 
+ 
+-def unmark_round_trips(statement: Statement) -> Statement:
++def unmark_round_trips(statement: Statement, ruleset_id: str | None = None) -> Statement:
+     """A "customer" the applicant also sends transfers to is not counted as revenue.
+ 
+     Money sent out by transfer and received back with an invoice reference is the
+     cheapest way to manufacture revenue. Such credits become OTHER (and so show in M16).
+     This also catches a genuine customer who is paid a refund by transfer: the cost is
+     understated revenue, which a person can add back; the alternative is gameable.
++
++    Only a category the built-in table set is undone: a person's override, a profile name
++    or a firm rule ranks above the table and is left alone.
+     """
+     paid_out = {counterparty(t.description) for t in statement.transactions
+                 if t.amount < 0 and OUTGOING_TRANSFER.search(t.description.upper())}
+     for t in statement.transactions:
+-        if t.category == Category.REVENUE_TRANSFER and counterparty(t.description) in paid_out:
++        set_by_table = ruleset_id is None or (t.rule_id or "").startswith(f"{ruleset_id}:")
++        if t.category == Category.REVENUE_TRANSFER and counterparty(t.description) in paid_out and set_by_table:
+             t.category = Category.OTHER
++            if ruleset_id is not None:
++                t.rule_id = f"{ruleset_id}:round_trip"
+     return statement
+ 
+ 
+-def categorise(statement: Statement, ruleset: Ruleset | None = None) -> Statement:
++def categorise(
++    statement: Statement,
++    ruleset: Ruleset | None = None,
++    *,
++    overrides: Mapping[str, LineOverride] | None = None,
++    profile: ProfileNames | None = None,
++    firm_rules: Sequence[Rule] = (),
++) -> Statement:
+     ruleset = ruleset or active_ruleset()
++    overrides = overrides or {}
+     for t in statement.transactions:
+-        t.category = categorise_one(t, ruleset)
++        t.category, t.rule_id = classify(t, ruleset, override=overrides.get(t.id), profile=profile,
++                                         firm_rules=firm_rules)
+         t.reverses = None
+-    return link_reversals(unmark_round_trips(statement))
++    return link_reversals(unmark_round_trips(statement, ruleset.id))
+diff --git a/src/cma/graph.py b/src/cma/graph.py
+index 8e788f0..727caf7 100644
+--- a/src/cma/graph.py
++++ b/src/cma/graph.py
+@@ -195,7 +195,10 @@ def evidence_record(s: MemoState) -> dict:
+         "model": s.get("model"),
+         "vat_stagger": s.get("vat_stagger"),
+         "ruleset": ruleset_used(s),
+-        "metrics": [m.model_dump() for m in s["metrics"]],
++        # Each line's category and the rule that set it: ids only, no descriptions.
++        "lines": [{"id": t.id, "category": t.category.value if t.category else None, "rule_id": t.rule_id,
++                   "reverses": t.reverses} for t in s["statement"].transactions],
++        "metrics":[m.model_dump() for m in s["metrics"]],
+         "policy": s["policy"].model_dump(mode="json"),
+         "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
+         "redrafts": s.get("redrafts", 0),
+diff --git a/src/cma/metrics.py b/src/cma/metrics.py
+index a294efe..ec65010 100644
+--- a/src/cma/metrics.py
++++ b/src/cma/metrics.py
+@@ -23,6 +23,12 @@ from .models import REVENUE_CATEGORIES, Category, Metric, Statement, Transaction
+ VAT_STAGGERS: dict[int, tuple[int, ...]] = {1: (3, 6, 9, 12), 2: (1, 4, 7, 10), 3: (2, 5, 8, 11)}
+ VAT_DD_WORKING_DAYS = 3  # HMRC collects by Direct Debit up to three working days after the due date.
+ FINANCING = {Category.LOAN_REPAYMENT, Category.LOAN_DRAWDOWN, Category.OWNER_DRAWINGS}
++# Money in that is neither trading receipts, a lending drawdown nor a returned DD. Under v1
++# every such credit is OTHER; v2 names some of them (director funding, own pots, refunds,
++# HMRC, grants), and M9 and M16 treat them all as v1 treats OTHER, so naming a credit
++# never moves either figure (R10).
++NON_TRADING_IN = {Category.OTHER, Category.OWN_ACCOUNT_TRANSFER, Category.DIRECTOR_FUNDING, Category.REFUND_IN,
++                  Category.HMRC_REPAYMENT, Category.OTHER_EXPLAINED_IN}
+ 
+ 
+ def _month(d: date) -> str:
+@@ -181,11 +187,12 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
+             sent[counterparty(t.description)] += -t.amount
+     back: dict[str, list[Transaction]] = defaultdict(list)
+     for t in txns:
+-        if t.amount > 0 and t.category == Category.OTHER and counterparty(t.description) in sent:
++        if t.amount > 0 and t.category in NON_TRADING_IN and counterparty(t.description) in sent:
+             back[counterparty(t.description)].append(t)
+     offset = sum(min(sum(t.amount for t in ts), sent[cp]) for cp, ts in back.items())
+     operating += [t for ts in back.values() for t in ts]
+-    net_operating = round(sum(t.amount for t in operating if t.category != Category.OTHER) + offset, 2)
++    net_operating = round(sum(t.amount for t in operating if not (t.amount > 0 and t.category in NON_TRADING_IN))
++                          + offset, 2)
+     dscr: float | None = None
+     dscr_note = (
+         "Historical cover of existing debt only: net operating cash flow after owner drawings, "
+@@ -238,7 +245,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
+     # Inflows nobody has explained.
+     inflows = [t for t in txns if t.amount > 0 and eff(t) not in (Category.LOAN_DRAWDOWN,)
+                and t.category != Category.RETURNED_DD]
+-    unclassified = [t for t in inflows if t.category == Category.OTHER]
++    unclassified = [t for t in inflows if t.category in NON_TRADING_IN]
+     total_in = sum(t.amount for t in inflows)
+     unclassified_share = round(sum(t.amount for t in unclassified) / total_in * 100, 2) if total_in else None
+ 
+diff --git a/src/cma/rules/v2.yaml b/src/cma/rules/v2.yaml
+new file mode 100644
+index 0000000..079c546
+--- /dev/null
++++ b/src/cma/rules/v2.yaml
+@@ -0,0 +1,278 @@
++# Built-in categorisation table v2: v1's rules plus the maintained lists of R4 (UK card
++# acquirers, payment gateways, marketplaces and delivery platforms; business lenders and
++# merchant cash advance providers; own pots and savings; cash paid in; cash-withdrawal
++# wording; HMRC repayments; refunds; explained non-trading money in).
++#
++# Rules are ordered; the first whose pattern (or one of whose names) matches the
++# upper-cased description, whose `unless` does not, and whose direction matches the sign
++# of the amount wins. `names` are plain words matched whole, with any run of spaces
++# between words; `pattern` is a Python regular expression.
++#
++# Protected rules (returned DD, director, capital, shareholder, lender, HMRC) come first
++# and win over the case profile and firm rules; only a per-line override changes a line
++# they match (R21). The precedence is in src/cma/categorise.py.
++#
++# Ambiguous wording never resolves to trading receipts: refunds, own pots and explained
++# non-trading credits are tried before the acquirer lists, so "PAYPAL REFUND" is a
++# refund and "STRIPE CAPITAL" a drawdown. Cash paid in is trading receipts (D31).
++id: v2
++frozen: false
++rules:
++  # --- protected ---------------------------------------------------------------------
++  - id: returned_dd
++    pattern: '^UNPAID DD\b'
++    direction: any
++    category: returned_dd
++    protected: true
++  - id: hmrc_vat
++    pattern: 'HMRC VAT'
++    direction: out
++    category: hmrc_vat
++    protected: true
++  - id: hmrc_paye
++    pattern: 'HMRC PAYE'
++    direction: out
++    category: hmrc_paye
++    protected: true
++  # HMRC paying money back (VAT repayment, tax refund, R&D credit).
++  - id: hmrc_repayment
++    names: [HMRC, HM REVENUE]
++    direction: in
++    category: hmrc_repayment
++    protected: true
++  # UK business lenders and merchant cash advance providers, named. Before the director
++  # and capital wording, so "STRIPE CAPITAL" and "BOOST CAPITAL" are lenders.
++  - id: lender_repayment
++    names: &lenders
++      - FUNDING CIRCLE
++      - IWOCA
++      - YOULEND
++      - LIBERIS
++      - 365 BUSINESS FINANCE
++      - CAPIFY
++      - BOOST CAPITAL
++      - FLEXIMIZE
++      - MARKETFINANCE
++      - MARKET FINANCE
++      - NUCLEUS COMMERCIAL FINANCE
++      - ESME LOANS
++      - ALLICA
++      - ULTIMATE FINANCE
++      - BIZCAP
++      - SWIFTFUND
++      - GOT CAPITAL
++      - MERCHANT MONEY
++      - UNCAPPED
++      - CLEARCO
++      - WAYFLYER
++      - OPTIMUM FINANCE
++      - LENDINGCROWD
++      - ARCHOVER
++      - THINCATS
++      - SHAWBROOK
++      - CLOSE BROTHERS
++      - ALDERMORE
++      - STRIPE CAPITAL
++      - PAYPAL WORKING CAPITAL
++      - PAYPAL BUSINESS LOAN
++      - SHOPIFY CAPITAL
++      - AMAZON LENDING
++      - SQUARE CAPITAL
++      - SQUARE LOANS
++      - SUMUP CASH ADVANCE
++      - MERCHANT CASH ADVANCE
++      - BUSINESS CASH ADVANCE
++      - BOUNCE BACK LOAN
++      - BBLS
++      - CBILS
++      - RECOVERY LOAN SCHEME
++    direction: out
++    category: loan_repayment
++    protected: true
++  - id: lender_drawdown
++    names: *lenders
++    direction: in
++    category: loan_drawdown
++    protected: true
++  - id: loan_repayment
++    pattern: '\bLOAN\b|FINANCE\b'
++    direction: out
++    category: loan_repayment
++    protected: true
++  # Money from a director, shareholder or owner, or capital introduced. Before the
++  # generic loan wording, so a director's loan to the business is director funding.
++  - id: director_funding
++    names: [DIRECTOR, DIRECTORS, OWNER, CAPITAL, SHAREHOLDER, SHAREHOLDERS]
++    direction: in
++    category: director_funding
++    protected: true
++  - id: loan_drawdown
++    pattern: '\bLOAN\b|FINANCE\b'
++    direction: in
++    category: loan_drawdown
++    protected: true
++  - id: owner_drawings
++    pattern: 'OWNER DRAWINGS|DIRECTOR DRAWINGS|DIVIDEND'
++    direction: out
++    category: owner_drawings
++    protected: true
++  # --- not protected: a profile name or a firm rule is tried before these ---------------
++  - id: bank_fees
++    pattern: 'UNPAID ITEM FEE|ACCOUNT FEES|BANK CHARGES'
++    direction: out
++    category: bank_fees
++  - id: payroll
++    pattern: 'PAYROLL|SALARIES'
++    direction: out
++    category: payroll
++  - id: rent
++    pattern: '\bRENT\b'
++    direction: out
++    category: rent
++  # Moves between the applicant's own pots, spaces and savings, either way.
++  - id: own_pots_savings
++    names:
++      - POT TRANSFER
++      - TO POT
++      - FROM POT
++      - SAVINGS
++      - SAVER
++      - BUSINESS SAVER
++      - INSTANT ACCESS
++      - TO SPACE
++      - FROM SPACE
++      - VAT POT
++      - TAX POT
++    direction: any
++    category: own_account_transfer
++  - id: refunds
++    names: [REFUND, REFUNDED, REVERSAL, REVERSED, RETURNED PAYMENT, PAYMENT RETURNED, CHARGEBACK]
++    direction: in
++    category: refund_in
++  # Explained, but not trading: grants, insurance claims, interest, cashback.
++  - id: explained_non_trading
++    names: [INTEREST, GRANT, INSURANCE CLAIM, INSURANCE PAYOUT, INSURANCE SETTLEMENT, CASHBACK, COMPENSATION]
++    direction: in
++    category: other_explained_in
++  # Cash paid in at a counter or a machine, at a bank, a Post Office or a PayPoint. A
++  # cheque is not cash.
++  - id: cash_paid_in
++    names:
++      - CASH PAID IN
++      - CASH DEPOSIT
++      - CASH DEP
++      - CASH CREDIT
++      - CASH IN BRANCH
++      - PAID IN AT
++      - COUNTER CREDIT
++      - COUNTER DEPOSIT
++      - DEPOSIT MACHINE
++      - ATM DEPOSIT
++      - CDM DEPOSIT
++      - POST OFFICE
++      - PAYPOINT
++    unless: '\bCHEQUES?\b|\bCHQ\b'
++    direction: in
++    category: cash_deposit
++  # Trading receipts. The first three patterns are v1's synthetic acquirer wording.
++  - id: card_settlement
++    pattern: 'ACQUIRER SETTLEMENT|PAYGATE PAYOUT|CARD SETTLEMENT'
++    direction: in
++    category: revenue_card_settlement
++  - id: card_acquirers
++    names:
++      - SUMUP
++      - SUM UP
++      - SQUARE UK
++      - SQUARE EUROPE
++      - SQUARE PAYMENTS
++      - ZETTLE
++      - IZETTLE
++      - WORLDPAY
++      - BARCLAYCARD MERCHANT
++      - BARCLAYCARD PAYMENT ACCEPTANCE
++      - ELAVON
++      - GLOBAL PAYMENTS
++      - GLOBALPAYMENTS
++      - CARDNET
++      - TAKEPAYMENTS
++      - DOJO
++      - PAYMENTSENSE
++      - TEYA
++      - SALTPAY
++      - ADYEN
++      - CHECKOUT.COM
++      - CHECKOUT COM
++      - TRUST PAYMENTS
++      - FISERV
++      - FIRST DATA
++      - VIVA WALLET
++      - MYPOS
++      - EVO PAYMENTS
++      - HANDEPAY
++      - TOTAL PROCESSING
++    direction: in
++    category: revenue_card_settlement
++  - id: payment_gateways
++    names:
++      - STRIPE
++      - PAYPAL
++      - GOCARDLESS
++      - OPAYO
++      - SAGEPAY
++      - SAGE PAY
++      - BRAINTREE
++      - KLARNA
++      - CLEARPAY
++      - PAYSAFE
++    direction: in
++    category: revenue_card_settlement
++  # Marketplace payouts. Amazon by its payout entities only: a plain AMAZON credit is
++  # usually a refund on a purchase, and stays for a person to look at.
++  - id: marketplaces
++    names:
++      - AMAZON PAYMENTS
++      - AMAZON EU
++      - AMAZON SERVICES EUROPE
++      - AMZN PAYMENTS
++      - AMZN MKTP PAYOUT
++      - EBAY
++      - ETSY
++      - NOT ON THE HIGH STREET
++      - NOTHS
++      - ONBUY
++      - SHOPIFY
++      - FRUUGO
++    direction: in
++    category: revenue_card_settlement
++  - id: delivery_platforms
++    names:
++      - DELIVEROO
++      - ROOFOODS
++      - JUST EAT
++      - JUSTEAT
++      - JUST-EAT
++      - UBER EATS
++      - PORTIER EATS
++      - FOODHUB
++    direction: in
++    category: revenue_card_settlement
++  - id: invoice_transfer
++    pattern: '\bINV(?:OICE)?\s*[-#:]?\s*\d+'
++    direction: in
++    category: revenue_transfer
++  # Cash taken out. The category is what an unmatched debit gets anyway (supplier); the
++  # rule is here so the line records cash_withdrawal as its rule, which the cash round-trip
++  # indicator reads. Last, so it never takes a debit from another rule.
++  - id: cash_withdrawal
++    names:
++      - CASH WITHDRAWAL
++      - CASH WDL
++      - CASH WITHDRAWN
++      - ATM
++      - CASH MACHINE
++      - CASHPOINT
++      - POST OFFICE CASH
++      - COUNTER WITHDRAWAL
++    direction: out
++    category: supplier
+diff --git a/tests/test_rules_v2.py b/tests/test_rules_v2.py
+new file mode 100644
+index 0000000..a75aed5
+--- /dev/null
++++ b/tests/test_rules_v2.py
+@@ -0,0 +1,494 @@
++"""The v2 rule table (R4) and the categoriser's precedence with per-line provenance.
++
++v2 is packaged data like v1 (src/cma/rules/v2.yaml) and adds the maintained lists of R4.
++Every line records the rule that set its category. Precedence, first match wins: a
++per-line override, the protected built-in rules, the case profile's names, firm rules,
++the rest of the table, the default.
++"""
++
++import csv
++import gzip
++import hashlib
++import json
++import re
++from datetime import date, timedelta
++from importlib import resources
++from pathlib import Path
++
++import pytest
++import yaml
++from typer.testing import CliRunner
++
++from cma import categorise, ingest, metrics, synth
++from cma.categorise import (
++    LineOverride,
++    ProfileNames,
++    Rule,
++    RulesetError,
++    classify,
++    load_ruleset,
++    validate_ruleset,
++)
++from cma.models import CREDIT_BUCKET, Bucket, Category, Statement, Transaction
++
++C = Category
++GOLDEN = Path(__file__).parent / "golden" / "p7_v1_baseline.json.gz"
++
++
++@pytest.fixture(scope="module")
++def v2():
++    return load_ruleset("v2")
++
++
++def _t(desc: str, amount: float, tid: str = "T") -> Transaction:
++    return Transaction(id=tid, date=date(2026, 1, 1), description=desc, amount=amount, balance=0.0)
++
++
++# --- one table of cases per maintained list ------------------------------------------
++# (description, amount, category, rule id recorded on the line)
++
++LISTS = {
++    "card_acquirers": [
++        ("SUMUP PAYMENTS LTD", 412.30, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("BGC SUM UP PAYOUT", 80.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("WORLDPAY UK LTD", 1250.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("ZETTLE BY PAYPAL", 55.10, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("IZETTLE PAYOUT", 55.10, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("SQUARE EUROPE LTD", 300.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("BARCLAYCARD MERCHANT SERVICES", 990.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("ELAVON FINANCIAL SERVICES", 210.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("GLOBAL PAYMENTS UK", 120.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("LLOYDS CARDNET SETTLEMENT", 640.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("DOJO PAYOUT", 400.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("TEYA UK LTD", 400.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("CHECKOUT.COM PAYOUT", 75.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("ADYEN NV", 75.00, C.REVENUE_CARD, "v2:card_acquirers"),
++        ("CARD ACQUIRER SETTLEMENT", 100.00, C.REVENUE_CARD, "v2:card_settlement"),  # v1's wording stays
++        # a debit to the same names is not money in; a card repayment is a supplier
++        ("BARCLAYCARD", -120.00, C.SUPPLIER, "v2:default"),
++        ("SUMUP FEES", -4.50, C.SUPPLIER, "v2:default"),
++        # whole words only: a payer who merely contains an acquirer's letters is not one
++        ("DOJOMATIC LTD", 50.00, C.OTHER, "v2:default"),
++    ],
++    "payment_gateways": [
++        ("STRIPE PAYMENTS UK LTD", 2300.00, C.REVENUE_CARD, "v2:payment_gateways"),
++        ("STRIPE PAYOUT", 2300.00, C.REVENUE_CARD, "v2:payment_gateways"),
++        ("PAYPAL PPWDL 7HK2", 145.00, C.REVENUE_CARD, "v2:payment_gateways"),
++        ("GOCARDLESS LTD", 600.00, C.REVENUE_CARD, "v2:payment_gateways"),
++        ("OPAYO PAYOUT", 60.00, C.REVENUE_CARD, "v2:payment_gateways"),
++        ("KLARNA BANK AB", 89.00, C.REVENUE_CARD, "v2:payment_gateways"),
++        ("CLEARPAY FINANCE LTD", 89.00, C.LOAN_DRAWDOWN, "v2:loan_drawdown"),  # lender wording wins, never trading
++    ],
++    "marketplaces": [
++        ("AMAZON PAYMENTS UK", 830.00, C.REVENUE_CARD, "v2:marketplaces"),
++        ("AMAZON SERVICES EUROPE SARL", 830.00, C.REVENUE_CARD, "v2:marketplaces"),
++        ("EBAY COMMERCE UK LTD", 210.00, C.REVENUE_CARD, "v2:marketplaces"),
++        ("ETSY UK", 33.00, C.REVENUE_CARD, "v2:marketplaces"),
++        ("NOTHS PAYOUT", 70.00, C.REVENUE_CARD, "v2:marketplaces"),
++        ("SHOPIFY PAYMENTS", 70.00, C.REVENUE_CARD, "v2:marketplaces"),
++        # a plain Amazon credit is usually a refund on a purchase: left for a person
++        ("AMAZON.CO.UK", 25.00, C.OTHER, "v2:default"),
++    ],
++    "delivery_platforms": [
++        ("DELIVEROO PLC", 510.00, C.REVENUE_CARD, "v2:delivery_platforms"),
++        ("ROOFOODS LTD", 510.00, C.REVENUE_CARD, "v2:delivery_platforms"),
++        ("JUST EAT PAYOUT", 310.00, C.REVENUE_CARD, "v2:delivery_platforms"),
++        ("JUST-EAT.CO.UK", 310.00, C.REVENUE_CARD, "v2:delivery_platforms"),
++        ("UBER EATS UK", 150.00, C.REVENUE_CARD, "v2:delivery_platforms"),
++        ("PORTIER EATS UK LTD", 150.00, C.REVENUE_CARD, "v2:delivery_platforms"),
++        ("UBER TRIP", -12.00, C.SUPPLIER, "v2:default"),
++    ],
++    "lenders": [
++        ("IWOCA LTD", 10000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("DD IWOCA LTD", -450.00, C.LOAN_REPAYMENT, "v2:lender_repayment"),
++        ("FUNDING CIRCLE", 25000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("DD FUNDING CIRCLE", -812.40, C.LOAN_REPAYMENT, "v2:lender_repayment"),
++        ("YOULEND LTD", 8000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("LIBERIS LTD", 8000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("365 BUSINESS FINANCE", 6000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("ESME LOANS", 15000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        # merchant cash advances from acquirers and gateways are drawdowns, not takings
++        ("STRIPE CAPITAL", 5000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("PAYPAL WORKING CAPITAL", 3000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("SHOPIFY CAPITAL", 3000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("SUMUP CASH ADVANCE", 2000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("BOOST CAPITAL", 4000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),  # a lender, not capital introduced
++        ("MERCHANT CASH ADVANCE", 4000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("HOLLOWAY BRIDGE FINANCE LOAN", -300.00, C.LOAN_REPAYMENT, "v2:loan_repayment"),  # v1 wording stays
++        ("HOLLOWAY BRIDGE FINANCE LOAN", 9000.00, C.LOAN_DRAWDOWN, "v2:loan_drawdown"),
++    ],
++    "own_pots_savings": [
++        ("POT TRANSFER IN HOLIDAY POT", 200.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("POT TRANSFER OUT HOLIDAY POT", -200.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("TFR TO SAVINGS", -1000.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("FPS CREDIT SAVINGS ACCOUNT", 1000.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("TRANSFER FROM BUSINESS SAVER", 750.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("TO SPACE VAT", -300.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("FROM SPACE VAT", 300.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
++        ("TEAPOT SUPPLIES", -18.00, C.SUPPLIER, "v2:default"),
++    ],
++    "cash_paid_in": [
++        ("CASH PAID IN", 640.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        ("CASH DEPOSIT BRANCH 30-11-22", 1200.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        ("COUNTER CREDIT", 380.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        ("PAID IN AT HIGH ST BRANCH", 380.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        ("CASH DEPOSIT MACHINE 0412", 250.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        ("POST OFFICE COUNTERS", 500.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        ("PAYPOINT CASH", 90.00, C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        # a cheque is not cash; it stays unexplained for a person
++        ("CHEQUE PAID IN AT BRANCH", 900.00, C.OTHER, "v2:default"),
++        # protected wording wins over cash wording: never cash or trading receipts
++        ("CASH DEPOSIT DIRECTOR", 3000.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
++        ("CASH DEPOSIT IWOCA", 3000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
++        ("HMRC CASH PAID IN", 3000.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),
++    ],
++    "cash_withdrawal": [
++        # cash out keeps the category an unmatched debit gets; the rule id marks it for
++        # the round-trip indicator
++        ("CASH WITHDRAWAL LLOYDS", -60.00, C.SUPPLIER, "v2:cash_withdrawal"),
++        ("ATM LINK 1234", -100.00, C.SUPPLIER, "v2:cash_withdrawal"),
++        ("POST OFFICE CASH", -50.00, C.SUPPLIER, "v2:cash_withdrawal"),
++        ("CASHPOINT HIGH ST", -40.00, C.SUPPLIER, "v2:cash_withdrawal"),
++        ("ATM REFUND", 40.00, C.REFUND_IN, "v2:refunds"),  # money in is never a withdrawal
++    ],
++    "hmrc": [
++        ("HMRC VAT REPAYMENT", 1840.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),
++        ("BACS CREDIT HMRC VAT REPAYMENT", 1840.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),
++        ("HM REVENUE & CUSTOMS", 220.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),
++        ("HMRC VAT", -2400.00, C.HMRC_VAT, "v2:hmrc_vat"),
++        ("HMRC PAYE", -900.00, C.HMRC_PAYE, "v2:hmrc_paye"),
++        ("HMRC INV 1234", 500.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),  # never a customer
++    ],
++    "refunds": [
++        ("CARD REFUND TESCO", 12.00, C.REFUND_IN, "v2:refunds"),
++        ("DD REFUND COUNCIL", 140.00, C.REFUND_IN, "v2:refunds"),
++        ("PAYPAL REFUND", 40.00, C.REFUND_IN, "v2:refunds"),  # a refund, not gateway takings
++        ("AMAZON REFUND", 25.00, C.REFUND_IN, "v2:refunds"),
++        ("REVERSAL OF PAYMENT", 75.00, C.REFUND_IN, "v2:refunds"),
++        ("RETURNED PAYMENT ACME", 75.00, C.REFUND_IN, "v2:refunds"),
++        ("UNPAID DD BRITISH GAS", 75.00, C.RETURNED_DD, "v2:returned_dd"),
++    ],
++    "explained_non_trading": [
++        ("INTEREST PAID", 3.10, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),
++        ("COUNCIL GRANT", 2500.00, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),
++        ("AVIVA INSURANCE CLAIM", 1800.00, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),
++        ("CASHBACK", 5.00, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),
++        ("COUNCIL GRANT INV 12", 2500.00, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),  # not a customer
++    ],
++    "director_and_shareholder": [
++        ("FPS CREDIT DIRECTOR CAPITAL INTRODUCED", 5000.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
++        ("FPS CREDIT A DIRECTOR LOAN ACCOUNT", 5000.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
++        ("J SMITH SHAREHOLDER INV 1234", 900.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
++        ("CAPITAL INJECTION", 900.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
++        ("DIRECTOR DRAWINGS", -900.00, C.OWNER_DRAWINGS, "v2:owner_drawings"),
++    ],
++    "defaults_and_invoices": [
++        ("FPS CREDIT ACME LTD INV1234", 1200.00, C.REVENUE_TRANSFER, "v2:invoice_transfer"),
++        ("FPS CREDIT ACME LTD", 1200.00, C.OTHER, "v2:default"),
++        ("CARD TESCO", -45.00, C.SUPPLIER, "v2:default"),
++        ("PAYROLL", -3000.00, C.PAYROLL, "v2:payroll"),
++        ("RENT", -1500.00, C.RENT, "v2:rent"),
++        ("BANK CHARGES", -15.00, C.BANK_FEES, "v2:bank_fees"),
++    ],
++}
++
++CASES = [(name, *case) for name, cases in LISTS.items() for case in cases]
++
++
++@pytest.mark.parametrize("name, desc, amount, category, rule_id", CASES,
++                         ids=[f"{c[0]}:{c[1]}:{'in' if c[2] > 0 else 'out'}" for c in CASES])
++def test_each_list_categorises_its_lines_and_records_the_rule(v2, name, desc, amount, category, rule_id):
++    s = categorise.categorise(Statement(account_name="a", transactions=[_t(desc, amount)]), v2)
++    line = s.transactions[0]
++    assert (line.category, line.rule_id) == (category, rule_id)
++    assert classify(_t(desc, amount), v2) == (category, rule_id)
++    assert categorise.categorise_one(_t(desc, amount), v2) == category
++
++
++def test_every_list_in_the_task_has_a_rule_in_v2(v2):
++    ids = {r.id for r in v2.rules}
++    assert {"card_acquirers", "payment_gateways", "marketplaces", "delivery_platforms", "lender_drawdown",
++            "lender_repayment", "own_pots_savings", "cash_paid_in", "cash_withdrawal", "hmrc_repayment",
++            "refunds", "explained_non_trading"} <= ids
++    # each list rule is exercised above, in the direction it applies to
++    exercised = {rid.split(":", 1)[1] for *_, rid in CASES}
++    assert ids <= exercised, ids - exercised
++
++
++def test_every_credit_category_v2_can_give_has_a_bucket(v2):
++    """A credit landing in a category with no bucket would be a reconciliation failure (R3)."""
++    for r in v2.rules:
++        if r.direction in ("in", "any"):
++            assert r.category in CREDIT_BUCKET, r.id
++    assert CREDIT_BUCKET[C.CASH_DEPOSIT] is Bucket.TRADING_RECEIPTS
++
++
++def test_ambiguous_wording_never_resolves_to_trading_receipts(v2):
++    """A refund, pot, grant or lender word with an acquirer name or an invoice reference is
++    not trading receipts: the rules that need judgement come first."""
++    trading = {C.REVENUE_CARD, C.REVENUE_TRANSFER}
++    for desc in ["STRIPE REFUND", "PAYPAL REVERSAL", "SUMUP INTEREST", "DELIVEROO GRANT", "EBAY TO SAVINGS",
++                 "STRIPE CAPITAL INV 1234", "AMAZON LENDING", "ACME LTD REFUND INV 99", "HMRC STRIPE"]:
++        assert classify(_t(desc, 100.0), v2)[0] not in trading, desc
++
++
++# --- precedence ----------------------------------------------------------------------
++
++
++def _firm(rid: str, pattern: str, direction: str, category: Category) -> Rule:
++    return Rule(rid, re.compile(pattern), direction, category)
++
++
++PROFILE = ProfileNames(directors=("Jane Doe",), own_accounts=("ACME HOLDINGS",))
++
++
++@pytest.mark.parametrize("desc, amount, kw, expected", [
++    # 1. an override beats everything, protected rules included
++    ("HMRC VAT REPAYMENT", 100.0, {"override": LineOverride(C.REVENUE_TRANSFER, "override:3")},
++     (C.REVENUE_TRANSFER, "override:3")),
++    # 2. a protected rule beats the profile and firm rules (R21)
++    ("IWOCA ACME HOLDINGS", 100.0, {"profile": PROFILE}, (C.LOAN_DRAWDOWN, "v2:lender_drawdown")),
++    ("HMRC", 100.0, {"firm_rules": [_firm("f1", "HMRC", "in", C.REVENUE_TRANSFER)]},
++     (C.HMRC_REPAYMENT, "v2:hmrc_repayment")),
++    ("FPS CREDIT DIRECTOR", 100.0, {"firm_rules": [_firm("f1", "DIRECTOR", "in", C.REVENUE_TRANSFER)]},
++     (C.DIRECTOR_FUNDING, "v2:director_funding")),
++    ("UNPAID DD ACME", 100.0, {"firm_rules": [_firm("f1", "ACME", "any", C.REVENUE_TRANSFER)]},
++     (C.RETURNED_DD, "v2:returned_dd")),
++    # 3. a profile director beats firm rules and an invoice reference (R5)
++    ("FPS CREDIT JANE DOE INV 1234", 100.0,
++     {"profile": PROFILE, "firm_rules": [_firm("f1", "JANE", "in", C.REVENUE_TRANSFER)]},
++     (C.DIRECTOR_FUNDING, "profile:director")),
++    # a director name on a debit is not funding; the table decides
++    ("FPS DEBIT JANE DOE", -100.0, {"profile": PROFILE}, (C.SUPPLIER, "v2:default")),
++    # own accounts, either direction (R6)
++    ("TFR ACME HOLDINGS", -100.0, {"profile": PROFILE}, (C.OWN_ACCOUNT_TRANSFER, "profile:own_account")),
++    ("TFR ACME HOLDINGS", 100.0, {"profile": PROFILE}, (C.OWN_ACCOUNT_TRANSFER, "profile:own_account")),
++    # a name matches whole words only
++    ("FPS CREDIT JANE DOERING INV 1", 100.0, {"profile": PROFILE}, (C.REVENUE_TRANSFER, "v2:invoice_transfer")),
++    # 4. a firm rule beats the rest of the table
++    ("ACME TRUST INV 99", 100.0, {"firm_rules": [_firm("trust", "ACME TRUST", "in", C.OTHER_EXPLAINED_IN)]},
++     (C.OTHER_EXPLAINED_IN, "firm:trust")),
++    ("STRIPE PAYOUT", 100.0, {"firm_rules": [_firm("s", "STRIPE", "out", C.SUPPLIER)]},
++     (C.REVENUE_CARD, "v2:payment_gateways")),  # a firm rule for the other direction does not apply
++    # 5. the default
++    ("SOMETHING ELSE", 100.0, {"profile": PROFILE}, (C.OTHER, "v2:default")),
++    ("SOMETHING ELSE", -100.0, {}, (C.SUPPLIER, "v2:default")),
++])
++def test_precedence(v2, desc, amount, kw, expected):
++    assert classify(_t(desc, amount), v2, **kw) == expected
++
++
++def test_categorise_applies_overrides_by_line_and_records_each_rule(v2):
++    s = Statement(account_name="a", transactions=[
++        _t("CASH PAID IN", 900.0, "T1"), _t("CASH PAID IN", 50.0, "T2"), _t("STRIPE PAYOUT", 10.0, "T3")])
++    categorise.categorise(s, v2, overrides={"T1": LineOverride(C.DIRECTOR_FUNDING, "override:1")})
++    assert [(t.category, t.rule_id) for t in s.transactions] == [
++        (C.DIRECTOR_FUNDING, "override:1"), (C.CASH_DEPOSIT, "v2:cash_paid_in"),
++        (C.REVENUE_CARD, "v2:payment_gateways")]
++
++
++def test_round_trip_records_its_pass_and_leaves_higher_precedence_alone(v2):
++    lines = [_t("FPS DEBIT ACME LTD", -500.0, "T1"), _t("FPS CREDIT ACME LTD INV 7", 500.0, "T2"),
++             _t("FPS DEBIT BETA LTD", -10.0, "T3"), _t("FPS CREDIT BETA LTD INV 8", 10.0, "T4")]
++    s = categorise.categorise(Statement(account_name="a", transactions=lines), v2,
++                              overrides={"T4": LineOverride(C.REVENUE_TRANSFER, "override:9")})
++    by = s.by_id()
++    assert (by["T2"].category, by["T2"].rule_id) == (C.OTHER, "v2:round_trip")
++    assert (by["T4"].category, by["T4"].rule_id) == (C.REVENUE_TRANSFER, "override:9")
++
++
++def test_returned_dd_links_under_v2_and_keeps_its_rule(v2):
++    s = categorise.categorise(Statement(account_name="a", transactions=[
++        _t("DD IWOCA LTD", -450.0, "T1"), _t("UNPAID DD IWOCA LTD", 450.0, "T2")]), v2)
++    assert s.transactions[1].reverses == "T1" and s.transactions[1].rule_id == "v2:returned_dd"
++    assert s.transactions[0].category == C.LOAN_REPAYMENT
++
++
++def test_v1_lines_record_v1_rule_ids():
++    v1 = load_ruleset("v1")
++    s = categorise.categorise(Statement(account_name="a", transactions=[
++        _t("CARD ACQUIRER SETTLEMENT", 10.0, "T1"), _t("STRIPE PAYOUT", 10.0, "T2"), _t("CASH PAID IN", 9.0, "T3")]), v1)
++    assert [(t.category, t.rule_id) for t in s.transactions] == [
++        (C.REVENUE_CARD, "v1:card_settlement"), (C.OTHER, "v1:default"), (C.OTHER, "v1:default")]
++
++
++# --- the table as data -----------------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_v2_is_packaged_with_an_id_and_the_hash_of_its_file(v2):
++    raw = resources.files("cma.rules").joinpath("v2.yaml").read_bytes()
++    assert v2.id == "v2" and v2.sha256 == hashlib.sha256(raw).hexdigest()
++    data = yaml.safe_load(raw)
++    assert data["frozen"] is False
++    # the protected rules are the ones the design names, and they come first
++    flags = [r.protected for r in v2.rules]
++    assert flags == sorted(flags, reverse=True)
++    assert {r.id for r in v2.protected} == {"returned_dd", "hmrc_vat", "hmrc_paye", "hmrc_repayment",
++                                            "lender_repayment", "lender_drawdown", "loan_repayment",
++                                            "director_funding", "loan_drawdown", "owner_drawings"}
++
++
++GOOD = {"id": "card", "names": ["STRIPE"], "direction": "in", "category": "revenue_card_settlement"}
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("rules, match", [
++    ([{k: v for k, v in GOOD.items() if k != "names"}], "missing pattern"),
++    ([{**GOOD, "names": []}], "names must be"),
++    ([{**GOOD, "names": "STRIPE"}], "names must be"),
++    ([{**GOOD, "names": ["STRIPE", " "]}], "names must be"),
++    ([{**GOOD, "names": ["STRIPE", "stripe"]}], "listed twice"),
++    ([{**GOOD, "unless": "("}], "unless does not compile"),
++    ([{**GOOD, "unless": 3}], "unless 3 is not"),
++    ([{**GOOD, "protected": "yes"}], "protected must be"),
++    ([GOOD, {**GOOD, "id": "p", "protected": True}], "protected rule must come before"),
++])
++def test_a_malformed_v2_rule_is_refused_naming_the_problem(rules, match):
++    with pytest.raises(RulesetError, match=match):
++        validate_ruleset({"id": "v2", "frozen": False, "rules": rules}, expected_id="v2", source="v2.yaml")
++
++
++def test_names_match_whole_words_with_any_spacing():
++    p = re.compile(categorise.names_pattern(["CHECKOUT.COM", "JUST EAT"]))
++    assert p.search("PAYOUT CHECKOUT.COM LTD") and p.search("JUST   EAT")
++    assert not p.search("CHECKOUTXCOM") and not p.search("JUSTEATS") and not p.search("XJUST EAT")
++
++
++@pytest.mark.contracts
++def test_cma_ruleset_v2_chooses_the_v2_table(monkeypatch):
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    assert categorise.active_ruleset().id == "v2"
++
++
++# --- cma run under CMA_RULESET=v2 ----------------------------------------------------------
++
++
++def _write(path: Path, rows: list[tuple[str, float]]) -> Path:
++    bal = 1000.0
++    with path.open("w", newline="") as f:
++        w = csv.writer(f)
++        w.writerow(["id", "date", "description", "amount", "balance"])
++        for i, (desc, amount) in enumerate(rows, start=1):
++            bal = round(bal + amount, 2)
++            w.writerow([f"T{i:03d}", (date(2026, 1, 1) + timedelta(days=5 * i)).isoformat(), desc,
++                        f"{amount:.2f}", f"{bal:.2f}"])
++    return path
++
++
++@pytest.mark.contracts
++def test_cma_run_under_v2_categorises_with_v2_and_records_each_lines_rule(tmp_path, monkeypatch):
++    from cma.cli import app
++
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    rows = [("STRIPE PAYMENTS UK LTD", 2000.0), ("CASH PAID IN", 640.0), ("IWOCA LTD", 5000.0),
++            ("DD IWOCA LTD", -450.0), ("POT TRANSFER OUT TAX", -300.0), ("CARD TESCO", -45.0)] * 6
++    path = _write(tmp_path / "s.csv", rows)
++    out = tmp_path / "memo.md"
++    r = CliRunner().invoke(app, ["run", str(path), "--yes", "--reviewer", "A", "--out", str(out)])
++    assert r.exit_code == 0, r.output
++    record = json.loads((tmp_path / "memo.evidence.json").read_text())
++    assert record["ruleset"] == {"id": "v2", "sha256": load_ruleset("v2").sha256}
++    lines = {d["id"]: d for d in record["lines"]}
++    s = ingest.load_csv(path)
++    assert len(lines) == len(s.transactions)
++    expect = {"STRIPE PAYMENTS UK LTD": ("revenue_card_settlement", "v2:payment_gateways"),
++              "CASH PAID IN": ("cash_deposit", "v2:cash_paid_in"),
++              "IWOCA LTD": ("loan_drawdown", "v2:lender_drawdown"),
++              "DD IWOCA LTD": ("loan_repayment", "v2:lender_repayment"),
++              "POT TRANSFER OUT TAX": ("own_account_transfer", "v2:own_pots_savings"),
++              "CARD TESCO": ("supplier", "v2:default")}
++    for t in s.transactions:
++        assert (lines[t.id]["category"], lines[t.id]["rule_id"]) == expect[t.description]
++    # the figures cma run reports use those categories: Stripe and cash are trading receipts
++    m = {x["id"]: x for x in record["metrics"]}
++    assert m["M2"]["value"] == pytest.approx(6 * (2000.0 + 640.0))
++    assert m["M8"]["value"] == pytest.approx(6 * 450.0)
++
++
++@pytest.mark.contracts
++def test_cma_run_under_v1_records_v1_rule_ids_and_keeps_old_evidence_keys(tmp_path, monkeypatch):
++    from cma.cli import app
++
++    monkeypatch.setenv("CMA_RULESET", "v1")
++    path = _write(tmp_path / "s.csv", [("CARD ACQUIRER SETTLEMENT", 100.0), ("STRIPE PAYOUT", 50.0)] * 3)
++    r = CliRunner().invoke(app, ["run", str(path), "--yes", "--reviewer", "A", "--out", str(tmp_path / "m.md")])
++    assert r.exit_code == 0, r.output
++    record = json.loads((tmp_path / "m.evidence.json").read_text())
++    assert {d["rule_id"] for d in record["lines"]} == {"v1:card_settlement", "v1:default"}
++    assert {"schema_version", "statement", "model", "ruleset", "metrics", "policy", "guard", "review"} <= set(record)
++
++
++# --- R10 / P7 under v2: M1-M16 move only on the lines v2 newly recognises ---------------------
++
++# Every line in the committed corpus (synthetic cases, the example, the test fixtures and
++# the single lines in the P7 golden) whose category v2 changes. The list is the change R10
++# asks for. On every committed statement M1-M16 stay exactly as v1 computed them: the lines
++# v2 names here are non-trading either way (metrics.NON_TRADING_IN). The director loan is
++# only a single line in the corpus, never part of a statement.
++NEWLY_RECOGNISED = {
++    ("BACS CREDIT HMRC VAT REPAYMENT", "in", "other", "hmrc_repayment"),
++    ("FPS CREDIT A DIRECTOR LOAN ACCOUNT", "in", "loan_drawdown", "director_funding"),
++    ("FPS CREDIT CAPITAL INJECTION", "in", "other", "director_funding"),
++    ("FPS CREDIT DIRECTOR CAPITAL INJECTION", "in", "other", "director_funding"),
++    ("FPS CREDIT DIRECTOR CAPITAL INTRODUCED", "in", "other", "director_funding"),
++    ("FPS CREDIT J SMITH CAPITAL INTRODUCED", "in", "other", "director_funding"),
++    ("FPS CREDIT MY SAVINGS POT", "in", "other", "own_account_transfer"),
++    ("FPS CREDIT SAVINGS ACCOUNT", "in", "other", "own_account_transfer"),
++    ("FPS DEBIT MY SAVINGS POT", "out", "supplier", "own_account_transfer"),
++    ("HMRC VAT REPAYMENT", "in", "other", "hmrc_repayment"),
++    ("POT TRANSFER OUT HOLIDAY POT", "out", "supplier", "own_account_transfer"),
++}
++
++
++def _golden() -> dict:
++    return json.loads(gzip.decompress(GOLDEN.read_bytes()))
++
++
++def _corpus_statements(tmp_path) -> list[tuple[str, Statement, object, list]]:
++    """(label, statement, vat_stagger, expected v1 metric rows) for every golden case."""
++    out = []
++    g = _golden()
++    for c in g["synthetic"]:
++        rows, truth = synth.generate(c["archetype"], c["profile"], seed=c["seed"], months=c["months"],
++                                     end=date.fromisoformat(c["end"]))
++        csv_path, _ = synth.write(rows, truth, tmp_path, stem=f"s{len(out)}")
++        for key, expected in c["metrics"].items():
++            out.append((f"{c['archetype']}-{c['profile']}", ingest.load_csv(csv_path),
++                        None if key == "None" else int(key), expected))
++    for e in g["examples"]:
++        for key, expected in e["metrics"].items():
++            out.append((e["path"], ingest.load_csv(Path(__file__).parents[1] / e["path"]),
++                        None if key == "None" else int(key), expected))
++    for f in g["fixtures"]:
++        s = Statement(account_name=f["account_name"], transactions=[
++            Transaction(id=i, date=date.fromisoformat(d), description=desc, amount=a, balance=b)
++            for i, d, desc, a, b, _, _ in f["lines"]])
++        out.append((f"fixture-{f['lines'][0][2]}", s, f["vat_stagger"], f["metrics"]))
++    return out
++
++
++def _rows(s: Statement, vat_stagger) -> list[dict]:
++    return [{"id": m.id, "unit": m.unit, "value": m.value, "evidence_n": len(m.evidence),
++             "evidence_sha256": hashlib.sha256("\n".join(m.evidence).encode()).hexdigest()}
++            for m in metrics.compute(s, vat_stagger=vat_stagger) if int(m.id[1:]) <= 16]
++
++
++@pytest.mark.dual_run
++@pytest.mark.invariants
++def test_p7_v2_changes_only_the_listed_lines_and_m1_m16_only_where_listed(tmp_path):
++    v1, v2 = load_ruleset("v1"), load_ruleset("v2")
++    changed: set[tuple] = set()
++    for label, s, stagger, expected in _corpus_statements(tmp_path):
++        a = categorise.categorise(s.model_copy(deep=True), v1)
++        b = categorise.categorise(s.model_copy(deep=True), v2)
++        diff = {(x.description, "in" if x.amount > 0 else "out", x.category.value, y.category.value)
++                for x, y in zip(a.transactions, b.transactions, strict=True) if x.category != y.category}
++        changed |= diff
++        assert _rows(a, stagger) == expected, f"{label}: v1 drifted from the baseline"
++        assert _rows(b, stagger) == expected, f"{label}: M1-M16 moved under v2"
++    for desc, amount, _ in _golden()["lines"]:
++        x, y = classify(_t(desc, amount), v1)[0], classify(_t(desc, amount), v2)[0]
++        if x != y:
++            changed.add((desc, "in" if amount > 0 else "out", x.value, y.value))
++    assert changed == NEWLY_RECOGNISED

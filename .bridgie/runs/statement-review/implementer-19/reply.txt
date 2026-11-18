@@ -1,0 +1,70 @@
+T03 is built: `CMA_RULESET=v2` now selects a new rule table with the R4 lists, the categoriser applies them in the design's precedence order, and each line records which rule set its category. The full suite passes (554 tests, including the v1 golden and dual-run tests), as do the contracts, invariants and dual_run tiers, ruff and compileall, and the offline evals under both v1 and v2. The default stays v1; the design switches it only after T10.
+
+- **Rule table:** `src/cma/rules/v2.yaml` has one rule per list: card acquirers, payment gateways, marketplaces and delivery platforms; named lenders and merchant cash advance providers; own pots and savings; cash paid in; cash-withdrawal wording; HMRC; refunds; and explained non-trading credits. Lists are written as `names`, matched as whole words. `unless` keeps cheques out of the cash rule, and protected rules must come first in the table. v1 is unchanged and its pinned hash still loads.
+- **Ambiguous wording:** wording that could be a refund, a loan or trading never lands in trading receipts. So "PAYPAL REFUND" is a refund, "STRIPE CAPITAL" a drawdown, a cheque stays unexplained, and "CASH DEPOSIT DIRECTOR" is director funding.
+- **Cash withdrawals:** they keep the category any unmatched debit gets (supplier), with rule id `v2:cash_withdrawal`. That id is the hook for the round-trip indicator in T08, which has nothing to read it yet.
+- **Precedence:** a per-line override wins, then the protected rules, then profile names, then firm rules, then the rest of the table, then the default. The id is stored on each line as `v2:<rule>`, `v2:default`, `v2:round_trip`, `profile:…`, `firm:…` or the override's own reference. The round-trip check now only undoes categories the table set, never a higher-ranking one.
+- **`cma run` under v2:** the evidence JSON records the v2 ruleset and its hash, plus a new `lines` key giving each line's id, category and rule id, with no descriptions. Existing keys are unchanged.
+- **M1–M16 under v2:** I changed `metrics.py` in two places, M9's round-trip offset and M16's numerator. Both now treat the new non-trading credit categories the way they treated "other"; under v1 that is the same set of lines. With that, M1–M16 under v2 equal the v1 baseline on every committed case and fixture. Only 11 descriptions change category: HMRC repayments, director and capital credits, and pots/savings. The test lists them.
+
+Things to know:
+- **Layers with no caller yet:** the override, profile and firm-rule layers are optional parameters, covered by the precedence tests. Their real callers arrive with T05, T16 and the Tier 2 firm-rules work. A reviewer applying the "no caller yet" gotcha may raise this; the only production path today is `cma run` with v2.
+- **Rollback gap:** a review left pending under v2 holds category values the release before T02 cannot load. Setting `CMA_RULESET=v1` avoids it.
+- **Shared install:** the shared editable install of `cma` points at the T12 worktree. Pytest and the evals both load this worktree's `src`, so the results above are for this code, but ad-hoc `cma` commands outside them would run T12's.
+- **Uncommitted:** the changes are left uncommitted in the worktree for the runner.
+
+```json
+{
+  "task": "T03",
+  "claims": [
+    {
+      "text": "R4: src/cma/rules/v2.yaml is a packaged, validated table (id v2, SHA-256 of its bytes, not frozen) with one rule per maintained list: card_acquirers, payment_gateways, marketplaces, delivery_platforms (trading receipts); lender_drawdown / lender_repayment (named UK lenders and MCA providers, incl. STRIPE CAPITAL, PAYPAL WORKING CAPITAL); own_pots_savings (own_account_transfer, either direction); cash_paid_in (cash_deposit, cheques excluded via `unless`); cash_withdrawal (debit stays supplier, rule id marks it for the round-trip indicator); hmrc_repayment; refunds (refund_in); explained_non_trading (other_explained_in). Table-driven cases per list check both the category and the rule id recorded on the line.",
+      "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k test_each_list",
+      "proof_output": "108 passed, 36 deselected in 0.23s"
+    },
+    {
+      "text": "Categoriser precedence (override > protected built-in > profile names > firm rules > rest of table > default) with per-line provenance in Transaction.rule_id ('<ruleset>:<rule>', '<ruleset>:default', '<ruleset>:round_trip', 'profile:director', 'profile:own_account', 'firm:<id>', or the override's ref); protected rules must come first in a table (validated); the round-trip pass only undoes categories the built-in table set.",
+      "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k \"precedence or round_trip or overrides\"",
+      "proof_output": "16 passed, 128 deselected in 0.11s"
+    },
+    {
+      "text": "cma run under CMA_RULESET=v2 categorises with v2, records {id: v2, sha256} as the ruleset, and writes each line's category and rule id to an additive `lines` key in the evidence JSON (ids only, no descriptions); Stripe and cash count in M2, the named lender's DD in M8. Under v1 the same key carries v1 rule ids and the existing evidence keys are kept.",
+      "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k cma_run_under",
+      "proof_output": "2 passed, 142 deselected in 0.55s"
+    },
+    {
+      "text": "P7/R10 under v2: across every committed synthetic case, the example and all 48 golden fixtures, M1-M16 under v2 equal the v1 baseline exactly; the only lines whose category v2 changes are the 11 listed in NEWLY_RECOGNISED (HMRC repayments, director/capital credits, own pots/savings). v1 still reproduces the baseline.",
+      "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k p7_v2",
+      "proof_output": "1 passed, 143 deselected in 0.71s"
+    },
+    {
+      "text": "Full suite passes, including the existing v1 P7 golden, dual-run fuzz and pre-change-commit tests.",
+      "proof_cmd": "python -m pytest -q -rs",
+      "proof_output": "554 passed in 27.52s"
+    },
+    {
+      "text": "Marker tiers pass.",
+      "proof_cmd": "for m in contracts invariants dual_run; do python -m pytest -q -m $m | tail -1; done",
+      "proof_output": "44 passed, 510 deselected in 16.19s\n66 passed, 488 deselected in 8.82s\n80 passed, 474 deselected in 13.05s"
+    },
+    {
+      "text": "Mechanical tier passes.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && echo OK",
+      "proof_output": "All checks passed!\nOK"
+    },
+    {
+      "text": "Offline evals pass under the default ruleset and under CMA_RULESET=v2.",
+      "proof_cmd": "python evals/run_evals.py | tail -1; CMA_RULESET=v2 python evals/run_evals.py | tail -1",
+      "proof_output": "9/9 memos fully grounded; model = fake\n9/9 memos fully grounded; model = fake"
+    }
+  ],
+  "files_changed": [
+    "src/cma/rules/v2.yaml",
+    "src/cma/categorise.py",
+    "src/cma/metrics.py",
+    "src/cma/graph.py",
+    "tests/test_rules_v2.py"
+  ],
+  "notes": "DEFAULT_RULESET stays v1: per the design's rollout, v2 becomes the default only after evals and synthetic truth for the new features pass (T10). metrics.py change: M9's round-trip offset and M16's numerator now read NON_TRADING_IN (OTHER plus the five new non-trading credit categories) where they read OTHER. Under v1 this is the same set, and it is what keeps M1-M16 unchanged under v2 when v2 names a credit. T04 still owns the M16 rename/denominator and the bucket figures. Rule-table schema additions (all optional, v1 unchanged and still pinned): `names` (whole-word list) as an alternative to `pattern`, `unless`, `protected`. Firm-rule, profile and override layers exist as keyword parameters of categorise()/classify() and are covered by the precedence tests. Their production callers come in later tasks (T05 profile, T16 overrides, Tier 2 firm rules). This task's production caller is cma run via graph.categorise with CMA_RULESET=v2. Known gap: a v2 review left pending in a checkpoint holds new Category values (e.g. director_funding), which the pre-T02 release cannot load on rollback. CMA_RULESET=v1 avoids this, and it comes from T02's enum. Environment: the shared site-packages editable install of cma points at the T12 worktree. pytest (pythonpath=src) and evals (sys.path insert) both use this worktree's src, so the results above are for this worktree. Changes are left uncommitted in the worktree for the runner."
+}
+```
