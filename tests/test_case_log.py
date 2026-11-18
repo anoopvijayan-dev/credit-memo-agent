@@ -30,8 +30,9 @@ def _write(log, lines):
     log.path.write_text("".join(lines), encoding="utf-8")
 
 
-def _write_head(log, count, hsh):
-    log.head_path.write_text(json.dumps({"count": count, "hash": hsh}, sort_keys=True,
+def _write_head(log, hashes):
+    log.head_path.write_text(json.dumps({"count": len(hashes), "hash": hashes[-1] if hashes else case.GENESIS,
+                                         "hashes": hashes}, sort_keys=True,
                                         separators=(",", ":")) + "\n", encoding="utf-8")
 
 
@@ -158,7 +159,7 @@ def test_p15_changing_any_entry_before_the_head_is_detected(tmp_path, n, field):
 
 @pytest.mark.invariants
 @pytest.mark.parametrize("n", SIZES)
-def test_p15_changing_an_entry_and_recomputing_its_hash_is_detected_at_the_next(tmp_path, n):
+def test_p15_changing_an_entry_and_recomputing_its_hash_is_detected_at_that_entry(tmp_path, n):
     log = _log(tmp_path, n)
     original = _lines(log)
     for k in range(n - 1):
@@ -170,7 +171,7 @@ def test_p15_changing_an_entry_and_recomputing_its_hash_is_detected_at_the_next(
         _write(log, lines)
         check = log.verify()
         assert not check.ok
-        assert check.first_bad == k + 2  # the entry whose link to it no longer holds
+        assert check.first_bad == k + 1  # its hash is not the one the head file recorded
 
 
 @pytest.mark.invariants
@@ -271,13 +272,13 @@ def test_drop_torn_entry_refuses_when_nothing_is_torn_or_the_chain_is_broken(tmp
         log.drop_torn_entry(expected=3, by="A")
     lines = _lines(log)
     _write(log, [lines[1], lines[0], lines[2][:5]])  # broken before the torn tail
-    _write_head(log, 0, case.GENESIS)
+    _write_head(log, [])
     with pytest.raises(case.CaseLogBroken) as err:
         log.drop_torn_entry(expected=0, by="A")
     assert not err.value.torn and err.value.first_bad == 1
 
 
-def test_a_crash_while_dropping_a_torn_entry_leaves_the_torn_log_unchanged(tmp_path, monkeypatch):
+def test_a_crash_before_the_rename_while_dropping_leaves_the_torn_log_unchanged(tmp_path, monkeypatch):
     log = _log(tmp_path, 2)
     _crash_mid_append(log, monkeypatch, 15)
     before = log.path.read_bytes()
@@ -510,7 +511,8 @@ def test_the_entry_append_returns_is_the_entry_read_back(tmp_path):
 def test_each_append_records_the_head_hash_and_count(tmp_path):
     log = _log(tmp_path, 3)
     head = json.loads(log.head_path.read_text(encoding="utf-8"))
-    assert head == {"count": 3, "hash": json.loads(_lines(log)[2])["hash"]}
+    hashes = [json.loads(line)["hash"] for line in _lines(log)]
+    assert head == {"count": 3, "hash": hashes[2], "hashes": hashes}
 
 
 def _rebuild(entries):
@@ -522,6 +524,15 @@ def _rebuild(entries):
         out.append(_dump(body))
         prev = body["hash"]
     return out
+
+
+def _chain_alone_holds(lines, tmp_path):
+    """The rebuilt lines, with a head file of their own, load as an intact log."""
+    alone = case.CaseLog(tmp_path / "alone" / "log.jsonl")
+    alone.path.parent.mkdir(exist_ok=True)
+    _write(alone, lines)
+    _write_head(alone, [json.loads(line)["hash"] for line in lines])
+    return alone.verify().ok
 
 
 @pytest.mark.invariants
@@ -536,13 +547,34 @@ def test_p15_a_rebuilt_chain_that_does_not_match_the_head_file_is_detected(tmp_p
         reordered = list(original)
         reordered[k], reordered[k + 1] = reordered[k + 1], reordered[k]
         for kind, entries in (("changed", changed), ("removed", removed), ("reordered", reordered)):
-            _write(log, _rebuild(entries))
-            assert case.CaseLog(log.path).entries  # the chain alone now holds
+            rebuilt = _rebuild(entries)
+            assert _chain_alone_holds(rebuilt, tmp_path), (kind, k)  # every link is consistent
+            _write(log, rebuilt)
             check = case.CaseLog(log.path).verify()
             assert not check.ok and not check.torn, (kind, k)
+            # The history diverges at entry k+1: that entry is named, and only the entries
+            # before it, unchanged, are returned as the intact prefix.
+            assert check.first_bad == k + 1, (kind, k)
+            assert check.head.position == k, (kind, k)
+            assert [e.hash for e in check.entries] == [e["hash"] for e in original[:k]], (kind, k)
             with pytest.raises(case.CaseLogBroken) as err:
                 case.CaseLog(log.path).require_intact()
-            assert "head file" in str(err.value), (kind, k)
+            assert err.value.first_bad == k + 1 and "head file" in str(err.value), (kind, k)
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("n", SIZES)
+def test_p15_a_rebuilt_chain_with_any_entry_removed_names_that_entry(tmp_path, n):
+    # The reviewer's case: remove entry k, renumber and rehash the survivors, leave the
+    # head file alone. The log is one entry short, but the first bad entry is k, not n.
+    log = _log(tmp_path, n)
+    original = [json.loads(line) for line in _lines(log)]
+    for k in range(n):
+        _write(log, _rebuild(original[:k] + original[k + 1:]))
+        check = case.CaseLog(log.path).verify()
+        expected = k + 1  # entry k+1 now holds what was entry k+2, or is missing if k was last
+        assert not check.ok and not check.torn and check.first_bad == expected, k
+        assert len(check.entries) == k
 
 
 @pytest.mark.invariants
@@ -557,7 +589,7 @@ def test_p15_removing_the_head_entry_is_detected_against_the_head_file(tmp_path,
 @pytest.mark.invariants
 def test_p15_an_entry_added_after_the_recorded_head_is_detected(tmp_path):
     log = _log(tmp_path, 3)
-    _write_head(log, 1, json.loads(_lines(log)[0])["hash"])
+    _write_head(log, [json.loads(_lines(log)[0])["hash"]])
     check = log.verify()
     assert not check.ok and not check.torn and check.first_bad == 2
 
@@ -625,3 +657,106 @@ def test_data_changed_by_another_thread_mid_append_cannot_break_the_entry(tmp_pa
     monkeypatch.undo()
     assert log.require_intact().position == 1
     assert log.entries() == [written] and written.data == {"v": 1}
+
+
+# --- findings from verification round 19 -----------------------------------------------
+
+
+def test_a_reader_never_reports_a_live_append_as_torn_however_long_the_writer_pauses(tmp_path, monkeypatch):
+    # The writer's line is on disk and its head file is not, and it stays paused far past
+    # the reader's retry window while still holding the lock.
+    import threading
+
+    log = _log(tmp_path, 2)
+    reader = case.CaseLog(log.path)
+    real = case.CaseLog._write_head
+    on_disk, release = threading.Event(), threading.Event()
+
+    def paused_head(self, hashes):
+        on_disk.set()
+        release.wait(10)
+        real(self, hashes)
+
+    monkeypatch.setattr(case.CaseLog, "_write_head", paused_head)
+    writer = threading.Thread(target=lambda: log.append("override", {"n": 99}, expected=2))
+    writer.start()
+    try:
+        assert on_disk.wait(5)
+        for _ in range(3):  # each verify waits out its whole retry window, the writer still paused
+            check = reader.verify()
+            assert check.ok and not check.torn and check.in_progress
+            assert check.head.position == 2  # the log as recorded
+            reader.require_intact()  # no CaseLogBroken, so nobody is asked to drop it
+    finally:
+        release.set()
+        writer.join(5)
+    check = reader.verify()
+    assert check.ok and not check.in_progress and check.head.position == 3
+
+
+@pytest.mark.invariants
+def test_p15_a_torn_entry_with_the_lock_free_is_still_reported_by_a_reader(tmp_path, monkeypatch):
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    check = case.CaseLog(log.path).verify()  # no writer: the reader takes the lock and looks
+    assert check.torn and check.first_bad == 3 and not check.in_progress
+
+
+def test_a_lock_holder_still_sees_a_torn_entry_while_a_reader_sees_it_recorded(tmp_path, monkeypatch):
+    # Sign-off holds the lock: for it a torn entry is torn, whoever else is reading.
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    with log.writer():
+        assert log.verify().torn
+        with pytest.raises(case.CaseLogBroken):
+            log.require_intact()
+        assert case.CaseLog(log.path).verify().in_progress
+
+
+def test_a_crash_after_the_rename_while_dropping_leaves_a_torn_log_that_drops_again(tmp_path, monkeypatch):
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 15)
+    monkeypatch.setattr(case.CaseLog, "_write_head", lambda *_a: (_ for _ in ()).throw(OSError("power lost")))
+    with pytest.raises(OSError):
+        log.drop_torn_entry(expected=2, by="A. Underwriter")
+    monkeypatch.undo()
+    # The log bytes changed (the drop entry is on disk), the head file did not: the drop
+    # entry is itself an unrecorded entry 3, still torn and still in the way of appends.
+    check = log.verify()
+    assert check.torn and check.first_bad == 3 and check.head.position == 2
+    with pytest.raises(case.CaseLogBroken):
+        log.append("override", {}, expected=2)
+    log.drop_torn_entry(expected=2, by="A. Underwriter")
+    entries = log.entries()
+    assert len(entries) == 3 and entries[-1].event == case.TORN_DROPPED
+
+
+@pytest.mark.invariants
+def test_p15_a_head_file_that_cannot_be_read_is_named_not_raised(tmp_path):
+    log = _log(tmp_path, 3)
+    log.head_path.unlink()
+    log.head_path.mkdir()  # a read error, not malformed bytes
+    with pytest.raises(case.CaseLogBroken) as err:
+        log.require_intact()
+    assert err.value.first_bad == 1 and "head file" in str(err.value)
+
+
+def test_a_log_file_that_cannot_be_read_is_named_not_raised(tmp_path):
+    log = case.CaseLog(tmp_path / "log.jsonl")
+    log.path.mkdir()
+    with pytest.raises(case.CaseLogBroken) as err:
+        log.require_intact()
+    assert err.value.first_bad == 1
+
+
+@pytest.mark.invariants
+def test_p15_a_head_file_whose_hashes_disagree_with_its_count_or_head_is_unreadable(tmp_path):
+    log = _log(tmp_path, 2)
+    hashes = [json.loads(line)["hash"] for line in _lines(log)]
+    for bad in ({"count": 3, "hash": hashes[1], "hashes": hashes},
+                {"count": 2, "hash": hashes[0], "hashes": hashes},
+                {"count": 2, "hash": hashes[1]}):
+        log.head_path.write_text(json.dumps(bad, sort_keys=True, separators=(",", ":")) + "\n",
+                                 encoding="utf-8")
+        check = log.verify()
+        assert not check.ok and check.first_bad == 1 and "head file" in check.reason

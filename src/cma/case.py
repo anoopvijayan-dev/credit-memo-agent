@@ -14,17 +14,22 @@ a bad entry rather than reinterpreted or raised.
 
 The chain alone cannot see a history rewritten from some entry onwards with every hash
 recomputed, nor the head entry removed. So each append, after its line is on disk, also
-replaces a head file beside the log (`log.jsonl.head`: {"count": n, "hash": h}), and
-every load compares the rebuilt chain with it: a chain that ends anywhere else, or whose
-entry n has another hash, is broken. Rewriting the log and the head file together is
-not detectable from these files; a sign-off or pack pins the head it saw.
+replaces a head file beside the log (`log.jsonl.head`: {"count": n, "hash": h,
+"hashes": [the hash of every entry, in order]}), and every load compares the chain with
+it entry by entry: the first entry whose hash is not the one recorded is named as the
+first bad entry, even when every link after it was recomputed, and a chain that ends
+before or after the recorded count is broken there. Rewriting the log and the head file
+together is not detectable from these files; a sign-off or pack pins the head it saw.
 
 An append can stop half way. A last line without its newline, or a complete last line
 the head file does not yet record (power lost between the two writes), is a torn entry:
 reported as incomplete, not as tampering, and in the way of appends and sign-off until
 someone confirms dropping it (`drop_torn_entry`), which is itself logged. A reader that
 does not hold the lock may catch a writer between the two writes, so it looks again
-briefly before reporting a torn entry.
+briefly and then takes the lock to read once more. If another writer still holds the
+lock, that writer's append is in progress: the reader reports the log as recorded (the
+intact entries, `in_progress` set) and never asks anyone to drop a live append. Only a
+reader that holds the lock, or that could take it, reports a torn entry.
 
 One writer at a time: every append takes an exclusive, non-blocking lock on a sibling
 lock file and re-reads the log under it, and the caller states the position it last
@@ -46,7 +51,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -55,7 +60,7 @@ GENESIS = "0" * 64
 HASHED_FIELDS = ("seq", "prev", "at", "event", "data")
 ENTRY_FIELDS = frozenset((*HASHED_FIELDS, "hash"))
 TORN_DROPPED = "torn_entry_dropped"
-HEAD_FIELDS = frozenset(("count", "hash"))
+HEAD_FIELDS = frozenset(("count", "hash", "hashes"))
 READ_RETRIES, READ_PAUSE = 5, 0.02  # seconds; a writer's two writes take far less
 _UNREADABLE = object()
 
@@ -116,6 +121,7 @@ class LogCheck:
     reason: str = ""
     torn: bool = False
     intact_bytes: int = field(default=0, repr=False)
+    in_progress: bool = False  # another writer is appending; `head` is the log as recorded
 
     @property
     def ok(self) -> bool:
@@ -184,13 +190,19 @@ def _parse(line: bytes, n: int, prev: str) -> tuple[Entry | None, str]:
     return Entry(**obj), ""
 
 
-def _read_head(path: Path) -> Head | object | None:
-    """The head file's (count, hash) as a Head; None if there is none; _UNREADABLE if it
-    is not exactly what the writer produces."""
+def _is_hash(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+def _read_head(path: Path) -> list[str] | object | None:
+    """The hash of every entry the head file records, in order; None if there is no head
+    file; _UNREADABLE if it cannot be read or is not exactly what the writer produces."""
     try:
         raw = path.read_bytes()
     except FileNotFoundError:
         return None
+    except OSError:  # a directory in its place, no permission: it cannot vouch for the log
+        return _UNREADABLE
     try:
         if not raw.endswith(b"\n"):
             raise ValueError("no newline")
@@ -199,25 +211,35 @@ def _read_head(path: Path) -> Head | object | None:
         return _UNREADABLE
     if not isinstance(obj, dict) or set(obj) != HEAD_FIELDS:
         return _UNREADABLE
-    count, hsh = obj["count"], obj["hash"]
-    if not isinstance(count, int) or isinstance(count, bool) or count < 0 \
-            or not isinstance(hsh, str) or len(hsh) != 64 \
-            or any(c not in "0123456789abcdef" for c in hsh) or (count == 0) != (hsh == GENESIS):
+    count, hsh, hashes = obj["count"], obj["hash"], obj["hashes"]
+    if not isinstance(count, int) or isinstance(count, bool) or not isinstance(hashes, list) \
+            or len(hashes) != count or not all(_is_hash(h) for h in hashes) \
+            or hsh != (hashes[-1] if hashes else GENESIS):
         return _UNREADABLE
-    return Head(count, hsh)
+    return hashes
 
 
-def _check(raw: bytes, recorded: Head | object | None) -> LogCheck:
-    """Walk the chain in `raw`, then compare where it ends with the head file's record."""
+def _head_bytes(hashes: list[str]) -> bytes:
+    return _canonical({"count": len(hashes), "hash": hashes[-1] if hashes else GENESIS,
+                       "hashes": hashes}) + b"\n"
+
+
+def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
+    """Walk the chain in `raw` to the first entry that does not hold, compare every entry
+    walked with the head file's record, and name the earlier of the two failures."""
+    if raw is None:
+        return LogCheck(Head(0, GENESIS), [], 1, "cannot be read: the log file cannot be opened", False, 0)
     pieces = raw.split(b"\n")
     complete, tail = pieces[:-1], pieces[-1]  # tail is non-empty only if torn
     entries: list[Entry] = []
     ends = [0]  # ends[k]: bytes up to and including entry k's newline
     prev = GENESIS
+    chain_bad, chain_reason = None, ""
     for n, line in enumerate(complete, start=1):
         entry, reason = _parse(line, n, prev)
         if entry is None:
-            return LogCheck(Head(n - 1, prev), entries, n, reason, False, ends[-1])
+            chain_bad, chain_reason = n, reason
+            break
         entries.append(entry)
         prev = entry.hash
         ends.append(ends[-1] + len(line) + 1)
@@ -225,38 +247,38 @@ def _check(raw: bytes, recorded: Head | object | None) -> LogCheck:
     def at(k: int) -> Head:
         return Head(k, entries[k - 1].hash if k else GENESIS)
 
-    def broken(first_bad: int, reason: str) -> LogCheck:
-        return LogCheck(at(first_bad - 1), entries[: first_bad - 1], first_bad, reason, False,
+    def failed(first_bad: int, reason: str, torn: bool = False) -> LogCheck:
+        return LogCheck(at(first_bad - 1), entries[: first_bad - 1], first_bad, reason, torn,
                         ends[first_bad - 1])
 
-    def torn(first_bad: int, reason: str) -> LogCheck:
-        return LogCheck(at(first_bad - 1), entries[: first_bad - 1], first_bad, reason, True,
-                        ends[first_bad - 1])
-
-    n = len(entries)
     if recorded is _UNREADABLE:
-        return broken(1, "cannot be trusted: the head file beside the log is unreadable")
-    rec = recorded if isinstance(recorded, Head) else Head(0, GENESIS)  # no head file yet
-    if rec == at(n) and not tail:
-        return LogCheck(rec, entries, intact_bytes=ends[-1])
-    if rec == at(n) and tail:
-        return torn(n + 1, "is incomplete: the write did not finish (the process or power "
-                           "stopped); confirm dropping it before anything else is recorded "
-                           "or signed off")
-    if n and rec == at(n - 1) and not tail:
-        return torn(n, "is incomplete: it was written but the head file was not updated (the "
-                       "process or power stopped); confirm dropping it before anything else "
-                       "is recorded or signed off")
+        return failed(1, "cannot be trusted: the head file beside the log is unreadable")
+    hashes: list[str] = recorded if isinstance(recorded, list) else []  # none yet: empty
+    n, count = len(entries), len(hashes)
+    same = 0
+    while same < min(n, count) and entries[same].hash == hashes[same]:
+        same += 1
+    if same < min(n, count):
+        return failed(same + 1, "does not match the head file: the log was rewritten from "
+                                "this entry on")
+    if chain_bad is not None:
+        return failed(chain_bad, chain_reason)
+    if n == count and not tail:
+        return LogCheck(at(n), entries, intact_bytes=ends[-1])
+    if n == count:
+        return failed(n + 1, "is incomplete: the write did not finish (the process or power "
+                             "stopped); confirm dropping it before anything else is recorded "
+                             "or signed off", torn=True)
+    if n == count + 1 and not tail:
+        return failed(n, "is incomplete: it was written but the head file was not updated (the "
+                         "process or power stopped); confirm dropping it before anything else "
+                         "is recorded or signed off", torn=True)
     if recorded is None:  # entries on disk, and no torn first append explains them
-        return broken(1, "cannot be trusted: the head file beside the log is missing")
-    if rec.position > n:
-        return broken(n + 1, f"is missing: the head file records {rec.position} entries and "
-                             f"the log holds {n}")
-    if rec != at(rec.position):
-        return broken(max(rec.position, 1), "does not match the head file: the log was "
-                                            "rewritten at or before this entry")
-    return broken(rec.position + 1, f"was added after the head the head file records "
-                                    f"(entry {rec.position})")
+        return failed(1, "cannot be trusted: the head file beside the log is missing")
+    if n < count:
+        return failed(n + 1, f"is missing: the head file records {count} entries and the log "
+                             f"holds {n}")
+    return failed(count + 1, f"was added after the head the head file records (entry {count})")
 
 
 class CaseLog:
@@ -273,28 +295,39 @@ class CaseLog:
 
     def verify(self) -> LogCheck:
         """Walk the chain from the start, stop at the first entry that does not hold, and
-        compare where it ends with the head file."""
+        compare every entry with the head file."""
         with self._state:
             holder = self._owner == threading.get_ident()
         if holder:  # nothing else can write: one read is the truth
             return _check(self._read_log(), _read_head(self.head_path))
         for attempt in range(READ_RETRIES):
+            if attempt:
+                time.sleep(READ_PAUSE)
             # The head file first: a writer replaces it only after its line is on disk, so
             # the log read next is never behind it, and a writer caught between the two
-            # writes looks like a torn entry. Look again before reporting one.
+            # writes looks like a torn entry. Look again before believing one.
             before = _read_head(self.head_path)
             check = _check(self._read_log(), before)
             if not check.torn and _read_head(self.head_path) == before:
                 return check
-            if attempt < READ_RETRIES - 1:
-                time.sleep(READ_PAUSE)
-        return check
+        # Still torn (or the head kept moving). Under the lock nothing moves, so if the lock
+        # is free, one read there is the truth. If another writer holds it, that writer has
+        # an append on the way: report the log as recorded, never a live append as torn.
+        try:
+            with self.writer():
+                return _check(self._read_log(), _read_head(self.head_path))
+        except CaseLocked:
+            if check.torn:
+                return replace(check, first_bad=None, reason="", torn=False, in_progress=True)
+            return check
 
-    def _read_log(self) -> bytes:
+    def _read_log(self) -> bytes | None:
         try:
             return self.path.read_bytes()
         except FileNotFoundError:
             return b""
+        except OSError:  # a directory in its place, no permission
+            return None
 
     def require_intact(self) -> Head:
         """The head of an intact log, or CaseLogBroken naming the first bad entry. Every
@@ -368,10 +401,12 @@ class CaseLog:
         # may be shared, and a change to it between hashing and writing must not reach the log.
         snapshot = json.loads(blob)
         with self.writer():
-            head = self.require_intact()
-            if head.position != expected:
-                raise LogConflict(expected, head.position)
-            return self._write(event, snapshot, head)
+            check = self.verify()
+            if not check.ok:
+                raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
+            if check.head.position != expected:
+                raise LogConflict(expected, check.head.position)
+            return self._write(event, snapshot, check)
 
     def drop_torn_entry(self, *, expected: int, by: str) -> Entry:
         """Cut an incomplete last entry off and record who confirmed it. `expected` is the
@@ -389,7 +424,10 @@ class CaseLog:
                 raise LogConflict(expected, check.head.position)
             # Write the intact prefix plus the drop entry to a temporary file and rename it
             # over the log, so a crash leaves either the torn log or the repaired one, never
-            # a truncated log with no record of who dropped the entry.
+            # a truncated log with no record of who dropped the entry. A crash after the
+            # rename and before the head file is replaced leaves the drop entry itself
+            # unrecorded: the log loads as torn at the same entry, and dropping it again
+            # repairs it.
             intact = self.path.read_bytes()[: check.intact_bytes]
             entry, line = self._encode(TORN_DROPPED, {"seq": check.first_bad, "by": by.strip()}, check.head)
             tmp = self.path.with_name(self.path.name + ".tmp")
@@ -405,7 +443,7 @@ class CaseLog:
                 tmp.unlink(missing_ok=True)
                 raise
             _fsync_dir(self.path.parent)
-            self._write_head(Head(entry.seq, entry.hash))
+            self._write_head([*(e.hash for e in check.entries), entry.hash])
             return entry
 
     @staticmethod
@@ -420,12 +458,12 @@ class CaseLog:
             raise CaseLogError(f"{reason}; nothing was written")
         return entry, line + b"\n"
 
-    def _write_head(self, head: Head) -> None:
-        """Replace the head file in one rename, after the entry it names is on disk."""
+    def _write_head(self, hashes: list[str]) -> None:
+        """Replace the head file in one rename, after the last entry it names is on disk."""
         tmp = self.head_path.with_name(self.head_path.name + ".tmp")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
-            _write_all(fd, _canonical({"count": head.position, "hash": head.hash}) + b"\n")
+            _write_all(fd, _head_bytes(hashes))
             os.fsync(fd)
         finally:
             os.close(fd)
@@ -436,8 +474,8 @@ class CaseLog:
             raise
         _fsync_dir(self.head_path.parent)
 
-    def _write(self, event: str, data: dict[str, Any], head: Head) -> Entry:
-        entry, line = self._encode(event, data, head)
+    def _write(self, event: str, data: dict[str, Any], check: LogCheck) -> Entry:
+        entry, line = self._encode(event, data, check.head)
         created = not self.path.exists()
         fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:
@@ -447,7 +485,7 @@ class CaseLog:
             os.close(fd)
         if created:
             _fsync_dir(self.path.parent)  # make the new file's name durable too
-        self._write_head(Head(entry.seq, entry.hash))
+        self._write_head([*(e.hash for e in check.entries), entry.hash])
         return entry
 
 
