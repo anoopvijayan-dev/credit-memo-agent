@@ -1201,12 +1201,12 @@
         "kill task"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "take over manually",
+      "free_text": "Owner: take over with the prepared fix. The writer lock's owner is the process id plus the thread ident, so a forked child is refused instead of entering on its parent's lock; invariants test p15 forks inside a held writer.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-18T21:41:59.601Z",
+      "effect": "task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12",
       "created_at": "2026-11-18T21:40:25.940Z"
     }
   ]

@@ -164,6 +164,7 @@ Every answer and decision, dated.
 - 2026-11-18 D53 (question): Cues that agree outrank names (design default, follows D46 and D48) → recorded [Anoop Vijayan]
 - 2026-11-18 D54 (question): An override, a profile name or a pairing; never a firm rule (design default, keeps R5, R6 and R8) → recorded [Anoop Vijayan]
 - 2026-11-18 D55 (approve_design): approve → design approved [Anoop Vijayan]
+- 2026-11-18 D56 (unblock): take over manually — Owner: take over with the prepared fix. The writer lock's owner is the process id plus the thread ident, so a forked child is refused instead of entering on its parent's lock; invariants test p15 forks inside a held writer. → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 
 ## Idea
 
