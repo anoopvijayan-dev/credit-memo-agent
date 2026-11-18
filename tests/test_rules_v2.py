@@ -251,6 +251,32 @@ def test_ambiguous_wording_never_resolves_to_trading_receipts(v2):
         assert classify(_t(desc, 100.0), v2)[0] not in trading, desc
 
 
+def _list(rule_id: str) -> list[str]:
+    data = yaml.safe_load(resources.files("cma.rules").joinpath("v2.yaml").read_bytes())
+    return next(r["names"] for r in data["rules"] if r["id"] == rule_id)
+
+
+@pytest.mark.contracts
+def test_overlaps_from_the_review_hold_for_every_listed_word(v2):
+    """The three review findings, generalised from one example to every word in the list:
+    an explicit pot move beats what the pot is for; explicit refund wording beats generic
+    loan or finance wording; a Post Office or PayPoint name without cash wording, or any
+    cash wording on an electronic payment, is never cash takings."""
+    for pot in _list("own_pots_savings"):
+        for purpose in ("RENT", "PAYROLL", "BANK CHARGES"):
+            assert classify(_t(f"TFR {pot} {purpose}", -100.0), v2) == \
+                (C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"), (pot, purpose)
+    for refund in _list("refunds"):
+        for generic in ("ACME RETAIL FINANCE", "LOAN"):
+            assert classify(_t(f"{refund} {generic}", 75.0), v2) == (C.REFUND_IN, "v2:refunds"), (refund, generic)
+    for provider in ("POST OFFICE LTD", "POST OFFICE COUNTERS", "POST OFFICE", "PAYPOINT PLC", "PAYPOINT"):
+        for rail in ("", "BACS CREDIT ", "FPS CREDIT "):
+            assert classify(_t(f"{rail}{provider}", 500.0), v2)[0] is C.OTHER, (rail, provider)
+    for cash in _list("cash_paid_in"):
+        for rail in ("FPS", "FASTER PAYMENT", "BACS", "CHAPS", "TFR", "TRANSFER", "SO", "STO"):
+            assert classify(_t(f"{rail} {cash}", 200.0), v2)[0] is not C.CASH_DEPOSIT, (rail, cash)
+
+
 # --- precedence ----------------------------------------------------------------------
 
 
