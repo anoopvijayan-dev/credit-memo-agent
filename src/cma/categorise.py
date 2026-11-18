@@ -15,8 +15,10 @@ cash advance providers, own pots and savings, cash paid in, cash-withdrawal word
 HMRC, refunds, explained non-trading money in). The matching passes below (reversals,
 round trips) stay in code.
 
-Precedence, first match wins: a per-line override; the table's protected rules (returned
-DD, HMRC, lenders, director, capital, shareholder); the case profile's names (directors
+Precedence, first match wins: a per-line override; the table's protected rules (in v2,
+first the line type from explicit wording: returned DD, a move to or from the applicant's
+own pot or savings, HMRC, a refund or reversal; then the protected name lists: lenders,
+director, capital, shareholder); the case profile's names (directors
 and shareholders, own accounts); firm rules; the rest of the table; the default (a debit
 is supplier, a credit is OTHER, unexplained). Every line records the rule that set its
 category in Transaction.rule_id: "<ruleset>:<rule id>", "<ruleset>:default",

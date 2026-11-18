@@ -353,6 +353,36 @@ def test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1(tmp_pat
     assert evidence_record(legacy)["lines"][0]["rule_id"] is None
 
 
+@pytest.mark.contracts
+def test_a_t02_checkpoint_with_a_recorded_v1_ruleset_but_no_line_rule_ids_replays_v1(tmp_path):
+    """The release before T03 recorded the ruleset (v1 and its hash) but no rule id on any
+    line. On resume each line's rule id is replayed from that recorded table, not left
+    null; a recorded hash the installed table does not have replays nothing."""
+    from langgraph.types import Command
+
+    from cma.graph import build, evidence_record
+    from cma.llm import FakeLLM
+
+    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
+    csv_path, _ = synth.write(rows, truth, tmp_path)
+    graph = build(FakeLLM())
+    cfg = {"configurable": {"thread_id": "t02"}}
+    graph.invoke({"statement_path": str(csv_path)}, cfg)
+    graph.invoke(Command(resume={"approved": True, "reviewer": "A. Analyst"}), cfg)
+    state = graph.get_state(cfg).values
+    recorded = [(t.category.value, t.rule_id) for t in state["statement"].transactions]
+    assert any(r == "v1:card_settlement" for _, r in recorded)
+    t02 = {**state, "ruleset": {"id": "v1", "sha256": load_ruleset("v1").sha256},
+           "statement": state["statement"].model_copy(deep=True)}
+    for t in t02["statement"].transactions:
+        t.rule_id = None
+    record = evidence_record(t02)
+    assert record["ruleset"] == {"id": "v1", "sha256": load_ruleset("v1").sha256}
+    assert [(line["category"], line["rule_id"]) for line in record["lines"]] == recorded
+    stale = {**t02, "ruleset": {"id": "v1", "sha256": "0" * 64}}
+    assert all(line["rule_id"] is None for line in evidence_record(stale)["lines"])
+
+
 # --- R10: M16 keeps its id, unit and value, and its name says what it measures ------------
 
 

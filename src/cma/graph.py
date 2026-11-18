@@ -186,15 +186,24 @@ def ruleset_used(s: MemoState) -> dict:
 
 
 def line_rule_ids(s: MemoState) -> list[str | None]:
-    """Each line's rule id. A checkpoint from before provenance holds none; its lines were
-    categorised by the table that is now v1 (P7), so v1 is replayed on a copy and its rule
-    id taken for each line whose saved category it reproduces. A line it does not
-    reproduce keeps None rather than a rule that did not set it."""
+    """Each line's rule id. A checkpoint from before provenance holds none: either no
+    ruleset at all (before T01; the lines were categorised by the table that is now v1,
+    P7) or a recorded ruleset with no rule ids on the lines (T02). The table the state
+    names, or v1 when it names none, is replayed on a copy, provided the installed table
+    has the recorded hash, and its rule id taken for each line whose saved category it
+    reproduces. A line it does not reproduce keeps None rather than a rule that did not
+    set it."""
     txns = s["statement"].transactions
-    recorded = s.get("ruleset")
-    if (recorded and not recorded.get("inferred")) or all(t.rule_id for t in txns):
+    if all(t.rule_id for t in txns):
         return [t.rule_id for t in txns]
-    replay = cat.categorise(s["statement"].model_copy(deep=True), cat.load_ruleset("v1")).transactions
+    recorded = s.get("ruleset") or {}
+    try:
+        table = cat.load_ruleset(recorded.get("id") or "v1")
+    except cat.RulesetError:
+        return [t.rule_id for t in txns]
+    if recorded.get("sha256") and recorded["sha256"] != table.sha256:
+        return [t.rule_id for t in txns]  # not the table that categorised these lines
+    replay = cat.categorise(s["statement"].model_copy(deep=True), table).transactions
     return [t.rule_id or (r.rule_id if r.category == t.category else None) for t, r in zip(txns, replay, strict=True)]
 
 

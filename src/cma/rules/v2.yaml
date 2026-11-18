@@ -8,16 +8,25 @@
 # of the amount wins. `names` are plain words matched whole, with any run of spaces
 # between words; `pattern` is a Python regular expression.
 #
-# Protected rules (returned DD, director, capital, shareholder, lender, HMRC) come first
-# and win over the case profile and firm rules; only a per-line override changes a line
-# they match (R21). The precedence is in src/cma/categorise.py. A rule may also have
-# `requires`, a pattern that must match too.
+# Classification is in two stages. First the line type, from explicit wording: a returned
+# direct debit; a move to or from the applicant's own pot, space or savings; an HMRC line;
+# a refund or reversal; and the payment rail (Faster Payment, FP, FPI, BACS, BGC, CHAPS, a
+# transfer, a standing order, a direct credit) anywhere in the line, which rules out cash
+# paid in. Only then the name lists: lenders and merchant cash advance providers, director
+# or capital wording, cash venues, rent, acquirers, gateways, marketplaces and delivery
+# platforms. So "TFR FROM SAVINGS CAPITAL RESERVE" is an own-account transfer and "CARD
+# REFUND CAPITAL OFFICE SUPPLIES" a refund, whatever names follow the line-type wording.
+# A rail has no category of its own: a rail line with a name on a list takes that list's
+# category, except cash, which a rail line never is.
 #
-# An explicit move to or from the applicant's own pot or space ("TFR FROM POT CAPITAL
-# RESERVE", "TO POT HMRC VAT") is an own-account transfer whatever the pot is called, so
-# every protected rule but a returned DD has `unless: *pot_move` and leaves it to the own
-# pots rule below. Savings wording alone is not a pot move: "DIRECTOR SAVINGS" stays
-# director funding.
+# Protected rules come first and win over the case profile and firm rules; only a
+# per-line override changes a line they match (R21). They are the line-type rules (returned
+# DD, own pot or savings move, HMRC, refund) and the protected name lists (lender, director,
+# capital, shareholder, generic loan wording). The precedence is in src/cma/categorise.py.
+# A rule may also have `requires`, a pattern that must match too.
+#
+# Savings wording without a move ("DIRECTOR SAVINGS") is not a line-type cue: it is tried
+# after the director wording, so a director's savings paid in stays director funding.
 #
 # Ambiguous wording never resolves to trading receipts: refunds, own pots and explained
 # non-trading credits are tried before the acquirer lists, so "PAYPAL REFUND" is a
@@ -25,31 +34,65 @@
 id: v2
 frozen: false
 rules:
-  # --- protected ---------------------------------------------------------------------
+  # --- stage 1, line type (protected) -------------------------------------------------
   - id: returned_dd
     pattern: '^UNPAID DD\b'
     direction: any
     category: returned_dd
     protected: true
+  # An explicit move to or from the applicant's own pot, space or savings, either way,
+  # whatever the pot or account is called: "TFR TO POT RENT", "TO POT HMRC VAT", "TFR FROM
+  # SAVINGS CAPITAL RESERVE" and "FROM POT IWOCA" are own-account transfers.
+  - id: own_pots_savings
+    names:
+      - POT TRANSFER
+      - TO POT
+      - FROM POT
+      - VAT POT
+      - TAX POT
+      - TO SPACE
+      - FROM SPACE
+      - SAVINGS TRANSFER
+      - SAVINGS TFR
+      - TFR SAVINGS
+      - TRANSFER SAVINGS
+      - TO SAVINGS
+      - FROM SAVINGS
+      - TO SAVER
+      - FROM SAVER
+      - TO BUSINESS SAVER
+      - FROM BUSINESS SAVER
+      - TO INSTANT ACCESS
+      - FROM INSTANT ACCESS
+    direction: any
+    category: own_account_transfer
+    protected: true
   - id: hmrc_vat
     pattern: 'HMRC VAT'
-    unless: &pot_move '(?<![A-Z0-9])(?:POT\s+TRANSFER|(?:TO|FROM)\s+(?:POT|SPACE)|(?:VAT|TAX)\s+POT)(?![A-Z0-9])'
     direction: out
     category: hmrc_vat
     protected: true
   - id: hmrc_paye
     pattern: 'HMRC PAYE'
-    unless: *pot_move
     direction: out
     category: hmrc_paye
     protected: true
-  # HMRC paying money back (VAT repayment, tax refund, R&D credit).
+  # HMRC paying money back (VAT repayment, tax refund, R&D credit). Before the refund
+  # wording: an HMRC refund is an HMRC repayment, its own bucket.
   - id: hmrc_repayment
     names: [HMRC, HM REVENUE]
-    unless: *pot_move
     direction: in
     category: hmrc_repayment
     protected: true
+  # Money given back: a refund, reversal, returned payment or chargeback, from anyone,
+  # a named lender or a payer called CAPITAL or DIRECTOR included. Money out with the same
+  # wording is left to the name lists: a payment to a lender stays debt service.
+  - id: refunds
+    names: [REFUND, REFUNDED, REVERSAL, REVERSED, RETURNED PAYMENT, PAYMENT RETURNED, CHARGEBACK]
+    direction: in
+    category: refund_in
+    protected: true
+  # --- stage 2, name lists (protected) ------------------------------------------------
   # UK business lenders and merchant cash advance providers, named. Before the director
   # and capital wording, so "STRIPE CAPITAL" and "BOOST CAPITAL" are lenders.
   - id: lender_repayment
@@ -96,28 +139,16 @@ rules:
       - BBLS
       - CBILS
       - RECOVERY LOAN SCHEME
-    unless: *pot_move
     direction: out
     category: loan_repayment
     protected: true
-  # A named lender's explicit refund or reversal ("DD REPAYMENT REVERSAL IWOCA LTD") is
-  # money given back, not a new drawdown. Still protected: a lender line (R21).
-  - id: lender_refund
-    names: *lenders
-    requires: &refund_wording '(?<![A-Z0-9])(?:REFUND|REFUNDED|REVERSAL|REVERSED|RETURNED\s+PAYMENT|PAYMENT\s+RETURNED|CHARGEBACK)(?![A-Z0-9])'
-    unless: *pot_move
-    direction: in
-    category: refund_in
-    protected: true
   - id: lender_drawdown
     names: *lenders
-    unless: *pot_move
     direction: in
     category: loan_drawdown
     protected: true
   - id: loan_repayment
     pattern: '\bLOAN\b|FINANCE\b'
-    unless: *pot_move
     direction: out
     category: loan_repayment
     protected: true
@@ -125,42 +156,24 @@ rules:
   # generic loan wording, so a director's loan to the business is director funding.
   - id: director_funding
     names: [DIRECTOR, DIRECTORS, OWNER, CAPITAL, SHAREHOLDER, SHAREHOLDERS]
-    unless: *pot_move
     direction: in
     category: director_funding
     protected: true
-  # Generic loan or finance wording, unless the line says it is a refund or a reversal
-  # (the refund wording above, or a pot move): "CARD REFUND ACME RETAIL FINANCE" is money
-  # given back, not debt drawn, and goes to the refunds rule below.
   - id: loan_drawdown
     pattern: '\bLOAN\b|FINANCE\b'
-    unless: '(?<![A-Z0-9])(?:REFUND|REFUNDED|REVERSAL|REVERSED|RETURNED\s+PAYMENT|PAYMENT\s+RETURNED|CHARGEBACK|POT\s+TRANSFER|(?:TO|FROM)\s+(?:POT|SPACE)|(?:VAT|TAX)\s+POT)(?![A-Z0-9])'
     direction: in
     category: loan_drawdown
     protected: true
   - id: owner_drawings
     pattern: 'OWNER DRAWINGS|DIRECTOR DRAWINGS|DIVIDEND'
-    unless: *pot_move
     direction: out
     category: owner_drawings
     protected: true
   # --- not protected: a profile name or a firm rule is tried before these ---------------
-  # Moves between the applicant's own pots, spaces and savings, either way. First of the
-  # unprotected rules, so an explicit move to a pot wins over what the pot is for:
-  # "TFR TO POT RENT" is an own-account transfer, not rent.
-  - id: own_pots_savings
-    names:
-      - POT TRANSFER
-      - TO POT
-      - FROM POT
-      - SAVINGS
-      - SAVER
-      - BUSINESS SAVER
-      - INSTANT ACCESS
-      - TO SPACE
-      - FROM SPACE
-      - VAT POT
-      - TAX POT
+  # Savings wording with no move ("FPS CREDIT SAVINGS ACCOUNT"): the applicant's own
+  # savings, after the director wording, so "DIRECTOR SAVINGS" stays director funding.
+  - id: savings_wording
+    names: [SAVINGS, SAVER, BUSINESS SAVER, INSTANT ACCESS]
     direction: any
     category: own_account_transfer
   - id: bank_fees
@@ -175,10 +188,6 @@ rules:
     pattern: '\bRENT\b'
     direction: out
     category: rent
-  - id: refunds
-    names: [REFUND, REFUNDED, REVERSAL, REVERSED, RETURNED PAYMENT, PAYMENT RETURNED, CHARGEBACK]
-    direction: in
-    category: refund_in
   # Explained, but not trading: grants, insurance claims, interest, cashback.
   - id: explained_non_trading
     names: [INTEREST, GRANT, INSURANCE CLAIM, INSURANCE PAYOUT, INSURANCE SETTLEMENT, CASHBACK, COMPENSATION]
