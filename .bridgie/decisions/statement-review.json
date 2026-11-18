@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 56,
+  "next_id": 57,
   "decisions": [
     {
       "id": "D1",
@@ -1188,6 +1188,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-18T09:53:53.528Z"
+    },
+    {
+      "id": "D56",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: major: The single-writer lock can be bypassed by a forked child using an inherited CaseLog. Reentrancy checks only the thread identifier, which is inherited by the calling thread across fork. The child enters without acquiring its own lock, so both processes can pass the same expected-position check and append duplicate sequence numbers. at src/cma/case.py:386; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-18T21:40:25.940Z"
     }
   ]
 }
