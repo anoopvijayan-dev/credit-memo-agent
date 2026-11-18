@@ -150,6 +150,7 @@ Every answer and decision, dated.
 - 2026-11-18 D40 (unblock): retry with guidance — Pin v1's SHA-256 in code and refuse a v1 table that does not match it. Build the P7 fixture list by globbing every statement file under tests/ and examples/ (not from what tests happen to compute), with a test asserting the count. Mark the evidence-ruleset test so the runner runs it by name. → task T01 gets one more attempt [Anoop Vijayan]
 - 2026-11-18 D41 (unblock): retry with guidance — Pin v1's SHA-256 in code and refuse a v1 table that does not match it. Build the P7 fixture list by globbing every statement file under tests/ and examples/ (not from what tests happen to compute), with a test asserting the count. Mark the evidence-ruleset test so the runner runs it by name. → task T01 gets one more attempt [Anoop Vijayan]
 - 2026-11-18 D42 (unblock): take over manually — Owner delegated to Claude: add .gitattributes so the rule tables keep LF line endings on Windows, with a test, then verify. → task T01 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T01 [Anoop Vijayan]
+- 2026-11-18 D43 (unblock): take over manually — Owner delegated to Claude: mark the unknown-id and path-rejection tests as contracts so the runner names them, then verify. → task T01 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T01 [Anoop Vijayan]
 
 ## Idea
 
