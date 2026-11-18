@@ -146,12 +146,12 @@
         "P15"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T12",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-30/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: major: The single-writer lock can be bypassed by a forked child using an inherited CaseLog. Reentrancy checks only the thread identifier, which is inherited by the calling thread across fork. The child enters without acquiring its own lock, so both processes can pass the same expected-position check and append duplicate sequence numbers. at src/cma/case.py:386; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-31/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: major: A forked child can release the parent's writer lock by exiting an inherited writer context. The process identity check guards context entry, but the cleanup calls LOCK_UN on the shared open file description without checking the process identity. The parent still considers itself the lock owner. The fork regression test at tests/test_case_log.py:316 uses os._exit and skips this cleanup path. at src/cma/case.py:425; reviewer verdict fail"
     },
     {
       "id": "T13",
