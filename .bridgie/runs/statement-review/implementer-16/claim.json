@@ -1,0 +1,41 @@
+{
+  "task": "T02",
+  "claims": [
+    {
+      "text": "Contracts tier, run with all extras installed (durable, mcp, llm, dev): a pending review stored as the old version wrote it (Transactions without account_key, rule_id, provider_hint) resumes to an approved memo, both through the in-memory saver and end to end through `cma run --checkpoint-db` / `cma resume` on SQLite; today's evidence key paths are a subset of the record `cma run` now writes, which carries schema_version 1; the committed example evidence carries today's keys and schema_version.",
+      "proof_cmd": "python -m pytest -q -rA -m contracts",
+      "proof_output": "PASSED tests/test_models.py::test_a_pending_review_saved_before_the_new_fields_resumes\nPASSED tests/test_models.py::test_a_checkpoint_written_before_the_new_fields_resumes\nPASSED tests/test_models.py::test_todays_evidence_keys_are_a_subset_of_the_new_record\nPASSED tests/test_models.py::test_the_committed_example_evidence_carries_todays_keys_and_a_schema_version\n4 passed, 250 deselected in 1.36s"
+    },
+    {
+      "text": "Full suite passes with nothing skipped in this environment (extras installed): the six new Category values, the CREDIT_BUCKET map, cash_deposit in REVENUE_CATEGORIES and the Transaction field defaults are tested in tests/test_models.py.",
+      "proof_cmd": "python -m pytest -q -rs",
+      "proof_output": "254 passed in 3.79s"
+    },
+    {
+      "text": "Lint and compile pass.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src",
+      "proof_output": "All checks passed!"
+    },
+    {
+      "text": "Offline evals still pass.",
+      "proof_cmd": "python evals/run_evals.py",
+      "proof_output": "9/9 memos fully grounded; model = fake"
+    }
+  ],
+  "files_changed": [
+    "src/cma/models.py",
+    "src/cma/graph.py",
+    "src/cma/metrics.py",
+    "examples/cafe_stretched.memo.evidence.json",
+    "examples/cafe_stretched.memo.md",
+    "tests/test_models.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "tests/test_models.py:193 (R53, major): The claimed zero-skip full suite and SQLite legacy-checkpoint resume have producer evidence only. The configured runner skipped the durable path before creating a checkpoint.",
+      "disposition": "reproduced",
+      "evidence": "The SQLite test used pytest.importorskip, so a runner without the durable extra skipped it silently, and it was unmarked so no tier reported it by name. Fixed: both resume tests and the two new evidence-key tests are now @pytest.mark.contracts, and the SQLite test imports langgraph.checkpoint.sqlite directly, so it fails (not skips) without the extra. With all extras installed, `python -m pytest -q -rA -m contracts` shows tests/test_models.py::test_a_checkpoint_written_before_the_new_fields_resumes PASSED, and `python -m pytest -q -rs` shows 254 passed with no skips."
+    }
+  ],
+  "notes": "The worktree started at cba9dba without the earlier T02 commits; they were re-applied (3667577, 413c277; no source drift since their base f74eaac) and extended. New in this attempt: EVIDENCE_SCHEMA_VERSION = 1 in models.py, written as the first key of the record `cma run` writes (graph.evidence_record), and added to the committed example evidence. The task title puts schema_version on the cma run record here; T25 still owns the pack's full v1 record. The contracts SQLite test now needs the durable extra (pip install -e \".[dev,mcp,durable,llm]\", per the project gotcha): in an environment without it, that test fails by design rather than skipping."
+}
