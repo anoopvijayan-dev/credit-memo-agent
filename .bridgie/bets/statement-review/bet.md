@@ -163,6 +163,7 @@ Every answer and decision, dated.
 - 2026-11-18 D51 (unblock): take over manually — Owner: take over with the prepared fix. writer() always closes the lock descriptor, even when the explicit unlock fails (closing releases the lock); invariants test p15 proves a failed unlock leaves the lock free. → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 - 2026-11-18 D53 (question): Cues that agree outrank names (design default, follows D46 and D48) → recorded [Anoop Vijayan]
 - 2026-11-18 D54 (question): An override, a profile name or a pairing; never a firm rule (design default, keeps R5, R6 and R8) → recorded [Anoop Vijayan]
+- 2026-11-18 D55 (approve_design): approve → design approved [Anoop Vijayan]
 
 ## Idea
 
