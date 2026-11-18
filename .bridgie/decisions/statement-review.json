@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 50,
+  "next_id": 51,
   "decisions": [
     {
       "id": "D1",
@@ -1070,6 +1070,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-18T08:49:51.981Z"
+    },
+    {
+      "id": "D50",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: major: A lock subsystem error is treated as evidence of a live writer. On a torn log, verification can therefore return the recorded prefix as intact and the CLI can exit 0 even though no writer holds the lock. The passing contention test covers a held lock only. at src/cma/case.py:394; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-18T08:58:55.372Z"
     }
   ]
 }

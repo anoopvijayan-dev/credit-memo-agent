@@ -146,12 +146,12 @@
         "P15"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T12",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-26/evidence.json",
-      "escalation": "attempt 2 of 3 fail: P15 fail (requirements.md:249 requires detection on the next load. src/cma/case.py:238 validates sequence, hashes and links. Lines 256–280 compare each entry with the recorded head and identify the first divergence. The runner passed 77 invariants, including the rebuilt-chain assertions at tests/test_case_log.py:540 and :567. Production code has no case-load caller for verify or require_intact, so the detection is available only through the library. The contracts and full-suite logs confirm duplicate-submit refusal, thread and process contention, JSON boundaries, owner-only file creation and UTC timestamps. The change adds no currency calculation, endpoint, tenant query, migration or existing contract consumer.); major: The integrity check is unreachable from production case loading. The runner exercises the case-log library directly. The case store and sign-off are assigned to T13 and T27. at src/cma/case.py:296; major: A reader can report a healthy log as corrupted during rapid appends. After the retry budget is exhausted, the lock-contention branch can return a failure computed from a stale head and newer log bytes. at src/cma/case.py:322; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-28/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: major: A lock subsystem error is treated as evidence of a live writer. On a torn log, verification can therefore return the recorded prefix as intact and the CLI can exit 0 even though no writer holds the lock. The passing contention test covers a held lock only. at src/cma/case.py:394; reviewer verdict fail"
     },
     {
       "id": "T13",
