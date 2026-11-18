@@ -1,8 +1,8 @@
 """Build tests/golden/p7_v1_baseline.json from the code as it was BEFORE T01.
 
 Run from a checkout of the pre-change commit (fd7b64c), with the capture produced by
-capture_plugin.py (every statement the test suite computes metrics on, and every
-line the categoriser sees). Install the durable extra so no capturing test is skipped.
+capture_plugin.py (every statement the test suite computes metrics on or categorises
+as a whole, and every line the categoriser sees). Install the durable extra so no capturing test is skipped.
 From the worktree root, with S a scratch directory:
 
     git archive fd7b64c | tar -x -C $S/old

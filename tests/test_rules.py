@@ -333,13 +333,18 @@ def test_p7_golden_covers_every_case():
     combos = {(c["archetype"], c["profile"]) for c in g["synthetic"]}
     assert combos >= {(a, p) for a in synth.ARCHETYPES for p in synth.PROFILES}
     assert [e["path"] for e in g["examples"]] == ["examples/cafe_stretched.csv"]
-    assert len(g["fixtures"]) >= 37 and g["lines"]
+    assert len(g["fixtures"]) >= 43 and g["lines"]
     # The same lines under another VAT stagger are another case (M13 differs); the
     # stagger-3 run of the on-time stagger-1 VAT year is the regression case for that.
     by_lines: dict[str, set] = {}
     for f in g["fixtures"]:
         by_lines.setdefault(json.dumps([line[:5] for line in f["lines"]]), set()).add(f["vat_stagger"])
     assert any({1, 3} <= staggers for staggers in by_lines.values())
+    # A whole statement the pre-change tests categorised without computing metrics still
+    # gets an M1-M16 baseline (verify-10: the two-credit Monzo invoice fixture in
+    # tests/test_import_monzo.py was captured only as single lines).
+    descriptions = [{line[2] for line in f["lines"]} for f in g["fixtures"]]
+    assert {"FPS CREDIT OAKFIELD PROPERTIES INV1042", "BACS CREDIT ACME LTD INVOICE2210"} in descriptions
 
 
 @pytest.mark.dual_run
