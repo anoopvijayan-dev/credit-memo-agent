@@ -1,0 +1,100 @@
+{
+  "task": "T01",
+  "criteria": [
+    {
+      "id": "R54",
+      "tier": "adversarial",
+      "check": "The shipped YAML preserves the pre-change rule order, patterns, directions and categories. src/cma/categorise.py:160–189 selects and hashes the table, src/cma/graph.py:215–218 records the table actually used, and src/cma/cli.py:218–222 writes its provenance. contracts:4 proves wheel packaging, graph evidence and both checkpoint migration directions. The CLI evidence test at tests/test_cli.py:60 appears only in the aggregate suite log. A named run would be `python -m pytest -v tests/test_cli.py::test_written_evidence_records_the_ruleset`. The freeze fails for a schema-valid replacement table, which also makes inferred legacy provenance unreliable.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "P7",
+      "tier": "adversarial",
+      "check": "invariants:5 and dual_run:7 show that the newest-first and BOM fixtures now replay successfully. tests/test_p7_history.py:78–84 checks the historical rebuild and explicitly excludes `_about` from value comparisons. tests/test_rules.py:339–392 covers the enumerated cases, but historical capture misses the valid balance-column Monzo fixture at tests/test_import_monzo.py:74–82. The runner produced no M1–M16 comparison for it. After adding it to historical capture and replay, `python -m pytest -v -m 'invariants or dual_run'` would prove the comparison.",
+      "result": "not_proven",
+      "artifact": "tests/golden/p7_v1_baseline.json.gz"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-12/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-12/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -q -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-12/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-12/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-12/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-12/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-12/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 181,
+      "criterion": "R54",
+      "claim": "The loader accepts a schema-valid change to the frozen v1 rules. New evidence still calls it v1, and a pending pre-change review can be attributed to the replacement file's hash by src/cma/graph.py:177–178.",
+      "repro": "In a disposable install, keep `id: v1` and `frozen: true`, change the `card_settlement` category to `other`, and start a fresh `CMA_RULESET=v1 cma run` on the committed café example. Card settlement credits stop counting as revenue under the same v1 id. Resume a checkpoint drafted at fd7b64c with that install and its evidence reports the replacement hash for figures computed with the original rules."
+    },
+    {
+      "severity": "major",
+      "file": "tests/golden/p7_tools/capture_plugin.py",
+      "line": 56,
+      "criterion": "P7",
+      "claim": "The capture omits a valid committed Monzo fixture whose successful path writes a statement CSV and checks import metadata without loading the output. Rebuilding the golden repeats the omission.",
+      "repro": "Trace the first conversion in tests/test_import_monzo.py:74–82. src/cma/importers/monzo.py:195–204 writes the two-row CSV and returns metadata without invoking any capture hook. Inspect the committed golden for the `tx_1` credit of 100.00 from `FPS CREDIT CLIENT A` followed by the `tx_2` debit of 50.00 from `CARD SHOP`. The fixture has no M1–M16 replay."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_p7_history.py",
+      "line": 82,
+      "criterion": "P7",
+      "claim": "The producer's claim that the historical rebuild equals the committed file on every key exceeds the test's assertion. The test excludes `_about` from value comparisons.",
+      "repro": "Change only the `_about` value in a disposable copy of the committed golden and run `python -m pytest -v tests/test_p7_history.py::test_p7_golden_is_rebuilt_exactly_from_the_pre_change_commit`. The equality assertions still pass."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

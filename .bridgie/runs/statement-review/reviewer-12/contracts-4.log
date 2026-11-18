@@ -1,0 +1,19 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.18, pytest-9.2.0, pluggy-1.7.0 -- /usr/local/bin/python
+cachedir: .pytest_cache
+rootdir: /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T01
+configfile: pyproject.toml
+testpaths: tests
+plugins: langsmith-0.14.17, anyio-4.15.1
+collecting ... collected 362 items / 354 deselected / 8 selected
+
+tests/test_p7_history.py::test_a_review_left_pending_by_the_pre_change_version_resumes_here PASSED [ 12%]
+tests/test_p7_history.py::test_rollback_a_review_left_pending_here_resumes_under_the_pre_change_version PASSED [ 25%]
+tests/test_p7_history.py::test_the_built_wheel_carries_v1_byte_for_byte PASSED [ 37%]
+tests/test_p7_history.py::test_cma_run_refuses_when_the_rules_package_is_missing PASSED [ 50%]
+tests/test_rules.py::test_v1_is_packaged_with_an_id_and_the_hash_of_its_file PASSED [ 62%]
+tests/test_rules.py::test_evidence_records_the_ruleset PASSED            [ 75%]
+tests/test_rules.py::test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1 PASSED [ 87%]
+tests/test_rules.py::test_a_legacy_resume_with_a_damaged_table_is_refused_before_anything_is_recorded PASSED [100%]
+
+====================== 8 passed, 354 deselected in 11.03s ======================
