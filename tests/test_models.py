@@ -7,6 +7,7 @@ from datetime import date
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 from typer.testing import CliRunner
 
 from cma import synth
@@ -294,3 +295,31 @@ def test_the_committed_example_evidence_carries_todays_keys_and_a_schema_version
     record = json.loads(path.read_text())
     assert _key_paths(record) >= TODAYS_EVIDENCE_KEYS
     assert record["schema_version"] == EVIDENCE_SCHEMA_VERSION
+
+
+# --- rollback: the release before this change reads what this one writes ---------------
+
+class _PreviousTransaction(BaseModel):
+    """Transaction as the release before T02 defined it (src/cma/models.py at cba9dba):
+    the same fields and pydantic's default config, which ignores unknown keys."""
+
+    id: str
+    date: date
+    description: str
+    amount: float
+    balance: float
+    category: Category | None = None
+    reverses: str | None = None
+
+
+@pytest.mark.contracts
+def test_the_previous_release_loads_a_transaction_written_by_this_one():
+    # Rollback by reinstalling the previous wheel: a pending review saved by this version
+    # holds Transactions with the new fields, and the previous model must still load them.
+    assert set(Transaction.model_fields) - set(NEW_FIELDS) == set(_PreviousTransaction.model_fields)
+    assert Transaction.model_config.get("extra") in (None, "ignore")  # stays rollback-safe
+    t = Transaction(id="T1", date=date(2026, 3, 5), description="X", amount=1.0, balance=1.0,
+                    category=Category.REVENUE_CARD, account_key="savings", rule_id="v2:x",
+                    provider_hint="CASH")
+    old = _PreviousTransaction(**t.model_dump())
+    assert old.model_dump() == {k: v for k, v in t.model_dump().items() if k not in NEW_FIELDS}
