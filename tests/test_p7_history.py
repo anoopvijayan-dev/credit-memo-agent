@@ -143,6 +143,32 @@ def test_a_review_left_pending_by_the_pre_change_version_resumes_here(pre_change
 
 
 @pytest.mark.contracts
+@pytest.mark.dual_run
+def test_rollback_a_review_left_pending_here_resumes_under_the_pre_change_version(pre_change, tmp_path):
+    """Rollback path: a review left pending in a --checkpoint-db by this code (its state
+    now carries `ruleset`) is resumed by the pre-change commit, as after reinstalling the
+    previous wheel. It must finish and write its memo and evidence."""
+    pytest.importorskip("langgraph.checkpoint.sqlite")
+    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
+    csv_path, _ = synth.write(rows, truth, tmp_path)
+    db, out = tmp_path / "reviews.db", tmp_path / "memo.md"
+    new = subprocess.run(
+        [sys.executable, "-m", "cma.cli", "run", str(csv_path), "--checkpoint-db", str(db), "--thread", "new-1"],
+        cwd=tmp_path, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+        env=_env(PYTHONPATH=str(ROOT / "src")))
+    assert "review id: new-1" in new.stdout, new.stdout + new.stderr
+    old = subprocess.run(
+        [sys.executable, "-m", "cma.cli", "resume", "new-1", "--checkpoint-db", str(db), "--reviewer", "C",
+         "--out", str(out)],
+        cwd=tmp_path, input="y\n\n", capture_output=True, text=True,
+        env=_env(PYTHONPATH=str(pre_change / "src")))
+    assert old.returncode == 0, old.stdout[-2000:] + old.stderr[-2000:]
+    assert "APPROVED by C" in out.read_text()
+    record = json.loads((tmp_path / "memo.evidence.json").read_text())
+    assert "ruleset" not in record and record["guard"]["grounded"] is True
+
+
+@pytest.mark.contracts
 def test_the_built_wheel_carries_v1_byte_for_byte(tmp_path):
     """Build the wheel, install it in a fresh virtual environment and load v1 from
     outside the checkout; its hash must be the source file's."""
