@@ -16,7 +16,7 @@ from rich.table import Table
 
 from . import guard as grd
 from . import synth
-from .categorise import RulesetError
+from .categorise import RulesetError, active_ruleset
 from .graph import build, evidence_record, ruleset_used, sqlite_checkpointer
 from .ingest import StatementError
 from .llm import get_llm
@@ -71,6 +71,13 @@ def run(
         console.print("[red]--yes needs --reviewer NAME: an approval must say who approved.[/red]")
         raise typer.Exit(code=2)
     _refuse_to_overwrite(out)
+    try:
+        # Refuse a bad CMA_RULESET before the graph checkpoints anything: a refusal after the first
+        # checkpoint would leave the review id taken, so a corrected retry could not reuse it.
+        active_ruleset()
+    except RulesetError as e:
+        console.print(f"[red]Refused.[/red] {e}")
+        raise typer.Exit(code=2) from e
     thread_id = thread or str(uuid.uuid4())
     with _checkpointer(checkpoint_db) as saver:
         graph = build(get_llm(llm), checkpointer=saver)

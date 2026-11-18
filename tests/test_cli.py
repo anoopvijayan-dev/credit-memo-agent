@@ -81,6 +81,22 @@ def test_whitespace_reviewer_is_refused(tmp_path):
     assert r.exit_code == 2
 
 
+@pytest.mark.contracts
+def test_a_refused_ruleset_leaves_a_durable_review_id_reusable(tmp_path, monkeypatch):
+    # T01 review: the refusal came after the first checkpoint, so the id stayed taken.
+    pytest.importorskip("langgraph.checkpoint.sqlite")
+    db = tmp_path / "reviews.sqlite"
+    csv = _statement(tmp_path)
+    monkeypatch.setenv("CMA_RULESET", "v9")
+    r = runner.invoke(app, ["run", str(csv), "--checkpoint-db", str(db), "--thread", "case-9"], input="\x04")
+    assert r.exit_code == 2, r.output
+    assert "Refused." in r.output and "CMA_RULESET" in r.output
+    monkeypatch.delenv("CMA_RULESET")
+    r = runner.invoke(app, ["run", str(csv), "--checkpoint-db", str(db), "--thread", "case-9"], input="\x04")
+    assert "already used" not in r.output, r.output
+    assert "review id: case-9" in r.output, r.output
+
+
 def test_pending_review_survives_a_restart(tmp_path):
     # Panel run 02, D15: a pending review lived only in memory.
     pytest.importorskip("langgraph.checkpoint.sqlite")
