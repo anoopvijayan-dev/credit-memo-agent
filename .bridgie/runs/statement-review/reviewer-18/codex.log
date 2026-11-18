@@ -1,0 +1,37 @@
+```json
+{
+  "task": "T01",
+  "criteria": [
+    {
+      "id": "R54",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:165 validates the packaged table, pins its byte hash and restricts selection to known IDs. src/cma/graph.py:216 records the table actually used, and src/cma/cli.py:229 writes its metadata to evidence. The contracts log confirms explicit and default v1, wheel packaging, path rejection, hash rejection and SQLite migration in both directions. The earlier durable retry defect is fixed by preflight validation at src/cma/cli.py:77, and the named retry test passed. The separate claim of unchanged categorisation performance still lacks a runner-produced comparison.",
+      "result": "not_proven",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "P7",
+      "tier": "adversarial",
+      "check": "tests/test_p7_history.py:34 pins fd7b64c and the test at line 59 rebuilds the golden from that commit. tests/golden/p7_tools/capture_plugin.py:65 includes valid statements left in test temporary directories. tests/test_rules.py:382 verifies coverage, including the Monzo balance-column fixture, and the tests at lines 421, 435 and 447 compare M1–M16, evidence and categories under v1. The runner logged the historical rebuild and replay tests passing in both invariants and dual_run.",
+      "result": "pass",
+      "artifact": "dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 285,
+      "criterion": "R54",
+      "claim": "The claimed before-and-after categorisation timing is unproven. The runner logged 372 passing tests and nine grounded eval memos, but produced no paired categorisation benchmark. The eval timings cover whole memo runs and provide no pre-change measurement.",
+      "repro": "To prove the claim, run `python -m timeit -r 5 -n 20 -s 'from pathlib import Path; from cma import categorise, ingest; s = ingest.load_csv(Path(\"examples/cafe_stretched.csv\"))' 'categorise.categorise(s)'` from each checkout with PYTHONPATH pointing to that checkout's src directory, using fd7b64c and the reviewed revision in the same environment. Record both results in a runner log."
+    }
+  ],
+  "verdict": "not_proven",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
+```

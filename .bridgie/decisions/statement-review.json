@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 45,
+  "next_id": 46,
   "decisions": [
     {
       "id": "D1",
@@ -970,6 +970,26 @@
       "decided_at": "2026-11-18T05:35:23.114Z",
       "effect": "task T01 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T01",
       "created_at": "2026-11-18T05:28:27.362Z"
+    },
+    {
+      "id": "D45",
+      "type": "unblock",
+      "task": "T01",
+      "raised_by": null,
+      "context": "Task T01 \"Move the built-in rule table into packaged, validated YAML under src/cma/rules/ (v1 frozen, with id and hash); CMA_RULESET selects it and cma run records the ruleset id and hash in evidence; test (dual_run and invariants, named p7): M1-M16 under v1 equal a golden captured by running the pre-change commit over every committed fixture and synthetic archetype, with the capture script and commit id kept under tests/\" is blocked after 5 attempts. Last verdict not_proven: R54 not_proven (src/cma/categorise.py:165 validates the packaged table, pins its byte hash and restricts selection to known IDs. src/cma/graph.py:216 records the table actually used, and src/cma/cli.py:229 writes its metadata to evidence. The contracts log confirms explicit and default v1, wheel packaging, path rejection, hash rejection and SQLite migration in both directions. The earlier durable retry defect is fixed by preflight validation at src/cma/cli.py:77, and the named retry test passed. The separate claim of unchanged categorisation performance still lacks a runner-produced comparison.); reviewer verdict not_proven",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-18T05:38:10.862Z"
     }
   ]
 }
