@@ -36,7 +36,8 @@ cma run examples/cafe_stretched.csv --vat-stagger 3
 # Scripts can approve with --yes, but only with a named reviewer and only if
 # every figure passed the grounding check; the memo is stamped
 # "automated, no interactive review". --out also writes memo.evidence.json
-# (every transaction id behind every figure); a rejected memo goes to
+# (every transaction id behind every figure, with "schema_version": 1; a record
+# without that key is v0, and v1 only adds keys); a rejected memo goes to
 # memo.rejected.md.
 # Existing files are never overwritten.
 cma run examples/cafe_stretched.csv --vat-stagger 3 --yes --reviewer "A. Analyst" --out private/memo.md

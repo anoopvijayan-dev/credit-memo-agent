@@ -35,7 +35,15 @@ from . import ingest
 from . import metrics as met
 from . import policy as pol
 from .llm import LLM, get_llm
-from .models import GuardResult, Metric, PolicyResult, ReviewDecision, Statement, format_value
+from .models import (
+    EVIDENCE_SCHEMA_VERSION,
+    GuardResult,
+    Metric,
+    PolicyResult,
+    ReviewDecision,
+    Statement,
+    format_value,
+)
 
 MAX_REDRAFTS = 2
 
@@ -166,6 +174,7 @@ def appendix(s: MemoState) -> str:
 def evidence_record(s: MemoState) -> dict:
     """Everything needed to audit the memo later, as plain JSON."""
     return {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
         "statement": {"path": s["statement_path"], "sha256": s.get("statement_sha256"),
                       "start": str(s["statement"].start), "end": str(s["statement"].end),
                       "transactions": len(s["statement"].transactions)},

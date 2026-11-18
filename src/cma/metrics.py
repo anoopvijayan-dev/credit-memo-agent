@@ -250,7 +250,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
                method="Days from the first transaction to the last, in months, to the nearest month.",
                evidence=[txns[0].id, txns[-1].id]),
         Metric(id="M2", name="Total revenue", value=g(total_revenue), unit="GBP",
-               method="Card and gateway settlements, plus transfers in that carry an invoice reference.",
+               method="Card and gateway settlements, transfers in that carry an invoice reference, and cash paid in.",
                evidence=[t.id for t in rev]),
         Metric(id="M3", name="Average monthly revenue",
                value=g(total_revenue / period_months), unit="GBP",
