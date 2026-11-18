@@ -17,6 +17,8 @@ jobs:
         python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # tests/test_p7_history.py rebuilds the P7 golden from fd7b64c
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
@@ -34,3 +36,7 @@ jobs:
           python -m venv /tmp/wheelcheck
           /tmp/wheelcheck/bin/pip install /tmp/dist/*.whl
           cd /tmp && /tmp/wheelcheck/bin/python -c "from cma import policy; print(policy.load_policy()['name'])"
+          cd /tmp && /tmp/wheelcheck/bin/python -c "import cma; from cma import categorise as c; r = c.load_ruleset('v1'); print(cma.__file__, r.id, r.sha256)"
+          # The installed table must be the source table, byte for byte.
+          want=$(sha256sum "$GITHUB_WORKSPACE/src/cma/rules/v1.yaml" | cut -d' ' -f1)
+          cd /tmp && /tmp/wheelcheck/bin/python -c "import sys; from cma import categorise as c; sys.exit(c.load_ruleset('v1').sha256 != sys.argv[1])" "$want"

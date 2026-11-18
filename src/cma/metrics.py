@@ -286,7 +286,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
                method="Payments to HMRC PAYE/NI, net of any returned unpaid.", evidence=[t.id for t in paye]),
         Metric(id="M15", name="Top customer share of transfer revenue", value=top_share, unit="pct",
                method=top_note, evidence=[t.id for t in transfers]),
-        Metric(id="M16", name="Unclassified inflows", value=unclassified_share, unit="pct",
+        Metric(id="M16", name="Non-trading money in (share)", value=unclassified_share, unit="pct",
                method="Share of money in (excluding loan drawdowns and returned DDs) that is not revenue; it is left out of operating cash flow.",
                evidence=[t.id for t in inflows]),
     ]

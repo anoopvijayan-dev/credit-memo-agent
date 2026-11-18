@@ -97,6 +97,7 @@ class MemoState(TypedDict, total=False):
     model: str
     statement_sha256: str
     statement: Statement
+    ruleset: dict  # {"id", "sha256"} of the categorisation table used (CMA_RULESET)
     metrics: list[Metric]
     policy: PolicyResult
     memo: str
@@ -163,6 +164,19 @@ def appendix(s: MemoState) -> str:
     return "\n".join(lines)
 
 
+def ruleset_used(s: MemoState) -> dict:
+    """The categorisation table the memo's figures came from. A review drafted before the
+    table moved to data (a pending checkpoint from an older version) has none in its state;
+    its lines were categorised by the table now packaged as v1, frozen and compared with
+    the old code (tests/test_rules.py, P7), so it is named as v1 and marked as inferred,
+    never null. That lookup reads the packaged table and can raise RulesetError, so the
+    CLI calls this before a decision is recorded, not after."""
+    if s.get("ruleset"):
+        return s["ruleset"]
+    v1 = cat.load_ruleset("v1")
+    return {"id": v1.id, "sha256": v1.sha256, "inferred": "pre-ruleset checkpoint"}
+
+
 def evidence_record(s: MemoState) -> dict:
     """Everything needed to audit the memo later, as plain JSON."""
     return {
@@ -171,6 +185,7 @@ def evidence_record(s: MemoState) -> dict:
                       "transactions": len(s["statement"].transactions)},
         "model": s.get("model"),
         "vat_stagger": s.get("vat_stagger"),
+        "ruleset": ruleset_used(s),
         "metrics": [m.model_dump() for m in s["metrics"]],
         "policy": s["policy"].model_dump(mode="json"),
         "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
@@ -198,7 +213,9 @@ def build(llm: LLM | None = None, checkpointer=None):
         }
 
     def categorise(s: MemoState) -> MemoState:
-        return {"statement": cat.categorise(s["statement"])}
+        rules = cat.active_ruleset()
+        return {"statement": cat.categorise(s["statement"], rules),
+                "ruleset": {"id": rules.id, "sha256": rules.sha256}}
 
     def metrics(s: MemoState) -> MemoState:
         return {"metrics": met.compute(s["statement"], vat_stagger=s.get("vat_stagger"))}

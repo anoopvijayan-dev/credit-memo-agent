@@ -16,7 +16,8 @@ from rich.table import Table
 
 from . import guard as grd
 from . import synth
-from .graph import build, evidence_record, sqlite_checkpointer
+from .categorise import RulesetError
+from .graph import build, evidence_record, ruleset_used, sqlite_checkpointer
 from .ingest import StatementError
 from .llm import get_llm
 from .policy import PolicyError
@@ -83,7 +84,7 @@ def run(
                  "vat_stagger": vat_stagger},
                 cfg,
             )
-        except (StatementError, PolicyError) as e:
+        except (StatementError, PolicyError, RulesetError) as e:
             console.print(f"[red]Refused.[/red] {e}")
             raise typer.Exit(code=2) from e
         except Exception as e:  # the model provider: network, auth, cut-off reply
@@ -172,6 +173,15 @@ def _review(graph, cfg, state, reviewer, yes, out):
     if not interrupts:
         raise typer.Exit(code=1)
     payload = interrupts[0].value
+    # Settle which rule table the evidence will name while the review is still pending. A
+    # review drafted by an older version has none stored, and naming it reads the packaged
+    # v1 table; if that fails after the decision is recorded, the memo has no evidence and
+    # the review can no longer be resumed. Refuse here instead, with nothing decided.
+    try:
+        ruleset = ruleset_used(state)
+    except RulesetError as e:
+        console.print(f"[red]Refused, nothing recorded.[/red] {e}")
+        raise typer.Exit(code=2) from e
 
     _print_metrics(state["metrics"])
     _print_policy(state["policy"])
@@ -209,7 +219,7 @@ def _review(graph, cfg, state, reviewer, yes, out):
         target = out if approved else out.with_name(out.stem + ".rejected.md")
         evidence = _evidence_path(target)
         target.write_text(final["final_memo"])
-        evidence.write_text(json.dumps(evidence_record(final), indent=2, default=str))
+        evidence.write_text(json.dumps(evidence_record({**final, "ruleset": ruleset}), indent=2, default=str))
         console.print(f"wrote {target} and {evidence}")
     if not approved:
         console.rule("Not approved")
