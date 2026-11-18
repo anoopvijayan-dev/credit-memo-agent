@@ -15,8 +15,8 @@ default_lane: engineering
 verify:
   commands:
     mechanical: ['ruff check src tests evals', 'python -m compileall -q src']
-    specified: ['python -m pytest -q']
-    contracts: ['python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -q -m contracts']
-    invariants: ['python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -q -m invariants']
+    specified: ['python -m pytest -q -rs']
+    contracts: ['python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -v -m contracts']
+    invariants: ['python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -v -m invariants']
     behavioural: ['python evals/run_evals.py']
-    dual_run: ['python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -q -m dual_run']
+    dual_run: ['python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -v -m dual_run']
