@@ -146,6 +146,7 @@ Every answer and decision, dated.
 - 2026-11-16 D36 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-16 D37 (ack_risk): ack → risk paths acknowledged [Anoop Vijayan]
 - 2026-11-17 D38 (unblock): retry with guidance — Fix the 2 majors: reject duplicate YAML keys when loading a rule table; make the legacy-resume ruleset lookup fail before the review is recorded, or fall back to v1. Test the missing-table path and hash the file bytes. Remove claims the runner cannot prove (wheel install, historical replay, no-skip suite) from the claim instead of asserting them. → task T01 gets one more attempt [Anoop Vijayan]
+- 2026-11-18 D39: superseded (re-planned; the task it was about was replaced) [Anoop Vijayan]
 
 ## Idea
 
