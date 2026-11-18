@@ -1,0 +1,53 @@
+```json
+{
+  "task": "T01",
+  "criteria": [
+    {
+      "id": "R54",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:165 validates the selected packaged table and checks its byte hash against the v1 pin. .gitattributes:4 preserves LF, resolving the previous checkout defect. src/cma/graph.py:215 captures the id and hash once per statement, and src/cma/graph.py:188 and src/cma/cli.py:222 put them in the evidence. contracts:4 names passing explicit-v1, default-v1, wheel, freeze, LF and checkpoint tests. The allowlist precedes resource lookup, and the MCP consumers retain their existing path checks at src/cma/mcp_server.py:37. The runner's full-suite log gives an aggregate count only, so the specific unknown-id and path-rejection test claims remain unverified by name. The claimed clean refusal also misses the durable partial failure described below.",
+      "result": "not_proven",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "P7",
+      "tier": "adversarial",
+      "check": "tests/test_p7_history.py:34 identifies fd7b64c and lines 61–86 rebuild and compare the complete golden. tests/golden/p7_tools/capture_plugin.py:64 captures generated statement files, including the Monzo balance-column fixture. tests/test_rules.py:381 checks coverage, and lines 413–459 compare metric ids, units, values and evidence under explicit v1. Both full marker logs name the historical rebuild and coverage tests as passing, and show the synthetic, committed example, fixture and single-line comparisons. dual_run:7 also names the ordered-rule and signed/zero-amount comparisons. The production diff leaves currency and date handling unchanged.",
+      "result": "pass",
+      "artifact": "dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 304,
+      "criterion": "R54",
+      "claim": "A ruleset refusal can reserve a durable review id before any draft exists. The graph checkpoints the load step before the categorisation step validates the ruleset. The CLI then refuses to reuse the id, while resume requires a review interrupt.",
+      "repro": "With the durable extra and a fresh SQLite path, run `CMA_RULESET=v9 cma run examples/cafe_stretched.csv --checkpoint-db reviews.sqlite --thread retry --yes --reviewer A`. After the refusal, repeat with `CMA_RULESET=v1` and the same database and thread. src/cma/cli.py:77 rejects the used id, and `cma resume retry --checkpoint-db reviews.sqlite` reaches the no-interrupt refusal at src/cma/cli.py:114. The runner's damaged-table resume test starts with an already drafted review and does not exercise this sequence."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_cli.py",
+      "line": 52,
+      "criterion": "R54",
+      "claim": "The producer's named unknown-id and path-rejection test results are not proven by the runner logs. The applicable full-suite row reports 371 passes in aggregate, and the marked rows do not identify these tests.",
+      "repro": "Run `python -m pytest -v -rs -k 'unknown_ruleset or cannot_name_a_path or unknown_cma_ruleset'` as a runner tier and check the three named result rows."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 284,
+      "criterion": "R54",
+      "claim": "The producer's before-and-after performance claim has no runner benchmark result. The offline eval log reports whole-case timings for the current code only.",
+      "repro": "Run the same `timeit.repeat` benchmark in fd7b64c and the reviewed checkout, using `categorise.categorise` on a preloaded `examples/cafe_stretched.csv` statement with `repeat=5` and `number=20`. Record both timings in a runner result."
+    }
+  ],
+  "verdict": "not_proven",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
+```

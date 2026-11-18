@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 43,
+  "next_id": 44,
   "decisions": [
     {
       "id": "D1",
@@ -930,6 +930,26 @@
       "decided_at": "2026-11-18T05:13:36.990Z",
       "effect": "task T01 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T01",
       "created_at": "2026-11-18T05:12:48.497Z"
+    },
+    {
+      "id": "D43",
+      "type": "unblock",
+      "task": "T01",
+      "raised_by": null,
+      "context": "Task T01 \"Move the built-in rule table into packaged, validated YAML under src/cma/rules/ (v1 frozen, with id and hash); CMA_RULESET selects it and cma run records the ruleset id and hash in evidence; test (dual_run and invariants, named p7): M1-M16 under v1 equal a golden captured by running the pre-change commit over every committed fixture and synthetic archetype, with the capture script and commit id kept under tests/\" is blocked after 5 attempts. Last verdict not_proven: R54 not_proven (src/cma/categorise.py:165 validates the selected packaged table and checks its byte hash against the v1 pin. .gitattributes:4 preserves LF, resolving the previous checkout defect. src/cma/graph.py:215 captures the id and hash once per statement, and src/cma/graph.py:188 and src/cma/cli.py:222 put them in the evidence. contracts:4 names passing explicit-v1, default-v1, wheel, freeze, LF and checkpoint tests. The allowlist precedes resource lookup, and the MCP consumers retain their existing path checks at src/cma/mcp_server.py:37. The runner's full-suite log gives an aggregate count only, so the specific unknown-id and path-rejection test claims remain unverified by name. The claimed clean refusal also misses the durable partial failure described below.); reviewer verdict not_proven",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-18T05:16:04.893Z"
     }
   ]
 }

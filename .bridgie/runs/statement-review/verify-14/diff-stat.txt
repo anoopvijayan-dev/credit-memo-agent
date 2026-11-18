@@ -1,0 +1,18 @@
+ .gitattributes                             |   4 +
+ .github/workflows/ci.yml                   |   6 +
+ README.md                                  |  13 +-
+ examples/cafe_stretched.memo.evidence.json |   8 +-
+ examples/cafe_stretched.memo.md            |   4 +-
+ src/cma/categorise.py                      | 206 ++++++++--
+ src/cma/cli.py                             |  16 +-
+ src/cma/graph.py                           |  19 +-
+ src/cma/metrics.py                         |   2 +-
+ src/cma/rules/__init__.py                  |   0
+ src/cma/rules/v1.yaml                      |  60 +++
+ tests/golden/p7_tools/capture_plugin.py    |  86 ++++
+ tests/golden/p7_tools/make_p7_baseline.py  | 144 +++++++
+ tests/golden/p7_v1_baseline.json.gz        | Bin 0 -> 49588 bytes
+ tests/test_cli.py                          |  26 ++
+ tests/test_p7_history.py                   | 213 ++++++++++
+ tests/test_rules.py                        | 613 +++++++++++++++++++++++++++++
+ 17 files changed, 1381 insertions(+), 39 deletions(-)

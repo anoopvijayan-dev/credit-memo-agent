@@ -1,0 +1,27 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.18, pytest-9.2.0, pluggy-1.7.0 -- /usr/local/bin/python
+cachedir: .pytest_cache
+rootdir: /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T01
+configfile: pyproject.toml
+testpaths: tests
+plugins: langsmith-0.14.17, anyio-4.15.1
+collecting ... collected 371 items / 355 deselected / 16 selected
+
+tests/test_cli.py::test_written_evidence_records_the_ruleset[None] PASSED [  6%]
+tests/test_cli.py::test_written_evidence_records_the_ruleset[v1] PASSED  [ 12%]
+tests/test_p7_history.py::test_a_review_left_pending_by_the_pre_change_version_resumes_here PASSED [ 18%]
+tests/test_p7_history.py::test_rollback_a_review_left_pending_here_resumes_under_the_pre_change_version PASSED [ 25%]
+tests/test_p7_history.py::test_the_built_wheel_carries_v1_byte_for_byte PASSED [ 31%]
+tests/test_p7_history.py::test_cma_run_refuses_when_the_rules_package_is_missing PASSED [ 37%]
+tests/test_rules.py::test_v1_is_packaged_with_an_id_and_the_hash_of_its_file PASSED [ 43%]
+tests/test_rules.py::test_v1_hash_is_pinned_in_code PASSED               [ 50%]
+tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[category: revenue_card_settlement-category: other] PASSED [ 56%]
+tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[direction: in\n-direction: any\n] PASSED [ 62%]
+tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[frozen: true-frozen: false] PASSED [ 68%]
+tests/test_rules.py::test_cma_run_refuses_a_changed_v1_and_writes_no_evidence PASSED [ 75%]
+tests/test_rules.py::test_evidence_records_the_ruleset PASSED            [ 81%]
+tests/test_rules.py::test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1 PASSED [ 87%]
+tests/test_rules.py::test_a_legacy_resume_with_a_damaged_table_is_refused_before_anything_is_recorded PASSED [ 93%]
+tests/test_rules.py::test_rule_tables_keep_lf_line_endings_on_every_checkout PASSED [100%]
+
+===================== 16 passed, 355 deselected in 11.20s ======================
