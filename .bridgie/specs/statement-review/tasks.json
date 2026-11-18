@@ -9,12 +9,12 @@
         "P7"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 5,
       "max_attempts": 5,
       "branch": "bridgie-task/statement-review/T01",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-12/evidence.json",
-      "escalation": "blocked after 4 attempts. Last: implementer run failed (see .bridgie/runs/statement-review) | guidance: Pin v1's SHA-256 in code and refuse a v1 table that does not match it. Build the P7 fixture list by globbing every statement file under tests/ and examples/ (not from what tests happen to compute), with a test asserting the count. Mark the evidence-ruleset test so the runner runs it by name."
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-13/evidence.json",
+      "escalation": "blocked after 5 attempts. Last verdict fail: R54 fail (src/cma/graph.py:215 selects one ruleset per statement and stores its id and SHA-256. src/cma/graph.py:188 and src/cma/cli.py:222 emit both fields. Runner contracts:4 confirms explicit v1, default v1, wheel packaging, and checkpoint compatibility. The raw-byte pin at src/cma/categorise.py:186 rejects the unmodified v1 table when Git checks it out with CRLF.); major: A Git checkout with core.autocrlf=true can convert the frozen YAML to CRLF. There is no Git attribute fixing its line endings. The source install and any wheel built from that checkout then refuse all v1 runs, including runs using the default, because the code pins the LF bytes. at src/cma/rules/v1.yaml:1; reviewer verdict fail"
     },
     {
       "id": "T02",

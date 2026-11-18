@@ -1,0 +1,108 @@
+{
+  "task": "T01",
+  "criteria": [
+    {
+      "id": "R54",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:215 selects one ruleset per statement and stores its id and SHA-256. src/cma/graph.py:188 and src/cma/cli.py:222 emit both fields. Runner contracts:4 confirms explicit v1, default v1, wheel packaging, and checkpoint compatibility. The raw-byte pin at src/cma/categorise.py:186 rejects the unmodified v1 table when Git checks it out with CRLF.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-13/contracts-4.log"
+    },
+    {
+      "id": "P7",
+      "tier": "adversarial",
+      "check": "tests/golden/p7_tools/make_p7_baseline.py:43 discovers statement CSVs under tests and examples. tests/golden/p7_tools/capture_plugin.py:65 captures generated statements, including the Monzo balance-column output. tests/test_p7_history.py:33 pins the pre-change commit and :78 compares the complete rebuilt golden. tests/test_rules.py:379 checks corpus coverage, and :418, :432, and :444 replay the synthetic cases, committed CSV, and fixtures under explicit v1. The full runner invariants and dual-run logs show the named rebuild, coverage, and replay tests passed.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-13/dual_run-7.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-13/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-13/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -q -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-13/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-13/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-13/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-13/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-13/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/rules/v1.yaml",
+      "line": 1,
+      "criterion": "R54",
+      "claim": "A Git checkout with core.autocrlf=true can convert the frozen YAML to CRLF. There is no Git attribute fixing its line endings. The source install and any wheel built from that checkout then refuse all v1 runs, including runs using the default, because the code pins the LF bytes.",
+      "repro": "In a disposable clone made with git -c core.autocrlf=true clone, confirm git ls-files --eol shows w/crlf for src/cma/rules/v1.yaml. Install from that checkout and invoke CMA_RULESET=v1 cma run examples/cafe_stretched.csv --yes --reviewer A. The frozen-table hash check returns exit 2 before categorisation. The runner's wheel check used an LF checkout."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 164,
+      "criterion": "R54",
+      "claim": "The damaged-table refusal claim covers cold loads. After the first successful load in a long-lived process, the id-keyed cache prevents the loader from checking the installed file again.",
+      "repro": "In a disposable installation, call load_ruleset('v1'), alter or remove the YAML, and call active_ruleset() again in the same process. It returns the cached table. The damaged-table test fixture clears the cache before each check, so those results do not cover this case."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules.py",
+      "line": 259,
+      "criterion": "R54",
+      "claim": "The allowlist is visible in source, but the producer's claimed targeted security test run is unproven. The runner supplied an aggregate full-suite count, and the marker logs do not name the unknown-id and path-id tests.",
+      "repro": "A runner result for python -m pytest -v -k 'unknown_ruleset or cannot_name_a_path or unknown_cma_ruleset' would establish that the three cited tests ran and passed."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 284,
+      "criterion": "R54",
+      "claim": "The claimed 1.45 ms to 1.50 ms comparison is unproven. The behavioural runner timed end-to-end memo generation, which does not measure categorisation separately or compare against fd7b64c.",
+      "repro": "In each revision's environment, set CMA_RULESET=v1 and run python -m timeit -r 5 -n 20 -s 'from cma import categorise, ingest; s = ingest.load_csv(\"examples/cafe_stretched.csv\")' 'categorise.categorise(s)'. Retain both runner logs to substantiate the hot-path comparison."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

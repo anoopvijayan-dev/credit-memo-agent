@@ -1,0 +1,26 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.18, pytest-9.2.0, pluggy-1.7.0 -- /usr/local/bin/python
+cachedir: .pytest_cache
+rootdir: /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T01
+configfile: pyproject.toml
+testpaths: tests
+plugins: langsmith-0.14.17, anyio-4.15.1
+collecting ... collected 370 items / 355 deselected / 15 selected
+
+tests/test_cli.py::test_written_evidence_records_the_ruleset[None] PASSED [  6%]
+tests/test_cli.py::test_written_evidence_records_the_ruleset[v1] PASSED  [ 13%]
+tests/test_p7_history.py::test_a_review_left_pending_by_the_pre_change_version_resumes_here PASSED [ 20%]
+tests/test_p7_history.py::test_rollback_a_review_left_pending_here_resumes_under_the_pre_change_version PASSED [ 26%]
+tests/test_p7_history.py::test_the_built_wheel_carries_v1_byte_for_byte PASSED [ 33%]
+tests/test_p7_history.py::test_cma_run_refuses_when_the_rules_package_is_missing PASSED [ 40%]
+tests/test_rules.py::test_v1_is_packaged_with_an_id_and_the_hash_of_its_file PASSED [ 46%]
+tests/test_rules.py::test_v1_hash_is_pinned_in_code PASSED               [ 53%]
+tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[category: revenue_card_settlement-category: other] PASSED [ 60%]
+tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[direction: in\n-direction: any\n] PASSED [ 66%]
+tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[frozen: true-frozen: false] PASSED [ 73%]
+tests/test_rules.py::test_cma_run_refuses_a_changed_v1_and_writes_no_evidence PASSED [ 80%]
+tests/test_rules.py::test_evidence_records_the_ruleset PASSED            [ 86%]
+tests/test_rules.py::test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1 PASSED [ 93%]
+tests/test_rules.py::test_a_legacy_resume_with_a_damaged_table_is_refused_before_anything_is_recorded PASSED [100%]
+
+===================== 15 passed, 355 deselected in 10.95s ======================

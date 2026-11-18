@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 42,
+  "next_id": 43,
   "decisions": [
     {
       "id": "D1",
@@ -910,6 +910,26 @@
       "decided_at": "2026-11-18T05:02:19.286Z",
       "effect": "task T01 gets one more attempt",
       "created_at": "2026-11-18T04:58:29.880Z"
+    },
+    {
+      "id": "D42",
+      "type": "unblock",
+      "task": "T01",
+      "raised_by": null,
+      "context": "Task T01 \"Move the built-in rule table into packaged, validated YAML under src/cma/rules/ (v1 frozen, with id and hash); CMA_RULESET selects it and cma run records the ruleset id and hash in evidence; test (dual_run and invariants, named p7): M1-M16 under v1 equal a golden captured by running the pre-change commit over every committed fixture and synthetic archetype, with the capture script and commit id kept under tests/\" is blocked after 5 attempts. Last verdict fail: R54 fail (src/cma/graph.py:215 selects one ruleset per statement and stores its id and SHA-256. src/cma/graph.py:188 and src/cma/cli.py:222 emit both fields. Runner contracts:4 confirms explicit v1, default v1, wheel packaging, and checkpoint compatibility. The raw-byte pin at src/cma/categorise.py:186 rejects the unmodified v1 table when Git checks it out with CRLF.); major: A Git checkout with core.autocrlf=true can convert the frozen YAML to CRLF. There is no Git attribute fixing its line endings. The source install and any wheel built from that checkout then refuse all v1 runs, including runs using the default, because the code pins the LF bytes. at src/cma/rules/v1.yaml:1; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-18T05:12:48.497Z"
     }
   ]
 }
