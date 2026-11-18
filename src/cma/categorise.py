@@ -51,7 +51,7 @@ from typing import Literal
 
 import yaml
 
-from .models import Category, Statement, Transaction
+from .models import CREDIT_BUCKET, Bucket, Category, Statement, Transaction
 
 Direction = Literal["in", "out", "any"]
 
@@ -64,7 +64,9 @@ DIRECTIONS = ("in", "out", "any")
 TABLE_KEYS = {"id", "frozen", "rules"}
 RULE_KEYS = {"id", "direction", "category"}  # required, plus a pattern or names
 MATCH_KEYS = {"pattern", "names"}
-OPTIONAL_KEYS = {"unless", "requires", "protected"}
+OPTIONAL_KEYS = {"unless", "requires", "protected", "stage"}
+# Stages of a table that is not frozen: explicit line-type wording first, then the name lists.
+STAGES = ("line_type", "names")
 ALL_RULE_KEYS = RULE_KEYS | MATCH_KEYS | OPTIONAL_KEYS
 # A frozen table's SHA-256, pinned here. A file that validates but differs from these
 # bytes (a rule recategorised, CRLF line ends, frozen switched off) is refused, so the id
@@ -85,6 +87,7 @@ class Rule:
     protected: bool = False  # wins over profile names and firm rules (R21)
     unless: re.Pattern[str] | None = None  # the rule does not match when this does
     requires: re.Pattern[str] | None = None  # the rule matches only when this does too
+    stage: str | None = None  # "line_type" or "names" (tables that are not frozen)
 
 
 @dataclass(frozen=True)
@@ -92,6 +95,7 @@ class Ruleset:
     id: str
     sha256: str
     rules: tuple[Rule, ...]
+    frozen: bool = False  # a frozen table (v1) keeps plain first-match order, to reproduce its history
 
     @property
     def protected(self) -> tuple[Rule, ...]:
@@ -165,6 +169,18 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
             elif r["protected"] and any(not isinstance(p, dict) or not p.get("protected") for p in rules[:i - 1]):
                 # One ordered pass and the precedence agree only if the protected rules come first.
                 problems.append(f"{where}: a protected rule must come before every rule that is not")
+        if "stage" in r and r["stage"] not in STAGES:
+            problems.append(f"{where}: stage {r['stage']!r} is not one of {list(STAGES)}")
+        if data.get("frozen") is False:
+            # Line-type wording beats every name list, the case profile and firm rules
+            # included, so it is protected and comes before any name list.
+            if "stage" not in r:
+                problems.append(f"{where}: missing stage (line_type or names)")
+            elif r["stage"] == "line_type":
+                if not r.get("protected"):
+                    problems.append(f"{where}: a line_type rule must be protected")
+                if any(isinstance(p, dict) and p.get("stage") == "names" for p in rules[:i - 1]):
+                    problems.append(f"{where}: a line_type rule must come before every names rule")
         if isinstance(r.get("id"), str):
             if r["id"] in seen:
                 problems.append(f"{where}: duplicate id")
@@ -204,9 +220,10 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) 
     return Ruleset(
         id=data["id"],
         sha256=sha256,
+        frozen=bool(data.get("frozen", False)),
         rules=tuple(
             Rule(r["id"], _rule_pattern(r), r["direction"], Category(r["category"]),
-                 protected=r.get("protected", False),
+                 protected=r.get("protected", False), stage=r.get("stage"),
                  unless=re.compile(r["unless"]) if "unless" in r else None,
                  requires=re.compile(r["requires"]) if "requires" in r else None)
             for r in data["rules"]
@@ -328,6 +345,26 @@ def classify(
     if override is not None:
         return override.category, override.ref
     desc = t.description.upper()
+    if t.amount > 0 and not ruleset.frozen:
+        # Two line-type cues that put a credit in different money-in buckets ("INSURANCE
+        # CLAIM REFUND", "COUNTER DEPOSIT FROM SAVINGS") are a judgement for the underwriter,
+        # never a guess by rule order. The rule id names both cues.
+        cues = [r for r in ruleset.rules if r.stage == "line_type" and rule_matches(r, desc, t.amount)]
+        # A cue anchored at the start of the line is the bank's own transaction code
+        # (`^UNPAID DD`) and is decisive; otherwise cues in different buckets conflict.
+        decisive = any(r.pattern.pattern.startswith("^") for r in cues)
+        if not decisive and len({CREDIT_BUCKET.get(r.category, r.category) for r in cues}) > 1:
+            return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(r.id for r in cues)
+        if not cues:
+            # Ambiguous wording never resolves to trading receipts: when the name list that
+            # wins by order counts a credit as trading ("CASH DEPOSIT", an acquirer) and a
+            # later list counts it as something else ("DIRECTOR", a lender, "CAPITAL" in a
+            # branch name), it is a judgement for the underwriter. A list that wins as
+            # non-trading ("STRIPE CAPITAL", a named lender) stands.
+            names = [r for r in ruleset.rules if r.stage == "names" and rule_matches(r, desc, t.amount)]
+            buckets = {CREDIT_BUCKET.get(r.category, r.category) for r in names}
+            if names and CREDIT_BUCKET.get(names[0].category) == Bucket.TRADING_RECEIPTS and len(buckets) > 1:
+                return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(r.id for r in names)
     for rule in ruleset.protected:
         if rule_matches(rule, desc, t.amount):
             return rule.category, f"{ruleset.id}:{rule.id}"

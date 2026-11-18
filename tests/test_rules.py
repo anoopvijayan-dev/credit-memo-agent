@@ -202,7 +202,6 @@ def test_v1_hash_is_pinned_in_code():
 @pytest.mark.parametrize("old, new", [
     ("category: revenue_card_settlement", "category: other"),  # verify-12: schema-valid, still v1
     ("direction: in\n", "direction: any\n"),
-    ("frozen: true", "frozen: false"),
 ])
 def test_a_schema_valid_change_to_frozen_v1_is_refused(packaged_table, old, new):
     text = _v1_text()
@@ -211,6 +210,18 @@ def test_a_schema_valid_change_to_frozen_v1_is_refused(packaged_table, old, new)
     validate_ruleset(yaml.safe_load(changed), "v1")  # the schema alone accepts it
     packaged_table(changed)
     with pytest.raises(RulesetError, match=r"cma/rules/v1\.yaml: frozen table v1 has been changed"):
+        load_ruleset("v1")
+
+
+@pytest.mark.contracts
+def test_switching_v1_frozen_off_is_refused(packaged_table):
+    # A table that is not frozen must stage every rule, so v1 with frozen: false fails the
+    # schema before the pin is even checked; either way v1 cannot load.
+    changed = _v1_text().replace("frozen: true", "frozen: false", 1)
+    with pytest.raises(RulesetError, match="missing stage"):
+        validate_ruleset(yaml.safe_load(changed), "v1")
+    packaged_table(changed)
+    with pytest.raises(RulesetError):
         load_ruleset("v1")
 
 

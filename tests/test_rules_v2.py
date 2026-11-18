@@ -117,6 +117,10 @@ LISTS = {
         ("HOLLOWAY BRIDGE FINANCE LOAN", -300.00, C.LOAN_REPAYMENT, "v2:loan_repayment"),  # v1 wording stays
         ("HOLLOWAY BRIDGE FINANCE LOAN", 9000.00, C.LOAN_DRAWDOWN, "v2:loan_drawdown"),
     ],
+    "pot_names": [
+        ("TAX POT", 400.00, C.OWN_ACCOUNT_TRANSFER, "v2:pot_names"),
+        ("VAT POT", -400.00, C.OWN_ACCOUNT_TRANSFER, "v2:pot_names"),
+    ],
     "own_pots_savings": [
         ("POT TRANSFER IN HOLIDAY POT", 200.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
         ("POT TRANSFER OUT HOLIDAY POT", -200.00, C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"),
@@ -156,8 +160,9 @@ LISTS = {
         # a cheque is not cash; it stays unexplained for a person
         ("CHEQUE PAID IN AT BRANCH", 900.00, C.OTHER, "v2:default"),
         # protected wording wins over cash wording: never cash or trading receipts
-        ("CASH DEPOSIT DIRECTOR", 3000.00, C.DIRECTOR_FUNDING, "v2:director_funding"),
-        ("CASH DEPOSIT IWOCA", 3000.00, C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
+        # cash wording with a director or lender name: never trading receipts, a judgement
+        ("CASH DEPOSIT DIRECTOR", 3000.00, C.OTHER, "v2:conflict:cash_paid_in+director_funding"),
+        ("CASH DEPOSIT IWOCA", 3000.00, C.OTHER, "v2:conflict:cash_paid_in+lender_drawdown"),
         ("HMRC CASH PAID IN", 3000.00, C.HMRC_REPAYMENT, "v2:hmrc_repayment"),
         # an electronic rail anywhere in the line, not only first, means it is not cash
         ("CREDIT FPS POST OFFICE CASH", 500.00, C.OTHER, "v2:default"),
@@ -495,7 +500,7 @@ def test_v2_is_packaged_with_an_id_and_the_hash_of_its_file(v2):
     assert flags == sorted(flags, reverse=True)
     # line type first, then the protected name lists
     assert [r.id for r in v2.protected] == ["returned_dd", "own_pots_savings", "hmrc_vat", "hmrc_paye",
-                                            "hmrc_repayment", "refunds",
+                                            "hmrc_repayment", "refunds", "explained_non_trading", "cash_paid_in",
                                             "lender_repayment", "lender_drawdown", "loan_repayment",
                                             "director_funding", "loan_drawdown", "owner_drawings"]
 
@@ -807,3 +812,81 @@ def test_categorise_10000_lines_under_v2_with_a_profile_is_fast(v2):
     categorise.categorise(s, v2, profile=ProfileNames(directors=("JANE DOE", "JOHN SMITH"),
                                                       own_accounts=("ACME HOLDINGS",)))
     assert time.perf_counter() - t0 < 2.0
+
+
+# --- stages: line-type cues, then name lists (T03 review verify-24) -----------------------------
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("desc, amount, category, rule_id", [
+    # verify-24: a counter cash deposit at a branch called CAPITAL is not director funding
+    ("COUNTER DEPOSIT CAPITAL ST BRANCH", 500.00, C.OTHER, "v2:conflict:cash_paid_in+director_funding"),
+    # verify-24: a bare pot name in the merchant on an explicit card refund is a refund
+    ("CARD REFUND TAX POT STATIONERY", 25.00, C.REFUND_IN, "v2:refunds"),
+    ("CARD REFUND VAT POT SUPPLIES", 25.00, C.REFUND_IN, "v2:refunds"),
+    # verify-24: third-party compensation with SAVINGS in its wording is explained money in
+    ("FPS CREDIT ACME INSURANCE COMPENSATION SAVINGS PLAN", 900.00, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),
+])
+def test_p_review_repros_land_in_their_buckets(v2, desc, amount, category, rule_id):
+    assert classify(_t(desc, amount), v2) == (category, rule_id)
+
+
+@pytest.mark.invariants
+def test_two_line_type_cues_in_different_buckets_are_a_judgement_unless_one_is_the_bank_code(v2):
+    from cma.models import CREDIT_BUCKET
+    cues = [r for r in v2.rules if r.stage == "line_type" and r.direction in ("in", "any")]
+    samples = {"own_pots_savings": "FROM POT", "hmrc_repayment": "HMRC", "refunds": "REFUND",
+               "explained_non_trading": "COMPENSATION", "returned_dd": "UNPAID DD"}
+    checked = 0
+    for a in cues:
+        for b in cues:
+            if a.id >= b.id or a.id not in samples or b.id not in samples:
+                continue
+            if CREDIT_BUCKET[a.category] == CREDIT_BUCKET[b.category]:
+                continue
+            # the bank code is anchored at the start of the line, so it is written first
+            pair = sorted((a, b), key=lambda r: r.id != "returned_dd")
+            desc = f"{samples[pair[0].id]} {samples[pair[1].id]}"
+            got = classify(_t(desc, 100.0), v2)
+            if "returned_dd" in (a.id, b.id):
+                assert got == (C.RETURNED_DD, "v2:returned_dd"), desc
+            elif {a.id, b.id} == {"hmrc_repayment", "refunds"}:
+                assert got == (C.HMRC_REPAYMENT, "v2:hmrc_repayment"), desc   # an HMRC refund is a repayment
+            elif {a.id, b.id} == {"hmrc_repayment", "own_pots_savings"}:
+                assert got == (C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"), desc   # a pot named HMRC
+            else:
+                assert got[0] == C.OTHER and got[1].startswith("v2:conflict:"), (desc, got)
+            checked += 1
+    assert checked >= 6
+
+
+@pytest.mark.invariants
+def test_no_name_list_makes_a_credit_trading_receipts_when_another_says_otherwise(v2):
+    from cma.models import CREDIT_BUCKET, Bucket
+    non_trading = ["DIRECTOR", "CAPITAL", "SHAREHOLDER", "IWOCA", "LOAN"]
+    trading = ["CASH DEPOSIT", "COUNTER DEPOSIT"]
+    for tr in trading:
+        for nt in non_trading:
+            cat, rid = classify(_t(f"{tr} {nt}", 500.0), v2)
+            assert CREDIT_BUCKET[cat] != Bucket.TRADING_RECEIPTS, (tr, nt, rid)
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("mutate, message", [
+    (lambda rules: rules[0].pop("stage"), "missing stage"),
+    (lambda rules: rules[0].update(protected=False), "a line_type rule must be protected"),
+    (lambda rules: rules.insert(0, rules.pop(next(i for i, r in enumerate(rules) if r["stage"] == "names"))),
+     "a line_type rule must come before every names rule"),
+    (lambda rules: rules[0].update(stage="other"), "is not one of"),
+])
+def test_a_v2_table_must_keep_its_stages(mutate, message):
+    import copy
+    from importlib import resources
+
+    import yaml
+
+    from cma.categorise import RulesetError, validate_ruleset
+    data = yaml.safe_load(resources.files("cma.rules").joinpath("v2.yaml").read_text(encoding="utf-8"))
+    data = copy.deepcopy(data)
+    mutate(data["rules"])
+    with pytest.raises(RulesetError, match=message):
+        validate_ruleset(data, "v2")
