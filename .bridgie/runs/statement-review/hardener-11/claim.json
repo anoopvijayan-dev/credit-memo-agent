@@ -1,0 +1,57 @@
+{
+  "task": "T01",
+  "claims": [
+    {
+      "text": "Mechanical tier: ruff and compileall pass on the T01 worktree (installed with .[dev,mcp,durable,llm]).",
+      "proof_cmd": "ruff check src tests evals; python -m compileall -q src && echo compile-ok",
+      "proof_output": "All checks passed!\ncompile-ok"
+    },
+    {
+      "text": "Specified tier: the full suite passes with no skips, including tests/test_p7_history.py (golden rebuilt from fd7b64c, pre-change checkpoint resume, wheel carries v1.yaml, missing rules package refused).",
+      "proof_cmd": "python -m pytest -q -rs; python -m pytest -v -rs tests/test_p7_history.py",
+      "proof_output": "351 passed in 16.87s\ntest_p7_golden_is_rebuilt_exactly_from_the_pre_change_commit PASSED\ntest_a_review_left_pending_by_the_pre_change_version_resumes_here PASSED\ntest_the_built_wheel_carries_v1_byte_for_byte PASSED\ntest_cma_run_refuses_when_the_rules_package_is_missing PASSED\n4 passed in 13.11s"
+    },
+    {
+      "text": "P7 (invariants) and dual run: M1-M16 and categories under v1 equal the golden over 13 synthetic cases, the committed example, >=37 fixtures and single lines; v1.yaml equals the old rule list and 20,000 fuzzed descriptions categorise identically.",
+      "proof_cmd": "python -m pytest -v -m invariants; python -m pytest -v -m dual_run",
+      "proof_output": "54 passed, 297 deselected in 6.97s\n57 passed, 294 deselected in 7.67s"
+    },
+    {
+      "text": "Contracts tier: v1 packaged with id and file hash, evidence records the ruleset (and names v1 inferred for pre-T01 checkpoints), legacy resume with a damaged table refused before anything is recorded.",
+      "proof_cmd": "python -m pytest -v -m contracts",
+      "proof_output": "7 passed, 344 deselected in 8.69s"
+    },
+    {
+      "text": "Behavioural tier: offline evals pass unchanged.",
+      "proof_cmd": "python evals/run_evals.py; echo evals_exit=$?",
+      "proof_output": "9/9 memos fully grounded; model = fake\nevals_exit=0"
+    },
+    {
+      "text": "Failure modes: an unknown/bad CMA_RULESET is a refusal (exit 2), not a model failure (exit 4); a ruleset id cannot name a path (allow-list RULESETS).",
+      "proof_cmd": "CMA_RULESET=v9 python -m cma.cli run examples/cafe_stretched.csv --yes --reviewer A; echo exit=$?; CMA_RULESET=../policies/uk_sme_default python -c 'from cma import categorise as c; c.active_ruleset()'",
+      "proof_output": "Refused. CMA_RULESET='v9': unknown ruleset 'v9'; known: v1\nexit=2\ncma.categorise.RulesetError: CMA_RULESET='../policies/uk_sme_default': unknown ruleset '../policies/uk_sme_default'; known: v1"
+    },
+    {
+      "text": "Idempotency / partial failure: the ruleset is settled in _review before the decision is recorded, so a damaged table on resume leaves the review pending and resumable (tests test_a_legacy_resume_with_a_damaged_table_is_refused_before_anything_is_recorded and test_a_review_left_pending_by_the_pre_change_version_resumes_here, both in the contracts/specified tiers above). No other mutation is introduced.",
+      "proof_cmd": "python -m pytest -v -m contracts",
+      "proof_output": "7 passed, 344 deselected in 8.69s"
+    },
+    {
+      "text": "Data/migration: additive only. Evidence gains a 'ruleset' key; checkpoint state gains an optional 'ruleset' field; no Category or Transaction change; the committed example evidence names v1 with the hash of the shipped file.",
+      "proof_cmd": "sha256sum src/cma/rules/v1.yaml; grep -n sha256 examples/cafe_stretched.memo.evidence.json | sed -n 2p",
+      "proof_output": "7573366854a668793ca20b3ecfaad91d406ea3018a71d524ea3324cc4ff76630  src/cma/rules/v1.yaml\n13:    \"sha256\": \"7573366854a668793ca20b3ecfaad91d406ea3018a71d524ea3324cc4ff76630\""
+    },
+    {
+      "text": "Security: no new dependency (pyyaml already declared); no secrets added; YAML loaded with a SafeLoader subclass that also refuses duplicate keys; patterns validated (re.error, OverflowError, RecursionError) at load.",
+      "proof_cmd": "grep -n 'pyyaml' pyproject.toml; git diff f0fdef5 --stat -- pyproject.toml",
+      "proof_output": "12:  \"pyyaml>=6\",\n(no change to pyproject.toml)"
+    },
+    {
+      "text": "Docs: README documents CMA_RULESET and the rules file; M16 rename reflected in README and committed example memo/evidence.",
+      "proof_cmd": "git diff f0fdef5 --name-only",
+      "proof_output": ".github/workflows/ci.yml\nREADME.md\nexamples/cafe_stretched.memo.evidence.json\nexamples/cafe_stretched.memo.md\nsrc/cma/categorise.py\nsrc/cma/cli.py\nsrc/cma/graph.py\nsrc/cma/metrics.py\nsrc/cma/rules/__init__.py\nsrc/cma/rules/v1.yaml\ntests/golden/p7_tools/capture_plugin.py\ntests/golden/p7_tools/make_p7_baseline.py\ntests/golden/p7_v1_baseline.json.gz\ntests/test_cli.py\ntests/test_p7_history.py\ntests/test_rules.py"
+    }
+  ],
+  "files_changed": [],
+  "notes": "Hardener made no code changes; every claim is against the implementer's commit 4d0583e. Checklist dispositions:\nFAILURE MODES — external call timeouts: n/a (no external call added; rule table is a packaged file). Idempotency: done (claims 6-7). Retries/dead letter: n/a (no queue, local CLI). Partial failure: done (claim 7).\nDATA — additive: done (claim 8). Reversible: done — rollback is reinstalling the previous wheel; pre-T01 checkpoints resume under new code (test_p7_history); CMA_RULESET only has v1 today, so the flag is not yet a rollback lever until v2 lands. Backfill: n/a (no stored data). PII: unchanged; evidence gains only an id and hash.\nSECURITY — authz on new entry points: n/a, no new entry point (CMA_RULESET is an env var restricted to an allow-list; claim 6). Input validation: done (claims 6, 9). Secrets: done. New deps: none.\nPERFORMANCE — no queries; load_ruleset is lru_cached; hot path not benchmarked (gap, low risk: same regex count as before; categorise_one without an explicit ruleset re-reads the env per line).\nOBSERVABILITY — proof the behaviour ran: the evidence record carries ruleset id+hash (claims 4, 8); there is no log line, consistent with the design (local-only, evidence is the signal). Alert: n/a by design (no remote alerting); refusal with exit 2 is the failure signal (claim 6). Dashboards: n/a.\nOPERABILITY — flag: CMA_RULESET exists. Rollback tried: only via tests (pre-change commit rebuild and checkpoint resume); no non-production environment exists for this local tool. Runbook: gap — no runbook doc; README covers CMA_RULESET. Config changes for deploy: CI now needs fetch-depth: 0 (included in ci.yml).\nDOCS — contract docs: done (README). Design decision: already in design.md (rule tables as data). Changelog: gap — the repo has no CHANGELOG file; owner to decide whether to add one.\nOWNER ITEMS: (1) test_p7_history depends on commit fd7b64c being reachable and on pip being able to build a wheel offline; a shallow clone skips the rebuild test (CI sets fetch-depth: 0). (2) The golden's '_about' text says the tools were in the T01 run directory; make_p7_baseline.py's docstring explains this, but the golden was not regenerated, by design."
+}

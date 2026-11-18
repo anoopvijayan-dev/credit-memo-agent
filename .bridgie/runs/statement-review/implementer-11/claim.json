@@ -1,0 +1,91 @@
+{
+  "task": "T01",
+  "claims": [
+    {
+      "text": "Lint and compile pass.",
+      "proof_cmd": "ruff check src tests evals; python -m compileall -q src && echo compiled",
+      "proof_output": "All checks passed!\ncompiled"
+    },
+    {
+      "text": "The full suite passes with 0 skipped. The log is full.log in this run directory.",
+      "proof_cmd": "python -m pytest -q -rs > full.log 2>&1; tail -1 full.log; grep -c SKIPPED full.log",
+      "proof_output": "351 passed in 16.34s\n0"
+    },
+    {
+      "text": "P7 (invariants tier, named p7). This tier now selects 54 tests. The 53 in tests/test_rules.py compare v1 with the committed golden on all 13 synthetic cases, the example, the 37 fixtures and the single lines. The other one, tests/test_p7_history.py::test_p7_golden_is_rebuilt_exactly_from_the_pre_change_commit, rebuilds the golden from the pre-change commit fd7b64c: it runs git archive fd7b64c, runs that commit's suite with tests/golden/p7_tools/capture_plugin.py (asserting nothing was skipped), runs make_p7_baseline.py with the old src, and asserts the result equals tests/golden/p7_v1_baseline.json.gz on every key except _about.",
+      "proof_cmd": "python -m pytest -q -rs -m invariants | tail -1",
+      "proof_output": "54 passed, 297 deselected in 6.41s"
+    },
+    {
+      "text": "dual_run tier: the P7 tests above, the rebuild from fd7b64c, the check that v1.yaml is the old rule list, the 20,000-sample comparison between the old matcher and the v1 matcher, and the cross-version SQLite resume all pass.",
+      "proof_cmd": "python -m pytest -q -rs -m dual_run | tail -1",
+      "proof_output": "57 passed, 294 deselected in 7.39s"
+    },
+    {
+      "text": "Contracts tier (R54): this tier now selects 7 tests. (1) A review left pending in a real SQLite --checkpoint-db by `python -m cma.cli run` under fd7b64c resumes under HEAD. With a damaged v1.yaml the resume exits 2 with 'Refused, nothing recorded.', writes no memo or evidence, and leaves the review pending. With the table repaired the same review exits 0, and its evidence ruleset is {id v1, sha256 of the table, inferred}. (2) The wheel built by pip, installed in a fresh venv and imported with -I from a directory outside the checkout, loads cma from the venv, and v1's sha256 equals sha256 of src/cma/rules/v1.yaml. (3) With no cma/rules package, cma run exits 2 with 'Refused.'. (4) The evidence records the ruleset id and hash, plus the in-memory legacy-resume tests.",
+      "proof_cmd": "python -m pytest -q -rs -m contracts | tail -1",
+      "proof_output": "7 passed, 344 deselected in 8.68s"
+    },
+    {
+      "text": "Offline evals pass.",
+      "proof_cmd": "python evals/run_evals.py | tail -1; echo evals=$?",
+      "proof_output": "9/9 memos fully grounded; model = fake\nevals=0"
+    },
+    {
+      "text": "Red check: the new bad-pattern tests fail against the previous attempt's src (archive branch) and pass now.",
+      "proof_cmd": "git archive bridgie-task-archive/statement-review/20261118-0331/T01 src | tar -x -C $S; PYTHONPATH=$S/src python -m pytest -q -p no:cacheprovider -o pythonpath=$S/src tests/test_rules.py tests/test_p7_history.py | grep -E '^FAILED|failed'",
+      "proof_output": "FAILED tests/test_rules.py::test_a_malformed_table_is_refused_naming_the_problem[bad8-pattern does not compile]\nFAILED tests/test_rules.py::test_a_malformed_table_is_refused_naming_the_problem[bad9-pattern does not compile]\nFAILED tests/test_rules.py::test_cma_run_refuses_a_damaged_table_rather_than_blaming_the_model[pattern: '^UNPAID DD\\b'-pattern: 'A{4294967296}']\n3 failed, 114 passed"
+    }
+  ],
+  "files_changed": [
+    ".github/workflows/ci.yml",
+    "README.md",
+    "examples/cafe_stretched.memo.evidence.json",
+    "examples/cafe_stretched.memo.md",
+    "src/cma/categorise.py",
+    "src/cma/cli.py",
+    "src/cma/graph.py",
+    "src/cma/metrics.py",
+    "src/cma/rules/__init__.py",
+    "src/cma/rules/v1.yaml",
+    "tests/golden/p7_tools/capture_plugin.py",
+    "tests/golden/p7_tools/make_p7_baseline.py",
+    "tests/golden/p7_v1_baseline.json.gz",
+    "tests/test_cli.py",
+    "tests/test_p7_history.py",
+    "tests/test_rules.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "src/cma/categorise.py:165: a missing cma/rules package raises ModuleNotFoundError, and cma run exits 4 instead of 2",
+      "disposition": "reproduced",
+      "evidence": "Reproduced by hand: a copy of the previous src without cma/rules gives 'The model call failed (ModuleNotFoundError)', exit 4. Fix: load_ruleset now catches (OSError, ImportError) when it reads the table and raises RulesetError, so the result is 'Refused. ... cannot be read from the installed package (ModuleNotFoundError)', exit 2. Covered by tests/test_p7_history.py::test_cma_run_refuses_when_the_rules_package_is_missing (contracts tier), which copies the package, deletes rules/ and runs `python -m cma.cli run` in a subprocess."
+    },
+    {
+      "finding": "src/cma/categorise.py:114: the regex validator catches only re.error, so A{4294967296} raises OverflowError and exits 4",
+      "disposition": "reproduced",
+      "evidence": "The new cases fail against the previous src ('The model call failed (OverflowError)'). Fix: the validator also catches OverflowError, RecursionError and MemoryError and reports 'pattern does not compile'. The YAML load also turns RecursionError into RulesetError. New cases: a malformed-table check for A{4294967296} and for 2000-deep nesting, and a cma run test with A{4294967296} in the packaged table (exit 2, 'rule 1'). All three pass now."
+    },
+    {
+      "finding": "tests/golden/p7_tools/make_p7_baseline.py:4: the historical replay and full fixture coverage had no runner result",
+      "disposition": "reproduced",
+      "evidence": "Fix: tests/test_p7_history.py::test_p7_golden_is_rebuilt_exactly_from_the_pre_change_commit, marked dual_run and invariants. It performs the reviewer's repro steps: git archive fd7b64c, the old suite with the capture plugin (asserting no skips), make_p7_baseline.py with the old src and MADE_AT=fd7b64c, then a comparison with the committed gzip on every key except _about. It passes, so the runner's dual_run and invariants tiers now produce that result. CI checkout now uses fetch-depth: 0 so the commit exists there."
+    },
+    {
+      "finding": ".github/workflows/ci.yml:33: the clean-wheel claim cited a manual result",
+      "disposition": "reproduced",
+      "evidence": "Fix: tests/test_p7_history.py::test_the_built_wheel_carries_v1_byte_for_byte (contracts tier). It builds the wheel with pip, installs it with --no-deps in a fresh venv, imports with -I from a directory outside the checkout, asserts that cma.__file__ is in the venv, and asserts that v1's sha256 equals the source file's. It passes. The CI workflow step stays as well."
+    },
+    {
+      "finding": "tests/test_rules.py:456: no runner result for the cross-version SQLite resume; the no-skip suite claim was unproven",
+      "disposition": "reproduced",
+      "evidence": "Fix: tests/test_p7_history.py::test_a_review_left_pending_by_the_pre_change_version_resumes_here (contracts and dual_run tiers) does the reviewer's repro. It creates the pending review in a real SQLite file with `python -m cma.cli run --checkpoint-db` under fd7b64c, then resumes under HEAD with a damaged v1.yaml: exit 2, still pending, no files. It restores the table and resumes again: exit 0, inferred v1 evidence. On skips: with all extras installed in this environment, `python -m pytest -q -rs` shows 0 SKIPPED (full.log). I make no claim about the runner's environment."
+    },
+    {
+      "finding": "tests/test_rules.py:121: the two mutation results and the before-and-after performance figures were not substantiated by the runner",
+      "disposition": "reproduced",
+      "evidence": "Those claims are withdrawn and do not appear in this claim.json. The behaviour they were meant to show is now covered directly by runner tiers: the repeated-key refusal test and the legacy resume tests (in-memory and real cross-version SQLite) all run in the full suite and the contracts tier. No performance claim is made."
+    }
+  ],
+  "notes": "The previous attempt's work was on bridgie-task-archive/statement-review/20261118-0331/T01. This branch, re-planned at f0fdef5, did not have it, so I restored it with git restore --source, excluding .bridgie/ and keeping this branch's pyproject markers, and then fixed the findings. Nothing is committed; the runner owns commits. Out of scope and not changed: the R54 review notes that the existing check-then-resume and the separate memo and evidence writes in cli.py (:221-222) can race or leave partial output. Those predate T01, belong to the existing cma run/resume paths and are not part of this task. The tests in tests/test_p7_history.py need git with commit fd7b64c, the durable extra and pip able to build a wheel (build isolation fetches hatchling). The history tests skip only when git or the commit is missing."
+}

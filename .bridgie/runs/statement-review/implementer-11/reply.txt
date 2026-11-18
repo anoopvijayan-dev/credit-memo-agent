@@ -1,0 +1,24 @@
+I finished T01 and wrote `claim.json` to `/home/user/credit-memo-agent/.bridgie/runs/statement-review/implementer-11/claim.json`. All six findings from the last review were confirmed and fixed. Every runner tier passes on my machine: lint, compile, the full suite (351 passed, none skipped), contracts (7), invariants (54), dual_run (57) and the evals (9/9 grounded). Nothing is committed.
+
+**Starting point.** The re-planned branch didn't have the earlier T01 work; it was only on the archive branch (`bridgie-task-archive/statement-review/20261118-0331/T01`). I copied it in, leaving out `.bridgie/` and keeping this branch's pytest markers in `pyproject.toml`, then made the fixes.
+
+**Code fixes in `src/cma/categorise.py`:**
+- **Missing rules folder:** if the whole `cma/rules` package is gone, `cma run` now refuses with exit 2 instead of reporting a model failure (exit 4). I reproduced the exit 4 on the old code first.
+- **Bad regex in the table:** a pattern like `A{4294967296}`, or one nested too deeply, is now refused as "pattern does not compile". Before, these errors got past the check and also ended as exit 4. The new test cases fail on the old code and pass now.
+
+**New tests in `tests/test_p7_history.py`, so the runner can prove what the reviewer said was unproven:**
+- **Rebuilding the P7 golden from the commit before the change (`fd7b64c`):** it runs that commit's test suite with the capture tool, rebuilds the golden and checks that every part equals the committed file. It is named `p7` and marked both `dual_run` and `invariants`; before this, the invariants tier selected no tests.
+- **Wheel:** it builds the wheel, installs it in a fresh virtual environment and loads v1 from outside the checkout. The loaded table's hash equals the source file's hash.
+- **Resuming an old review:** `fd7b64c` leaves a review pending in a real SQLite file, and the current code resumes it. With a damaged v1 table it refuses with exit 2, writes nothing and leaves the review pending. With the table repaired it resumes with exit 0, and the evidence names v1 as inferred.
+- **Missing rules folder:** `cma run` is run on a copy of the package with the `rules` folder deleted, and must refuse with exit 2.
+
+**Other changes:**
+- I marked the evidence, packaging and legacy-resume tests as `contracts`, so that tier now selects 7 tests instead of none.
+- CI now checks out the full history (`fetch-depth: 0`), so `fd7b64c` exists there.
+- I dropped the earlier claims about the two mutation tests and the performance timings rather than try to prove them.
+
+**Conditions and limits:**
+- The history tests skip if git or commit `fd7b64c` is missing.
+- The wheel test needs pip to fetch the build tool (hatchling) from the network; it fails rather than skips if it can't.
+- The 0-skips result is from this environment only; I make no claim about the runner's.
+- I left alone the reviewer's note that `cma run`/`cma resume` can race or leave partial output (`src/cma/cli.py:221–222`). That predates this task.
