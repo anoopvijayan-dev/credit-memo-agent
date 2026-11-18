@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 60,
+  "next_id": 61,
   "decisions": [
     {
       "id": "D1",
@@ -1268,6 +1268,24 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-18T22:16:26.314Z"
+    },
+    {
+      "id": "D60",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "D58 (owner, after the fifth T03 review): reword R4's queue clause so each task can complete its own requirement. T03 builds the categoriser; the judgement queue is R15's (task T21). R4 SHALL mark an ambiguous credit as ambiguous, place it in unexplained money in, and record as its candidates every rule it matched in either stage. Move the 'list it in the judgement queue' clause from R4 to R15: R15's queue already lists every unexplained line, and SHALL show each ambiguous credit's candidates and the bucket each would give. Keep every other requirement, property and id as they are.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-18T22:34:19.116Z",
+      "effect": "changes requested: D58 (owner, after the fifth T03 review): reword R4's queue clause so each task can complete its own requirement. T03 builds the categoriser; the judgement queue is R15's (task T21). R4 SHALL mark an ambiguous credit as ambiguous, place it in unexplained money in, and record as its candidates every rule it matched in either stage. Move the 'list it in the judgement queue' clause from R4 to R15: R15's queue already lists every unexplained line, and SHALL show each ambiguous credit's candidates and the bucket each would give. Keep every other requirement, property and id as they are.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-18T22:34:19.106Z"
     }
   ]
 }
