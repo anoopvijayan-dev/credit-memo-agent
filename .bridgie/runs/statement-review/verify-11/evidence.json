@@ -1,0 +1,100 @@
+{
+  "task": "T01",
+  "criteria": [
+    {
+      "id": "R54",
+      "tier": "adversarial",
+      "check": "The shipped v1 rule order, patterns, directions and categories match fd7b64c. Selection and hashing are in src/cma/categorise.py:159–188. The graph records the exact table it used at src/cma/graph.py:215–218 and emits that identity at src/cma/graph.py:180–189. Runner contracts:4 confirms the installed wheel, exact evidence hash and legacy checkpoint path. Runner dual_run:7 confirms old-table parity and positive, negative and zero-amount matching. Reviewed duplicate submissions, concurrent runs, partial failure, authorization and tenant isolation. The shared table contains immutable rule data, the selector is allow-listed, and the Monzo and MCP consumers retain their call signatures. The shipped table and evidence path satisfy R54. The malformed-table refusal claim has an exception-handling defect.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P7",
+      "tier": "adversarial",
+      "check": "Runner invariants:5 and dual_run:7 cover the generated archetypes, VAT-stagger variants, committed example and captured fixtures in tests/test_rules.py:331–387. The two-credit Monzo fixture is now in the golden and fixture-2-lines0 passed. The historical capture at tests/golden/p7_tools/capture_plugin.py:34–48 still misses valid statements exercised only by the loader. The runner produced no M1–M16 comparison for the newest-first or BOM fixtures at tests/test_ingest.py:82–91. Include those fixtures in the historical capture and replay, then run python -m pytest -v -m 'invariants or dual_run' to prove coverage.",
+      "result": "not_proven",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-11/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-11/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -q -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-11/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-11/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-11/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-11/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-11/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "tests/golden/p7_tools/capture_plugin.py",
+      "line": 46,
+      "criterion": "P7",
+      "claim": "The golden omits valid pre-change statement fixtures that are loaded but never categorised or passed to metrics.compute. Rebuilding the golden repeats the omission.",
+      "repro": "Compare the exact transaction tuples from tests/test_ingest.py:82–91 with the decompressed tests/golden/p7_v1_baseline.json.gz. The newest-first fixture's T3 / 2026-01-03 / C / -50 / 150 row and the BOM fixture's T1 / 2026-01-01 / CARD ACQUIRER SETTLEMENT / 100 / 100 row are absent. Both fixtures exist in fd7b64c and return valid statements from ingest.load_csv."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 170,
+      "criterion": "R54",
+      "claim": "A malformed YAML scalar can escape the ruleset refusal path. PyYAML can raise ValueError during scalar construction, which the loader does not wrap as RulesetError. The CLI then reports a model failure.",
+      "repro": "In a disposable install, replace the first rule's category with the unquoted scalar 2026-02-30 and start a fresh CMA_RULESET=v1 cma run process against the committed example. PyYAML attempts to construct a date and raises ValueError. src/cma/cli.py:90–92 routes it to exit 4 instead of the claimed refusal at exit 2."
+    },
+    {
+      "severity": "minor",
+      "file": "claim.json",
+      "line": 15,
+      "criterion": null,
+      "claim": "The compileall claim includes tests, but the runner only compiled src.",
+      "repro": "Compare the claim's python -m compileall -q src tests with runner mechanical:2, which ran python -m compileall -q src. A passing runner row for python -m compileall -q src tests would prove the stated scope."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
