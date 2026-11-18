@@ -1,0 +1,35 @@
+{
+  "criteria": [
+    {
+      "id": "R54",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:160 and :182 load the allow-listed v1 table and hash its packaged bytes. src/cma/graph.py:215 uses the same table for categorisation and evidence metadata, and src/cma/cli.py:222 writes it. Runner contracts:4 confirms the installed-wheel hash, evidence metadata and legacy resume. Runner dual_run:7 confirms that the ordered v1 rules match the old rule list.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P7",
+      "tier": "adversarial",
+      "check": "Runner invariants:5 and dual_run:7 confirm the rebuild from fd7b64c and the comparisons in tests/test_rules.py:348–390. The capture at tests/golden/p7_tools/capture_plugin.py:18–33 misses whole statements that pre-change tests categorised without computing metrics. The runner produced no M1–M16 comparison for the omitted Monzo fixture at tests/test_import_monzo.py:136. Add that fixture to the historical capture and replay, then run python -m pytest -v -m 'invariants or dual_run'.",
+      "result": "not_proven",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "tests/golden/p7_tools/capture_plugin.py",
+      "line": 24,
+      "criterion": "P7",
+      "claim": "The golden does not cover M1–M16 for every committed fixture. Whole statements are captured only when a test calls metrics.compute. The two-credit Monzo invoice fixture is represented only by individual categorisation rows, so rebuilding the golden repeats the omission.",
+      "repro": "Trace tests/test_import_monzo.py:136–147. It imports and categorises the £4,800 Oakfield and £900 Acme credits without calling metrics.compute. Decompress tests/golden/p7_v1_baseline.json.gz and search for INV1042 and INVOICE2210. Both occur in the lines array only, with no statement-level metric baseline for that fixture."
+    }
+  ],
+  "verdict": "not_proven",
+  "task": "T01",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

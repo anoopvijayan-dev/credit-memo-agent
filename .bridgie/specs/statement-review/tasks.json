@@ -9,12 +9,12 @@
         "P7"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "failed",
       "attempts": 1,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T01",
-      "evidence": null,
-      "escalation": null
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-10/evidence.json",
+      "escalation": "attempt 1 of 3 fail: P7 not_proven (Runner invariants:5 and dual_run:7 confirm the rebuild from fd7b64c and the comparisons in tests/test_rules.py:348–390. The capture at tests/golden/p7_tools/capture_plugin.py:18–33 misses whole statements that pre-change tests categorised without computing metrics. The runner produced no M1–M16 comparison for the omitted Monzo fixture at tests/test_import_monzo.py:136. Add that fixture to the historical capture and replay, then run python -m pytest -v -m 'invariants or dual_run'.); major: The golden does not cover M1–M16 for every committed fixture. Whole statements are captured only when a test calls metrics.compute. The two-credit Monzo invoice fixture is represented only by individual categorisation rows, so rebuilding the golden repeats the omission. at tests/golden/p7_tools/capture_plugin.py:24; reviewer verdict not_proven"
     },
     {
       "id": "T02",
