@@ -312,6 +312,29 @@ def test_new_log_and_lock_files_are_private_to_their_owner(tmp_path):
     log = _log(tmp_path, 1)
     assert stat.S_IMODE(log.path.stat().st_mode) & 0o077 == 0
     assert stat.S_IMODE(log.lock_path.stat().st_mode) & 0o077 == 0
+    assert stat.S_IMODE(log.head_path.stat().st_mode) & 0o077 == 0
+
+
+# --- hardener round 17 -----------------------------------------------------------------
+
+
+@pytest.mark.contracts
+def test_retrying_an_append_that_already_succeeded_writes_nothing_twice(tmp_path):
+    # The expected position is the idempotency key: a client that lost the reply and
+    # retries the same write gets a conflict, not a second copy of the entry.
+    log = _log(tmp_path, 1)
+    log.append("override", {"line": "T1"}, expected=1)
+    before = (log.path.read_bytes(), log.head_path.read_bytes())
+    with pytest.raises(case.LogConflict):
+        log.append("override", {"line": "T1"}, expected=1)
+    assert (log.path.read_bytes(), log.head_path.read_bytes()) == before
+
+
+def test_data_with_text_that_is_not_utf8_encodable_is_refused(tmp_path):
+    log = case.CaseLog(tmp_path / "log.jsonl")
+    with pytest.raises(ValueError):
+        log.append("override", {"reason": "\ud800"}, expected=0)
+    assert not log.path.exists()
 
 
 @pytest.mark.invariants
@@ -543,7 +566,9 @@ def test_p15_an_entry_added_after_the_recorded_head_is_detected(tmp_path):
 def test_p15_a_missing_or_unreadable_head_file_is_detected(tmp_path):
     log = _log(tmp_path, 3)
     log.head_path.unlink()
-    assert not log.verify().ok and not log.verify().torn
+    check = log.verify()
+    assert not check.ok and not check.torn and check.first_bad == 1
+    assert "head file" in check.reason and "missing" in check.reason
     log.head_path.write_text("{not json\n", encoding="utf-8")
     check = log.verify()
     assert not check.ok and "head file" in check.reason

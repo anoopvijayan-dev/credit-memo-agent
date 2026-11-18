@@ -247,6 +247,8 @@ def _check(raw: bytes, recorded: Head | object | None) -> LogCheck:
         return torn(n, "is incomplete: it was written but the head file was not updated (the "
                        "process or power stopped); confirm dropping it before anything else "
                        "is recorded or signed off")
+    if recorded is None:  # entries on disk, and no torn first append explains them
+        return broken(1, "cannot be trusted: the head file beside the log is missing")
     if rec.position > n:
         return broken(n + 1, f"is missing: the head file records {rec.position} entries and "
                              f"the log holds {n}")
