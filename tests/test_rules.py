@@ -117,6 +117,14 @@ def test_a_damaged_packaged_table_is_refused_on_load(packaged_table):
         load_ruleset("v1")
 
 
+def test_a_scalar_yaml_cannot_construct_is_refused_as_invalid_yaml(packaged_table):
+    """PyYAML raises ValueError, not YAMLError, building the impossible date 2026-02-30
+    (verify-11); that is a damaged table, not a model failure."""
+    packaged_table(_v1_text().replace("category: returned_dd", "category: 2026-02-30", 1))
+    with pytest.raises(RulesetError, match=r"cma/rules/v1\.yaml: not valid YAML"):
+        load_ruleset("v1")
+
+
 def _v1_text() -> str:
     return resources.files("cma.rules").joinpath("v1.yaml").read_text()
 
@@ -345,6 +353,13 @@ def test_p7_golden_covers_every_case():
     # tests/test_import_monzo.py was captured only as single lines).
     descriptions = [{line[2] for line in f["lines"]} for f in g["fixtures"]]
     assert {"FPS CREDIT OAKFIELD PROPERTIES INV1042", "BACS CREDIT ACME LTD INVOICE2210"} in descriptions
+    # Statements the pre-change tests only loaded, never categorised or computed on, are
+    # in too (verify-11: the newest-first and byte-order-mark fixtures in tests/test_ingest.py).
+    rows = [[line[:5] for line in f["lines"]] for f in g["fixtures"]]
+    assert [["T1", "2026-01-01", "A", 100.0, 100.0], ["T2", "2026-01-02", "B", 100.0, 200.0],
+            ["T3", "2026-01-03", "C", -50.0, 150.0]] in rows
+    assert [["T1", "2026-01-01", "A", 100.0, 100.0]] in rows
+    assert [["T1", "2026-01-01", "CARD ACQUIRER SETTLEMENT", 100.0, 100.0]] in rows
 
 
 @pytest.mark.dual_run
@@ -375,7 +390,7 @@ def test_p7_v1_committed_examples_match_the_baseline(case, v1):
 
 @pytest.mark.dual_run
 @pytest.mark.invariants
-@pytest.mark.parametrize("case", _golden()["fixtures"], ids=lambda c: f"fixture-{len(c['lines'])}-lines")
+@pytest.mark.parametrize("case", _golden()["fixtures"], ids=lambda c: f"fixture-{len(c['lines'])}-lines-{c['lines'][0][2][:24]}")
 def test_p7_v1_test_fixtures_match_the_baseline(case, v1):
     s = Statement(account_name=case["account_name"], transactions=[
         Transaction(id=i, date=date.fromisoformat(d), description=desc, amount=a, balance=b)

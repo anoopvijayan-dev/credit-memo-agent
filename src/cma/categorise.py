@@ -175,6 +175,8 @@ def load_ruleset(ruleset_id: str) -> Ruleset:
         raise RulesetError(f"{source}: not valid YAML ({problem})") from e
     except RecursionError as e:
         raise RulesetError(f"{source}: not valid YAML (nested too deeply)") from e
+    except (ValueError, TypeError, OverflowError) as e:  # a scalar the loader cannot build, e.g. 2026-02-30
+        raise RulesetError(f"{source}: not valid YAML ({e.__class__.__name__} building a value)") from e
     # The hash is of the file's bytes as installed, so it matches sha256sum on that file.
     return ruleset_from_data(data, ruleset_id, source, hashlib.sha256(raw).hexdigest())
 

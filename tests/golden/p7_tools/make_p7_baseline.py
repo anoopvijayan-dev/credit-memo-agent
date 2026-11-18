@@ -1,8 +1,8 @@
 """Build tests/golden/p7_v1_baseline.json from the code as it was BEFORE T01.
 
 Run from a checkout of the pre-change commit (fd7b64c), with the capture produced by
-capture_plugin.py (every statement the test suite computes metrics on or categorises
-as a whole, and every line the categoriser sees). Install the durable extra so no capturing test is skipped.
+capture_plugin.py (every statement the test suite loads, computes metrics on or
+categorises as a whole, and every line the categoriser sees). Install the durable extra so no capturing test is skipped.
 From the worktree root, with S a scratch directory:
 
     git archive fd7b64c | tar -x -C $S/old
@@ -108,7 +108,8 @@ def main(capture_path: str, out_path: str) -> None:
             continue
         given = Statement(**sd)
         fresh = categorise.categorise(Statement(**sd))
-        if categories_sha(given) != categories_sha(fresh):
+        # A loaded statement has no categories yet; the rule table sets all of them.
+        if not rec.get("loaded") and categories_sha(given) != categories_sha(fresh):
             skipped += 1  # categories set by hand in the test; not the rule table's output
             continue
         seen_rows.add(rows_key(sd, rec["vat_stagger"]))
