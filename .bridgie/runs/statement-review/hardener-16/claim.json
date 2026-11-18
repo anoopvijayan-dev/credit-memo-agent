@@ -1,0 +1,79 @@
+{
+  "task": "T02",
+  "claims": [
+    {
+      "text": "Data/migration additive + reversible (forward): a SQLite checkpoint written by the real previous release (source at cba9dba, run in a child interpreter that asserts it imported the old cma package) stores Transactions with only the 7 old fields, and this release's `cma resume` approves it and writes an evidence record with schema_version 1. This answers the attempt-1 major finding (simulated old payload).",
+      "proof_cmd": "python -m pytest -q -m contracts -rA tests/test_previous_release.py",
+      "proof_output": "PASSED tests/test_previous_release.py::test_the_previous_release_is_really_the_old_code\nPASSED tests/test_previous_release.py::test_a_checkpoint_written_by_the_previous_release_resumes\nPASSED tests/test_previous_release.py::test_the_previous_release_loads_a_transaction_this_one_writes\nPASSED tests/test_previous_release.py::test_all_extras_are_installed\nPASSED tests/test_previous_release.py::test_a_second_run_with_the_same_out_is_refused_and_leaves_the_record"
+    },
+    {
+      "text": "Rollback path (reinstall previous release) tried: the old release's own Transaction model loads a line written by this one and drops the three new fields (test_the_previous_release_loads_a_transaction_this_one_writes, above). CMA_RULESET is not introduced by T02, so this reinstall is T02's rollback path.",
+      "proof_cmd": "python -m pytest -q -m contracts -rA tests/test_previous_release.py::test_the_previous_release_loads_a_transaction_this_one_writes",
+      "proof_output": "PASSED (included in the 10 contracts tests passed, 260 deselected)"
+    },
+    {
+      "text": "Run with all extras installed: the contracts tier imports anthropic, openai, mcp and langgraph.checkpoint.sqlite, and fails (not skips) if any is missing.",
+      "proof_cmd": "python -m pytest -q -m contracts -rA tests/test_previous_release.py::test_all_extras_are_installed",
+      "proof_output": "PASSED tests/test_previous_release.py::test_all_extras_are_installed"
+    },
+    {
+      "text": "Contract: every key path in the evidence record `cma run` wrote before this change is a subset of the record `cma run` now writes, and schema_version == 1; the committed example record also carries them.",
+      "proof_cmd": "python -m pytest -q -m contracts -rA tests/test_models.py",
+      "proof_output": "PASSED tests/test_models.py::test_a_pending_review_saved_before_the_new_fields_resumes\nPASSED tests/test_models.py::test_a_checkpoint_written_before_the_new_fields_resumes\nPASSED tests/test_models.py::test_todays_evidence_keys_are_a_subset_of_the_new_record\nPASSED tests/test_models.py::test_the_committed_example_evidence_carries_todays_keys_and_a_schema_version\nPASSED tests/test_models.py::test_the_previous_release_loads_a_transaction_written_by_this_one"
+    },
+    {
+      "text": "Dual run: M1-M16 ids, units, values and evidence match the previous release on every synthetic archetype/profile and the committed example; only M2's method sentence differs.",
+      "proof_cmd": "python -m pytest -q -m dual_run",
+      "proof_output": "10 passed, 260 deselected in 2.59s"
+    },
+    {
+      "text": "Idempotency of the mutation T02 touches (evidence write): a replay onto an existing --out is refused with exit 2 and leaves the memo and evidence bytes unchanged.",
+      "proof_cmd": "python -m pytest -q -m contracts -rA tests/test_previous_release.py::test_a_second_run_with_the_same_out_is_refused_and_leaves_the_record",
+      "proof_output": "PASSED"
+    },
+    {
+      "text": "Full suite, lint, compile and offline evals pass. Ruff is clean on src, tests and evals. The 14 ruff errors from `ruff check .` are all in committed .bridgie/runs/implementer-0x helper scripts. The same 14 appear at base cba9dba, and T02's diff touches nothing under .bridgie/.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src tests && python -m pytest -q && python evals/run_evals.py && git diff cba9dba --name-only -- .bridgie | wc -l",
+      "proof_output": "All checks passed!\n270 passed in 7.98s\n9/9 memos fully grounded; model = fake\n0"
+    },
+    {
+      "text": "Failure modes / external calls: not applicable. T02 adds no external call, retry or queue. Enum values, a dict constant and defaulted model fields cannot fail partway. The evidence writer and its refuse-to-overwrite guard are unchanged (src/cma/cli.py:139-154, 207-212).",
+      "proof_cmd": "git diff cba9dba --stat -- src",
+      "proof_output": "src/cma/graph.py 11, src/cma/metrics.py 2, src/cma/models.py 56 (no change to cli.py or mcp_server.py)"
+    },
+    {
+      "text": "Security: no new entry point, so no new authz check is needed. cli.py, mcp_server.py and pyproject.toml are unchanged, which means no new dependency and no lockfile change. provider_hint is documented as untrusted, and nothing reads it yet. No secrets were added.",
+      "proof_cmd": "git diff cba9dba -- src/cma/mcp_server.py src/cma/cli.py pyproject.toml | wc -l",
+      "proof_output": "0"
+    },
+    {
+      "text": "PII: unchanged. The new fields are an account key, a rule id and a provider category label. No name or description is added to evidence, which gains only the integer schema_version.",
+      "proof_cmd": "git diff cba9dba -- src/cma/graph.py | grep '^+' | grep -v '^+++'",
+      "proof_output": "+from .models import (\n+    EVIDENCE_SCHEMA_VERSION, ... \n+        \"schema_version\": EVIDENCE_SCHEMA_VERSION,"
+    },
+    {
+      "text": "Performance: not applicable. There are no queries or endpoints. Payload growth is one integer per evidence record and three short defaulted fields per checkpointed Transaction.",
+      "proof_cmd": "python -m pytest -q",
+      "proof_output": "270 passed in 7.98s"
+    },
+    {
+      "text": "Observability: schema_version in every evidence record is the signal that the new writer ran, keyed to the statement sha256 already in the record. Remote alerting is not applicable by design (design.md Observability: no remote alerting, the tool refuses with a non-zero exit). T02 adds no new failure mode that needs an alert.",
+      "proof_cmd": "python -m pytest -q -m contracts -rA tests/test_models.py::test_todays_evidence_keys_are_a_subset_of_the_new_record",
+      "proof_output": "PASSED"
+    },
+    {
+      "text": "Docs: the README documents schema_version, and that a record without it is v0 and v1 only adds keys. The committed example memo and evidence are regenerated for M2's method. The design decision is already recorded in design.md (Data changes, Migration).",
+      "proof_cmd": "git diff cba9dba --stat -- README.md examples",
+      "proof_output": "README.md 3 +-, examples/cafe_stretched.memo.evidence.json 3 +-, examples/cafe_stretched.memo.md 2 +-"
+    }
+  ],
+  "files_changed": [],
+  "dispositions": [
+    {
+      "finding": "major: the SQLite contract proves resume of a simulated old payload, not a checkpoint written by the old version (tests/test_models.py:205); no proof the llm extra was installed",
+      "disposition": "not_reproduced",
+      "evidence": "On HEAD b24844c, tests/test_previous_release.py::test_a_checkpoint_written_by_the_previous_release_resumes runs `cma run` from the git-archived source at cba9dba in a child interpreter. The guard asserts cma.__file__ is under the extracted tree, so the old package really ran. The test checks that every stored Transaction has exactly the 7 old fields, then resumes and approves under this release. test_all_extras_are_installed imports anthropic and openai (the llm extra), mcp and the sqlite checkpointer. Both PASSED in `python -m pytest -q -m contracts -rA`."
+    }
+  ],
+  "notes": "No code changes in this hardening pass; HEAD b24844c already contains the evidence. Gaps for the owner: (1) The repo has no changelog, so the README paragraph is the only release note. Add a CHANGELOG line if one is wanted. (2) `ruff check .` from the repo root reports 14 errors, all in committed .bridgie/runs/statement-review/implementer-02 and implementer-05 helper scripts. They predate T02 and are outside its scope, but the runner should lint src/tests/evals or those files should be removed from the branch. (3) tests/previous_release.py pins BASE=cba9dba and needs git history, so it fails in a shallow clone without that commit. (4) Rollback by flag (CMA_RULESET) arrives with C1/T-later, not T02. T02's rollback is reinstalling the previous release, proven above."
+}
