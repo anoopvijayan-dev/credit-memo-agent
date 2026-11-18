@@ -9,12 +9,12 @@
         "P7"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "passed",
       "attempts": 5,
       "max_attempts": 5,
       "branch": "bridgie-task/statement-review/T01",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-18/evidence.json",
-      "escalation": "blocked after 5 attempts. Last verdict not_proven: R54 not_proven (src/cma/categorise.py:165 validates the packaged table, pins its byte hash and restricts selection to known IDs. src/cma/graph.py:216 records the table actually used, and src/cma/cli.py:229 writes its metadata to evidence. The contracts log confirms explicit and default v1, wheel packaging, path rejection, hash rejection and SQLite migration in both directions. The earlier durable retry defect is fixed by preflight validation at src/cma/cli.py:77, and the named retry test passed. The separate claim of unchanged categorisation performance still lacks a runner-produced comparison.); reviewer verdict not_proven"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-20/evidence.json",
+      "escalation": null
     },
     {
       "id": "T02",
