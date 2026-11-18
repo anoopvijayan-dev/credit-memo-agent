@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 44,
+  "next_id": 45,
   "decisions": [
     {
       "id": "D1",
@@ -950,6 +950,26 @@
       "decided_at": "2026-11-18T05:23:27.617Z",
       "effect": "task T01 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T01",
       "created_at": "2026-11-18T05:16:04.893Z"
+    },
+    {
+      "id": "D44",
+      "type": "unblock",
+      "task": "T01",
+      "raised_by": null,
+      "context": "Task T01 \"Move the built-in rule table into packaged, validated YAML under src/cma/rules/ (v1 frozen, with id and hash); CMA_RULESET selects it and cma run records the ruleset id and hash in evidence; test (dual_run and invariants, named p7): M1-M16 under v1 equal a golden captured by running the pre-change commit over every committed fixture and synthetic archetype, with the capture script and commit id kept under tests/\" is blocked after 5 attempts. Last verdict fail: R54 not_proven (src/cma/categorise.py:165 validates and pins the packaged table. src/cma/graph.py:215 captures the ID and hash from the table used, and src/cma/cli.py:222 writes them into evidence. The runner logs named passes for explicit and default v1, wheel packaging, hash rejection, unknown IDs, path rejection, and SQLite migration in both directions. The clean-refusal claim remains contradicted for a new durable run. The runner also supplies no before-and-after timing result for the claimed performance parity. The review was read-only and used existing runner results.); major: The claimed clean refusal leaves a durable partial run. Categorisation validates the ruleset after the graph has checkpointed the statement. The refusal returns exit 2 while leaving the thread occupied. A corrected retry is rejected as already used, and resume requires a review interrupt the failed run never reached. The changed-table contract test at tests/test_rules.py:228 uses the in-memory path and checks only the output files. at src/cma/cli.py:82; reviewer verdict not_proven",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-18T05:28:27.362Z"
     }
   ]
 }

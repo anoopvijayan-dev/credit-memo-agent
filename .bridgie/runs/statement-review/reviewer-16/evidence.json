@@ -1,0 +1,43 @@
+{
+  "task": "T01",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R54",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:165 validates and pins the packaged table. src/cma/graph.py:215 captures the ID and hash from the table used, and src/cma/cli.py:222 writes them into evidence. The runner logs named passes for explicit and default v1, wheel packaging, hash rejection, unknown IDs, path rejection, and SQLite migration in both directions. The clean-refusal claim remains contradicted for a new durable run. The runner also supplies no before-and-after timing result for the claimed performance parity. The review was read-only and used existing runner results.",
+      "result": "not_proven",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-16/contracts-4.log"
+    },
+    {
+      "id": "P7",
+      "tier": "adversarial",
+      "check": "tests/test_p7_history.py:33 pins fd7b64c and :66 rebuilds the golden against that historical code. tests/test_rules.py:382 checks corpus coverage, and :421, :435, :447 and :459 compare the synthetic cases, committed example, captured fixtures and standalone lines. Both named runner tiers passed the historical rebuild and the v1 comparisons. The dual-run log also shows the old-table comparison and signed and zero amount checks passed. src/cma/metrics.py:289 changes only M16's display name.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-16/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 82,
+      "criterion": "R54",
+      "claim": "The claimed clean refusal leaves a durable partial run. Categorisation validates the ruleset after the graph has checkpointed the statement. The refusal returns exit 2 while leaving the thread occupied. A corrected retry is rejected as already used, and resume requires a review interrupt the failed run never reached. The changed-table contract test at tests/test_rules.py:228 uses the in-memory path and checks only the output files.",
+      "repro": "With the durable extra and a fresh database, run `CMA_RULESET=v9 cma run examples/cafe_stretched.csv --checkpoint-db /tmp/t01-review.sqlite --thread t01 --yes --reviewer A`. Repeat with `CMA_RULESET=v1` and the same database and thread. The retry hits the already-used check at src/cma/cli.py:78. `cma resume t01 --checkpoint-db /tmp/t01-review.sqlite` hits the no-interrupt check at src/cma/cli.py:114."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 284,
+      "criterion": "R54",
+      "claim": "The producer's categorisation performance comparison is not proven by a runner result. The behavioural tier reports end-to-end timings for the current offline memos, which do not measure the old and new categorisers on the same input.",
+      "repro": "Compare behavioural-6.log with the producer's 1.45 ms and 1.5 ms claim. To prove it, the runner would need to run `python -m timeit -r 5 -n 20` for `categorise.categorise(statement)` against both fd7b64c and the reviewed checkout, with setup loading the same committed café CSV outside the timed statement."
+    }
+  ],
+  "verdict": "not_proven"
+}
