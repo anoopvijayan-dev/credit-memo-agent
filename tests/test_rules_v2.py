@@ -386,6 +386,21 @@ def test_line_type_cue_beats_every_name_list_in_a_full_matrix(v2):
                         assert got == alone, (desc, got, alone)
 
 
+@pytest.mark.contracts
+def test_returned_dd_cue_beats_every_name_on_every_list_either_direction(v2):
+    """The first line-type cue, a returned direct debit, crossed with every name the
+    table lists (and the same name as a profile director and own account): it is always
+    a returned DD, in either direction."""
+    data = yaml.safe_load(resources.files("cma.rules").joinpath("v2.yaml").read_bytes())
+    names = {n for r in data["rules"] if "names" in r for n in r["names"]}
+    assert len(names) > 100
+    for name in sorted(names):
+        profile = ProfileNames(directors=(name,), own_accounts=(name,))
+        for amount in (75.0, -75.0):
+            assert classify(_t(f"UNPAID DD {name}", amount), v2, profile=profile) == \
+                (C.RETURNED_DD, "v2:returned_dd"), (name, amount)
+
+
 # --- precedence ----------------------------------------------------------------------
 
 
