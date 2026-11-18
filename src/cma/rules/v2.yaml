@@ -187,8 +187,8 @@ rules:
   # Cash paid in at a counter or a machine, at a bank, a Post Office or a PayPoint. A
   # cheque is not cash. Post Office and PayPoint count only with cash, deposit or counter
   # wording: both also pay by transfer, and their name alone is not cash. An electronic
-  # payment (Faster Payment, BACS, CHAPS, a transfer, a standing order, a direct credit)
-  # is never cash, wherever in the line the rail is named and whatever its payer-written
+  # payment (Faster Payment, including the FP and FPI codes, BACS, CHAPS, a bank giro
+  # credit (BGC), a transfer, a standing order, a direct credit) is never cash, wherever in the line the rail is named and whatever its payer-written
   # reference says; it stays unexplained for a person.
   - id: cash_paid_in
     names:
@@ -209,7 +209,7 @@ rules:
       - POST OFFICE COUNTER DEPOSIT
       - PAYPOINT CASH
       - PAYPOINT DEPOSIT
-    unless: '(?<![A-Z0-9])(?:CHEQUES?|CHQ|FPS|FASTER\s+PAYMENTS?|BACS|CHAPS|TFR|TRANSFER|SO|STO|STANDING\s+ORDER|DIRECT\s+CREDIT)(?![A-Z0-9])'
+    unless: '(?<![A-Z0-9])(?:CHEQUES?|CHQ|FPS|FPI|FP|BGC|FASTER\s+PAYMENTS?|BACS|CHAPS|TFR|TRANSFER|SO|STO|STANDING\s+ORDER|DIRECT\s+CREDIT)(?![A-Z0-9])'
     direction: in
     category: cash_deposit
   # Trading receipts. The first three patterns are v1's synthetic acquirer wording.

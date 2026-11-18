@@ -283,8 +283,9 @@ def test_overlaps_from_the_review_hold_for_every_listed_word(v2):
         for rail in ("", "BACS CREDIT ", "FPS CREDIT "):
             assert classify(_t(f"{rail}{provider}", 500.0), v2)[0] is C.OTHER, (rail, provider)
     for cash in _list("cash_paid_in"):
-        for rail in ("FPS", "FASTER PAYMENT", "FASTER PAYMENTS", "BACS", "CHAPS", "TFR", "TRANSFER", "SO", "STO",
-                     "STANDING ORDER", "DIRECT CREDIT"):
+        # FPI, FP and BGC are rail codes UK banks print (BGC is in categorise.RAIL_PREFIX too)
+        for rail in ("FPS", "FPI", "FP", "BGC", "FASTER PAYMENT", "FASTER PAYMENTS", "BACS", "CHAPS", "TFR",
+                     "TRANSFER", "SO", "STO", "STANDING ORDER", "DIRECT CREDIT"):
             # wherever the rail sits in the line
             for desc in (f"{rail} {cash}", f"CREDIT {rail} {cash}", f"{cash} {rail}", f"{cash} BY {rail} REF 12"):
                 assert classify(_t(desc, 200.0), v2)[0] is not C.CASH_DEPOSIT, desc
