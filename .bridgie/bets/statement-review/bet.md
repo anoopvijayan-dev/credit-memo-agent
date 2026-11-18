@@ -165,6 +165,16 @@ Every answer and decision, dated.
 - 2026-11-18 D54 (question): An override, a profile name or a pairing; never a firm rule (design default, keeps R5, R6 and R8) → recorded [Anoop Vijayan]
 - 2026-11-18 D55 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-18 D56 (unblock): take over manually — Owner: take over with the prepared fix. The writer lock's owner is the process id plus the thread ident, so a forked child is refused instead of entering on its parent's lock; invariants test p15 forks inside a held writer. → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
+- 2026-11-18 D49 (unblock): retry with guidance — Owner (D49): R4 is amended (design revision 3, D52-D55): ambiguous or conflicting wording goes to the judgement queue and is never counted as trading receipts. Rebuild the v2 credit verdict exactly as design.md C1 now says, rather than steering more collisions by rule order or exceptions:
+- Collect every matching rule. A match inside a longer match from another rule counts only as the longer one (STRIPE inside STRIPE CAPITAL, REFUND inside HMRC REFUND, LOAN inside DIRECTOR LOAN).
+- A returned-payment code the bank prints at the start of the line settles the line type alone.
+- Otherwise, if any stage-1 cue matches, the cues decide: one bucket gives it; two or more buckets, or a payment rail with cash paid-in wording, make the credit ambiguous. With no cue, the names decide the same way. Agreeing cues outrank names (D53).
+- Ambiguous: unexplained money in, every candidate rule recorded on the line, listed in the judgement queue. Only a per-line override, a profile name or an own-account pairing settles it, never a firm rule (D54).
+- No hidden tie-breaks: a rule's exceptions may exclude wording that is on no list, never another list's cue or name. Remove the HMRC 'unless move wording' and refunds 'unless HMRC' exceptions; use longer phrases (HMRC REFUND on the HMRC list) or let the line be ambiguous.
+- Bare words are not evidence (D48): remove the bare pot-label rule; a pot needs move wording or a profile account.
+- Cash paid in is not protected (move it to the unprotected names); a profile director outranks cash wording.
+- Precedence as C1 lists it, (1) to (7). Debits keep first-match order; v1 is untouched (R54).
+The four verify-27 findings must each become a test with the R4 outcome: HMRC credit with savings wording -> ambiguous (HMRC vs own-account cues); counter cash at a branch whose name holds a generic explained word -> ambiguous, not trading and not explained; a bare pot label in an external payment -> not own-account (no move wording); a card refund from a merchant named with savings-transfer wording -> ambiguous (refund and own-account move cues disagree): unexplained with both candidates recorded and listed in the queue. Add a test that shuffles the order of lists within a stage and gets the same verdict for every case (design Rollout). → task T03 gets one more attempt [Anoop Vijayan]
 
 ## Idea
 
