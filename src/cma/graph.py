@@ -195,7 +195,10 @@ def evidence_record(s: MemoState) -> dict:
         "model": s.get("model"),
         "vat_stagger": s.get("vat_stagger"),
         "ruleset": ruleset_used(s),
-        "metrics": [m.model_dump() for m in s["metrics"]],
+        # Each line's category and the rule that set it: ids only, no descriptions.
+        "lines": [{"id": t.id, "category": t.category.value if t.category else None, "rule_id": t.rule_id,
+                   "reverses": t.reverses} for t in s["statement"].transactions],
+        "metrics":[m.model_dump() for m in s["metrics"]],
         "policy": s["policy"].model_dump(mode="json"),
         "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
         "redrafts": s.get("redrafts", 0),

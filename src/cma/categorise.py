@@ -9,8 +9,19 @@ The rule table is data, not code: src/cma/rules/<id>.yaml, validated on load lik
 policy (a key repeated in a mapping is refused), with an id and the SHA-256 of the
 file's bytes. CMA_RULESET chooses the table (default v1). v1 is the table as it was
 when it lived here, frozen: its hash is pinned in FROZEN_SHA256 and any other bytes are
-refused, so CMA_RULESET=v1 always reproduces those categories. The
-matching passes below (reversals, round trips) stay in code.
+refused, so CMA_RULESET=v1 always reproduces those categories. v2 adds the maintained
+lists of R4 (acquirers, gateways, marketplaces, delivery platforms, lenders and merchant
+cash advance providers, own pots and savings, cash paid in, cash-withdrawal wording,
+HMRC, refunds, explained non-trading money in). The matching passes below (reversals,
+round trips) stay in code.
+
+Precedence, first match wins: a per-line override; the table's protected rules (returned
+DD, HMRC, lenders, director, capital, shareholder); the case profile's names (directors
+and shareholders, own accounts); firm rules; the rest of the table; the default (a debit
+is supplier, a credit is OTHER, unexplained). Every line records the rule that set its
+category in Transaction.rule_id: "<ruleset>:<rule id>", "<ruleset>:default",
+"<ruleset>:round_trip", "profile:director", "profile:own_account", "firm:<rule id>" or
+the override's own reference.
 
 Revenue is claimed narrowly. A card or gateway settlement is trading income. A bank
 transfer in is only counted as a customer payment when it carries an invoice
@@ -30,6 +41,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
@@ -44,11 +56,14 @@ Direction = Literal["in", "out", "any"]
 INVOICE_REF = re.compile(r"\bINV(?:OICE)?\s*[-#:]?\s*\d+")
 
 RULESET_ENV = "CMA_RULESET"
-RULESETS = ("v1",)
+RULESETS = ("v1", "v2")
 DEFAULT_RULESET = "v1"
 DIRECTIONS = ("in", "out", "any")
 TABLE_KEYS = {"id", "frozen", "rules"}
-RULE_KEYS = {"id", "pattern", "direction", "category"}
+RULE_KEYS = {"id", "direction", "category"}  # required, plus a pattern or names
+MATCH_KEYS = {"pattern", "names"}
+OPTIONAL_KEYS = {"unless", "protected"}
+ALL_RULE_KEYS = RULE_KEYS | MATCH_KEYS | OPTIONAL_KEYS
 # A frozen table's SHA-256, pinned here. A file that validates but differs from these
 # bytes (a rule recategorised, CRLF line ends, frozen switched off) is refused, so the id
 # v1 in an evidence record always means this exact table.
@@ -65,6 +80,8 @@ class Rule:
     pattern: re.Pattern[str]
     direction: Direction
     category: Category
+    protected: bool = False  # wins over profile names and firm rules (R21)
+    unless: re.Pattern[str] | None = None  # the rule does not match when this does
 
 
 @dataclass(frozen=True)
@@ -72,6 +89,32 @@ class Ruleset:
     id: str
     sha256: str
     rules: tuple[Rule, ...]
+
+    @property
+    def protected(self) -> tuple[Rule, ...]:
+        return tuple(r for r in self.rules if r.protected)
+
+    @property
+    def unprotected(self) -> tuple[Rule, ...]:
+        return tuple(r for r in self.rules if not r.protected)
+
+
+def names_pattern(names: Sequence[str]) -> str:
+    """A pattern matching any of `names` as whole words in an upper-cased description,
+    with any run of spaces between words. A name's other characters (".", "-", "&",
+    digits) are matched literally."""
+    alts = sorted({r"\s+".join(re.escape(w) for w in n.upper().split()) for n in names}, key=lambda a: (-len(a), a))
+    return r"(?<![A-Z0-9])(?:" + "|".join(alts) + r")(?![A-Z0-9])"
+
+
+def _compile_problem(pattern: str) -> str | None:
+    # re.error is not the only way a pattern fails to compile: a repeat count past
+    # the engine's limit raises OverflowError, deep nesting RecursionError.
+    try:
+        re.compile(pattern)
+    except (re.error, OverflowError, RecursionError, MemoryError) as e:
+        return f"{e.__class__.__name__}: {e}"
+    return None
 
 
 def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> None:
@@ -98,13 +141,27 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
             continue
         for key in sorted(RULE_KEYS - set(r)):
             problems.append(f"{where}: missing {key}")
-        for key in sorted(set(r) - RULE_KEYS, key=repr):
+        if not MATCH_KEYS & set(r):
+            problems.append(f"{where}: missing pattern (or names)")
+        for key in sorted(set(r) - ALL_RULE_KEYS, key=repr):
             problems.append(f"{where}: unknown key {key!r}")
         # Every field is a string. Checking the type first means a list, a mapping, a
         # number or null is reported here, not raised later as a TypeError.
-        for key in sorted(RULE_KEYS & set(r)):
+        for key in sorted((RULE_KEYS | {"pattern", "unless"}) & set(r)):
             if not isinstance(r[key], str) or not r[key]:
                 problems.append(f"{where}: {key} {r[key]!r} is not a non-empty string")
+        if "names" in r:
+            names = r["names"]
+            if not isinstance(names, list) or not names or not all(isinstance(n, str) and n.strip() for n in names):
+                problems.append(f"{where}: names must be a non-empty list of non-empty strings")
+            elif len({" ".join(n.upper().split()) for n in names}) != len(names):
+                problems.append(f"{where}: a name is listed twice")
+        if "protected" in r:
+            if not isinstance(r["protected"], bool):
+                problems.append(f"{where}: protected must be true or false")
+            elif r["protected"] and any(not isinstance(p, dict) or not p.get("protected") for p in rules[:i - 1]):
+                # One ordered pass and the precedence agree only if the protected rules come first.
+                problems.append(f"{where}: a protected rule must come before every rule that is not")
         if isinstance(r.get("id"), str):
             if r["id"] in seen:
                 problems.append(f"{where}: duplicate id")
@@ -113,15 +170,18 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
             problems.append(f"{where}: direction {r['direction']!r} is not one of {list(DIRECTIONS)}")
         if isinstance(r.get("category"), str) and r["category"] not in categories:
             problems.append(f"{where}: category {r['category']!r} is not a category")
-        if isinstance(r.get("pattern"), str) and r["pattern"]:
-            # re.error is not the only way a pattern fails to compile: a repeat count past
-            # the engine's limit raises OverflowError, deep nesting RecursionError.
-            try:
-                re.compile(r["pattern"])
-            except (re.error, OverflowError, RecursionError, MemoryError) as e:
-                problems.append(f"{where}: pattern does not compile ({e.__class__.__name__}: {e})")
+        for key in ("pattern", "unless"):
+            if isinstance(r.get(key), str) and r[key]:
+                problem = _compile_problem(r[key])
+                if problem:
+                    problems.append(f"{where}: {key} does not compile ({problem})")
     if problems:
         raise RulesetError(f"{source}: " + "; ".join(problems))
+
+
+def _rule_pattern(r: dict) -> re.Pattern[str]:
+    parts = [p for p in (r.get("pattern"), names_pattern(r["names"]) if "names" in r else None) if p]
+    return re.compile(parts[0] if len(parts) == 1 else "|".join(f"(?:{p})" for p in parts))
 
 
 def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) -> Ruleset:
@@ -131,7 +191,9 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) 
         id=data["id"],
         sha256=sha256,
         rules=tuple(
-            Rule(r["id"], re.compile(r["pattern"]), r["direction"], Category(r["category"]))
+            Rule(r["id"], _rule_pattern(r), r["direction"], Category(r["category"]),
+                 protected=r.get("protected", False),
+                 unless=re.compile(r["unless"]) if "unless" in r else None)
             for r in data["rules"]
         ),
     )
@@ -209,14 +271,66 @@ def _direction_ok(direction: Direction, amount: float) -> bool:
     return amount > 0 if direction == "in" else amount < 0
 
 
-def categorise_one(t: Transaction, ruleset: Ruleset | None = None) -> Category:
+def rule_matches(rule: Rule, description: str, amount: float) -> bool:
+    """`description` upper-cased."""
+    return (_direction_ok(rule.direction, amount) and rule.pattern.search(description) is not None
+            and (rule.unless is None or rule.unless.search(description) is None))
+
+
+@dataclass(frozen=True)
+class LineOverride:
+    """A person's category for one line, with the reference recorded as its rule id."""
+
+    category: Category
+    ref: str
+
+
+@dataclass(frozen=True)
+class ProfileNames:
+    """Names from the case profile: directors and shareholders, and the applicant's other
+    accounts. Matched as whole words in the upper-cased description."""
+
+    directors: tuple[str, ...] = ()
+    own_accounts: tuple[str, ...] = ()
+
+
+def _names_in(names: Sequence[str], description: str) -> bool:
+    names = [n for n in names if n.strip()]
+    return bool(names) and re.search(names_pattern(names), description) is not None
+
+
+def classify(
+    t: Transaction,
+    ruleset: Ruleset | None = None,
+    *,
+    override: LineOverride | None = None,
+    profile: ProfileNames | None = None,
+    firm_rules: Sequence[Rule] = (),
+) -> tuple[Category, str]:
+    """The category of one line and the id of the rule that set it, in precedence order."""
+    ruleset = ruleset or active_ruleset()
+    if override is not None:
+        return override.category, override.ref
     desc = t.description.upper()
-    for rule in (ruleset or active_ruleset()).rules:
-        if rule.pattern.search(desc) and _direction_ok(rule.direction, t.amount):
-            return rule.category
-    if t.amount < 0:
-        return Category.SUPPLIER
-    return Category.OTHER
+    for rule in ruleset.protected:
+        if rule_matches(rule, desc, t.amount):
+            return rule.category, f"{ruleset.id}:{rule.id}"
+    if profile is not None:
+        if t.amount > 0 and _names_in(profile.directors, desc):
+            return Category.DIRECTOR_FUNDING, "profile:director"
+        if t.amount != 0 and _names_in(profile.own_accounts, desc):
+            return Category.OWN_ACCOUNT_TRANSFER, "profile:own_account"
+    for rule in firm_rules:
+        if rule_matches(rule, desc, t.amount):
+            return rule.category, f"firm:{rule.id}"
+    for rule in ruleset.unprotected:
+        if rule_matches(rule, desc, t.amount):
+            return rule.category, f"{ruleset.id}:{rule.id}"
+    return (Category.SUPPLIER if t.amount < 0 else Category.OTHER), f"{ruleset.id}:default"
+
+
+def categorise_one(t: Transaction, ruleset: Ruleset | None = None) -> Category:
+    return classify(t, ruleset)[0]
 
 
 RAIL_PREFIX = re.compile(
@@ -265,25 +379,40 @@ def link_reversals(statement: Statement) -> Statement:
 OUTGOING_TRANSFER = re.compile(r"^(?:FPS DEBIT|BACS DEBIT|TFR)\b")
 
 
-def unmark_round_trips(statement: Statement) -> Statement:
+def unmark_round_trips(statement: Statement, ruleset_id: str | None = None) -> Statement:
     """A "customer" the applicant also sends transfers to is not counted as revenue.
 
     Money sent out by transfer and received back with an invoice reference is the
     cheapest way to manufacture revenue. Such credits become OTHER (and so show in M16).
     This also catches a genuine customer who is paid a refund by transfer: the cost is
     understated revenue, which a person can add back; the alternative is gameable.
+
+    Only a category the built-in table set is undone: a person's override, a profile name
+    or a firm rule ranks above the table and is left alone.
     """
     paid_out = {counterparty(t.description) for t in statement.transactions
                 if t.amount < 0 and OUTGOING_TRANSFER.search(t.description.upper())}
     for t in statement.transactions:
-        if t.category == Category.REVENUE_TRANSFER and counterparty(t.description) in paid_out:
+        set_by_table = ruleset_id is None or (t.rule_id or "").startswith(f"{ruleset_id}:")
+        if t.category == Category.REVENUE_TRANSFER and counterparty(t.description) in paid_out and set_by_table:
             t.category = Category.OTHER
+            if ruleset_id is not None:
+                t.rule_id = f"{ruleset_id}:round_trip"
     return statement
 
 
-def categorise(statement: Statement, ruleset: Ruleset | None = None) -> Statement:
+def categorise(
+    statement: Statement,
+    ruleset: Ruleset | None = None,
+    *,
+    overrides: Mapping[str, LineOverride] | None = None,
+    profile: ProfileNames | None = None,
+    firm_rules: Sequence[Rule] = (),
+) -> Statement:
     ruleset = ruleset or active_ruleset()
+    overrides = overrides or {}
     for t in statement.transactions:
-        t.category = categorise_one(t, ruleset)
+        t.category, t.rule_id = classify(t, ruleset, override=overrides.get(t.id), profile=profile,
+                                         firm_rules=firm_rules)
         t.reverses = None
-    return link_reversals(unmark_round_trips(statement))
+    return link_reversals(unmark_round_trips(statement, ruleset.id))
