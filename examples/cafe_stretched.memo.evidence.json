@@ -9,6 +9,10 @@
   },
   "model": "fake:offline-template",
   "vat_stagger": 3,
+  "ruleset": {
+    "id": "v1",
+    "sha256": "7573366854a668793ca20b3ecfaad91d406ea3018a71d524ea3324cc4ff76630"
+  },
   "metrics": [
     {
       "id": "M1",
@@ -1730,7 +1734,7 @@
     },
     {
       "id": "M16",
-      "name": "Unclassified inflows",
+      "name": "Non-trading money in (share)",
       "value": 2.49,
       "unit": "pct",
       "method": "Share of money in (excluding loan drawdowns and returned DDs) that is not revenue; it is left out of operating cash flow.",
@@ -2105,7 +2109,7 @@
         "description": "No more than 20% of money in left unexplained",
         "metric_id": "M16",
         "outcome": "pass",
-        "detail": "Unclassified inflows is 2.5%; rule requires <= 20.",
+        "detail": "Non-trading money in (share) is 2.5%; rule requires <= 20.",
         "op": "<=",
         "threshold": 20.0,
         "refer_below": null,

@@ -49,9 +49,52 @@ def test_written_memo_carries_its_evidence(tmp_path):
     assert record["vat_stagger"] == 3 and record["guard"]["grounded"] is True
 
 
+@pytest.mark.contracts
+def test_unknown_cma_ruleset_is_refused_not_blamed_on_the_model(tmp_path, monkeypatch):
+    # T01: exit 4 means the model failed; a bad CMA_RULESET is a refusal (exit 2).
+    monkeypatch.setenv("CMA_RULESET", "v9")
+    r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A"])
+    assert r.exit_code == 2, r.output
+    assert "Refused." in r.output and "CMA_RULESET" in r.output and "model call failed" not in r.output
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("env", [None, "v1"])
+def test_written_evidence_records_the_ruleset(tmp_path, monkeypatch, env):
+    """R54: `cma run` writes the ruleset id and the pinned hash of v1 into the evidence
+    file, with CMA_RULESET unset (the default) and set to v1."""
+    from cma.categorise import FROZEN_SHA256
+
+    if env is None:
+        monkeypatch.delenv("CMA_RULESET", raising=False)
+    else:
+        monkeypatch.setenv("CMA_RULESET", env)
+    out = tmp_path / "memo.md"
+    r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A", "--out", str(out)])
+    assert r.exit_code == 0, r.output
+    record = json.loads((tmp_path / "memo.evidence.json").read_text())
+    assert record["ruleset"] == {"id": "v1", "sha256": FROZEN_SHA256["v1"]}
+
+
 def test_whitespace_reviewer_is_refused(tmp_path):
     r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "   "])
     assert r.exit_code == 2
+
+
+@pytest.mark.contracts
+def test_a_refused_ruleset_leaves_a_durable_review_id_reusable(tmp_path, monkeypatch):
+    # T01 review: the refusal came after the first checkpoint, so the id stayed taken.
+    pytest.importorskip("langgraph.checkpoint.sqlite")
+    db = tmp_path / "reviews.sqlite"
+    csv = _statement(tmp_path)
+    monkeypatch.setenv("CMA_RULESET", "v9")
+    r = runner.invoke(app, ["run", str(csv), "--checkpoint-db", str(db), "--thread", "case-9"], input="\x04")
+    assert r.exit_code == 2, r.output
+    assert "Refused." in r.output and "CMA_RULESET" in r.output
+    monkeypatch.delenv("CMA_RULESET")
+    r = runner.invoke(app, ["run", str(csv), "--checkpoint-db", str(db), "--thread", "case-9"], input="\x04")
+    assert "already used" not in r.output, r.output
+    assert "review id: case-9" in r.output, r.output
 
 
 def test_pending_review_survives_a_restart(tmp_path):

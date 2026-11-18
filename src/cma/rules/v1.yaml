@@ -1,0 +1,60 @@
+# Built-in categorisation table v1: the table as it was in src/cma/categorise.py before
+# it moved to data. Frozen: CMA_RULESET=v1 must reproduce today's categories and M1-M16
+# exactly (tests/test_rules.py, P7). Change a newer table, never this one.
+#
+# Rules are ordered; the first whose pattern matches the upper-cased description and
+# whose direction matches the sign of the amount wins. No match: a debit is supplier,
+# a credit is other. Patterns are Python regular expressions; direction is in, out or
+# any; category is a cma.models.Category value.
+id: v1
+frozen: true
+rules:
+  - id: returned_dd
+    pattern: '^UNPAID DD\b'
+    direction: any
+    category: returned_dd
+  - id: bank_fees
+    pattern: 'UNPAID ITEM FEE|ACCOUNT FEES|BANK CHARGES'
+    direction: out
+    category: bank_fees
+  - id: hmrc_vat
+    pattern: 'HMRC VAT'
+    direction: out
+    category: hmrc_vat
+  - id: hmrc_paye
+    pattern: 'HMRC PAYE'
+    direction: out
+    category: hmrc_paye
+  - id: payroll
+    pattern: 'PAYROLL|SALARIES'
+    direction: out
+    category: payroll
+  - id: rent
+    pattern: '\bRENT\b'
+    direction: out
+    category: rent
+  - id: loan_repayment
+    pattern: '\bLOAN\b|FINANCE\b'
+    direction: out
+    category: loan_repayment
+  - id: loan_drawdown
+    pattern: '\bLOAN\b|FINANCE\b'
+    direction: in
+    category: loan_drawdown
+  - id: owner_drawings
+    pattern: 'OWNER DRAWINGS|DIRECTOR DRAWINGS|DIVIDEND'
+    direction: out
+    category: owner_drawings
+  # Money in that is never trading income, whatever reference it carries.
+  - id: non_trading_in
+    pattern: '\bDIRECTOR\b|\bOWNER\b|\bCAPITAL\b|\bSHAREHOLDER\b|\bHMRC\b|\bREFUND\b|\bREVERSAL\b|\bSAVINGS\b|\bPOT TRANSFER\b|\bINTEREST\b|\bGRANT\b|\bINSURANCE CLAIM\b'
+    direction: in
+    category: other
+  - id: card_settlement
+    pattern: 'ACQUIRER SETTLEMENT|PAYGATE PAYOUT|CARD SETTLEMENT'
+    direction: in
+    category: revenue_card_settlement
+  - id: invoice_transfer
+    pattern: '\bINV(?:OICE)?\s*[-#:]?\s*\d+'
+    direction: in
+    category: revenue_transfer

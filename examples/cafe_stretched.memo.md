@@ -41,7 +41,7 @@ Evidence: every transaction id behind each figure is in the .evidence.json file 
 | M13 | Late or missed VAT payments | 0 | VAT quarters in the business's stagger group with no payment that stuck (not returned unpaid) between the quarter end and the Direct Debit collection days after the due date. | 4 |
 | M14 | PAYE paid | £19,114 | Payments to HMRC PAYE/NI, net of any returned unpaid. | 12 |
 | M15 | Top customer share of transfer revenue | n/a | No customer transfers: revenue is card or gateway settled, which hides who the customers are. | 0 |
-| M16 | Unclassified inflows | 2.5% | Share of money in (excluding loan drawdowns and returned DDs) that is not revenue; it is left out of operating cash flow. | 262 |
+| M16 | Non-trading money in (share) | 2.5% | Share of money in (excluding loan drawdowns and returned DDs) that is not revenue; it is left out of operating cash flow. | 262 |
 
 | id | rule | metric | requirement | outcome | detail |
 |---|---|---|---|---|---|
@@ -53,4 +53,4 @@ Evidence: every transaction id behind each figure is in the .evidence.json file 
 | R6 | Revenue trend no worse than -15% | M4 | >= -15.0% | pass | Revenue trend is 10.8%; rule requires >= -15. |
 | R7 | Top customer below 60% of transfer revenue | M15 | < 60.0% | pass | Top customer share of transfer revenue cannot be computed (No customer transfers: revenue is card or gateway settled, which hides who the customers are.); policy says pass when missing. |
 | R8 | Positive net operating cash flow over the period | M9 | > £0 | pass | Net operating cash flow is £54,192; rule requires > 0. |
-| R9 | No more than 20% of money in left unexplained | M16 | <= 20.0% | pass | Unclassified inflows is 2.5%; rule requires <= 20. |
+| R9 | No more than 20% of money in left unexplained | M16 | <= 20.0% | pass | Non-trading money in (share) is 2.5%; rule requires <= 20. |
