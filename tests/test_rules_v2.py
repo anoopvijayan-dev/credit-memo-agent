@@ -1642,5 +1642,24 @@ def test_an_anchored_cue_without_the_flag_gets_no_bank_code_exception():
 def test_the_bank_code_flag_is_refused_on_any_other_rule():
     refund = {"id": "refund", "pattern": "^REFUND", "direction": "in", "category": "refund_in",
               "protected": True, "stage": "line_type", "bank_code": True}
-    with pytest.raises(RulesetError, match="bank_code is only for the returned-payment rule"):
+    with pytest.raises(RulesetError, match="bank_code is only for the bank's own returned-payment code"):
         validate_ruleset({"id": "v2", "frozen": False, "rules": [refund]}, expected_id="v2")
+    # T03 review 13: ordinary returned-payment wording, anchored, cannot claim it either
+    payer = {"id": "returned", "pattern": "^RETURNED", "direction": "in", "category": "returned_dd",
+             "protected": True, "stage": "line_type", "bank_code": True}
+    with pytest.raises(RulesetError, match="bank_code is only for the bank's own returned-payment code"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [payer]}, expected_id="v2")
+
+
+
+@pytest.mark.contracts
+def test_a_mixed_rule_finds_its_longest_match_at_each_start_across_pattern_and_names():
+    """T03 review 13: one alternation returns its first part that matches; the span scan
+    now keeps the longest of the rule's parts, so a longer listed phrase hides the words
+    inside it (here a rail word inside ACME FASTER PAYMENT LTD)."""
+    rail = {"id": "rail", "names": ["FASTER PAYMENT"], "direction": "in", "protected": True,
+            "stage": "line_type"}
+    acme = {"id": "acme", "pattern": r"\bACME\b", "names": ["ACME FASTER PAYMENT LTD"], "direction": "in",
+            "category": "revenue_card_settlement", "stage": "names"}
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [rail, acme]}, "v2", "t", "0")
+    assert [r.id for r in categorise.credit_matches(rs, "ACME FASTER PAYMENT LTD", 100.0)] == ["acme"]

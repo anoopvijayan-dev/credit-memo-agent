@@ -68,7 +68,7 @@ import re._parser as _sre_parse  # the parser re uses; read only, to find back-r
 import sys
 import unicodedata
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib import resources
 from typing import Literal
@@ -95,6 +95,10 @@ OPTIONAL_KEYS = {"unless", "requires", "protected", "stage", "bank_code"}
 # Stages of a table that is not frozen: explicit line-type wording first, then the name lists.
 STAGES = ("line_type", "names")
 ALL_RULE_KEYS = RULE_KEYS | MATCH_KEYS | OPTIONAL_KEYS
+# The bank's own returned-payment codes, printed at the start of the line: the only wording
+# that settles a credit's line type alone (bank_code). Kept in code, reviewed like code, so
+# a table edit cannot grant the exception to payer wording.
+BANK_RETURN_CODES = frozenset({r"^UNPAID DD\b"})
 # A frozen table's SHA-256, pinned here. A file that validates but differs from these
 # bytes (a rule recategorised, CRLF line ends, frozen switched off) is refused, so the id
 # v1 in an evidence record always means this exact table.
@@ -116,6 +120,9 @@ class Rule:
     requires: re.Pattern[str] | None = None  # the rule matches only when this does too
     stage: str | None = None  # "line_type" or "names" (tables that are not frozen)
     bank_code: bool = False  # the bank's own code: settles a credit's line type alone (returned_dd)
+    # Each part (own pattern, names) inside a lookahead, to find its matches at every start
+    # (_spans); kept apart so a part that matches first never hides a longer one.
+    span_patterns: tuple[re.Pattern[str], ...] = field(default=(), compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -302,9 +309,9 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
             if not isinstance(r["bank_code"], bool):
                 problems.append(f"{where}: bank_code must be true or false")
             elif r["bank_code"] and not (r.get("stage") == "line_type" and r.get("category") == Category.RETURNED_DD.value
-                                         and isinstance(r.get("pattern"), str) and r["pattern"].startswith("^")):
-                problems.append(f"{where}: bank_code is only for the returned-payment rule anchored at the "
-                                "start of the line")
+                                         and r.get("pattern") in BANK_RETURN_CODES and "names" not in r):
+                problems.append(f"{where}: bank_code is only for the bank's own returned-payment code "
+                                f"({', '.join(sorted(BANK_RETURN_CODES))}), alone")
         if data.get("frozen") is False:
             for key in ("pattern", "unless", "requires"):
                 if isinstance(r.get(key), str) and r[key] and not _compile_problem(r[key]) and _has_group_reference(r[key]):
@@ -380,11 +387,16 @@ def _category_order_problems(data: dict, rules: list) -> list[str]:
     return problems
 
 
-def _rule_pattern_text(r: dict, frozen: bool = True) -> str:
+def _rule_parts(r: dict, frozen: bool = True) -> list[str]:
+    """A rule's own pattern (made mark-aware for a v2 table) and its names, each a pattern."""
     own = r.get("pattern")
     if own and not frozen:
         own = _mark_aware(own)
-    parts = [p for p in (own, names_pattern(r["names"]) if "names" in r else None) if p]
+    return [p for p in (own, names_pattern(r["names"]) if "names" in r else None) if p]
+
+
+def _rule_pattern_text(r: dict, frozen: bool = True) -> str:
+    parts = _rule_parts(r, frozen)
     return parts[0] if len(parts) == 1 else "|".join(f"(?:{p})" for p in parts)
 
 
@@ -411,9 +423,9 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) 
                         Category(r["category"]) if "category" in r else None,
                         protected=r.get("protected", False), stage=r.get("stage"),
                         bank_code=r.get("bank_code", False),
+                        span_patterns=tuple(re.compile(f"(?=({part}))") for part in _rule_parts(r, frozen)),
                         unless=_side_pattern(r["unless"], frozen) if "unless" in r else None,
                         requires=_side_pattern(r["requires"], frozen) if "requires" in r else None)
-            _at_every_position(rule.pattern)
         except (re.error, OverflowError, RecursionError) as e:
             raise RulesetError(f"{source}: rule {r['id']}: its pattern cannot be used: {e}") from e
         rules.append(rule)
@@ -539,7 +551,15 @@ def _at_every_position(pattern: re.Pattern[str]) -> re.Pattern[str]:
 
 
 def _spans(rule: Rule, description: str) -> list[tuple[int, int]]:
-    return [m.span(1) for m in _at_every_position(rule.pattern).finditer(description) if m.end(1) > m.start(1)]
+    """Every match of the rule, at every start, the longest at each start across its parts:
+    one alternation returns its first part that matches, which may be the shorter."""
+    longest: dict[int, int] = {}
+    for part in rule.span_patterns or (_at_every_position(rule.pattern),):
+        for m in part.finditer(description):
+            start, end = m.span(1)
+            if end > start and end > longest.get(start, -1):
+                longest[start] = end
+    return sorted(longest.items())
 
 
 def credit_matches(ruleset: Ruleset, description: str, amount: float) -> list[Rule]:
