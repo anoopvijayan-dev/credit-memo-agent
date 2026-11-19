@@ -1615,3 +1615,14 @@ def test_p_a_credit_ambiguous_only_by_two_profile_names_records_every_rule_it_ma
     assert category is C.OTHER
     assert rule == "v2:conflict:" + "+".join([*matched, "profile:director", "profile:own_account"])
     assert {"payment_rail", "invoice_transfer"} <= set(matched)
+
+
+@pytest.mark.contracts
+def test_a_pattern_that_cannot_be_matched_at_every_position_is_refused_at_load():
+    """T03 review 11: a back-reference compiles alone but not inside the form that finds
+    matches at every position; it is refused when the table loads, by rule id, not on
+    the first credit it meets."""
+    rule = {"id": "echo", "pattern": r"(AB)\1", "direction": "in", "category": "revenue_card_settlement",
+            "stage": "names"}
+    with pytest.raises(RulesetError, match="rule echo"):
+        categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [rule]}, "v2", "t", "0")

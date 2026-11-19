@@ -363,18 +363,28 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) 
     validate_ruleset(data, expected_id, source)
     assert isinstance(data, dict)
     frozen = bool(data.get("frozen", False))
+    rules = []
+    for r in data["rules"]:
+        # Every pattern a line will meet is compiled here, at load: the rule's own (made
+        # mark-aware for a v2 table), its exceptions, and the form that finds its matches
+        # at every position (_spans). A pattern that fails any of them refuses the table
+        # by rule id, rather than failing on the first line it meets.
+        try:
+            rule = Rule(r["id"], _rule_pattern(r, frozen), r["direction"],
+                        Category(r["category"]) if "category" in r else None,
+                        protected=r.get("protected", False), stage=r.get("stage"),
+                        unless=_side_pattern(r["unless"], frozen) if "unless" in r else None,
+                        requires=_side_pattern(r["requires"], frozen) if "requires" in r else None)
+            _at_every_position(rule.pattern)
+        except (re.error, OverflowError, RecursionError) as e:
+            raise RulesetError(f"{source}: rule {r['id']}: its pattern cannot be used: {e}") from e
+        rules.append(rule)
     return Ruleset(
         id=data["id"],
         sha256=sha256,
         frozen=frozen,
         category_order=tuple(Category(c) for c in data.get("category_order") or ()),
-        rules=tuple(
-            Rule(r["id"], _rule_pattern(r, frozen), r["direction"], Category(r["category"]) if "category" in r else None,
-                 protected=r.get("protected", False), stage=r.get("stage"),
-                 unless=_side_pattern(r["unless"], frozen) if "unless" in r else None,
-                 requires=_side_pattern(r["requires"], frozen) if "requires" in r else None)
-            for r in data["rules"]
-        ),
+        rules=tuple(rules),
     )
 
 
