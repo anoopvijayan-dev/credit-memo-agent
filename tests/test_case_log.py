@@ -7,6 +7,7 @@ kind of tamper exhaustively, which is the property over all logs of those sizes.
 
 import json
 import os
+import threading
 
 import pytest
 
@@ -401,6 +402,191 @@ def test_p15_a_fork_while_another_thread_holds_the_state_lock_does_not_hang_the_
     _, status = os.waitpid(pid, 0)
     assert os.waitstatus_to_exitcode(status) == 0
     assert len(log.entries()) == 2
+
+
+@pytest.mark.invariants
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX only")
+def test_p15_leaving_an_inherited_block_never_releases_a_lock_the_child_took(tmp_path):
+    # T12 review: in a child, another thread took its own writer lock, and the main thread
+    # leaving the block it inherited from the parent released that thread's lock.
+    import threading
+    log = _log(tmp_path, 1)
+    go_r, go_w = os.pipe()
+    taken, leave = threading.Event(), threading.Event()
+
+    def other():
+        with log.writer():
+            taken.set()
+            leave.wait(5)
+
+    t = threading.Thread(target=other)
+    pid = None
+    try:
+        with log.writer():
+            pid = os.fork()
+            if pid == 0:
+                os.close(go_w)
+                os.read(go_r, 1)  # the parent has released its lock
+                t.start()
+                assert taken.wait(5)
+        if pid == 0:  # the child has just left the inherited block while t holds a lock
+            code = 0
+            try:
+                with case.CaseLog(log.path).writer():
+                    code = 1  # the lock was released under t
+            except case.CaseLocked:
+                pass
+            leave.set()
+            t.join(5)
+            os._exit(code)
+    except BaseException:
+        if pid == 0:
+            os._exit(2)
+        raise
+    os.close(go_r)
+    os.write(go_w, b"x")
+    os.close(go_w)
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0
+
+
+@pytest.mark.invariants
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX only")
+def test_p15_a_surviving_child_does_not_keep_a_dead_writers_lock(tmp_path):
+    # T12 review: the child kept its copy of the lock descriptor, so when the writer died
+    # the lock stayed held until the child exited.
+    log = _log(tmp_path, 1)
+    ready_r, ready_w = os.pipe()
+    go_r, go_w = os.pipe()
+    with log.writer():
+        pid = os.fork()
+        if pid == 0:
+            os.close(ready_r)
+            os.close(go_w)
+            os.write(ready_w, b"x")  # the fork hook has run in this child
+            os.read(go_r, 1)
+            os._exit(0)
+        os.close(ready_w)
+        os.close(go_r)
+        os.read(ready_r, 1)
+        os.close(log._lock_fd)  # the writer dies: its descriptor closes with no unlock
+        log._lock_fd = None
+        try:
+            with case.CaseLog(log.path).writer():  # free, though the child still runs
+                pass
+        finally:
+            os.write(go_w, b"x")
+            os.close(go_w)
+            os.close(ready_r)
+            os.waitpid(pid, 0)
+
+
+@pytest.mark.invariants
+@pytest.mark.skipif(not (hasattr(os, "fork") and os.path.isdir("/proc/self/fd")),
+                    reason="fork and /proc are POSIX/Linux only")
+@pytest.mark.filterwarnings("ignore:This process .* is multi-threaded:DeprecationWarning")
+def test_p15_a_fork_never_lands_inside_an_acquisition(tmp_path, monkeypatch):
+    # Pre-review: a fork between flock and recording the descriptor left the child a copy
+    # the fork hook could not see, so the lock outlived a dead parent.
+    log = _log(tmp_path, 1)
+    real = case._lock
+    locked, go, done = threading.Event(), threading.Event(), threading.Event()
+
+    def slow_lock(fd):
+        real(fd)
+        locked.set()
+        go.wait(10)
+
+    monkeypatch.setattr(case, "_lock", slow_lock)
+
+    def hold():
+        with log.writer():
+            done.wait(10)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    assert locked.wait(5)
+    forked = {}
+
+    def forker():
+        pid = os.fork()
+        if pid == 0:  # exit 0 if no descriptor on the lock file survived into the child
+            lock = os.path.realpath(log.lock_path)
+            held = [f for f in os.listdir("/proc/self/fd")
+                    if os.path.realpath(f"/proc/self/fd/{f}") == lock]
+            os._exit(1 if held else 0)
+        forked["status"] = os.waitpid(pid, 0)[1]
+
+    f = threading.Thread(target=forker)
+    f.start()
+    f.join(0.3)
+    assert f.is_alive()  # the fork waits for the acquisition to finish
+    go.set()
+    f.join(10)
+    done.set()
+    holder.join(10)
+    assert os.waitstatus_to_exitcode(forked["status"]) == 0
+
+
+@pytest.mark.invariants
+def test_p15_an_interrupt_after_the_lock_is_taken_leaves_no_lock(tmp_path, monkeypatch):
+    # Pre-review: KeyboardInterrupt after flock but before the descriptor was recorded
+    # leaked it, and every writer in the process was refused from then on.
+    log = _log(tmp_path, 1)
+    real = case._lock
+
+    def lock_then_interrupt(fd):
+        real(fd)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(case, "_lock", lock_then_interrupt)
+    with pytest.raises(KeyboardInterrupt), log.writer():
+        pass
+    monkeypatch.undo()
+    assert log._lock_fd is None and log._owner is None
+    case.CaseLog(log.path).append("override", {}, expected=1)
+
+
+@pytest.mark.invariants
+def test_p15_cleanup_reentering_the_state_lock_on_its_thread_does_not_hang(tmp_path):
+    # Pre-review: a writer block finalised by the garbage collector (or a signal handler)
+    # while its thread was inside a short state-lock region deadlocked on that lock.
+    log = _log(tmp_path, 1)
+
+    def reenter():
+        with log._state, log.writer():
+            pass
+
+    t = threading.Thread(target=reenter, daemon=True)
+    t.start()
+    t.join(5)
+    assert not t.is_alive()
+
+
+def test_a_rename_blocked_by_a_windows_reader_is_retried_not_failed(tmp_path, monkeypatch):
+    # Pre-review: on Windows a reader's open file blocks a rename over it for a moment; the
+    # head file's rename after an append must wait it out, not leave a torn entry.
+    real, calls = os.replace, []
+
+    def busy_twice(src, dst):
+        calls.append(dst)
+        if len(calls) <= 2:
+            raise PermissionError(13, "in use by a reader")
+        real(src, dst)
+
+    src, dst = tmp_path / "a.tmp", tmp_path / "a"
+    src.write_bytes(b"x")
+    monkeypatch.setattr(case.os, "replace", busy_twice)
+    monkeypatch.setattr(case, "REPLACE_PAUSE", 0)
+    monkeypatch.setattr(case.os, "name", "nt")
+    case._replace(src, dst)
+    monkeypatch.setattr(case.os, "name", "posix")
+    assert dst.read_bytes() == b"x" and len(calls) == 3
+    src.write_bytes(b"y")
+    calls.clear()
+    with pytest.raises(PermissionError):  # elsewhere a permission error is real at once
+        case._replace(src, dst)
+    assert len(calls) == 1
 
 
 def test_torn_last_entry_blocks_appends_until_dropped(tmp_path, monkeypatch):
@@ -862,7 +1048,17 @@ def test_a_lock_holder_still_sees_a_torn_entry_while_a_reader_sees_it_recorded(t
         assert log.verify().torn
         with pytest.raises(case.CaseLogBroken):
             log.require_intact()
-        assert case.CaseLog(log.path).verify().in_progress
+        # Pre-review: a second CaseLog in the holding thread (for_case builds one) is the
+        # holder too. Its own fallback lock is refused by its own thread, which is not
+        # another writer, so it must not excuse the torn entry as an append in progress.
+        with pytest.raises(case.CaseLogBroken):
+            case.CaseLog(log.path).require_intact()
+        # Another thread reading while this one holds the lock sees an append landing.
+        seen = []
+        t = threading.Thread(target=lambda: seen.append(case.CaseLog(log.path).verify()))
+        t.start()
+        t.join(10)
+        assert seen and seen[0].in_progress
 
 
 def test_a_crash_after_the_rename_while_dropping_leaves_a_torn_log_that_drops_again(tmp_path, monkeypatch):
@@ -1055,8 +1251,21 @@ def test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_
     # A torn tail while another command holds the lock is that command's append landing.
     folder, log = _case_dir(tmp_path, 2)
     _crash_mid_append(log, monkeypatch, 10)
-    with case.for_case(folder).writer():
+    taken, leave = threading.Event(), threading.Event()
+
+    def other_command():  # another command holds the lock: a thread, not this one
+        with case.for_case(folder).writer():
+            taken.set()
+            leave.wait(10)
+
+    t = threading.Thread(target=other_command)
+    t.start()
+    assert taken.wait(10)
+    try:
         r = _check_cli(folder)
+    finally:
+        leave.set()
+        t.join(10)
     assert r.exit_code == 0, r.output
     assert "2 entries" in r.output and "appending" in r.output
     r = _check_cli(folder)  # the lock free again: the torn entry is named
