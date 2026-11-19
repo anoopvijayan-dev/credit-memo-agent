@@ -40,12 +40,12 @@
         "T01",
         "T02"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 6,
       "max_attempts": 6,
       "branch": "bridgie-task/statement-review/T03",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-44/evidence.json",
-      "escalation": "blocked after 6 attempts. Last verdict fail: R4 fail (Reviewed the supplied revision 8 of R4. The shipped tables cover own-account moves, HMRC, refunds, payment rails and cheques at src/cma/rules/v2.yaml:63–160, lenders and MCA providers at :162–241, cash deposits and explained credits at :253–280, and trading providers and cash withdrawals at :298–405. src/cma/categorise.py:497–559 filters contained phrases, gives the leading bank code precedence, and applies the two-stage ambiguity rules. The per-line override takes precedence at :573–574. At :595–618, an ambiguous credit remains OTHER and bypasses firm rules, but the director match short-circuits the own-account match, so a credit matching both profile-name kinds loses one required candidate. src/cma/models.py:57–65 maps cash deposits to trading receipts and OTHER to unexplained. src/cma/graph.py:250–253 applies the selected table and :210–224 exports line provenance. The runner logged 724 passing tests, including table-driven provenance, CLI output, repeat categorisation, rollback, historical checkpoint replay, and offline evals under both rulesets. Source review covered duplicate input, concurrent updates, sign and Unicode boundaries, currency and date handling, partial output writes, authorisation and data-root isolation, and CLI, checkpoint and MCP consumers. No tests were run or files changed during review.); major: An ambiguous credit that matches both a director or shareholder name and an own-account name records only the director candidate. R4 requires both candidate kinds. at src/cma/categorise.py:617; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-48/evidence.json",
+      "escalation": "blocked after 6 attempts. Last verdict fail: major: The producer's fail-at-load claim misses the regex used to collect credit match spans. A pattern can pass validation and compile at load, then abort categorisation with a raw regex error on the first matching credit. at src/cma/categorise.py:490; reviewer verdict fail"
     },
     {
       "id": "T04",

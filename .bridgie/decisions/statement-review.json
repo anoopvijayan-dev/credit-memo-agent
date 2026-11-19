@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 94,
+  "next_id": 95,
   "decisions": [
     {
       "id": "D1",
@@ -1940,6 +1940,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-19T22:01:47.583Z"
+    },
+    {
+      "id": "D94",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: major: The producer's fail-at-load claim misses the regex used to collect credit match spans. A pattern can pass validation and compile at load, then abort categorisation with a raw regex error on the first matching credit. at src/cma/categorise.py:490; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T22:09:49.095Z"
     }
   ]
 }
