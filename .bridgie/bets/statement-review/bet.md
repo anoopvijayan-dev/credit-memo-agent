@@ -195,6 +195,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-19 D66 (question): State it only: the README and the trial sheet say local disk, and nothing detects a share (design default; no other requirement changes) → recorded [Anoop Vijayan]
 - 2026-11-19 D67 (question): Only another writer holding the case excuses, and only after the recorded entries (design default; what T12 builds) → recorded [Anoop Vijayan]
 - 2026-11-19 D68 (approve_design): approve → design approved [Anoop Vijayan]
+- 2026-11-19 D70 (unblock): take over manually — Owner: take over. Cheque wording becomes a payment-method line-type cue with no bucket (like the rail); cheque with cash paid-in wording is ambiguous (R4), and the cash rule's hidden 'unless cheque' exception is removed. → task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03 [Anoop Vijayan]
 
 ## Idea
 
