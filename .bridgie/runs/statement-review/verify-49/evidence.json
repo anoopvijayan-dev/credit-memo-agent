@@ -1,0 +1,101 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:196–322 validates canonical entry bytes, chain links and the recorded head. Lines 401–427 check the whole log under the reader's own or a shared lock, including folder aliases. Lines 504–541 require a stable head for contended reads. Lines 551–563 expose the integrity gate intended for sign-off. Lines 588–640 enforce writer exclusion and refuse inherited writers, lines 680–706 reject stale duplicate appends, and lines 708–797 cover torn-write recovery and persistence order. The runner logs confirm the named tamper, rebuilt-chain, recovery, writer-exclusion and CLI tests. The lock handoff at lines 434–442 can still mask an incomplete entry read while the case was free.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-49/invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-49/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-49/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-49/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-49/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-49/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-49/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-49/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 440,
+      "criterion": "P15",
+      "claim": "Two different lock holds can have the same observed generation because the second writer acquires the OS lock at line 632 before incrementing the generation at line 640. The reader can therefore report an incomplete entry read while the case was free as being saved and suppress its entry number.",
+      "repro": "Start with two recorded entries and an incomplete entry 3. Hold the lock with writer A until the reader samples A's generation and its first _still_held probe sees contention. Release A before the reader reads either the head or the log. After the reader completes its stable read, let writer B acquire the OS lock and pause B at entry to _bump_generation. The final contention probe sees B and the generation still equals A's. verify returns in_progress with no first_bad, so the CLI exits 4 instead of naming entry 3 as incomplete. tests/test_case_log.py:1743 forces the generation to change and misses this schedule."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 300,
+      "criterion": "P15",
+      "claim": "A later malformed line can take precedence over an earlier divergence from the recorded head, causing the check to name the wrong first bad entry.",
+      "repro": "With the case free and two entries recorded, leave the head file unchanged and put a valid chain continuation followed by a malformed newline-terminated line after entry 2. The check names entry 4 because chain_bad takes precedence. Entry 3 is already an addition beyond the recorded head, and the following line rules out the single-unrecorded-last-entry recovery case."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 333,
+      "criterion": "P15",
+      "claim": "The producer's exit-code claim says a contended torn tail exits 0 and prints 'appending'. The implementation and the passing contracts test specify exit 4 and 'being saved', which matches P15.",
+      "repro": "Compare the third producer claim with contracts-4.log and the passing test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 141,
+      "criterion": "P15",
+      "claim": "The producer's 82-invariant and 396-full-suite totals are not proven for this revision. The runner records 115 invariant passes and 432 full-suite passes, including the named tests.",
+      "repro": "Compare the summaries in invariants-5.log and specified-3.log with the producer's claimed totals. The configured pytest commands in those logs establish the current totals."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

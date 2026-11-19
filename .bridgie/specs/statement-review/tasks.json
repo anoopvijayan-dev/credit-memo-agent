@@ -146,12 +146,12 @@
         "P15"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T12",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-47/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:196–322 verifies canonical entry bytes, chain links and the recorded head, and names the first divergence or incomplete entry. Lines 373–399 recognize the holding thread through folder aliases and check the whole log under lock. Lines 469–506 require a stable head for a contended verdict. Lines 541–619 and 642–668 enforce writer exclusion, refuse inherited writers and reject duplicate appends at a stale position. Lines 685–756 implement torn-entry recovery and persist the log before updating the head. The runner logs confirm the named tamper, rebuilt-chain, recovery and contention tests, including the CLI path at src/cma/cli.py:321. The lock probes at src/cma/case.py:400–407 can still misclassify a read made entirely while the case was free.); major: Contention before and after the read can come from different lock acquisitions. The reader then reports a free-case snapshot with an incomplete last entry as being saved and suppresses the entry number. at src/cma/case.py:406; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-49/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:196–322 validates canonical entry bytes, chain links and the recorded head. Lines 401–427 check the whole log under the reader's own or a shared lock, including folder aliases. Lines 504–541 require a stable head for contended reads. Lines 551–563 expose the integrity gate intended for sign-off. Lines 588–640 enforce writer exclusion and refuse inherited writers, lines 680–706 reject stale duplicate appends, and lines 708–797 cover torn-write recovery and persistence order. The runner logs confirm the named tamper, rebuilt-chain, recovery, writer-exclusion and CLI tests. The lock handoff at lines 434–442 can still mask an incomplete entry read while the case was free.); major: Two different lock holds can have the same observed generation because the second writer acquires the OS lock at line 632 before incrementing the generation at line 640. The reader can therefore report an incomplete entry read while the case was free as being saved and suppress its entry number. at src/cma/case.py:440; reviewer verdict fail"
     },
     {
       "id": "T13",

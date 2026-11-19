@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 95,
+  "next_id": 96,
   "decisions": [
     {
       "id": "D1",
@@ -1960,6 +1960,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-19T22:09:49.095Z"
+    },
+    {
+      "id": "D95",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:196–322 validates canonical entry bytes, chain links and the recorded head. Lines 401–427 check the whole log under the reader's own or a shared lock, including folder aliases. Lines 504–541 require a stable head for contended reads. Lines 551–563 expose the integrity gate intended for sign-off. Lines 588–640 enforce writer exclusion and refuse inherited writers, lines 680–706 reject stale duplicate appends, and lines 708–797 cover torn-write recovery and persistence order. The runner logs confirm the named tamper, rebuilt-chain, recovery, writer-exclusion and CLI tests. The lock handoff at lines 434–442 can still mask an incomplete entry read while the case was free.); major: Two different lock holds can have the same observed generation because the second writer acquires the OS lock at line 632 before incrementing the generation at line 640. The reader can therefore report an incomplete entry read while the case was free as being saved and suppress its entry number. at src/cma/case.py:440; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T22:11:15.013Z"
     }
   ]
 }
