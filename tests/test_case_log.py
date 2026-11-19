@@ -1822,3 +1822,42 @@ def test_p15_a_writer_paused_at_the_gate_does_not_hide_a_torn_entry(tmp_path, mo
         case._unlock(gate)
         os.close(gate)
     assert check.checked and check.torn and check.first_bad == 3 and not check.in_progress
+
+
+@pytest.mark.invariants
+def test_p15_with_gate_and_case_both_held_a_recorded_fault_is_still_named(tmp_path, monkeypatch):
+    # T12 review 14 / P15: the recorded entries are final whoever holds the case; a fault
+    # among them is named even while the gate and the case lock are both busy.
+    log = _log(tmp_path, 3)
+    lines = _lines(log)
+    _write(log, [lines[0].replace('"n":0', '"n":9'), *lines[1:]])
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+
+    def gate_busy(self, path):
+        raise case.CaseLocked("a writer is passing the gate")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(case.CaseLog, "_shared", contextlib.contextmanager(gate_busy))
+    monkeypatch.setattr(case, "_try_shared", lambda fd: False)
+    check = case.CaseLog(log.path).verify()
+    monkeypatch.undo()
+    assert not check.ok and check.first_bad == 1 and not check.in_progress
+
+
+@pytest.mark.invariants
+def test_p15_a_lock_replaced_after_the_line_stops_the_head_being_written(tmp_path, monkeypatch):
+    # T12 review 14 / revision 10: the lock is re-checked before each write, the head too.
+    log = _log(tmp_path, 1)
+    head_before = log.head_path.read_bytes()
+    real = case._write_all
+
+    def then_replace_the_lock(fd, data):
+        real(fd, data)
+        if not data.startswith(b'{"count"'):  # the entry's line is down: the lock goes
+            log.lock_path.unlink()
+
+    monkeypatch.setattr(case, "_write_all", then_replace_the_lock)
+    with pytest.raises(case.CaseLocked, match="replaced"):
+        log.append("override", {}, expected=1)
+    monkeypatch.undo()
+    assert log.head_path.read_bytes() == head_before  # the head was not moved

@@ -480,6 +480,11 @@ class CaseLog:
                     return self._untested()
                 finally:
                     os.close(case_fd)
+                # Gate and case both held: the recorded entries are final whoever holds the
+                # case, so a fault at or before them in a steady read is named now (P15).
+                check = self._steady()
+                if check is not None and check.first_bad is not None and not check.past_recorded:
+                    return check
                 continue
             except FileNotFoundError:
                 # No gate: no writer has ever started on this case (each creates it first),
@@ -774,6 +779,7 @@ class CaseLog:
             tmp.unlink(missing_ok=True)
             raise
         _fsync_dir(self.path.parent)
+        self._require_lock_in_place()  # before each write: the log, then the head (rev. 10)
         self._write_head([*(e.hash for e in check.entries), entry.hash])
         return entry
 
@@ -825,6 +831,7 @@ class CaseLog:
             os.close(fd)
         if created:
             _fsync_dir(self.path.parent)  # make the new file's name durable too
+        self._require_lock_in_place()  # before each write: the line, then the head (rev. 10)
         self._write_head([*(e.hash for e in check.entries), entry.hash])
         return entry
 
