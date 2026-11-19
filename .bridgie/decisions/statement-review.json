@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 97,
+  "next_id": 98,
   "decisions": [
     {
       "id": "D1",
@@ -2000,6 +2000,26 @@
       "decided_at": "2026-11-19T22:26:29.074Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-19T22:21:17.611Z"
+    },
+    {
+      "id": "D97",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Mapped the shipped lists to src/cma/rules/v2.yaml:74,118,137,146,155,163,254,277,304,339,356,373,394. Traced bucket precedence and candidate recording through src/cma/categorise.py:545,595,659 and CLI provenance through src/cma/graph.py:221,250. The full runner log confirms the list cases and v2 CLI test passed. Reviewed repeat categorisation, per-call state and concurrent table selection, sign and Unicode boundaries, currency and date handling, partial failure, override and firm-rule precedence, profile isolation, and evidence consumers and rollback. Two accepted table edits violate R4's ambiguity rules, as detailed below.); major: The validator still lets ordinary returned-payment wording acquire the bank-code exception. The passing test only tries to set the flag on a rule in the refund category. at src/cma/categorise.py:304; major: The span scan finds overlapping matches at different starts, but captures only the first successful alternative at a given start. An accepted mixed pattern-and-names rule can therefore miss a longer listed phrase and report a false conflict. at src/cma/categorise.py:541; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T22:29:43.539Z"
     }
   ]
 }

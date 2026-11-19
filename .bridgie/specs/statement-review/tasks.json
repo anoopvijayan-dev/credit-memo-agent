@@ -40,12 +40,12 @@
         "T01",
         "T02"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 6,
       "max_attempts": 6,
       "branch": "bridgie-task/statement-review/T03",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-50/evidence.json",
-      "escalation": "blocked after 6 attempts. Last verdict fail: major: The claimed load-time validation catches a span pattern that fails to compile, but the wrapper can also compile successfully and silently change a numbered backreference. That lets an accepted table report the wrong ambiguity and provenance. at src/cma/categorise.py:500; major: An accepted table edit can silently grant an ordinary line-type cue the bank-code exception, bypassing ambiguity. The passing contract test checks only which shipped patterns are currently anchored. at src/cma/categorise.py:561; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-51/evidence.json",
+      "escalation": "blocked after 6 attempts. Last verdict fail: R4 fail (Mapped the shipped lists to src/cma/rules/v2.yaml:74,118,137,146,155,163,254,277,304,339,356,373,394. Traced bucket precedence and candidate recording through src/cma/categorise.py:545,595,659 and CLI provenance through src/cma/graph.py:221,250. The full runner log confirms the list cases and v2 CLI test passed. Reviewed repeat categorisation, per-call state and concurrent table selection, sign and Unicode boundaries, currency and date handling, partial failure, override and firm-rule precedence, profile isolation, and evidence consumers and rollback. Two accepted table edits violate R4's ambiguity rules, as detailed below.); major: The validator still lets ordinary returned-payment wording acquire the bank-code exception. The passing test only tries to set the flag on a rule in the refund category. at src/cma/categorise.py:304; major: The span scan finds overlapping matches at different starts, but captures only the first successful alternative at a given start. An accepted mixed pattern-and-names rule can therefore miss a longer listed phrase and report a false conflict. at src/cma/categorise.py:541; reviewer verdict fail"
     },
     {
       "id": "T04",
