@@ -1252,6 +1252,18 @@ def test_p_r4_a_listed_name_inside_a_longer_word_in_any_script_is_not_that_name(
 
 
 @pytest.mark.invariants
+@pytest.mark.parametrize("word", ["ACQUIRER SETTLEMENT", "PAYGATE PAYOUT", "CARD SETTLEMENT"])
+def test_p_r4_v1_acquirer_wording_is_whole_words_in_any_script_too(v2, word):
+    """Hardener: the one trading rule written as a regex (v1's synthetic acquirer wording)
+    follows the same whole-word rule as the name lists, so a Unicode letter glued to it does
+    not make a credit trading receipts; the wording alone, and inside v1's own lines, still does."""
+    for desc in (f"FPS CREDIT CAFÉ{word}", f"FPS CREDIT {word}É", f"FPS CREDIT Ж{word}"):
+        assert classify(_t(desc, 500.0), v2) == (C.OTHER, "v2:default"), desc
+    for desc in (word, f"CARD {word} 0412", f"FPS CREDIT CAFÉ {word}"):
+        assert classify(_t(desc, 500.0), v2) == (C.REVENUE_CARD, "v2:card_settlement"), desc
+
+
+@pytest.mark.invariants
 def test_p_r4_unicode_neighbours_that_are_not_letters_still_separate_words(v2):
     assert classify(_t("FPS CREDIT CAFÉ STRIPE LTD", 500.0), v2) == (C.REVENUE_CARD, "v2:payment_gateways")
     assert classify(_t("café stripe ltd", 500.0), v2) == (C.REVENUE_CARD, "v2:payment_gateways")

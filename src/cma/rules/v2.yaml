@@ -283,9 +283,10 @@ rules:
     direction: out
     category: rent
     stage: names
-  # Trading receipts. The first three patterns are v1's synthetic acquirer wording.
+  # Trading receipts. v1's synthetic acquirer wording, as a names list so it matches whole
+  # words in any script like every other trading list (CAFÉACQUIRER SETTLEMENT is not it).
   - id: card_settlement
-    pattern: 'ACQUIRER SETTLEMENT|PAYGATE PAYOUT|CARD SETTLEMENT'
+    names: [ACQUIRER SETTLEMENT, PAYGATE PAYOUT, CARD SETTLEMENT]
     direction: in
     category: revenue_card_settlement
     stage: names
