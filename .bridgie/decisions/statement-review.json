@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 93,
+  "next_id": 94,
   "decisions": [
     {
       "id": "D1",
@@ -1920,6 +1920,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-19T22:00:22.518Z"
+    },
+    {
+      "id": "D93",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:196–322 verifies canonical entry bytes, chain links and the recorded head, and names the first divergence or incomplete entry. Lines 373–399 recognize the holding thread through folder aliases and check the whole log under lock. Lines 469–506 require a stable head for a contended verdict. Lines 541–619 and 642–668 enforce writer exclusion, refuse inherited writers and reject duplicate appends at a stale position. Lines 685–756 implement torn-entry recovery and persist the log before updating the head. The runner logs confirm the named tamper, rebuilt-chain, recovery and contention tests, including the CLI path at src/cma/cli.py:321. The lock probes at src/cma/case.py:400–407 can still misclassify a read made entirely while the case was free.); major: Contention before and after the read can come from different lock acquisitions. The reader then reports a free-case snapshot with an incomplete last entry as being saved and suppresses the entry number. at src/cma/case.py:406; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T22:01:47.583Z"
     }
   ]
 }

@@ -1,0 +1,54 @@
+```json
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:196–322 verifies canonical entry bytes, chain links and the recorded head, and names the first divergence or incomplete entry. Lines 373–399 recognize the holding thread through folder aliases and check the whole log under lock. Lines 469–506 require a stable head for a contended verdict. Lines 541–619 and 642–668 enforce writer exclusion, refuse inherited writers and reject duplicate appends at a stale position. Lines 685–756 implement torn-entry recovery and persist the log before updating the head. The runner logs confirm the named tamper, rebuilt-chain, recovery and contention tests, including the CLI path at src/cma/cli.py:321. The lock probes at src/cma/case.py:400–407 can still misclassify a read made entirely while the case was free.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 406,
+      "criterion": "P15",
+      "claim": "Contention before and after the read can come from different lock acquisitions. The reader then reports a free-case snapshot with an incomplete last entry as being saved and suppresses the entry number.",
+      "repro": "Leave two recorded entries and a torn third entry. Use thread barriers so writer A holds the lock when the reader's initial shared probe fails, then releases it before the reader starts _held(). Keep the case free for the entire stable head/log/head read. Acquire the lock in writer B after _held() returns and before _still_held() probes. The reader returns in_progress=True with two recorded entries, and the CLI exits 4 without naming entry 3. P15 requires the free-case read to name entry 3 as incomplete."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1348,
+      "criterion": "P15",
+      "claim": "The producer describes exit 0 with 'appending' during contention. The passing contract test requires exit 4 with 'saved', which is the behavior the CLI implements.",
+      "repro": "Inspect test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break in contracts-4.log and compare the assertions at tests/test_case_log.py:1348–1352 with the producer claim."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1201,
+      "criterion": "P15",
+      "claim": "The producer's claim that the stress test reproduces two commits per retry and contention at fallback is not_proven. The passing runner row establishes that the stress test ran. The test neither schedules nor asserts that interleaving.",
+      "repro": "Read the loop at tests/test_case_log.py:1207–1221. It runs 40 reads and checks that none names a bad entry. To prove the specific schedule, add a barrier-controlled regression that forces two commits across every head-read pair, keeps the lock held at the fallback probe and asserts the returned status and entry claims. Run it with python -m pytest -v -m invariants tests/test_case_log.py -k p15_two_commits_per_retry."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 318,
+      "criterion": "P15",
+      "claim": "The producer's owner-only authorization claim exceeds what the CLI and its tests establish. The command relies on filesystem permissions and does not verify ownership of the supplied directory.",
+      "repro": "Give a second local account read and traversal permissions on a fixture case directory and read permission on its log, head and lock. The CLI checks that the argument is a directory and verifies the log under those permissions. The runner's owner-permissions test checks the mode of newly created files."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```
