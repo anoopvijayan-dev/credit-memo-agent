@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 99,
+  "next_id": 100,
   "decisions": [
     {
       "id": "D1",
@@ -2040,6 +2040,24 @@
       "decided_at": "2026-11-19T22:34:46.125Z",
       "effect": "task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12",
       "created_at": "2026-11-19T22:31:19.174Z"
+    },
+    {
+      "id": "D99",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "D98 (Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). after the thirteenth T12 review): state in R42 and P15's scope, keeping their ids, that the case folder's lock files (the gate and the case lock beside the log) are the tool's own. Removing or replacing them while the case is in use is outside R42's single-writer guarantee, as hand-editing the log is: a writer re-checks its lock before each write and refuses if it was removed or replaced, and if such interference still lets two writers append, the log they leave is reported broken (R43), never intact. Keep every other requirement, property and id.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-19T22:34:46.272Z",
+      "effect": "changes requested: D98 (Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). after the thirteenth T12 review): state in R42 and P15's scope, keeping their ids, that the case folder's lock files (the gate and the case lock beside the log) are the tool's own. Removing or replacing them while the case is in use is outside R42's single-writer guarantee, as hand-editing the log is: a writer re-checks its lock before each write and refuses if it was removed or replaced, and if such interference still lets two writers append, the log they leave is reported broken (R43), never intact. Keep every other requirement, property and id.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-19T22:34:46.268Z"
     }
   ]
 }
