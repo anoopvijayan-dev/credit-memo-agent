@@ -33,10 +33,12 @@ contain STRIPE). Descriptions are compared in Unicode NFC form, so a decomposed 
 counts as part of its letter.
 
 Precedence, highest first: a per-line override; a protected verdict (the line-type cues,
-lender, director, capital-introduced, shareholder and generic loan wording); the case
-profile's names (directors and shareholders, own accounts); an ambiguous verdict, which
-leaves the credit OTHER (unexplained) with every candidate recorded; firm rules; an
-unprotected verdict; the default (a debit is supplier, a credit is OTHER, unexplained).
+lender, director, capital-introduced, shareholder and generic loan wording); an ambiguous
+verdict, which leaves the credit OTHER (unexplained) with every candidate recorded, a
+matching profile name among them (D78: the wording cannot tell the payer from a reference
+naming someone else); the case profile's names (directors and shareholders, own
+accounts); firm rules; an unprotected verdict; the default (a debit is supplier, a credit
+is OTHER, unexplained).
 Debits, and every line under the frozen v1 table, keep first-match order: the protected
 rules, the profile, firm rules, the rest of the table. Every line records the rule that
 set its category in Transaction.rule_id: "<ruleset>:<rule id>", "<ruleset>:default",
@@ -602,16 +604,20 @@ def _profile(t: Transaction, desc: str, profile: ProfileNames | None) -> tuple[C
 def _classify_credit(t: Transaction, desc: str, ruleset: Ruleset, profile: ProfileNames | None,
                      firm_rules: Sequence[Rule]) -> tuple[Category, str]:
     """Design C1's precedence for a credit, after the override: (2) a protected verdict,
-    (3) a profile name, (4) an ambiguous verdict, (5) firm rules, (6) an unprotected
-    verdict, (7) the default. Only (3) and an override settle an ambiguous credit."""
+    (3) an ambiguous verdict, (4) a profile name, (5) firm rules, (6) an unprotected
+    verdict, (7) the default. Only an override (or an own-account pairing, applied over
+    the whole statement) settles an ambiguous credit (D78): a profile name the wording
+    matches is one more candidate, because the description cannot tell the payer from a
+    payment reference that names someone else."""
     verdict = credit_verdict(ruleset, desc, t.amount)
     if verdict is not None and not verdict.ambiguous and verdict.rule.protected:
         return verdict.rule.category, f"{ruleset.id}:{verdict.rule.id}"
     found = _profile(t, desc, profile)
+    if verdict is not None and verdict.ambiguous:
+        candidates = [r.id for r in verdict.rules] + ([found[1]] if found else [])
+        return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(candidates)
     if found:
         return found
-    if verdict is not None and verdict.ambiguous:
-        return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(r.id for r in verdict.rules)
     for rule in firm_rules:
         if rule_matches(rule, desc, t.amount):
             return rule.category, f"firm:{rule.id}"

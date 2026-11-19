@@ -1020,15 +1020,16 @@ def test_p_verdict_follows_design_c1(v2, desc, amount, category, rule_id):
 @pytest.mark.invariants
 @pytest.mark.parametrize("desc", ["COUNTER DEPOSIT GRANT ST BRANCH", "CARD REFUND FROM SAVINGS AND LOANS LTD",
                                   "BACS CREDIT HMRC VAT REPAYMENT REF TO SAVINGS", "CASH DEPOSIT DIRECTOR"])
-def test_p_only_an_override_or_a_profile_name_settles_an_ambiguous_credit_never_a_firm_rule(v2, desc):
+def test_p_only_an_override_settles_an_ambiguous_credit_never_a_firm_rule_or_a_profile_name(v2, desc):
     conflict = classify(_t(desc, 500.0), v2)
     assert conflict[0] is C.OTHER and ":conflict:" in conflict[1]
     firm = [_firm("f", ".", "in", C.REVENUE_TRANSFER)]
     assert classify(_t(desc, 500.0), v2, firm_rules=firm) == conflict
     assert classify(_t(desc, 500.0), v2, override=LineOverride(C.CASH_DEPOSIT, "override:1")) == \
         (C.CASH_DEPOSIT, "override:1")
+    # D78: a profile name the wording matches is one more candidate, not a settlement
     profile = ProfileNames(own_accounts=(desc.split()[-1],))
-    assert classify(_t(desc, 500.0), v2, profile=profile) == (C.OWN_ACCOUNT_TRANSFER, "profile:own_account")
+    assert classify(_t(desc, 500.0), v2, profile=profile) == (C.OTHER, conflict[1] + "+profile:own_account")
 
 
 @pytest.mark.invariants
@@ -1564,3 +1565,16 @@ def test_a_profile_value_of_only_separators_names_no_one(v2, value):
     for desc in ("FPS CREDIT CASH DEPOSIT", "CASH DEPOSIT DIRECTOR", "STRIPE PAYMENTS UK"):
         assert classify(_t(desc, 300.0), v2, profile=profile) == classify(_t(desc, 300.0), v2), (value, desc)
     assert categorise.names_pattern([value]) == "(?!)"
+
+
+@pytest.mark.invariants
+def test_p_a_director_named_in_a_payment_reference_does_not_settle_an_ambiguous_credit(v2):
+    """T03 review 9 / D78: the description cannot tell the payer from a reference that
+    names someone else, so a profile name only adds its bucket as a candidate."""
+    profile = ProfileNames(directors=("JANE DOE",))
+    desc = "FPS CREDIT CASH DEPOSIT REF JANE DOE"
+    assert classify(_t(desc, 900.0), v2) == (C.OTHER, "v2:conflict:payment_rail+cash_paid_in")
+    assert classify(_t(desc, 900.0), v2, profile=profile) == \
+        (C.OTHER, "v2:conflict:payment_rail+cash_paid_in+profile:director")
+    # a credit the table does not find ambiguous still follows R5
+    assert classify(_t("FPS CREDIT JANE DOE", 900.0), v2, profile=profile) == (C.DIRECTOR_FUNDING, "profile:director")
