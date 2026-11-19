@@ -306,6 +306,11 @@ def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
                          "is recorded or signed off", torn=True)
     if recorded is None:  # entries on disk, and no torn first append explains them
         return failed(1, "cannot be trusted: the head file beside the log is missing")
+    if n < count and tail:
+        # The head file records this entry, and only part of its line is there: damage to a
+        # recorded entry, named incomplete, and not one to drop like a crash's torn write.
+        return failed(n + 1, f"is incomplete: the head file records {count} entries and this "
+                             "entry's line is cut short")
     if n < count:
         return failed(n + 1, f"is missing: the head file records {count} entries and the log "
                              f"holds {n}")
@@ -394,7 +399,7 @@ class CaseLog:
                 # first), and a check writes nothing. A steady read is the truth, unless a
                 # writer started meanwhile: then probe again.
                 check = self._steady()
-                if check is not None and (check.ok or not self.lock_path.exists()):
+                if check is not None and not self.lock_path.exists():
                     return check
                 continue
             except OSError:
@@ -756,20 +761,46 @@ def _fsync_dir(path: Path) -> None:
 
 
 if os.name == "nt":  # pragma: no cover - exercised on Windows only
+    import ctypes
     import msvcrt
+    from ctypes import wintypes
 
-    # msvcrt.locking reports a region another process holds as EACCES or EDEADLOCK.
-    _CONTENDED = {errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)}
+    # LockFileEx, not msvcrt.locking: msvcrt has no shared lock, and a check must share the
+    # case with other checks (R43) while a writer takes it alone (R42). One byte, per handle;
+    # closing the handle, or the process ending, releases it.
+    class _Overlapped(ctypes.Structure):
+        _fields_ = [("Internal", ctypes.c_void_p), ("InternalHigh", ctypes.c_void_p),
+                    ("Offset", wintypes.DWORD), ("OffsetHigh", wintypes.DWORD),
+                    ("hEvent", wintypes.HANDLE)]
 
-    _SHARED_LOCKS = False  # msvcrt has no shared lock: a reader's hold is exclusive and brief
-    _PROBE_FLAGS = os.O_RDWR
+    _KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _KERNEL32.LockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+                                     wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(_Overlapped)]
+    _KERNEL32.LockFileEx.restype = wintypes.BOOL
+    _KERNEL32.UnlockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+                                       wintypes.DWORD, ctypes.POINTER(_Overlapped)]
+    _KERNEL32.UnlockFileEx.restype = wintypes.BOOL
+    _FAIL_IMMEDIATELY, _EXCLUSIVE = 0x1, 0x2
+    _ERROR_LOCK_VIOLATION = 33  # another handle holds a conflicting lock
+
+    _CONTENDED = {errno.EACCES}
+    _SHARED_LOCKS = True
+    _PROBE_FLAGS = os.O_RDONLY
+
+    def _win_error() -> OSError:
+        code = ctypes.get_last_error()
+        return OSError(errno.EACCES if code == _ERROR_LOCK_VIOLATION else errno.EIO,
+                       ctypes.FormatError(code))
 
     def _lock(fd: int, shared: bool = False) -> None:
-        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        flags = _FAIL_IMMEDIATELY | (0 if shared else _EXCLUSIVE)
+        if not _KERNEL32.LockFileEx(msvcrt.get_osfhandle(fd), flags, 0, 1, 0,
+                                    ctypes.byref(_Overlapped())):
+            raise _win_error()
 
     def _unlock(fd: int) -> None:
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        if not _KERNEL32.UnlockFileEx(msvcrt.get_osfhandle(fd), 0, 1, 0, ctypes.byref(_Overlapped())):
+            raise _win_error()
 
 else:
     import fcntl

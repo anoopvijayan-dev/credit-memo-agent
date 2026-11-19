@@ -1590,3 +1590,48 @@ def test_the_held_lock_registry_is_reentrant_on_its_thread():
     t = threading.Thread(target=reenter, daemon=True)
     t.start()
     assert done.wait(5)
+
+
+@pytest.mark.invariants
+def test_p15_a_recorded_entry_whose_line_is_cut_short_is_named_incomplete_not_missing(tmp_path):
+    # T12 review 8 / R43: the head file records entry 3 and only part of its line is left.
+    log = _log(tmp_path, 3)
+    raw = log.path.read_bytes()
+    log.path.write_bytes(raw[: len(raw) - 12])  # entry 3's line loses its end and newline
+    check = log.verify()
+    assert not check.ok and check.first_bad == 3 and "incomplete" in check.reason
+    assert not check.torn  # a recorded entry is damage, not a crash's torn write to drop
+    with pytest.raises(case.CaseLogBroken):
+        log.drop_torn_entry(expected=2, by="A. Underwriter")
+
+
+@pytest.mark.invariants
+def test_p15_a_writer_that_starts_while_a_check_reads_without_a_lock_file_is_seen(tmp_path, monkeypatch):
+    # T12 review 8 / R43: with no lock file the check read without the lock; a writer that
+    # created and took the lock meanwhile must make it probe again, not call the log intact.
+    log = _log(tmp_path, 2)
+    log.lock_path.unlink()
+    taken, leave = threading.Event(), threading.Event()
+
+    def writer_starts():
+        with case.CaseLog(log.path).writer():
+            taken.set()
+            leave.wait(10)
+
+    reader, real, started = case.CaseLog(log.path), case.CaseLog._read_log, {}
+
+    def read(self):
+        if self is reader and not started:
+            started["t"] = threading.Thread(target=writer_starts)
+            started["t"].start()
+            assert taken.wait(5)
+        return real(self)
+
+    monkeypatch.setattr(case.CaseLog, "_read_log", read)
+    try:
+        check = reader.verify()
+    finally:
+        monkeypatch.undo()
+        leave.set()
+        started["t"].join(10)
+    assert check.in_progress and not (check.ok and not check.in_progress)
