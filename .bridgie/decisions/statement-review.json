@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 106,
+  "next_id": 107,
   "decisions": [
     {
       "id": "D1",
@@ -2183,6 +2183,24 @@
       "decided_at": "2026-11-19T23:04:32.566Z",
       "effect": "task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12",
       "created_at": "2026-11-19T23:00:54.405Z"
+    },
+    {
+      "id": "D106",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "D101 (Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach).): say in R4 that a returned-payment code the bank prints at the start of the line settles the line type before the longer-phrase rule applies: it never counts as inside another rule's longer listed phrase (UNPAID DD TO SAVINGS on an own-pot list is still a returned payment). And per D102, a match's length is the longest any alternative of the rule's pattern or names can make at that start. Keep every other requirement, property and id.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-19T23:04:32.724Z",
+      "effect": "changes requested: D101 (Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach).): say in R4 that a returned-payment code the bank prints at the start of the line settles the line type before the longer-phrase rule applies: it never counts as inside another rule's longer listed phrase (UNPAID DD TO SAVINGS on an own-pot list is still a returned payment). And per D102, a match's length is the longest any alternative of the rule's pattern or names can make at that start. Keep every other requirement, property and id.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-19T23:04:32.717Z"
     }
   ]
 }
