@@ -5,6 +5,7 @@ detected on the next load. The logs here are small enough to try every entry and
 kind of tamper exhaustively, which is the property over all logs of those sizes.
 """
 
+import contextlib
 import json
 import os
 import threading
@@ -537,11 +538,12 @@ def test_p15_a_reader_caught_across_a_drop_does_not_call_a_healthy_log_rewritten
     # the new head judged the old unrecorded line against the drop entry's hash.
     log = _log(tmp_path, 3)
     _stale_unrecorded(log, 3)
-    go, done, release = threading.Event(), threading.Event(), threading.Event()
+    go, done, release, held = threading.Event(), threading.Event(), threading.Event(), threading.Event()
 
     def dropper():
         d = case.CaseLog(log.path)
         with d.writer():
+            held.set()
             go.wait(5)
             d.drop_torn_entry(expected=3, by="A. Underwriter")
             done.set()
@@ -549,13 +551,14 @@ def test_p15_a_reader_caught_across_a_drop_does_not_call_a_healthy_log_rewritten
 
     t = threading.Thread(target=dropper)
     t.start()
+    assert held.wait(5)  # the reader starts while the dropper holds the case
     reader, calls, real = case.CaseLog(log.path), {"n": 0}, case.CaseLog._read_log
 
     def read(self):
         raw = real(self)
         if self is reader:
             calls["n"] += 1
-            if calls["n"] == case.READ_RETRIES:  # the drop lands between this log read and the head
+            if calls["n"] == 1:  # the drop lands between this log read and the head
                 go.set()
                 done.wait(5)
         return raw
@@ -635,10 +638,10 @@ def test_p15_a_torn_entry_is_being_saved_while_held_and_named_once_the_case_is_f
 
 @pytest.mark.invariants
 def test_p15_entries_removed_while_another_writer_appends_are_still_named(tmp_path, monkeypatch):
-    # Pre-review: the later head was cut to the lines read, which hid entries removed
-    # from the log while another writer's append was landing.
+    # Entries the log records as complete are judged strictly even while another writer
+    # holds the case mid-append: removing them is named, never excused as being saved.
     log = _log(tmp_path, 3)
-    written, go, head_done, release = (threading.Event() for _ in range(4))
+    written, go = threading.Event(), threading.Event()
     writer = case.CaseLog(log.path)
     real_head = case.CaseLog._write_head
 
@@ -647,41 +650,19 @@ def test_p15_entries_removed_while_another_writer_appends_are_still_named(tmp_pa
             written.set()
             go.wait(5)
         real_head(self, hashes)
-        if self is writer:
-            head_done.set()
-
-    def write_and_hold():
-        with writer.writer():
-            writer.append("override", {"n": 3}, expected=3)
-            release.wait(5)
 
     monkeypatch.setattr(case.CaseLog, "_write_head", slow_head)
-    t = threading.Thread(target=write_and_hold)
+    t = threading.Thread(target=lambda: writer.append("override", {"n": 3}, expected=3))
     t.start()
     assert written.wait(5)
-    reader, calls, real_read = case.CaseLog(log.path), {"n": 0}, case.CaseLog._read_log
-
-    def read(self):
-        if self is reader:
-            calls["n"] += 1
-            if calls["n"] == case.READ_RETRIES:  # entries 3 and 4 are cut from the log
-                lines = log.path.read_bytes().split(b"\n")
-                log.path.write_bytes(b"\n".join(lines[:2]) + b"\n")
-                raw = real_read(self)
-                go.set()
-                head_done.wait(5)
-                return raw
-        return real_read(self)
-
-    monkeypatch.setattr(case.CaseLog, "_read_log", read)
+    lines = log.path.read_bytes().split(b"\n")
+    log.path.write_bytes(b"\n".join(lines[:2]) + b"\n")  # recorded entries 3 and 4 cut away
     try:
-        check = reader.verify()
+        check = case.CaseLog(log.path).verify()
     finally:
-        monkeypatch.undo()
         go.set()
-        release.set()
         t.join(10)
-    assert not check.ok and check.first_bad == 3
+    assert not check.ok and check.first_bad == 3 and not check.in_progress
 
 
 def test_torn_last_entry_blocks_appends_until_dropped(tmp_path, monkeypatch):
@@ -1216,38 +1197,27 @@ def test_p15_a_head_file_whose_hashes_disagree_with_its_count_or_head_is_unreada
 # --- findings from verification round 26 -----------------------------------------------
 
 
-def test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing(tmp_path, monkeypatch):
-    # Every read attempt sees a head, then two more committed appends before it reads the
-    # log; on the last attempt another writer also holds the lock, so the reader cannot
-    # take it to look under it. Each extra entry is a complete, recorded append.
-    from contextlib import ExitStack
-
+def test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing(tmp_path):
+    # Another window appends without pause while this one checks again and again: every
+    # answer is intact, being saved, or nothing claimed; never broken.
     log = _log(tmp_path, 2)
-    reader = case.CaseLog(log.path)
-    other, holder = case.CaseLog(log.path), case.CaseLog(log.path)
-    real = case.CaseLog._read_log
-    calls = {"n": 0}
+    stop = threading.Event()
 
-    def busy(self):
-        if self is reader:
-            calls["n"] += 1
-            if calls["n"] <= case.READ_RETRIES:  # once the holder has the case, nobody else appends
-                for _ in range(2):
-                    other.append("override", {"n": calls["n"]}, expected=other.require_intact().position)
-            if calls["n"] == case.READ_RETRIES:
-                stack.enter_context(holder.writer())
-        return real(self)
+    def keep_appending():
+        w = case.CaseLog(log.path)
+        while not stop.is_set():
+            with contextlib.suppress(case.CaseLocked):
+                w.append("override", {"n": 1}, expected=w.require_intact().position)
 
-    with ExitStack() as stack:
-        monkeypatch.setattr(case.CaseLog, "_read_log", busy)
-        check = reader.verify()
-    monkeypatch.undo()
-    # T12 review: the head read after the log records every entry the read holds, so the
-    # reader judges by it and reports the whole log intact, not an older head's prefix
-    assert check.ok and not check.torn
-    assert check.head.position == 2 + 2 * case.READ_RETRIES
-    assert [e.seq for e in check.entries] == list(range(1, check.head.position + 1))
-    assert reader.verify().ok  # once the writers are gone, the whole log is intact
+    t = threading.Thread(target=keep_appending)
+    t.start()
+    try:
+        checks = [case.CaseLog(log.path).verify() for _ in range(40)]
+    finally:
+        stop.set()
+        t.join(10)
+    assert all(c.first_bad is None for c in checks), [c.reason for c in checks if c.first_bad]
+    assert case.CaseLog(log.path).verify().ok
 
 
 def test_a_torn_log_is_still_named_when_the_reader_cannot_create_the_lock_file(tmp_path, monkeypatch):
@@ -1467,3 +1437,91 @@ def test_p15_an_abandoned_writer_block_closed_on_another_thread_releases_the_loc
     t.join(10)
     with case.CaseLog(log.path).writer():  # released
         pass
+
+
+@pytest.mark.invariants
+def test_p15_a_held_intact_log_is_being_saved_never_intact(tmp_path):
+    # T12 review 7 / R43: while anyone holds the case the log is never called intact, even
+    # with nothing after the recorded entries; case check exits 4 (D75).
+    folder, _ = _case_dir(tmp_path, 2)
+    holder, taken, leave = case.for_case(folder), threading.Event(), threading.Event()
+
+    def hold():
+        with holder.writer():
+            taken.set()
+            leave.wait(10)
+
+    t = threading.Thread(target=hold)
+    t.start()
+    assert taken.wait(5)
+    try:
+        check = case.for_case(folder).verify()
+        r = _check_cli(folder)
+    finally:
+        leave.set()
+        t.join(10)
+    assert check.in_progress and check.first_bad is None and check.head.position == 2
+    assert r.exit_code == 4 and "intact" not in r.output
+    assert _check_cli(folder).exit_code == 0  # free: intact
+
+
+@pytest.mark.invariants
+def test_p15_no_verdict_comes_from_a_read_across_which_the_head_moved(tmp_path, monkeypatch):
+    # T12 review 7 / R43: entries are judged only from a steady read; damage seen only in
+    # reads where the head moved yields no verdict at all, not "broken" and not "intact".
+    log = _log(tmp_path, 4)
+    lines = _lines(log)
+    tampered = "".join([lines[0].replace('"n":0', '"n":9'), *lines[1:]]).encode()
+    holder, taken, leave = case.CaseLog(log.path), threading.Event(), threading.Event()
+
+    def hold():
+        with holder.writer():
+            taken.set()
+            leave.wait(10)
+
+    t = threading.Thread(target=hold)
+    t.start()
+    assert taken.wait(5)
+    real_head, calls = case._read_head, {"n": 0}
+
+    def head_keeps_moving(path):
+        calls["n"] += 1
+        hashes = real_head(path)
+        return hashes[:3] if calls["n"] % 2 else hashes
+
+    try:
+        monkeypatch.setattr(case, "READ_PAUSE", 0)
+        monkeypatch.setattr(case.CaseLog, "_read_log", lambda self: tampered)
+        monkeypatch.setattr(case, "_read_head", head_keeps_moving)
+        check = case.CaseLog(log.path).verify()
+    finally:
+        monkeypatch.undo()
+        leave.set()
+        t.join(10)
+    assert not check.checked and check.first_bad is None and not check.ok
+
+
+@pytest.mark.invariants
+def test_p15_an_untestable_lock_with_unsteady_reads_blames_no_other_window(tmp_path, monkeypatch):
+    # T12 review 7 / R43: a lock that cannot be tested is not another holder, so with no
+    # steady read the reader claims nothing and does not say another window is saving.
+    import errno
+    folder, _ = _case_dir(tmp_path, 3)
+    real_head, calls = case._read_head, {"n": 0}
+
+    def head_keeps_moving(path):
+        calls["n"] += 1
+        hashes = real_head(path)
+        return hashes[:2] if calls["n"] % 2 else hashes
+
+    def no_locks(fd):
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    monkeypatch.setattr(case, "_lock", no_locks)
+    monkeypatch.setattr(case, "_read_head", head_keeps_moving)
+    check = case.for_case(folder).verify()
+    r = _check_cli(folder)
+    monkeypatch.undo()
+    assert not check.checked and not check.in_progress and check.first_bad is None
+    assert r.exit_code == 4 and "another window" not in r.output and "could not be checked" in r.output

@@ -320,8 +320,11 @@ def case_check(folder: Path = typer.Argument(..., help="The case folder (cases/<
         raise typer.Exit(code=2)
     check = case.for_case(folder).verify()
     if not check.checked:
-        console.print("Case log is being saved by another window or command; nothing could be "
-                      "checked yet. Check again in a moment.")
+        if check.in_progress:
+            console.print("Case log is being saved by another window or command; nothing could "
+                          "be checked yet. Check again in a moment.")
+        else:
+            console.print(f"Case log {check.reason}. Check again in a moment.")
         raise typer.Exit(code=4)
     if not check.ok:
         console.print(f"[red]Case log broken:[/red] entry {check.first_bad} {check.reason}.")

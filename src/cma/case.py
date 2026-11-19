@@ -67,6 +67,7 @@ ENTRY_FIELDS = frozenset((*HASHED_FIELDS, "hash"))
 TORN_DROPPED = "torn_entry_dropped"
 HEAD_FIELDS = frozenset(("count", "hash", "hashes"))
 READ_RETRIES, READ_PAUSE = 5, 0.02  # seconds; a writer paused for longer is handled in verify
+WRITER_WAIT = 0.2  # seconds a writer waits out another's hold (a reader's probe) before refusing
 _UNREADABLE = object()
 
 
@@ -310,16 +311,15 @@ def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
     return failed(count + 1, f"was added after the head the head file records (entry {count})")
 
 
-def _unchecked() -> LogCheck:
-    """The case is being written and no steady read was had: nothing is claimed."""
-    return LogCheck(Head(0, GENESIS), [], reason="being saved: the log changed during every read",
-                    in_progress=True, checked=False)
+def _unchecked(reason: str, *, in_progress: bool) -> LogCheck:
+    """No steady read was had: nothing is claimed about any entry."""
+    return LogCheck(Head(0, GENESIS), [], reason=reason, in_progress=in_progress, checked=False)
 
 
 def _refuse_unchecked(path: Path, check: LogCheck) -> None:
     if not check.checked:
-        raise CaseLocked(f"{path}: another window or command is saving to this case; nothing "
-                         "could be checked yet, try again")
+        raise CaseLocked(f"{path}: the log {check.reason.split(': ', 1)[-1]}; nothing could be "
+                         "checked yet, try again")
 
 
 def _holder_id() -> tuple[int, int]:
@@ -375,61 +375,64 @@ class CaseLog:
                     holder = _HELD.get(lock_id) == me
         if holder:  # nothing else can write: one read is the truth
             return _check(self._read_log(), _read_head(self.head_path))
-        # A read is the head, then the log, then the head again: a writer replaces the head
-        # only after its line is on disk, so the log read holds every entry the first head
-        # records. Those entries are final (appends only add after them, a drop keeps their
-        # bytes), so a failure at or before them is real in any read, whoever holds the
-        # case. A failure only after them is believed only from a steady read, across which
-        # the head held still.
-        steady: LogCheck | None = None
-        for attempt in range(READ_RETRIES):
-            if attempt:
-                time.sleep(READ_PAUSE)
-            check, still = self._look()
-            if not check.past_recorded:
-                return check
-            if still:
-                steady = check
-        # Still a failure after the recorded entries. Under the lock nothing moves, so if the
-        # lock is free, one read there is the truth. An object a forked child inherited
-        # still names its parent as holder whether or not the parent has let go, so the lock
-        # is tested through a fresh handle.
+        # Take the lock first: if the case is free, one read under the lock is the truth.
+        # A probe by another reader holds it for a moment, so it is tried a few times
+        # before the case counts as held. An object a forked child inherited still names
+        # its parent as holder whether or not the parent has let go, so the lock is tested
+        # through a fresh handle.
         locker = CaseLog(self.path) if self._pid != os.getpid() else self
-        try:
-            with locker.writer():
-                return _check(self._read_log(), _read_head(self.head_path))
-        except CaseLocked:
-            pass
-        except OSError:
-            # The lock cannot be taken or tested: no holder is known, so a steady read is
-            # believed as it stands, an incomplete entry reported as incomplete. Without
-            # one, a read across which the head moved is evidence of nothing past the
-            # recorded entries: look again, and with no steady read claim nothing.
-            for _ in range(READ_RETRIES):
-                if steady is not None:
-                    return steady
+        for attempt in range(READ_RETRIES):
+            if attempt:
                 time.sleep(READ_PAUSE)
-                check, still = self._look()
-                if not check.past_recorded:
+            try:
+                with locker.writer(wait=0, create=False):
+                    return _check(self._read_log(), _read_head(self.head_path))
+            except CaseLocked:
+                continue
+            except FileNotFoundError:
+                # No lock file: no writer has ever started on this case (each creates it
+                # first), and a check writes nothing. A steady read is the truth, unless a
+                # writer started meanwhile: then probe again.
+                check = self._steady()
+                if check is not None and (check.ok or not self.lock_path.exists()):
                     return check
-                if still:
-                    steady = check
-            return steady if steady is not None else _unchecked()
-        # Someone else holds the case (R43). Look again for the freshest steady read, then
-        # report the entries the log records as complete and the rest as being saved: never
-        # intact, never broken. With no steady read, nothing is claimed.
+                continue
+            except OSError:
+                return self._untested()
+        return self._held()
+
+    def _steady(self) -> LogCheck | None:
+        """A read across which the head file did not change, or None if every read moved:
+        it holds every entry the head records, each walked and matched."""
         for attempt in range(READ_RETRIES):
             if attempt:
                 time.sleep(READ_PAUSE)
             check, still = self._look()
-            if not check.past_recorded:
-                return check
             if still:
-                steady = check
-                break
-        if steady is not None:
-            return steady.as_recorded()
-        return _unchecked()
+                return check
+        return None
+
+    def _held(self) -> LogCheck:
+        """Someone else holds the case (R43): judge only the entries the log records as
+        complete, from a steady read. A change, removal or reordering at or before them is
+        broken; anything after them is being saved, and the log is never called intact.
+        With no steady read, nothing is claimed."""
+        check = self._steady()
+        if check is None:
+            return _unchecked("being saved: the log changed during every read", in_progress=True)
+        if check.first_bad is not None and not check.past_recorded:
+            return check
+        return check.as_recorded()
+
+    def _untested(self) -> LogCheck:
+        """The lock cannot be taken or tested: no holder is known, so a steady read is
+        believed as it stands (an incomplete entry reported as incomplete). With no
+        steady read, nothing is claimed, and no other window is blamed."""
+        check = self._steady()
+        if check is not None:
+            return check
+        return _unchecked("could not be checked: the case lock cannot be taken and the log "
+                          "changed during every read", in_progress=False)
 
     def _look(self) -> tuple[LogCheck, bool]:
         """One read judged by the head read before it, and whether the head held still."""
@@ -471,8 +474,9 @@ class CaseLog:
     # --- writing -----------------------------------------------------------------------
 
     @contextmanager
-    def writer(self) -> Iterator[CaseLog]:
-        """Hold the case's single-writer lock; refuses at once if another writer has it.
+    def writer(self, *, wait: float | None = None, create: bool = True) -> Iterator[CaseLog]:
+        """Hold the case's single-writer lock; refuses if another writer still holds it after
+        `wait` seconds (WRITER_WAIT by default: a reader's probe holds it only a moment).
 
         The thread that holds it may nest (a sign-off holds the lock across its checks and
         its append). Any other writer is refused, whether it is another process, another
@@ -485,9 +489,19 @@ class CaseLog:
                              "the case again in this one")
         me = _holder_id()
         entered = False
+        deadline = time.monotonic() + (WRITER_WAIT if wait is None else wait)
         try:
-            with self._state:
-                entered = self._enter(me)
+            while True:
+                try:
+                    with self._state:
+                        entered = self._enter(me, create)
+                    break
+                except CaseLocked:
+                    # A reader's probe holds the lock for a moment: wait briefly before
+                    # refusing, so a check in another window never refuses a save.
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(READ_PAUSE)
             yield self
         finally:
             if entered:
@@ -499,15 +513,17 @@ class CaseLog:
                     if self._owner is not None and self._owner[0] == os.getpid():
                         self._release_one_level()
 
-    def _enter(self, me: tuple[int, int]) -> bool:
-        """Take or join the lock for `me` (call under _state); True once it is held."""
+    def _enter(self, me: tuple[int, int], create: bool = True) -> bool:
+        """Take or join the lock for `me` (call under _state); True once it is held. With
+        `create` False a missing lock file raises FileNotFoundError and nothing is made."""
         if self._owner == me:
             self._lock_depth += 1
         elif self._owner is not None:
             raise CaseLocked(f"{self.path}: another window or command is writing to this case")
         else:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            if create:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(self.lock_path, os.O_RDWR | (os.O_CREAT if create else 0), 0o600)
             locked = False
             try:
                 _lock(fd)
