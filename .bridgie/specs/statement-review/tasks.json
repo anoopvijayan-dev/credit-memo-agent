@@ -40,12 +40,12 @@
         "T01",
         "T02"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 6,
       "max_attempts": 6,
       "branch": "bridgie-task/statement-review/T03",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-48/evidence.json",
-      "escalation": "blocked after 6 attempts. Last verdict fail: major: The producer's fail-at-load claim misses the regex used to collect credit match spans. A pattern can pass validation and compile at load, then abort categorisation with a raw regex error on the first matching credit. at src/cma/categorise.py:490; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-50/evidence.json",
+      "escalation": "blocked after 6 attempts. Last verdict fail: major: The claimed load-time validation catches a span pattern that fails to compile, but the wrapper can also compile successfully and silently change a numbered backreference. That lets an accepted table report the wrong ambiguity and provenance. at src/cma/categorise.py:500; major: An accepted table edit can silently grant an ordinary line-type cue the bank-code exception, bypassing ambiguity. The passing contract test checks only which shipped patterns are currently anchored. at src/cma/categorise.py:561; reviewer verdict fail"
     },
     {
       "id": "T04",

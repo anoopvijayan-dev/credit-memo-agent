@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 96,
+  "next_id": 97,
   "decisions": [
     {
       "id": "D1",
@@ -1980,6 +1980,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-19T22:11:15.013Z"
+    },
+    {
+      "id": "D96",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: major: The claimed load-time validation catches a span pattern that fails to compile, but the wrapper can also compile successfully and silently change a numbered backreference. That lets an accepted table report the wrong ambiguity and provenance. at src/cma/categorise.py:500; major: An accepted table edit can silently grant an ordinary line-type cue the bank-code exception, bypassing ambiguity. The passing contract test checks only which shipped patterns are currently anchored. at src/cma/categorise.py:561; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T22:21:17.611Z"
     }
   ]
 }
