@@ -194,6 +194,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-19 D64 (unblock): take over manually — Owner: take over. Find longer listed phrases that start inside another match (overlapping search, not non-overlapping finditer), and decide word boundaries with Unicode's own categories (a combining mark joins a word) instead of hard-coded ranges; a test for each. → task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03 [Anoop Vijayan]
 - 2026-11-19 D66 (question): State it only: the README and the trial sheet say local disk, and nothing detects a share (design default; no other requirement changes) → recorded [Anoop Vijayan]
 - 2026-11-19 D67 (question): Only another writer holding the case excuses, and only after the recorded entries (design default; what T12 builds) → recorded [Anoop Vijayan]
+- 2026-11-19 D68 (approve_design): approve → design approved [Anoop Vijayan]
 
 ## Idea
 
