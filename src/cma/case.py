@@ -54,7 +54,7 @@ import json
 import os
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -774,8 +774,7 @@ class CaseLog:
         finally:
             os.close(fd)
         try:
-            self._require_lock_in_place()  # just before the rename a reader sees (D108)
-            _replace(tmp, self.path)
+            _replace(tmp, self.path, before=self._require_lock_in_place)  # each attempt (D108)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
@@ -808,8 +807,7 @@ class CaseLog:
             # Before each step that changes a file a reader reads (R42, D108): the rename
             # that publishes the head record, the empty first one included. The temporary
             # file is read by nobody.
-            self._require_lock_in_place()
-            _replace(tmp, self.head_path)
+            _replace(tmp, self.head_path, before=self._require_lock_in_place)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
@@ -827,9 +825,11 @@ class CaseLog:
             # entry is always damage, never a crash to repair (T12 review 9).
             self._write_head([])
         created = not self.path.exists()
-        self._require_lock_in_place()  # just before the line, after any empty head (D108)
         fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:
+            # After the open and immediately before the line is written (D108): a lock
+            # removed while the log was being opened stops the write.
+            self._require_lock_in_place()
             _write_all(fd, line)
             os.fsync(fd)
         finally:
@@ -846,8 +846,12 @@ REPLACE_RETRIES = 40
 REPLACE_PAUSE = 0.025
 
 
-def _replace(src: Path, dst: Path) -> None:
+def _replace(src: Path, dst: Path, before: Callable[[], None] | None = None) -> None:
+    """Rename `src` over `dst`, retrying a rename a Windows reader blocks for a moment;
+    `before` runs immediately before every attempt (the lock re-check, D108)."""
     for attempt in range(REPLACE_RETRIES):
+        if before is not None:
+            before()
         try:
             os.replace(src, dst)
             return

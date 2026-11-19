@@ -1901,3 +1901,48 @@ def test_p15_a_lock_replaced_before_the_repair_rename_leaves_the_log_alone(tmp_p
         log.drop_torn_entry(expected=2, by="A. Underwriter")
     monkeypatch.undo()
     assert log.path.read_bytes() == before  # the rename never happened
+
+
+@pytest.mark.invariants
+def test_p15_a_lock_removed_while_the_log_is_opened_stops_the_line(tmp_path, monkeypatch):
+    # T12 review 16 / D108: the lock is re-checked after the log is opened, immediately
+    # before the line is written.
+    log = _log(tmp_path, 1)
+    before = log.path.read_bytes()
+    real_open = case.os.open
+
+    def open_then_lose_the_lock(path, flags, *a):
+        fd = real_open(path, flags, *a)
+        if os.fspath(path) == os.fspath(log.path) and flags & os.O_APPEND:
+            log.lock_path.unlink()
+        return fd
+
+    monkeypatch.setattr(case.os, "open", open_then_lose_the_lock)
+    with pytest.raises(case.CaseLocked, match="replaced"):
+        log.append("override", {}, expected=1)
+    monkeypatch.undo()
+    assert log.path.read_bytes() == before
+
+
+@pytest.mark.invariants
+def test_p15_a_rename_retried_after_a_blocked_attempt_re_checks_the_lock(tmp_path, monkeypatch):
+    # T12 review 16 / D108: on Windows a rename a reader blocks is retried; the lock is
+    # re-checked before every attempt, so a lock lost during the pause stops the rename.
+    log = _log(tmp_path, 1)
+    head_before = log.head_path.read_bytes()
+    real_replace, calls = case.os.replace, []
+
+    def blocked_once(src, dst):
+        calls.append(dst)
+        if len(calls) == 1:
+            log.lock_path.unlink()  # lost while the first attempt is blocked
+            raise PermissionError(13, "in use by a reader")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(case.os, "replace", blocked_once)
+    monkeypatch.setattr(case.os, "name", "nt")
+    monkeypatch.setattr(case, "REPLACE_PAUSE", 0)
+    with pytest.raises(case.CaseLocked, match="replaced"), log.writer():
+        log._write_head(["x" * 64])
+    monkeypatch.undo()
+    assert log.head_path.read_bytes() == head_before and len(calls) == 1
