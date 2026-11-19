@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 85,
+  "next_id": 86,
   "decisions": [
     {
       "id": "D1",
@@ -1761,6 +1761,26 @@
       "decided_at": "2026-11-19T21:29:19.409Z",
       "effect": "design approved",
       "created_at": "2026-11-19T21:28:58.494Z"
+    },
+    {
+      "id": "D85",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:196 and :257 check canonical bytes, chain links and recorded hashes. Lines 363–378 recognize the reader's own lock across folder aliases, lines 441–474 check head stability, and lines 519–588 enforce writer ownership and refuse inherited writers. Lines 631–635 reject stale duplicate submissions, and lines 710–721 write the log before advancing the head. The CLI at src/cma/cli.py:321 is the sole production consumer. Linux runner logs confirm the named tamper, rebuilt-chain, append-failure, lock contention, duplicate-submit, strict JSON, file permissions and CLI tests. Case folders have separate log and lock files, authorization uses filesystem permissions, timestamps use UTC, currency remains payload data, and there is no existing case-log format to migrate. P15 fails because the free or holding reader misclassifies an incomplete recorded last entry, the first-write race can return intact while a writer holds the case, and Windows checks can mistake another reader for a writer.); major: A recorded last entry with an incomplete line is reported as missing. The incomplete-tail branch requires the complete-entry count to equal the head count. at src/cma/case.py:309; major: After a missing-lock probe, a stable intact snapshot bypasses a second lock check even when a writer has since created and acquired the lock. at src/cma/case.py:397; major: On Windows, a reader takes an exclusive lock. A second reader that exhausts its retries treats that reader as a writer and can hide an incomplete tail. at src/cma/case.py:767; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T21:30:44.630Z"
     }
   ]
 }

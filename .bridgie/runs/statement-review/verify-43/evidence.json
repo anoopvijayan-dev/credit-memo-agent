@@ -1,0 +1,117 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:196 and :257 check canonical bytes, chain links and recorded hashes. Lines 363–378 recognize the reader's own lock across folder aliases, lines 441–474 check head stability, and lines 519–588 enforce writer ownership and refuse inherited writers. Lines 631–635 reject stale duplicate submissions, and lines 710–721 write the log before advancing the head. The CLI at src/cma/cli.py:321 is the sole production consumer. Linux runner logs confirm the named tamper, rebuilt-chain, append-failure, lock contention, duplicate-submit, strict JSON, file permissions and CLI tests. Case folders have separate log and lock files, authorization uses filesystem permissions, timestamps use UTC, currency remains payload data, and there is no existing case-log format to migrate. P15 fails because the free or holding reader misclassifies an incomplete recorded last entry, the first-write race can return intact while a writer holds the case, and Windows checks can mistake another reader for a writer.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-43/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-43/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-43/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-43/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-43/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-43/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-43/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 309,
+      "criterion": "P15",
+      "claim": "A recorded last entry with an incomplete line is reported as missing. The incomplete-tail branch requires the complete-entry count to equal the head count.",
+      "repro": "Append two entries, leave the head file untouched, and truncate only the final newline from log.jsonl. Run cma case check on the free case, or call verify() under writer(). Both name entry 2 as missing with torn=False, even though its bytes are present and its line is incomplete. The existing missing-newline test tears an unrecorded append."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 397,
+      "criterion": "P15",
+      "claim": "After a missing-lock probe, a stable intact snapshot bypasses a second lock check even when a writer has since created and acquired the lock.",
+      "repro": "Start checking a new empty case and pause the reader after its lock-file open fails with FileNotFoundError. In another thread, enter writer() and hold it without appending. Resume the reader. Its empty snapshot is stable and check.ok is true, so the CLI exits 0 with 'case log intact' while the writer holds the case."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 767,
+      "criterion": "P15",
+      "claim": "On Windows, a reader takes an exclusive lock. A second reader that exhausts its retries treats that reader as a writer and can hide an incomplete tail.",
+      "repro": "On Windows, prepare a case with two recorded entries and an incomplete third entry. Pause reader A inside _reading() for longer than the retry window, with no writers running. Invoke cma case check from reader B. The exclusive byte lock sends B to _held(), which exits 4 and attributes the tail to another save. The two-reader invariant is skipped when _SHARED_LOCKS is false, and the supplied runner ran on Linux."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's held-tail contract claim gives exit 0 and 'appending'. The current CLI and the passing contract test require exit 4 and 'being saved'.",
+      "repro": "Compare the claim with tests/test_case_log.py:1327 and its PASSED row in contracts-4.log. Hold the writer lock over a torn tail and invoke the CLI from another thread. It reports the recorded count and exits 4."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1201,
+      "criterion": "P15",
+      "claim": "The producer's claim that the rapid-append test forces two commits on each read attempt with fallback contention is not proven. The test runs an unsynchronized writer loop and never asserts that schedule or that the reader entered the fallback.",
+      "repro": "Read test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing and its PASSED line in specified-3.log. A run in which shared lock probes succeed can pass. To prove the stated schedule, add synchronization that forces two commits during each read attempt, assert fallback contention, and run python -m pytest -v tests/test_case_log.py -k never_reports_a_healthy_log_broken."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 363,
+      "criterion": "P15",
+      "claim": "The producer's diff-stat proof is stale for the reviewed revision. Its cited command reports 830 insertions under src, rather than the claimed 581. The production caller search supports the separate claim that only case check consumes this log today.",
+      "repro": "Run git diff --stat 576e43d..HEAD -- src at a65685d. It reports 795 lines for src/cma/case.py and 35 for src/cma/cli.py."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
