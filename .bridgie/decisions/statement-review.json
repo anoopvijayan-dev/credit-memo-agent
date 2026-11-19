@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 108,
+  "next_id": 112,
   "decisions": [
     {
       "id": "D1",
@@ -2221,6 +2221,87 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-19T23:05:45.582Z"
+    },
+    {
+      "id": "D108",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-11"
+      },
+      "context": "R42's 're-check before each write' (verify-54, verify-55; revision 10 scope). An append changes the case's files in up to three steps: the empty head record before the first line, the line, and the rename that publishes the new head record. A repair renames a rewritten log over the old one, then renames the head record. Each rename is prepared in a temporary file that nobody reads. Revision 10's design said a writer re-checks its lock before each append and each repair. T12 at 6e73302 re-checks before the first step and before writing a head record's temporary file. verify-55 reads R42 as asking for a re-check before every step that changes a file the case holds. It failed T12 on two majors: there is no re-check between the empty head record and the line, and none between a temporary file and the rename that publishes it. The design now reads R42 as the reviewer does. A re-check never closes the window between itself and its step; revision 10 already states that window. A step refused after the line leaves an unrecorded entry, as a crash does, and the next holder drops it.",
+      "options": [
+        "Before each step that changes a file a reader reads: the empty head record, the line and each rename; a temporary file is not one (design default; R42 as written)",
+        "Before each append and each repair only, as revision 10's design said; amend R42 in the next revision to say so"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T23:27:19.996Z"
+    },
+    {
+      "id": "D109",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-11"
+      },
+      "context": "What a reader reports when one writer waits at the gate while another holds the case (R43, P15; verify-54, verify-55). A check that finds the gate busy tries the case lock directly (D98). If the case is held too, the check does not hold the gate, so it cannot know that one writer held the case through its read. The holder can let go, leaving an incomplete entry, and the writer at the gate can take the case between the check's two looks. This is verify-47's corner, which the gate closes only for checks that hold it. Since D105, T12 names a fault at or before the recorded entries from a steady read, and otherwise claims nothing. verify-55 reads R43 as asking for the recorded entries and the rest as being saved whenever a steady read exists, and failed T12 for claiming nothing. Reporting being saved there would let a check say being saved over an incomplete entry left during a free moment in its read. R43 says a reader of a free case names that entry.",
+      "options": [
+        "Name a fault at or before the recorded entries and otherwise claim nothing. In the next revision, write into R43 and P15 that a steady read gives the recorded entries only when one writer held the case through it (design default; what T12 builds since D105)",
+        "Report the recorded entries and the rest as being saved, as verify-55 reads R43; no requirement change, accepting verify-47's corner when a writer waits at the gate"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T23:27:20.000Z"
+    },
+    {
+      "id": "D110",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-11"
+      },
+      "context": "A v2 pattern that can match across words (R4 after D102; table validation). Since D102, a rule's match is the longest its pattern can make where it starts, and R4 counts a match inside a longer one only as the longer one. A table edit could add a pattern with a repeat that can match across a space, such as .* or [A-Z ]+. That pattern would take in every other list's wording after its start: SQUARE.* on the card list would make SQUARE UK CASH ADVANCE a card settlement in trading receipts instead of ambiguous. No shipped pattern has such a repeat. Of the ten patterns in v2, only the invoice reference repeats without limit, and only whitespace and digits. verify-53's two majors were table edits, so T03's next review may try this one.",
+      "options": [
+        "Refuse such a pattern at load, naming the rule; a repeat of spaces, digits or letters alone stays allowed (design default; T03 adds one validator check before its review)",
+        "Allow it, and state in the design that a pattern reaching across words takes in what follows"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T23:27:20.004Z"
+    },
+    {
+      "id": "D111",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Approve the design and requirements (R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R18 R19 R20 R21 R22 R23 R24 R25 R26 R27 R28 R29 R30 R31 R32 R33 R34 R35 R36 R37 R38 R39 R40 R41 R42 R43 R44 R45 R46 R47 R48 R50 R51 R52 R53 R54 R55 R56 P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20) for 'statement-review'? Branch bridgie/statement-review from claude/busy-ride-h88y5r.",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T23:27:20.008Z"
     }
   ]
 }
