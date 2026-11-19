@@ -238,6 +238,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-19 D101 (question): The bank's code settles the line type before the longer-phrase rule; say so in R4 in the next revision (design default; what verify-53 expects) — (recommended option, chosen under the owner's standing approval of 2026-11-19) → recorded [Anoop Vijayan]
 - 2026-11-19 D102 (question): The longest match any alternative can make at a start (design default) — (recommended option, chosen under the owner's standing approval of 2026-11-19) → recorded [Anoop Vijayan]
 - 2026-11-19 D103 (question): State it in the design only: under such interference a repair can remove another writer's entries, and a signed pack pins the head it saw (design default) — (recommended option, chosen under the owner's standing approval of 2026-11-19) → recorded [Anoop Vijayan]
+- 2026-11-19 D104 (approve_design): approve → design approved [Anoop Vijayan]
 
 ## Idea
 
