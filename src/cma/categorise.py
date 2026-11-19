@@ -64,6 +64,7 @@ import functools
 import hashlib
 import os
 import re
+import re._compiler as _sre_compile  # to test what one parsed element of a pattern matches
 import re._parser as _sre_parse  # the parser re uses; read only, to find back-references
 import sys
 import unicodedata
@@ -250,6 +251,53 @@ def _has_group_reference(pattern: str) -> bool:
     return walk(_sre_parse.parse(pattern))
 
 
+def _atoms(sub: _sre_parse.SubPattern):
+    """The single-character elements a parsed pattern is made of, through groups,
+    alternatives and repeats."""
+    for op, av in sub:
+        name = str(op)
+        if name in ("LITERAL", "NOT_LITERAL", "IN", "ANY", "CATEGORY"):
+            yield op, av
+        elif name == "SUBPATTERN":
+            yield from _atoms(av[3])
+        elif name == "BRANCH":
+            for branch in av[1]:
+                yield from _atoms(branch)
+        elif name in ("MAX_REPEAT", "MIN_REPEAT", "POSSESSIVE_REPEAT"):
+            yield from _atoms(av[2])
+        elif name == "ATOMIC_GROUP":
+            yield from _atoms(av)
+
+
+def _repeat_crosses_words(pattern: str) -> bool:
+    """A repeat that can take in both a space and a word character (.*, [A-Z ]+, (?:\\d+\\s)+):
+    with the longest match counting (D102), it would swallow every other list's wording
+    after its start (D110). A repeat of spaces, digits or letters alone is fine."""
+    parsed = _sre_parse.parse(pattern)
+
+    def matches(atom, char: str) -> bool:
+        return _sre_compile.compile(_sre_parse.SubPattern(parsed.state, [atom])).fullmatch(char) is not None
+
+    def walk(sub: _sre_parse.SubPattern) -> bool:
+        for op, av in sub:
+            if str(op) in ("MAX_REPEAT", "MIN_REPEAT", "POSSESSIVE_REPEAT") and av[1] > 1:
+                atoms = list(_atoms(av[2]))
+                if (any(matches(a, " ") or matches(a, "\t") for a in atoms)
+                        and any(matches(a, c) for a in atoms for c in "Aa1-.\u00e9")):
+                    return True
+            stack = [av]
+            while stack:
+                item = stack.pop()
+                if isinstance(item, _sre_parse.SubPattern):
+                    if walk(item):
+                        return True
+                elif isinstance(item, (list, tuple)):
+                    stack.extend(item)
+        return False
+
+    return walk(parsed)
+
+
 def _compile_problem(pattern: str) -> str | None:
     # re.error is not the only way a pattern fails to compile: a repeat count past
     # the engine's limit raises OverflowError, deep nesting RecursionError.
@@ -322,6 +370,10 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                     # which renumbers groups: a back-reference would silently change meaning.
                     problems.append(f"{where}: {key} uses a back-reference or a conditional group, "
                                     "which a v2 table does not allow")
+            if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
+                    and _repeat_crosses_words(r["pattern"])):
+                problems.append(f"{where}: pattern has a repeat that can run across words (such as .* or "
+                                "[A-Z ]+), which a v2 table does not allow: list the phrases as names")
         if "stage" in r and r["stage"] not in STAGES:
             problems.append(f"{where}: stage {r['stage']!r} is not one of {list(STAGES)}")
         if data.get("frozen") is False:

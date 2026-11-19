@@ -1691,3 +1691,22 @@ def test_the_longest_alternative_of_one_pattern_counts_as_the_longer_phrase():
     assert [r.id for r in categorise.credit_matches(rs, "ACME FASTER PAYMENT LTD", 100.0)] == ["acme"]
     # word edges still hold for the longer end: ACME FASTER PAYMENT LTDX is not that phrase
     assert "rail" in [r.id for r in categorise.credit_matches(rs, "ACME FASTER PAYMENT LTDX", 100.0)]
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("pattern", [r"SQUARE.*", r"\bSQUARE[A-Z ]+", r"(?:\d+\s)+", r"(?s)\bACME.+?LTD"])
+def test_a_v2_pattern_that_can_run_across_words_is_refused_at_load(pattern):
+    """D110: with the longest match counting (D102), SQUARE.* on the card list would take in
+    every other list's wording after it. A repeat of spaces, digits or letters alone stays."""
+    rule = {"id": "wide", "pattern": pattern, "direction": "in", "category": "revenue_card_settlement",
+            "stage": "names"}
+    with pytest.raises(RulesetError, match="run across words"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [rule]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("pattern", [r"\bINV(?:OICE)?\s*[-#:]?\s*\d+", r"\bREF\d+", r"\b[A-Z]+LTD\b"])
+def test_a_v2_pattern_repeating_one_kind_of_character_is_allowed(pattern):
+    rule = {"id": "narrow", "pattern": pattern, "direction": "in", "category": "revenue_card_settlement",
+            "stage": "names"}
+    validate_ruleset({"id": "v2", "frozen": False, "rules": [rule]}, expected_id="v2")
