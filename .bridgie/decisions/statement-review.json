@@ -2138,12 +2138,12 @@
         "Make a repair an append (the torn bytes stay, closed off and named by a drop entry), so 'broken, never intact' covers repairs too; T12 changes its log format and reader"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "State it in the design only: under such interference a repair can remove another writer's entries, and a signed pack pins the head it saw (design default)",
+      "free_text": "(recommended option, chosen under the owner's standing approval of 2026-11-19)",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-19T22:59:50.430Z",
+      "effect": "recorded",
       "created_at": "2026-11-19T22:59:07.213Z"
     },
     {
