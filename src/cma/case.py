@@ -322,6 +322,34 @@ def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
     return failed(count + 1, f"was added after the head the head file records (entry {count})")
 
 
+# Every writer that takes the case counts itself in the lock file, after the locked byte:
+# a reader that finds the same count before and after its read, and the case held at both
+# ends, knows one writer held it throughout (another taking it would have counted). Readers
+# take the lock shared and never count.
+_GEN_AT = 8
+_GEN_LEN = 21
+
+
+def _read_generation(lock_path: Path) -> int | None:
+    try:
+        with open(lock_path, "rb") as f:
+            f.seek(_GEN_AT)
+            raw = f.read(_GEN_LEN).strip()
+    except OSError:
+        return None
+    return int(raw) if raw.isdigit() else None
+
+
+def _bump_generation(fd: int) -> None:
+    os.lseek(fd, _GEN_AT, os.SEEK_SET)
+    raw = os.read(fd, _GEN_LEN).strip()
+    count = int(raw) if raw.isdigit() else 0
+    data = memoryview(f"{count + 1:020d}\n".encode())
+    os.lseek(fd, _GEN_AT, os.SEEK_SET)
+    while data:  # the count's own write: not the log's, so a log write failing is not this
+        data = data[os.write(fd, data):]
+
+
 def _unchecked(reason: str, *, in_progress: bool) -> LogCheck:
     """No steady read was had: nothing is claimed about any entry."""
     return LogCheck(Head(0, GENESIS), [], reason=reason, in_progress=in_progress, checked=False)
@@ -398,12 +426,19 @@ class CaseLog:
                 with self._reading():
                     return _check(self._read_log(), _read_head(self.head_path))
             except CaseLocked:
+                # "Being saved" stands only if one writer held the case through the whole
+                # read (R43): held before and after it, and no writer took the case in
+                # between (the writers' count unchanged). Otherwise the read may have been
+                # of a free case, whose incomplete entry must be named: look again. A fault
+                # at or before the recorded entries is real whoever holds the case.
+                before = _read_generation(self.lock_path)
+                if not self._still_held():
+                    continue
                 held = self._held()
-                # "Being saved" stands only if the case is still held after the read: a
-                # holder that let go meanwhile may have left an incomplete entry, which a
-                # read of the free case must name (R43). A fault at or before the recorded
-                # entries is real either way.
-                if held.first_bad is not None or self._still_held():
+                if held.first_bad is not None:
+                    return held
+                if (before is not None and self._still_held()
+                        and _read_generation(self.lock_path) == before):
                     return held
                 continue
             except FileNotFoundError:
@@ -600,6 +635,9 @@ class CaseLog:
                 self._lock_fd, self._owner, self._lock_depth, self._lock_id = fd, me, 1, lock_id
                 with _HELD_GUARD:
                     _HELD[lock_id] = me
+                # Counted before anything else, and required: a writer that cannot count
+                # itself leaves, so a reader never mistakes two holds for one.
+                _bump_generation(fd)
             except BaseException as e:
                 # Whatever interrupts this (a lock error, or KeyboardInterrupt between
                 # two steps) leaves no lock behind: once the descriptor is recorded

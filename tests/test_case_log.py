@@ -1726,3 +1726,49 @@ def test_p15_a_case_that_changes_hands_on_every_attempt_gets_no_verdict(tmp_path
     monkeypatch.undo()
     assert not check.checked and not check.in_progress and check.first_bad is None
     assert case.CaseLog(log.path).verify().torn  # free and steady: the entry is named
+
+
+@pytest.mark.invariants
+def test_p15_each_writer_hold_counts_once_and_checks_never_count(tmp_path):
+    log = _log(tmp_path, 1)
+    start = case._read_generation(log.lock_path)
+    with log.writer(), log.writer():  # one hold, nested: counted once
+        pass
+    case.CaseLog(log.path).verify()  # a check takes the lock shared and does not count
+    assert case._read_generation(log.lock_path) == start + 1
+
+
+@pytest.mark.invariants
+def test_p15_two_holds_around_a_read_are_never_taken_for_one(tmp_path, monkeypatch):
+    # T12 review 11 / R43: held before and after the read, but by different writers (the
+    # count moved): the read may have been of a free case, so it is not "being saved".
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    counts = iter(range(1000))
+
+    def held_now(self):
+        raise case.CaseLocked("held")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(case.CaseLog, "_reading", contextlib.contextmanager(held_now))
+    monkeypatch.setattr(case.CaseLog, "_still_held", lambda self: True)
+    monkeypatch.setattr(case, "_read_generation", lambda path: next(counts))
+    check = case.CaseLog(log.path).verify()
+    monkeypatch.undo()
+    assert not check.checked and not check.in_progress and check.first_bad is None
+
+
+@pytest.mark.invariants
+def test_p15_a_writer_that_cannot_count_its_hold_leaves_no_lock(tmp_path, monkeypatch):
+    import errno
+    log = _log(tmp_path, 1)
+
+    def cannot_count(fd):
+        raise OSError(errno.EIO, "write failed")
+
+    monkeypatch.setattr(case, "_bump_generation", cannot_count)
+    with pytest.raises(OSError), log.writer():
+        pass
+    monkeypatch.undo()
+    case.CaseLog(log.path).append("override", {}, expected=1)  # the lock was let go
