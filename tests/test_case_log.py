@@ -283,6 +283,7 @@ def test_p15_a_contended_lock_still_reads_as_another_writer(tmp_path, monkeypatc
         raise OSError(errno.EWOULDBLOCK, "held")
 
     monkeypatch.setattr(case, "_lock", held)
+    monkeypatch.setattr(case, "READER_WAIT", 0.1)  # the gate looks busy too: don't wait it out
     with pytest.raises(case.CaseLocked), log.writer():
         pass
 
@@ -1541,7 +1542,7 @@ def test_p15_two_checks_at_once_never_see_each_other_as_a_save(tmp_path, monkeyp
     other, taken, leave = case.CaseLog(log.path), threading.Event(), threading.Event()
 
     def checking():
-        with other._reading():
+        with other._shared(other.gate_path):
             taken.set()
             leave.wait(10)
 
@@ -1566,7 +1567,7 @@ def test_p15_a_save_waits_out_a_long_check_instead_of_being_refused(tmp_path):
     taken = threading.Event()
 
     def long_check():
-        with log._reading():
+        with log._shared(log.gate_path):
             taken.set()
             time.sleep(case.WRITER_WAIT * 3)
 
@@ -1709,19 +1710,18 @@ def test_p15_a_crash_during_the_first_append_is_still_a_torn_entry_to_drop(tmp_p
 
 
 @pytest.mark.invariants
-def test_p15_a_case_that_changes_hands_on_every_attempt_gets_no_verdict(tmp_path, monkeypatch):
-    # T12 review 10 / R43: held at each probe and free by the end of each read, so neither
-    # "being saved" (nobody held it through the read) nor a free-case verdict stands.
+def test_p15_a_case_writers_keep_taking_gets_no_verdict(tmp_path, monkeypatch):
+    # R43: if writers pass the gate at every attempt, no read can be held against one
+    # writer or made of a free case, so nothing is claimed.
     log = _log(tmp_path, 2)
     _crash_mid_append(log, monkeypatch, 10)
     monkeypatch.setattr(case, "READ_PAUSE", 0)
-    monkeypatch.setattr(case.CaseLog, "_still_held", lambda self: False)
 
-    def always_held(self):
-        raise case.CaseLocked("held at the probe")
+    def gate_busy(self, path):
+        raise case.CaseLocked("a writer is passing the gate")
         yield  # pragma: no cover
 
-    monkeypatch.setattr(case.CaseLog, "_reading", contextlib.contextmanager(always_held))
+    monkeypatch.setattr(case.CaseLog, "_shared", contextlib.contextmanager(gate_busy))
     check = case.CaseLog(log.path).verify()
     monkeypatch.undo()
     assert not check.checked and not check.in_progress and check.first_bad is None
@@ -1729,46 +1729,48 @@ def test_p15_a_case_that_changes_hands_on_every_attempt_gets_no_verdict(tmp_path
 
 
 @pytest.mark.invariants
-def test_p15_each_writer_hold_counts_once_and_checks_never_count(tmp_path):
-    log = _log(tmp_path, 1)
-    start = case._read_generation(log.lock_path)
-    with log.writer(), log.writer():  # one hold, nested: counted once
-        pass
-    case.CaseLog(log.path).verify()  # a check takes the lock shared and does not count
-    assert case._read_generation(log.lock_path) == start + 1
-
-
-@pytest.mark.invariants
-def test_p15_two_holds_around_a_read_are_never_taken_for_one(tmp_path, monkeypatch):
-    # T12 review 11 / R43: held before and after the read, but by different writers (the
-    # count moved): the read may have been of a free case, so it is not "being saved".
+def test_p15_no_writer_takes_the_case_during_a_read_so_a_handover_is_never_being_saved(tmp_path, monkeypatch):
+    # T12 review 12 / R43: writer A lets go during the read and writer B wants the case at
+    # once. B cannot pass the gate while the reader holds it, so the reader finds the case
+    # free after its read, reads it under the lock, and names A's incomplete entry.
     log = _log(tmp_path, 2)
     _crash_mid_append(log, monkeypatch, 10)
     monkeypatch.setattr(case, "READ_PAUSE", 0)
-    counts = iter(range(1000))
+    taken, leave, gone = threading.Event(), threading.Event(), threading.Event()
+    b_took = {}
 
-    def held_now(self):
-        raise case.CaseLocked("held")
-        yield  # pragma: no cover
+    def writer_a():
+        with case.CaseLog(log.path).writer():
+            taken.set()
+            leave.wait(10)
+        gone.set()
 
-    monkeypatch.setattr(case.CaseLog, "_reading", contextlib.contextmanager(held_now))
-    monkeypatch.setattr(case.CaseLog, "_still_held", lambda self: True)
-    monkeypatch.setattr(case, "_read_generation", lambda path: next(counts))
-    check = case.CaseLog(log.path).verify()
-    monkeypatch.undo()
-    assert not check.checked and not check.in_progress and check.first_bad is None
+    def writer_b():
+        with case.CaseLog(log.path).writer():
+            b_took["at"] = time.monotonic()
 
+    a = threading.Thread(target=writer_a)
+    a.start()
+    assert taken.wait(5)
+    reader, real, b = case.CaseLog(log.path), case.CaseLog._read_log, threading.Thread(target=writer_b)
 
-@pytest.mark.invariants
-def test_p15_a_writer_that_cannot_count_its_hold_leaves_no_lock(tmp_path, monkeypatch):
-    import errno
-    log = _log(tmp_path, 1)
+    def read(self):
+        if self is reader and not leave.is_set():
+            leave.set()  # A lets go during this read ...
+            assert gone.wait(5)
+            b.start()  # ... and B tries to take the case at once
+            time.sleep(0.05)
+            assert "at" not in b_took  # B is held at the gate
+        return real(self)
 
-    def cannot_count(fd):
-        raise OSError(errno.EIO, "write failed")
-
-    monkeypatch.setattr(case, "_bump_generation", cannot_count)
-    with pytest.raises(OSError), log.writer():
-        pass
-    monkeypatch.undo()
-    case.CaseLog(log.path).append("override", {}, expected=1)  # the lock was let go
+    monkeypatch.setattr(case.CaseLog, "_read_log", read)
+    try:
+        check = reader.verify()
+        done = time.monotonic()
+    finally:
+        monkeypatch.undo()
+        leave.set()
+        a.join(10)
+        b.join(10)
+    assert check.torn and check.first_bad == 3 and not check.in_progress
+    assert b_took["at"] >= done - 0.5  # B took the case only once the reader let the gate go

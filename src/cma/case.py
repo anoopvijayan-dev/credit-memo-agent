@@ -322,32 +322,41 @@ def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
     return failed(count + 1, f"was added after the head the head file records (entry {count})")
 
 
-# Every writer that takes the case counts itself in the lock file, after the locked byte:
-# a reader that finds the same count before and after its read, and the case held at both
-# ends, knows one writer held it throughout (another taking it would have counted). Readers
-# take the lock shared and never count.
-_GEN_AT = 8
-_GEN_LEN = 21
+def _held_result(check: LogCheck | None) -> LogCheck:
+    """One other writer held the case through a read (R43): only the recorded entries are
+    judged. A change, removal or reordering at or before them is broken; what follows them
+    is being saved, never intact. With no steady read, nothing is claimed."""
+    if check is None:
+        return _unchecked("being saved: the log changed during every read", in_progress=True)
+    if check.first_bad is not None and not check.past_recorded:
+        return check
+    return check.as_recorded()
 
 
-def _read_generation(lock_path: Path) -> int | None:
+def _try_exclusive(fd: int) -> bool:
+    """Take `fd`'s lock alone now; False if anyone else holds it."""
     try:
-        with open(lock_path, "rb") as f:
-            f.seek(_GEN_AT)
-            raw = f.read(_GEN_LEN).strip()
-    except OSError:
-        return None
-    return int(raw) if raw.isdigit() else None
+        _lock(fd)
+    except OSError as e:
+        if e.errno in _CONTENDED:
+            return False
+        raise
+    return True
 
 
-def _bump_generation(fd: int) -> None:
-    os.lseek(fd, _GEN_AT, os.SEEK_SET)
-    raw = os.read(fd, _GEN_LEN).strip()
-    count = int(raw) if raw.isdigit() else 0
-    data = memoryview(f"{count + 1:020d}\n".encode())
-    os.lseek(fd, _GEN_AT, os.SEEK_SET)
-    while data:  # the count's own write: not the log's, so a log write failing is not this
-        data = data[os.write(fd, data):]
+def _try_shared(fd: int) -> bool:
+    """Take `fd`'s lock shared now; False if a writer holds it alone."""
+    try:
+        _lock(fd, shared=True)
+    except OSError as e:
+        if e.errno in _CONTENDED:
+            return False
+        raise
+    return True
+
+
+class _GateBusy(CaseLocked):
+    """Readers hold the gate (or a writer is passing it): a writer waits for them."""
 
 
 def _unchecked(reason: str, *, in_progress: bool) -> LogCheck:
@@ -385,6 +394,9 @@ class CaseLog:
     def __init__(self, path: Path | str):
         self.path = Path(path)
         self.lock_path = self.path.with_name(self.path.name + ".lock")
+        # Every writer passes this gate, briefly and alone, to take the case; a reader holds
+        # it shared through its read, so no writer can take the case mid-read (R43).
+        self.gate_path = self.path.with_name(self.path.name + ".gate")
         self.head_path = self.path.with_name(self.path.name + ".head")
         # Guards the fields below, never held long. Reentrant, so a writer block's
         # cleanup run by the garbage collector or a signal handler inside one of these
@@ -414,65 +426,51 @@ class CaseLog:
                     holder = _HELD.get(lock_id) == me
         if holder:  # nothing else can write: one read is the truth
             return _check(self._read_log(), _read_head(self.head_path))
-        # Take the lock first: if the case is free, one read under the lock is the truth.
-        # A probe by another reader holds it for a moment, so it is tried a few times
-        # before the case counts as held. An object a forked child inherited still names
-        # its parent as holder whether or not the parent has let go, so the lock is tested
-        # through a fresh handle.
+        # Hold the gate shared, so no writer can take the case during this read; then try
+        # the case lock shared. Free: one read under it is the truth. Held: the writer that
+        # holds it cannot be replaced while the gate is held, so after a steady read the
+        # lock tells whether that one writer held the case throughout (still held) or let
+        # it go (now free, and taken here for a true read). Fresh descriptors throughout,
+        # so an object a forked child inherited tests the locks as they are now.
         for attempt in range(READ_RETRIES):
             if attempt:
                 time.sleep(READ_PAUSE)
             try:
-                with self._reading():
-                    return _check(self._read_log(), _read_head(self.head_path))
-            except CaseLocked:
-                # "Being saved" stands only if one writer held the case through the whole
-                # read (R43): held before and after it, and no writer took the case in
-                # between (the writers' count unchanged). Otherwise the read may have been
-                # of a free case, whose incomplete entry must be named: look again. A fault
-                # at or before the recorded entries is real whoever holds the case.
-                before = _read_generation(self.lock_path)
-                if not self._still_held():
-                    continue
-                held = self._held()
-                if held.first_bad is not None:
-                    return held
-                if (before is not None and self._still_held()
-                        and _read_generation(self.lock_path) == before):
-                    return held
+                with self._shared(self.gate_path):
+                    case_fd = os.open(self.lock_path, _PROBE_FLAGS)
+                    try:
+                        if _try_shared(case_fd):
+                            return _check(self._read_log(), _read_head(self.head_path))
+                        check = self._steady()
+                        if _try_shared(case_fd):  # its writer let go during the read
+                            return _check(self._read_log(), _read_head(self.head_path))
+                        return _held_result(check)
+                    finally:
+                        os.close(case_fd)
+            except CaseLocked:  # a writer is passing the gate this moment: look again
                 continue
             except FileNotFoundError:
-                # No lock file: no writer has ever started on this case (each creates it
-                # first), and a check writes nothing. A steady read is the truth, unless a
-                # writer started meanwhile: then probe again.
+                # No gate: no writer has ever started on this case (each creates it first),
+                # and a check writes nothing. A steady read is the truth, unless a writer
+                # started meanwhile: then look again.
                 check = self._steady()
-                if check is not None and not self.lock_path.exists():
+                if check is not None and not self.gate_path.exists():
                     return check
                 continue
             except OSError:
                 return self._untested()
-        # Every attempt found the case changing hands (held at the probe, let go by the end
-        # of the read, or a writer starting where there was no lock file): no read stood
-        # for a holder or for a free case, so nothing is claimed (R43).
-        return _unchecked("could not be checked: the case was taken and let go during every "
+        return _unchecked("could not be checked: writers kept taking the case during every "
                           "read", in_progress=False)
 
     @contextmanager
-    def _reading(self) -> Iterator[None]:
-        """Hold the case's lock shared for one read, through a fresh descriptor (so an
-        object a forked child inherited tests the lock as it is now). Readers never
-        exclude each other; a writer holding the case refuses it with CaseLocked, and a
-        writer waits for readers (R42: a reader is not a case-log writer). Where the
-        platform has no shared lock (Windows) the hold is exclusive and brief. A missing
-        lock file raises FileNotFoundError and nothing is created."""
-        fd = os.open(self.lock_path, _PROBE_FLAGS)
+    def _shared(self, path: Path) -> Iterator[None]:
+        """Hold `path` locked shared through a fresh descriptor: readers never exclude each
+        other; CaseLocked while a writer holds it alone. A missing file raises
+        FileNotFoundError and nothing is created (a check writes nothing)."""
+        fd = os.open(path, _PROBE_FLAGS)
         try:
-            try:
-                _lock(fd, shared=True)
-            except OSError as e:
-                if e.errno in _CONTENDED:
-                    raise CaseLocked(f"{self.path}: another window or command is writing to this case") from e
-                raise
+            if not _try_shared(fd):
+                raise CaseLocked(f"{self.path}: another window or command is writing to this case")
             try:
                 yield
             finally:
@@ -480,26 +478,6 @@ class CaseLog:
                     _unlock(fd)
         finally:
             os.close(fd)
-
-    def _still_held(self) -> bool:
-        """Another holds the case right now (a lock that cannot be tested counts as not)."""
-        try:
-            with self._reading():
-                return False
-        except CaseLocked:
-            return True
-        except OSError:
-            return False
-
-    def _only_readers_hold(self) -> bool:
-        """The lock is held, and only shared (by readers), so a writer should wait."""
-        if not _SHARED_LOCKS:
-            return False
-        try:
-            with self._reading():
-                return True
-        except (CaseLocked, OSError):
-            return False
 
     def _steady(self) -> LogCheck | None:
         """A read across which the head file did not change, or None if every read moved:
@@ -511,18 +489,6 @@ class CaseLog:
             if still:
                 return check
         return None
-
-    def _held(self) -> LogCheck:
-        """Someone else holds the case (R43): judge only the entries the log records as
-        complete, from a steady read. A change, removal or reordering at or before them is
-        broken; anything after them is being saved, and the log is never called intact.
-        With no steady read, nothing is claimed."""
-        check = self._steady()
-        if check is None:
-            return _unchecked("being saved: the log changed during every read", in_progress=True)
-        if check.first_bad is not None and not check.past_recorded:
-            return check
-        return check.as_recorded()
 
     def _untested(self) -> LogCheck:
         """The lock cannot be taken or tested: no holder is known, so a steady read is
@@ -598,10 +564,10 @@ class CaseLog:
                     with self._state:
                         entered = self._enter(me, create)
                     break
-                except CaseLocked:
+                except CaseLocked as e:
                     # Another writer: wait briefly, then refuse (R42). Only readers: they
                     # are no writer and finish their read, so wait for them (READER_WAIT).
-                    limit = start + READER_WAIT if self._only_readers_hold() else deadline
+                    limit = start + READER_WAIT if isinstance(e, _GateBusy) else deadline
                     if time.monotonic() >= limit:
                         raise
                     time.sleep(READ_PAUSE)
@@ -626,36 +592,53 @@ class CaseLog:
         else:
             if create:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(self.lock_path, os.O_RDWR | (os.O_CREAT if create else 0), 0o600)
-            locked = False
+            flags = os.O_RDWR | (os.O_CREAT if create else 0)
+            # Pass the gate alone to take the case, so no writer takes it while a reader
+            # holds the gate through a read (R43); leave the gate as soon as the case lock
+            # is taken or refused. The gate is created before the case lock, so a missing
+            # gate means no writer has ever started here.
+            gate = os.open(self.gate_path, flags, 0o600)
             try:
-                _lock(fd)
-                locked = True
-                lock_id = _file_id(os.fstat(fd))
-                self._lock_fd, self._owner, self._lock_depth, self._lock_id = fd, me, 1, lock_id
-                with _HELD_GUARD:
-                    _HELD[lock_id] = me
-                # Counted before anything else, and required: a writer that cannot count
-                # itself leaves, so a reader never mistakes two holds for one.
-                _bump_generation(fd)
-            except BaseException as e:
-                # Whatever interrupts this (a lock error, or KeyboardInterrupt between
-                # two steps) leaves no lock behind: once the descriptor is recorded
-                # the lock is released, before that the descriptor is closed.
-                if self._lock_fd == fd:
-                    self._lock_depth = 1
-                    self._owner = me
-                    self._release_one_level()
-                else:
-                    os.close(fd)
-                # Only contention means another writer holds the lock. Any other lock
-                # error (no locks available, an I/O error) is not evidence of a writer:
-                # it propagates, so a reader falls back to the plain read and a torn
-                # entry is reported, never excused as some writer's append.
-                if not locked and isinstance(e, OSError) and e.errno in _CONTENDED:
-                    raise CaseLocked(f"{self.path}: another window or command is writing to this case") from e
-                raise
+                if not _try_exclusive(gate):
+                    raise _GateBusy(f"{self.path}: another window or command is checking or "
+                                    "writing to this case")
+                try:
+                    self._take_case_lock(me, flags)
+                finally:
+                    with suppress(OSError):
+                        _unlock(gate)
+            finally:
+                os.close(gate)
         return True
+
+    def _take_case_lock(self, me: tuple[int, int], flags: int) -> None:
+        """Take the case lock alone for `me` and record it (call under _state, at the gate)."""
+        fd = os.open(self.lock_path, flags, 0o600)
+        locked = False
+        try:
+            _lock(fd)
+            locked = True
+            lock_id = _file_id(os.fstat(fd))
+            self._lock_fd, self._owner, self._lock_depth, self._lock_id = fd, me, 1, lock_id
+            with _HELD_GUARD:
+                _HELD[lock_id] = me
+        except BaseException as e:
+            # Whatever interrupts this (a lock error, or KeyboardInterrupt between
+            # two steps) leaves no lock behind: once the descriptor is recorded
+            # the lock is released, before that the descriptor is closed.
+            if self._lock_fd == fd:
+                self._lock_depth = 1
+                self._owner = me
+                self._release_one_level()
+            else:
+                os.close(fd)
+            # Only contention means another writer holds the lock. Any other lock
+            # error (no locks available, an I/O error) is not evidence of a writer:
+            # it propagates, so a reader falls back to the plain read and a torn
+            # entry is reported, never excused as some writer's append.
+            if not locked and isinstance(e, OSError) and e.errno in _CONTENDED:
+                raise CaseLocked(f"{self.path}: another window or command is writing to this case") from e
+            raise
 
     def _release_one_level(self) -> None:
         """Leave one level of this process's writer lock (call under _state)."""
