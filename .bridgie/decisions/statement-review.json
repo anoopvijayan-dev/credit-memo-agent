@@ -1459,12 +1459,12 @@
         "kill task"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "take over manually",
+      "free_text": "Owner: take over with an independent pre-review before Codex. (1) The holder records in the lock file when it is mid-append; only a holder mid-append excuses an incomplete last entry, so a stale torn entry under a lock held for a check is reported. (2) A contended reader decides what is recorded from the latest head, not the snapshot before its last log read. (3) A CaseLog belongs to the process that opened it: a forked child's writes through it are refused whether or not the lock was held at the fork.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-19T17:18:55.491Z",
+      "effect": "task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12",
       "created_at": "2026-11-19T11:57:36.131Z"
     },
     {
