@@ -774,12 +774,12 @@ class CaseLog:
         finally:
             os.close(fd)
         try:
+            self._require_lock_in_place()  # just before the rename a reader sees (D108)
             _replace(tmp, self.path)
-        except OSError:
+        except BaseException:
             tmp.unlink(missing_ok=True)
             raise
         _fsync_dir(self.path.parent)
-        self._require_lock_in_place()  # before each write: the log, then the head (rev. 10)
         self._write_head([*(e.hash for e in check.entries), entry.hash])
         return entry
 
@@ -805,8 +805,12 @@ class CaseLog:
         finally:
             os.close(fd)
         try:
+            # Before each step that changes a file a reader reads (R42, D108): the rename
+            # that publishes the head record, the empty first one included. The temporary
+            # file is read by nobody.
+            self._require_lock_in_place()
             _replace(tmp, self.head_path)
-        except OSError:
+        except BaseException:
             tmp.unlink(missing_ok=True)
             raise
         _fsync_dir(self.head_path.parent)
@@ -823,6 +827,7 @@ class CaseLog:
             # entry is always damage, never a crash to repair (T12 review 9).
             self._write_head([])
         created = not self.path.exists()
+        self._require_lock_in_place()  # just before the line, after any empty head (D108)
         fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:
             _write_all(fd, line)
@@ -831,7 +836,6 @@ class CaseLog:
             os.close(fd)
         if created:
             _fsync_dir(self.path.parent)  # make the new file's name durable too
-        self._require_lock_in_place()  # before each write: the line, then the head (rev. 10)
         self._write_head([*(e.hash for e in check.entries), entry.hash])
         return entry
 

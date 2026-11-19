@@ -1861,3 +1861,43 @@ def test_p15_a_lock_replaced_after_the_line_stops_the_head_being_written(tmp_pat
         log.append("override", {}, expected=1)
     monkeypatch.undo()
     assert log.head_path.read_bytes() == head_before  # the head was not moved
+
+
+@pytest.mark.invariants
+def test_p15_a_lock_replaced_after_the_empty_head_stops_the_first_line(tmp_path, monkeypatch):
+    # T12 review 15 / D108: the first append writes an empty head record, then its line;
+    # the lock is re-checked between the two.
+    log = case.CaseLog(tmp_path / "log.jsonl")
+    real = case.CaseLog._write_head
+
+    def then_replace_the_lock(self, hashes):
+        real(self, hashes)
+        if not hashes:  # the empty head record is down: the lock goes
+            self.lock_path.unlink()
+
+    monkeypatch.setattr(case.CaseLog, "_write_head", then_replace_the_lock)
+    with pytest.raises(case.CaseLocked, match="replaced"):
+        log.append("override", {}, expected=0)
+    monkeypatch.undo()
+    assert not log.path.exists() or log.path.read_bytes() == b""  # no line was written
+
+
+@pytest.mark.invariants
+def test_p15_a_lock_replaced_before_the_repair_rename_leaves_the_log_alone(tmp_path, monkeypatch):
+    # T12 review 15 / D108: a repair rewrites the log through a temporary file and renames
+    # it over the log; the lock is re-checked just before that rename.
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    before = log.path.read_bytes()
+    real = case._write_all
+
+    def then_replace_the_lock(fd, data):
+        real(fd, data)
+        if not data.startswith(b'{"count"'):  # the repaired log is in the temporary file
+            log.lock_path.unlink()
+
+    monkeypatch.setattr(case, "_write_all", then_replace_the_lock)
+    with pytest.raises(case.CaseLocked, match="replaced"):
+        log.drop_torn_entry(expected=2, by="A. Underwriter")
+    monkeypatch.undo()
+    assert log.path.read_bytes() == before  # the rename never happened
