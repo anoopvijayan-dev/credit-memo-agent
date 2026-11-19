@@ -1438,3 +1438,54 @@ def test_cma_run_under_v2_records_the_verify32_repros_with_every_candidate(tmp_p
     stripe = {t.id for t in txns if t.description == "STRIPE PAYMENTS UK LTD"}
     assert set(m["M2"]["evidence"]) == stripe
     assert {t.id for t in txns if t.amount > 0} - stripe <= set(m["M16"]["evidence"])
+
+
+# --- T03 review 6 (D64): overlapping phrases and Unicode marks --------------------------
+
+@pytest.mark.contracts
+def test_a_longer_phrase_starting_inside_another_match_still_hides_the_words_inside_it():
+    """A plain scan resumes after ACME PAY and never sees PAY FASTER PAYMENT LTD, which
+    starts inside it; the rail inside that longer phrase then survived as a cue."""
+    rail = {"id": "rail", "names": ["FASTER PAYMENT"], "direction": "in", "protected": True,
+            "stage": "line_type"}
+    acme = {"id": "acme", "names": ["ACME PAY", "PAY FASTER PAYMENT LTD"], "direction": "in",
+            "category": "revenue_card_settlement", "stage": "names"}
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [rail, acme]}, "v2", "t", "0")
+    assert [r.id for r in categorise.credit_matches(rs, "ACME PAY FASTER PAYMENT LTD", 100.0)] == ["acme"]
+    # the rail on its own, outside any longer phrase, is still a cue
+    assert [r.id for r in categorise.credit_matches(rs, "FASTER PAYMENT ACME PAY", 100.0)] == ["rail", "acme"]
+
+
+# Combining marks from several blocks, including ones a hand-kept list of the Latin and
+# symbol blocks missed: Devanagari, Cyrillic, Hebrew, Thai, and a variation selector.
+MARKS = ["́", "ँ", "҃", "ַ", "ั", "\U000e0100"]
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("mark", MARKS)
+def test_a_listed_name_joined_to_other_letters_by_any_mark_is_not_that_name(v2, mark):
+    trading = {c for c, b in CREDIT_BUCKET.items() if b is Bucket.TRADING_RECEIPTS}
+    assert classify(_t("PAYOUT STRIPE", 100.0), v2)[0] in trading  # the control
+    for desc in (f"PAYOUT X{mark}STRIPE", f"PAYOUT STRIPE{mark}X"):
+        matched = categorise.credit_matches(v2, desc, 100.0)
+        assert not any(r.category in trading for r in matched), (desc, [r.id for r in matched])
+        assert classify(_t(desc, 100.0), v2)[0] not in trading, desc
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("mark", MARKS)
+def test_a_table_pattern_word_edge_is_mark_aware_too(v2, mark):
+    """\\b in a v2 pattern counts a mark as part of the word, like the name lists do."""
+    invoice = next(r for r in v2.rules if r.id == "invoice_transfer")
+    assert invoice.pattern.search("PAYMENT INV 1234")
+    assert not invoice.pattern.search(f"PAYMENT X{mark}INV 1234")
+
+
+@pytest.mark.contracts
+def test_a_frozen_table_keeps_its_patterns_exactly():
+    """v1 reproduces its history (R54): its patterns are compiled as written."""
+    from importlib import resources as res
+    raw = yaml.safe_load(res.files("cma.rules").joinpath("v1.yaml").read_text(encoding="utf-8"))
+    v1 = load_ruleset("v1")
+    written = {r["id"]: r["pattern"] for r in raw["rules"] if "pattern" in r}
+    assert written and all(r.pattern.pattern == written[r.id] for r in v1.rules if r.id in written)

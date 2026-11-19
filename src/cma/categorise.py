@@ -58,9 +58,11 @@ from someone the applicant also pays by transfer is not revenue (round trip).
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import os
 import re
+import sys
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -131,12 +133,43 @@ class Ruleset:
         return tuple(r for r in self.rules if not r.protected)
 
 
+def _mark_ranges() -> str:
+    """Every combining mark (Unicode general category M: Mn, Mc, Me) as a character-class
+    body, from the Unicode database this Python ships, not a hand-kept list of blocks."""
+    ranges: list[tuple[int, int]] = []
+    start = prev = None
+    for cp in range(sys.maxunicode + 1):
+        if unicodedata.category(chr(cp))[0] == "M":
+            if start is None:
+                start = cp
+            prev = cp
+        elif start is not None:
+            ranges.append((start, prev))
+            start = None
+    if start is not None:
+        ranges.append((start, prev))
+    return "".join(f"\\U{a:08x}" if a == b else f"\\U{a:08x}-\\U{b:08x}" for a, b in ranges)
+
+
 # Whole-word edges in any script: the character on each side is not a letter or a digit
 # (str patterns are Unicode, so [^\W_] is a letter or digit in any alphabet), nor a
-# combining mark that belongs to the letter before it.
-_MARKS = "\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f"
+# combining mark, which belongs to the letter before it.
+_MARKS = _mark_ranges()
+_WORD_CHAR = rf"(?:[^\W_]|[{_MARKS}])"
 WORD_START = rf"(?<![^\W_])(?<![{_MARKS}])"
 WORD_END = rf"(?![^\W_])(?![{_MARKS}])"
+# \b with the same notion of a word character: a letter, a digit or a combining mark.
+_BOUNDARY = rf"(?:{WORD_START}(?={_WORD_CHAR})|(?<=[^\W_])(?![^\W_])(?![{_MARKS}])|(?<=[{_MARKS}])(?![^\W_])(?![{_MARKS}]))"
+_PLAIN_B = re.compile(r"(?<!\\)((?:\\\\)*)\\b")
+
+
+def _mark_aware(pattern: str) -> str:
+    """A table pattern's word edges made mark-aware: \\b, and the letter-or-digit
+    lookarounds written out, also treat a combining mark as part of the word, so a listed
+    word joined to other letters by any mark is not a whole word. Frozen tables (v1) keep
+    their patterns exactly, to reproduce their history (R54)."""
+    pattern = pattern.replace("(?<![^\\W_])", WORD_START).replace("(?![^\\W_])", WORD_END)
+    return _PLAIN_B.sub(lambda m: m.group(1) + _BOUNDARY, pattern)
 
 
 def names_pattern(names: Sequence[str]) -> str:
@@ -277,28 +310,36 @@ def _category_order_problems(data: dict, rules: list) -> list[str]:
     return problems
 
 
-def _rule_pattern_text(r: dict) -> str:
-    parts = [p for p in (r.get("pattern"), names_pattern(r["names"]) if "names" in r else None) if p]
+def _rule_pattern_text(r: dict, frozen: bool = True) -> str:
+    own = r.get("pattern")
+    if own and not frozen:
+        own = _mark_aware(own)
+    parts = [p for p in (own, names_pattern(r["names"]) if "names" in r else None) if p]
     return parts[0] if len(parts) == 1 else "|".join(f"(?:{p})" for p in parts)
 
 
-def _rule_pattern(r: dict) -> re.Pattern[str]:
-    return re.compile(_rule_pattern_text(r))
+def _rule_pattern(r: dict, frozen: bool) -> re.Pattern[str]:
+    return re.compile(_rule_pattern_text(r, frozen))
+
+
+def _side_pattern(text: str, frozen: bool) -> re.Pattern[str]:
+    return re.compile(text if frozen else _mark_aware(text))
 
 
 def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) -> Ruleset:
     validate_ruleset(data, expected_id, source)
     assert isinstance(data, dict)
+    frozen = bool(data.get("frozen", False))
     return Ruleset(
         id=data["id"],
         sha256=sha256,
-        frozen=bool(data.get("frozen", False)),
+        frozen=frozen,
         category_order=tuple(Category(c) for c in data.get("category_order") or ()),
         rules=tuple(
-            Rule(r["id"], _rule_pattern(r), r["direction"], Category(r["category"]) if "category" in r else None,
+            Rule(r["id"], _rule_pattern(r, frozen), r["direction"], Category(r["category"]) if "category" in r else None,
                  protected=r.get("protected", False), stage=r.get("stage"),
-                 unless=re.compile(r["unless"]) if "unless" in r else None,
-                 requires=re.compile(r["requires"]) if "requires" in r else None)
+                 unless=_side_pattern(r["unless"], frozen) if "unless" in r else None,
+                 requires=_side_pattern(r["requires"], frozen) if "requires" in r else None)
             for r in data["rules"]
         ),
     )
@@ -406,8 +447,16 @@ def _names_in(names: Sequence[str], description: str) -> bool:
     return bool(names) and re.search(names_pattern(names), description) is not None
 
 
+@functools.lru_cache(maxsize=None)
+def _at_every_position(pattern: re.Pattern[str]) -> re.Pattern[str]:
+    # The pattern inside a lookahead matches at every start position, so a longer listed
+    # phrase that starts inside another match of the same rule is still found; plain
+    # finditer resumes after each match and would skip it.
+    return re.compile(f"(?=({pattern.pattern}))", pattern.flags)
+
+
 def _spans(rule: Rule, description: str) -> list[tuple[int, int]]:
-    return [m.span() for m in rule.pattern.finditer(description) if m.end() > m.start()]
+    return [m.span(1) for m in _at_every_position(rule.pattern).finditer(description) if m.end(1) > m.start(1)]
 
 
 def credit_matches(ruleset: Ruleset, description: str, amount: float) -> list[Rule]:
