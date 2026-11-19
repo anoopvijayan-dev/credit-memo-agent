@@ -1578,3 +1578,13 @@ def test_p_a_director_named_in_a_payment_reference_does_not_settle_an_ambiguous_
         (C.OTHER, "v2:conflict:payment_rail+cash_paid_in+profile:director")
     # a credit the table does not find ambiguous still follows R5
     assert classify(_t("FPS CREDIT JANE DOE", 900.0), v2, profile=profile) == (C.DIRECTOR_FUNDING, "profile:director")
+
+
+@pytest.mark.invariants
+def test_p_an_ambiguous_credit_records_every_kind_of_profile_name_it_matches(v2):
+    """T03 review 10 / R4: a credit naming both a director and an own account keeps both
+    as candidates; the director match used to hide the own-account one."""
+    profile = ProfileNames(directors=("JANE DOE",), own_accounts=("ACME HOLDINGS",))
+    desc = "FPS CREDIT CASH DEPOSIT JANE DOE ACME HOLDINGS"
+    assert classify(_t(desc, 900.0), v2, profile=profile) == \
+        (C.OTHER, "v2:conflict:payment_rail+cash_paid_in+profile:director+profile:own_account")

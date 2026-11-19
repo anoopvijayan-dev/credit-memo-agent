@@ -592,13 +592,20 @@ def classify(
     return (Category.SUPPLIER if t.amount < 0 else Category.OTHER), f"{ruleset.id}:default"
 
 
-def _profile(t: Transaction, desc: str, profile: ProfileNames | None) -> tuple[Category, str] | None:
+def _profile_matches(t: Transaction, desc: str, profile: ProfileNames | None) -> list[tuple[Category, str]]:
+    """Every kind of case-profile name the line's wording matches, director first."""
+    found: list[tuple[Category, str]] = []
     if profile is not None:
         if t.amount > 0 and _names_in(profile.directors, desc):
-            return Category.DIRECTOR_FUNDING, "profile:director"
+            found.append((Category.DIRECTOR_FUNDING, "profile:director"))
         if t.amount != 0 and _names_in(profile.own_accounts, desc):
-            return Category.OWN_ACCOUNT_TRANSFER, "profile:own_account"
-    return None
+            found.append((Category.OWN_ACCOUNT_TRANSFER, "profile:own_account"))
+    return found
+
+
+def _profile(t: Transaction, desc: str, profile: ProfileNames | None) -> tuple[Category, str] | None:
+    found = _profile_matches(t, desc, profile)
+    return found[0] if found else None
 
 
 def _classify_credit(t: Transaction, desc: str, ruleset: Ruleset, profile: ProfileNames | None,
@@ -614,7 +621,9 @@ def _classify_credit(t: Transaction, desc: str, ruleset: Ruleset, profile: Profi
         return verdict.rule.category, f"{ruleset.id}:{verdict.rule.id}"
     found = _profile(t, desc, profile)
     if verdict is not None and verdict.ambiguous:
-        candidates = [r.id for r in verdict.rules] + ([found[1]] if found else [])
+        # Every kind of profile name the wording matches is a candidate (R4): a credit
+        # can name a director and an own account both.
+        candidates = [r.id for r in verdict.rules] + [ref for _, ref in _profile_matches(t, desc, profile)]
         return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(candidates)
     if found:
         return found
