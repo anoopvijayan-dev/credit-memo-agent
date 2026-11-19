@@ -146,12 +146,12 @@
         "P15"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T12",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-34/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: major: Concurrent forks share the same mutable list of acquired state locks. The first fork's parent callback can clear that list while the second fork is waiting to acquire a state lock. The second parent callback then has no record of the lock it acquired, leaving verification and appends blocked in the parent. at src/cma/case.py:334; major: A second handle opened through a symlink to the case directory can report a torn log as intact even in the thread that owns the writer lock. The ownership lookup compares path spellings while the OS lock contends on the same underlying file. at src/cma/case.py:327; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-36/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:196 validates canonical entries and their links, :282 compares the recorded hashes, :439 acquires the writer lock, :516 rejects a stale expected position, and :586 writes the entry before updating the head. src/cma/cli.py:319 exposes verification through the CLI. The runner's invariants log confirms the CLI tamper and torn-tail cases, rebuilt-chain cases, and symlink ownership case. The full-suite log confirms double-submit, cross-process and shared-handle contention, UTC stamping, strict JSON boundaries, and repair failures on both sides of the rename. Currency is opaque to the log, storage is per case folder, and the CLI is the only production verification caller. The contended read at src/cma/case.py:391 can hide both a previously torn append and damage to an entry already committed during the read. The writer also accepts a handle inherited across a fork when the handle was unlocked at fork time.); major: A different thread holding the lock for an integrity check can make a stale torn entry appear to be a live append. The passing CLI contracts test explicitly expects this behavior. at src/cma/case.py:391; major: After exhausting its retries, a contended reader can suppress corruption in an entry that the current head already records. It decides which entries are committed using the head snapshot from before its final log read. at src/cma/case.py:391; major: The inherited-handle write refusal only applies when the handle had an owner at fork time. P15 also requires refusal through an inherited handle after a fork with the lock free. at src/cma/case.py:432; reviewer verdict fail"
     },
     {
       "id": "T13",
