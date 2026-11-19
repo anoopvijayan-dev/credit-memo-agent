@@ -1663,3 +1663,31 @@ def test_a_mixed_rule_finds_its_longest_match_at_each_start_across_pattern_and_n
             "category": "revenue_card_settlement", "stage": "names"}
     rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [rail, acme]}, "v2", "t", "0")
     assert [r.id for r in categorise.credit_matches(rs, "ACME FASTER PAYMENT LTD", 100.0)] == ["acme"]
+
+
+@pytest.mark.contracts
+def test_the_bank_code_settles_the_line_before_a_longer_listed_phrase():
+    """T03 review 14 / D101: with UNPAID DD TO SAVINGS on the own-pot list (a table edit),
+    the bank's code at the start still settles the line type; it is not 'inside' the
+    longer phrase."""
+    bank = {"id": "returned_dd", "pattern": r"^UNPAID DD\b", "direction": "any", "category": "returned_dd",
+            "protected": True, "stage": "line_type", "bank_code": True}
+    pot = {"id": "pot", "names": ["UNPAID DD TO SAVINGS"], "direction": "in",
+           "category": "own_account_transfer", "protected": True, "stage": "line_type"}
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [bank, pot]}, "v2", "t", "0")
+    assert classify(_t("UNPAID DD TO SAVINGS", 50.0), rs) == (C.RETURNED_DD, "v2:returned_dd")
+
+
+@pytest.mark.contracts
+def test_the_longest_alternative_of_one_pattern_counts_as_the_longer_phrase():
+    """T03 review 14 / D102: ACME and ACME FASTER PAYMENT LTD as alternatives of one pattern;
+    the engine returns ACME first, but the longest match at that start is what counts,
+    so the rail inside it is hidden."""
+    rail = {"id": "rail", "names": ["FASTER PAYMENT"], "direction": "in", "protected": True,
+            "stage": "line_type"}
+    acme = {"id": "acme", "pattern": r"\bACME\b|\bACME FASTER PAYMENT LTD\b", "direction": "in",
+            "category": "revenue_card_settlement", "stage": "names"}
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [rail, acme]}, "v2", "t", "0")
+    assert [r.id for r in categorise.credit_matches(rs, "ACME FASTER PAYMENT LTD", 100.0)] == ["acme"]
+    # word edges still hold for the longer end: ACME FASTER PAYMENT LTDX is not that phrase
+    assert "rail" in [r.id for r in categorise.credit_matches(rs, "ACME FASTER PAYMENT LTDX", 100.0)]

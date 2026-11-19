@@ -123,6 +123,9 @@ class Rule:
     # Each part (own pattern, names) inside a lookahead, to find its matches at every start
     # (_spans); kept apart so a part that matches first never hides a longer one.
     span_patterns: tuple[re.Pattern[str], ...] = field(default=(), compare=False, repr=False)
+    # For each part: its source when an alternative or a lazy repeat could end a match
+    # early, so _spans looks for the longest end (D102); None when the first match is it.
+    span_longest: tuple[str | None, ...] = field(default=(), compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -424,6 +427,7 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) 
                         protected=r.get("protected", False), stage=r.get("stage"),
                         bank_code=r.get("bank_code", False),
                         span_patterns=tuple(re.compile(f"(?=({part}))") for part in _rule_parts(r, frozen)),
+                        span_longest=_longest_sources(r, frozen),
                         unless=_side_pattern(r["unless"], frozen) if "unless" in r else None,
                         requires=_side_pattern(r["requires"], frozen) if "requires" in r else None)
         except (re.error, OverflowError, RecursionError) as e:
@@ -550,13 +554,58 @@ def _at_every_position(pattern: re.Pattern[str]) -> re.Pattern[str]:
     return re.compile(f"(?=({pattern.pattern}))", pattern.flags)
 
 
+def _may_end_early(pattern: str) -> bool:
+    """An alternative or a lazy repeat: the first match at a start may not be the longest."""
+    def walk(sub: _sre_parse.SubPattern) -> bool:
+        for op, av in sub:
+            if str(op) in ("BRANCH", "MIN_REPEAT"):
+                return True
+            stack = [av]
+            while stack:
+                item = stack.pop()
+                if isinstance(item, _sre_parse.SubPattern):
+                    if walk(item):
+                        return True
+                elif isinstance(item, (list, tuple)):
+                    stack.extend(item)
+        return False
+
+    return walk(_sre_parse.parse(pattern))
+
+
+def _longest_sources(r: dict, frozen: bool) -> tuple[str | None, ...]:
+    """Per part of _rule_parts: the own pattern's source if it may end early. Names lists
+    try their longest name first, so their first match is already the longest."""
+    own = r.get("pattern")
+    out: list[str | None] = []
+    for part in _rule_parts(r, frozen):
+        is_own = own is not None and part == (own if frozen else _mark_aware(own))
+        out.append(part if is_own and _may_end_early(part) else None)
+    return tuple(out)
+
+
+@functools.lru_cache(maxsize=8192)
+def _ending_at(source: str, rest: int) -> re.Pattern[str]:
+    # The part, forced to end where exactly `rest` characters of the line remain: matched
+    # in the whole line, so its word edges see the real text on both sides.
+    return re.compile(f"(?:{source})(?=[\\s\\S]{{{rest}}}\\Z)")
+
+
 def _spans(rule: Rule, description: str) -> list[tuple[int, int]]:
-    """Every match of the rule, at every start, the longest at each start across its parts:
-    one alternation returns its first part that matches, which may be the shorter."""
+    """Every match of the rule, at every start, the longest at each start across its parts
+    and across a part's own alternatives (D102): the engine returns the first alternative
+    that matches at a start, which may be the shorter."""
     longest: dict[int, int] = {}
-    for part in rule.span_patterns or (_at_every_position(rule.pattern),):
+    parts = rule.span_patterns or (_at_every_position(rule.pattern),)
+    sources = rule.span_longest or (None,) * len(parts)
+    for part, source in zip(parts, sources, strict=True):
         for m in part.finditer(description):
             start, end = m.span(1)
+            if source is not None:
+                for later in range(len(description), end, -1):
+                    if _ending_at(source, len(description) - later).match(description, start):
+                        end = later
+                        break
             if end > start and end > longest.get(start, -1):
                 longest[start] = end
     return sorted(longest.items())
@@ -573,7 +622,9 @@ def credit_matches(ruleset: Ruleset, description: str, amount: float) -> list[Ru
         others = [o for other, ss in matched if other is not rule for o in ss]
         return bool(spans) and all(any(a <= s and e <= b and b - a > e - s for a, b in others) for s, e in spans)
 
-    return [r for r, spans in matched if not inside_longer(r, spans)]
+    # The bank's own code settles the line type before the longer-phrase rule (D101): it is
+    # never counted as inside another rule's longer phrase.
+    return [r for r, spans in matched if r.bank_code or not inside_longer(r, spans)]
 
 
 @dataclass(frozen=True)
