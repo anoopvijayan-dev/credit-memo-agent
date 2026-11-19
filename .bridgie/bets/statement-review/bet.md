@@ -226,6 +226,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-19 D91 (question): R5 and R6 point to R15; T21 builds the queue (design default, follows D60) → recorded [Anoop Vijayan]
 - 2026-11-19 D92 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-19 D93 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Writers count their holds in the lock file; being saved stands only when one hold lasted through the read. → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
+- 2026-11-19 D94 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Every pattern form a line will meet, including the form that finds matches at every position, is compiled when the table loads; a failure refuses the table by rule id. → task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03 [Anoop Vijayan]
 
 ## Idea
 
