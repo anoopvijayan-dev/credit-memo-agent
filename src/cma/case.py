@@ -416,7 +416,11 @@ class CaseLog:
                 continue
             except OSError:
                 return self._untested()
-        return self._held()
+        # Every attempt found the case changing hands (held at the probe, let go by the end
+        # of the read, or a writer starting where there was no lock file): no read stood
+        # for a holder or for a free case, so nothing is claimed (R43).
+        return _unchecked("could not be checked: the case was taken and let go during every "
+                          "read", in_progress=False)
 
     @contextmanager
     def _reading(self) -> Iterator[None]:

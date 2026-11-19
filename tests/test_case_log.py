@@ -1706,3 +1706,23 @@ def test_p15_a_crash_during_the_first_append_is_still_a_torn_entry_to_drop(tmp_p
     assert check.torn and check.first_bad == 1
     log.drop_torn_entry(expected=0, by="A. Underwriter")
     assert [e.event for e in log.entries()] == [case.TORN_DROPPED]
+
+
+@pytest.mark.invariants
+def test_p15_a_case_that_changes_hands_on_every_attempt_gets_no_verdict(tmp_path, monkeypatch):
+    # T12 review 10 / R43: held at each probe and free by the end of each read, so neither
+    # "being saved" (nobody held it through the read) nor a free-case verdict stands.
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    monkeypatch.setattr(case.CaseLog, "_still_held", lambda self: False)
+
+    def always_held(self):
+        raise case.CaseLocked("held at the probe")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(case.CaseLog, "_reading", contextlib.contextmanager(always_held))
+    check = case.CaseLog(log.path).verify()
+    monkeypatch.undo()
+    assert not check.checked and not check.in_progress and check.first_bad is None
+    assert case.CaseLog(log.path).verify().torn  # free and steady: the entry is named
