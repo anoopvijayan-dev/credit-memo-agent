@@ -1,0 +1,52 @@
+{
+  "task": "T03",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "The shipped tables cover own pots and savings, HMRC, refunds and rails at src/cma/rules/v2.yaml:73–158, lenders and MCA providers at :161–215, cash deposits and explained credits at :250–277, and trading providers and cash withdrawals at :300–402. src/cma/categorise.py:462 filters contained phrases, :511 applies the bank-code exception and cue precedence, and :529–587 applies override, profile, ambiguity and firm-rule precedence. src/cma/graph.py:250 selects and applies the table and :221 exports per-line provenance. The runner logged 704 passing tests, including per-list provenance, the previous cheque regression, the v2 CLI tests and offline eval tests for both tables. Source inspection found two wording variants that can enter trading receipts without an override. The review covered duplicate submission, concurrent updates, sign and text boundaries, currency and timezone dependencies, partial failure, authorisation, case isolation, rollback, and CLI, checkpoint and MCP consumers. The new reproductions are from source inspection. No tests were run and no files were changed during review.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/rules/v2.yaml",
+      "line": 146,
+      "criterion": "R4",
+      "claim": "The rail list misses hyphenated Faster Payment wording. The cash rule can then count an explicitly electronic credit as cash takings instead of recording both candidates and leaving it unexplained.",
+      "repro": "Categorise a +£500 credit described as FASTER-PAYMENT CASH DEPOSIT under v2 with no override or profile. The name matcher allows whitespace between FASTER and PAYMENT, so only cash_paid_in survives. The source predicts cash_deposit and inclusion in M2. Replace the hyphen with a space and the same credit becomes v2:conflict:payment_rail+cash_paid_in."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/rules/v2.yaml",
+      "line": 199,
+      "criterion": "R4",
+      "claim": "The MCA entry covers SUMUP CASH ADVANCE, but the card-acquirer list also recognises the spaced provider alias SUM UP at line 303. The spaced spelling of the same advance is counted as trading receipts.",
+      "repro": "Categorise a +£2,000 credit described as SUM UP CASH ADVANCE under v2 with no override or profile. The source predicts revenue_card_settlement with v2:card_acquirers and inclusion in M2. SUMUP CASH ADVANCE instead produces loan_drawdown with v2:lender_drawdown."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 455,
+      "criterion": "R4",
+      "claim": "The table-validation proof does not cover regexes that pass validation and fail when wrapped for credit matching. A table can load successfully and fail later while categorising a credit.",
+      "repro": "In a copy of the v2 table, change the pattern-only invoice_transfer regex to (?i)INV[0-9]+. Validation compiles the standalone pattern successfully. Categorising a credit described as INV123 then tries to compile (?=((?i)INV[0-9]+)), which raises re.error because the global flag is inside the wrapper."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1381,
+      "criterion": "R4",
+      "claim": "The producer's whole-statement shuffle claim extends beyond its proof. The fixture misses debits that match two categorised line-type rules, which still use first-match precedence.",
+      "repro": "Categorise a −£100 debit described as TFR TO SAVINGS HMRC VAT, then swap own_pots_savings and hmrc_vat within the protected line-type group and categorise it again. The first order yields own_account_transfer and the second yields hmrc_vat. This is a gap in the shuffle claim, which extends beyond R4's credit ambiguity policy."
+    }
+  ],
+  "verdict": "fail"
+}

@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 71,
+  "next_id": 72,
   "decisions": [
     {
       "id": "D1",
@@ -1486,6 +1486,26 @@
       "decided_at": "2026-11-19T17:18:51.529Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-19T12:01:15.218Z"
+    },
+    {
+      "id": "D71",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (The shipped tables cover own pots and savings, HMRC, refunds and rails at src/cma/rules/v2.yaml:73–158, lenders and MCA providers at :161–215, cash deposits and explained credits at :250–277, and trading providers and cash withdrawals at :300–402. src/cma/categorise.py:462 filters contained phrases, :511 applies the bank-code exception and cue precedence, and :529–587 applies override, profile, ambiguity and firm-rule precedence. src/cma/graph.py:250 selects and applies the table and :221 exports per-line provenance. The runner logged 704 passing tests, including per-list provenance, the previous cheque regression, the v2 CLI tests and offline eval tests for both tables. Source inspection found two wording variants that can enter trading receipts without an override. The review covered duplicate submission, concurrent updates, sign and text boundaries, currency and timezone dependencies, partial failure, authorisation, case isolation, rollback, and CLI, checkpoint and MCP consumers. The new reproductions are from source inspection. No tests were run and no files were changed during review.); major: The rail list misses hyphenated Faster Payment wording. The cash rule can then count an explicitly electronic credit as cash takings instead of recording both candidates and leaving it unexplained. at src/cma/rules/v2.yaml:146; major: The MCA entry covers SUMUP CASH ADVANCE, but the card-acquirer list also recognises the spaced provider alias SUM UP at line 303. The spaced spelling of the same advance is counted as trading receipts. at src/cma/rules/v2.yaml:199; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T17:25:09.659Z"
     }
   ]
 }
