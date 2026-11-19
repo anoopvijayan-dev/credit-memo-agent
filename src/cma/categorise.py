@@ -64,6 +64,7 @@ import functools
 import hashlib
 import os
 import re
+import re._parser as _sre_parse  # the parser re uses; read only, to find back-references
 import sys
 import unicodedata
 from collections.abc import Mapping, Sequence
@@ -90,7 +91,7 @@ RULE_KEYS = {"id", "direction", "category"}  # required, plus a pattern or names
 # payment rail). It never sets a category itself.
 CUE_ONLY_KEYS = RULE_KEYS - {"category"}
 MATCH_KEYS = {"pattern", "names"}
-OPTIONAL_KEYS = {"unless", "requires", "protected", "stage"}
+OPTIONAL_KEYS = {"unless", "requires", "protected", "stage", "bank_code"}
 # Stages of a table that is not frozen: explicit line-type wording first, then the name lists.
 STAGES = ("line_type", "names")
 ALL_RULE_KEYS = RULE_KEYS | MATCH_KEYS | OPTIONAL_KEYS
@@ -114,6 +115,7 @@ class Rule:
     unless: re.Pattern[str] | None = None  # the rule does not match when this does
     requires: re.Pattern[str] | None = None  # the rule matches only when this does too
     stage: str | None = None  # "line_type" or "names" (tables that are not frozen)
+    bank_code: bool = False  # the bank's own code: settles a credit's line type alone (returned_dd)
 
 
 @dataclass(frozen=True)
@@ -219,6 +221,25 @@ def _fold(text: str) -> str:
     return unicodedata.normalize("NFC", text).upper()
 
 
+def _has_group_reference(pattern: str) -> bool:
+    """The pattern refers back to a group (\\1, (?P=name)) or tests one ((?(1)...))."""
+    def walk(sub: _sre_parse.SubPattern) -> bool:
+        for op, av in sub:
+            if str(op).startswith("GROUPREF"):
+                return True
+            stack = [av]
+            while stack:
+                item = stack.pop()
+                if isinstance(item, _sre_parse.SubPattern):
+                    if walk(item):
+                        return True
+                elif isinstance(item, (list, tuple)):
+                    stack.extend(item)
+        return False
+
+    return walk(_sre_parse.parse(pattern))
+
+
 def _compile_problem(pattern: str) -> str | None:
     # re.error is not the only way a pattern fails to compile: a repeat count past
     # the engine's limit raises OverflowError, deep nesting RecursionError.
@@ -275,6 +296,22 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
             elif r["protected"] and any(not isinstance(p, dict) or not p.get("protected") for p in rules[:i - 1]):
                 # One ordered pass and the precedence agree only if the protected rules come first.
                 problems.append(f"{where}: a protected rule must come before every rule that is not")
+        if "bank_code" in r:
+            # The one exception to the ambiguity rule is the bank's own returned-payment
+            # code at the start of the line: allowed only there, never gained by anchoring.
+            if not isinstance(r["bank_code"], bool):
+                problems.append(f"{where}: bank_code must be true or false")
+            elif r["bank_code"] and not (r.get("stage") == "line_type" and r.get("category") == Category.RETURNED_DD.value
+                                         and isinstance(r.get("pattern"), str) and r["pattern"].startswith("^")):
+                problems.append(f"{where}: bank_code is only for the returned-payment rule anchored at the "
+                                "start of the line")
+        if data.get("frozen") is False:
+            for key in ("pattern", "unless", "requires"):
+                if isinstance(r.get(key), str) and r[key] and not _compile_problem(r[key]) and _has_group_reference(r[key]):
+                    # Matches are found at every position by wrapping the pattern in a group,
+                    # which renumbers groups: a back-reference would silently change meaning.
+                    problems.append(f"{where}: {key} uses a back-reference or a conditional group, "
+                                    "which a v2 table does not allow")
         if "stage" in r and r["stage"] not in STAGES:
             problems.append(f"{where}: stage {r['stage']!r} is not one of {list(STAGES)}")
         if data.get("frozen") is False:
@@ -373,6 +410,7 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) 
             rule = Rule(r["id"], _rule_pattern(r, frozen), r["direction"],
                         Category(r["category"]) if "category" in r else None,
                         protected=r.get("protected", False), stage=r.get("stage"),
+                        bank_code=r.get("bank_code", False),
                         unless=_side_pattern(r["unless"], frozen) if "unless" in r else None,
                         requires=_side_pattern(r["requires"], frozen) if "requires" in r else None)
             _at_every_position(rule.pattern)
@@ -558,7 +596,7 @@ def credit_verdict(ruleset: Ruleset, description: str, amount: float) -> Verdict
     or None when no rule with a category decides it."""
     rules = credit_matches(ruleset, description, amount)  # step 1, both stages, in table order
     cues = [r for r in rules if r.stage == "line_type"]
-    bank = [r for r in cues if r.category is not None and r.pattern.pattern.startswith("^")]
+    bank = [r for r in cues if r.bank_code]
     if bank:  # step 2: the bank's own code at the start of the line (UNPAID DD), not payer wording
         return Verdict((bank[0],))
     rails = [r for r in cues if r.category is None]

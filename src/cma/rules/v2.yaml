@@ -66,6 +66,7 @@ rules:
     category: returned_dd
     protected: true
     stage: line_type
+    bank_code: true  # the bank's own code at the start of the line settles it alone
   # An explicit move to or from the applicant's own pot, space or savings, either way,
   # whatever names the pot or account: "TFR TO POT RENT", "TFR FROM SAVINGS CAPITAL
   # RESERVE" and "FROM POT IWOCA" are own-account transfers. With another cue on a credit

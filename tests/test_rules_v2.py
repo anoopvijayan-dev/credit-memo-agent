@@ -1154,13 +1154,11 @@ def test_only_a_line_type_cue_of_a_v2_table_may_have_no_category():
 
 
 @pytest.mark.contracts
-def test_only_the_banks_returned_payment_code_is_anchored_so_only_it_settles_a_credit_alone(v2):
-    """credit_verdict treats a categorised line-type rule whose pattern starts with "^" as the
-    bank's own code, which settles a credit on its own. Pin that only returned_dd has that
-    shape, so a future anchored cue cannot silently become a tie-break (design C1)."""
-    anchored = {r.id for r in v2.rules if r.stage == "line_type" and r.category is not None
-                and r.pattern.pattern.startswith("^")}
-    assert anchored == {"returned_dd"}
+def test_only_the_banks_returned_payment_code_settles_a_credit_alone(v2):
+    """The bank-code exception is an explicit flag (T03 review 12), allowed only on the
+    returned-payment rule anchored at the start of the line; anchoring another cue in a
+    table edit gains nothing (design C1)."""
+    assert {r.id for r in v2.rules if r.bank_code} == {"returned_dd"}
     # payer wording cannot take the bank code's place: UNPAID DD later in the line is not anchored
     got = classify(_t("REFUND REF UNPAID DD", 50.0), v2)
     assert got == (C.REFUND_IN, "v2:refunds")
@@ -1624,5 +1622,25 @@ def test_a_pattern_that_cannot_be_matched_at_every_position_is_refused_at_load()
     the first credit it meets."""
     rule = {"id": "echo", "pattern": r"(AB)\1", "direction": "in", "category": "revenue_card_settlement",
             "stage": "names"}
-    with pytest.raises(RulesetError, match="rule echo"):
+    with pytest.raises(RulesetError, match=r"echo.*back-reference"):
         categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [rule]}, "v2", "t", "0")
+
+
+
+@pytest.mark.contracts
+def test_an_anchored_cue_without_the_flag_gets_no_bank_code_exception():
+    """T03 review 12: anchoring an ordinary cue with ^ used to grant it the exception."""
+    refund = {"id": "refund", "pattern": "^REFUND", "direction": "in", "category": "refund_in",
+              "protected": True, "stage": "line_type"}
+    pot = {"id": "pot", "names": ["TO SAVINGS"], "direction": "in", "category": "own_account_transfer",
+           "protected": True, "stage": "line_type"}
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [refund, pot]}, "v2", "t", "0")
+    assert classify(_t("REFUND TO SAVINGS", 50.0), rs) == (C.OTHER, "v2:conflict:refund+pot")
+
+
+@pytest.mark.contracts
+def test_the_bank_code_flag_is_refused_on_any_other_rule():
+    refund = {"id": "refund", "pattern": "^REFUND", "direction": "in", "category": "refund_in",
+              "protected": True, "stage": "line_type", "bank_code": True}
+    with pytest.raises(RulesetError, match="bank_code is only for the returned-payment rule"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [refund]}, expected_id="v2")
