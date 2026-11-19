@@ -1123,7 +1123,10 @@ def test_a_reader_never_reports_a_live_append_as_torn_however_long_the_writer_pa
             check = reader.verify()
             assert check.ok and not check.torn and check.in_progress
             assert check.head.position == 2  # the log as recorded
-            reader.require_intact()  # no CaseLogBroken, so nobody is asked to drop it
+            # never CaseLogBroken, so nobody is asked to drop it; and not "whole" either,
+            # since only the recorded entries could be checked (pre-review, R43 rev 6)
+            with pytest.raises(case.CaseLocked):
+                reader.require_intact()
     finally:
         release.set()
         writer.join(5)
@@ -1384,3 +1387,81 @@ def test_case_check_says_try_again_when_nothing_could_be_checked(tmp_path, monke
     monkeypatch.setattr(case.CaseLog, "verify", lambda self: unchecked)
     r = _check_cli(folder)
     assert r.exit_code == 4 and "being saved" in r.output and "intact" not in r.output
+
+
+@pytest.mark.invariants
+def test_p15_with_the_lock_untestable_an_unsteady_read_never_calls_a_healthy_log_broken(tmp_path, monkeypatch):
+    # Pre-review (rev 6): with a lock error and appends landing in every read, the reader
+    # fell back to one unsteady read and reported "added after the head" as a break.
+    import errno
+    log = _log(tmp_path, 3)
+    writer = case.CaseLog(log.path)
+    reader = case.CaseLog(log.path)
+    real_read = case.CaseLog._read_log
+
+    def busy(self):
+        if self is reader:
+            for _ in range(2):  # two appends land between the reader's head read and log read
+                c = case._check(real_read(writer), case._read_head(writer.head_path))
+                writer._write_entry("override", {"x": 1}, c)
+        return real_read(self)
+
+    def no_locks(fd):
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    monkeypatch.setattr(case.CaseLog, "_read_log", busy)
+    monkeypatch.setattr(case, "_lock", no_locks)
+    check = reader.verify()
+    monkeypatch.undo()
+    assert check.first_bad is None, check.reason  # never broken
+    assert not check.checked  # and nothing claimed past what it could check
+    assert case.CaseLog(log.path).verify().ok
+
+
+@pytest.mark.invariants
+def test_p15_require_intact_refuses_while_another_holds_the_case_whatever_follows(tmp_path):
+    # Pre-review (rev 6): require_intact returned the recorded head as "intact" while an
+    # unchecked line followed it; sign-off must hold the case, and nobody else gets a head.
+    log = _log(tmp_path, 2)
+    with open(log.path, "ab") as f:
+        f.write(b'{"garbage": true}\n')
+    holder, taken, leave = case.CaseLog(log.path), threading.Event(), threading.Event()
+
+    def hold():
+        with holder.writer():
+            taken.set()
+            leave.wait(10)
+
+    t = threading.Thread(target=hold)
+    t.start()
+    assert taken.wait(5)
+    try:
+        with pytest.raises(case.CaseLocked):
+            case.CaseLog(log.path).require_intact()
+    finally:
+        leave.set()
+        t.join(10)
+    with pytest.raises(case.CaseLogBroken):  # free: the bad line is named
+        case.CaseLog(log.path).require_intact()
+
+
+@pytest.mark.invariants
+def test_p15_an_abandoned_writer_block_closed_on_another_thread_releases_the_lock(tmp_path):
+    # Pre-review (rev 6): a block finalised on a thread other than its owner released
+    # nothing, so the lock was held until the process exited.
+    log = _log(tmp_path, 1)
+
+    def block():
+        with log.writer():
+            yield
+
+    gen = block()
+    next(gen)  # the lock is held inside the suspended block
+    with pytest.raises(case.CaseLocked), case.CaseLog(log.path).writer():
+        pass
+    t = threading.Thread(target=gen.close)  # finalised elsewhere, as a garbage collector may
+    t.start()
+    t.join(10)
+    with case.CaseLog(log.path).writer():  # released
+        pass

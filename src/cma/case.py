@@ -310,6 +310,12 @@ def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
     return failed(count + 1, f"was added after the head the head file records (entry {count})")
 
 
+def _unchecked() -> LogCheck:
+    """The case is being written and no steady read was had: nothing is claimed."""
+    return LogCheck(Head(0, GENESIS), [], reason="being saved: the log changed during every read",
+                    in_progress=True, checked=False)
+
+
 def _refuse_unchecked(path: Path, check: LogCheck) -> None:
     if not check.checked:
         raise CaseLocked(f"{path}: another window or command is saving to this case; nothing "
@@ -394,8 +400,21 @@ class CaseLog:
                 return _check(self._read_log(), _read_head(self.head_path))
         except CaseLocked:
             pass
-        except OSError:  # the lock cannot be taken or tested: no holder is known, a read stands
-            return steady or self._look()[0]
+        except OSError:
+            # The lock cannot be taken or tested: no holder is known, so a steady read is
+            # believed as it stands, an incomplete entry reported as incomplete. Without
+            # one, a read across which the head moved is evidence of nothing past the
+            # recorded entries: look again, and with no steady read claim nothing.
+            for _ in range(READ_RETRIES):
+                if steady is not None:
+                    return steady
+                time.sleep(READ_PAUSE)
+                check, still = self._look()
+                if not check.past_recorded:
+                    return check
+                if still:
+                    steady = check
+            return steady if steady is not None else _unchecked()
         # Someone else holds the case (R43). Look again for the freshest steady read, then
         # report the entries the log records as complete and the rest as being saved: never
         # intact, never broken. With no steady read, nothing is claimed.
@@ -410,8 +429,7 @@ class CaseLog:
                 break
         if steady is not None:
             return steady.as_recorded()
-        return LogCheck(Head(0, GENESIS), [], reason="being saved: the log changed during every read",
-                        in_progress=True, checked=False)
+        return _unchecked()
 
     def _look(self) -> tuple[LogCheck, bool]:
         """One read judged by the head read before it, and whether the head held still."""
@@ -428,12 +446,17 @@ class CaseLog:
             return None
 
     def require_intact(self) -> Head:
-        """The head of an intact log, or CaseLogBroken naming the first bad entry. Every
-        append goes through it; sign-off (T27) must call it and refuse on the exception (R43)."""
+        """The head of a log checked whole, or CaseLogBroken naming the first bad entry.
+        Sign-off (T27) must call it while holding the case (writer()) and refuse on the
+        exception (R43). Called while another holds the case, it refuses with CaseLocked:
+        only the recorded entries could be checked, so the log is not known whole."""
         check = self.verify()
         _refuse_unchecked(self.path, check)
         if not check.ok:
             raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
+        if check.in_progress:
+            raise CaseLocked(f"{self.path}: another window or command is saving to this case; "
+                             "only its recorded entries could be checked, try again")
         return check.head
 
     def entries(self) -> list[Entry]:
@@ -461,48 +484,56 @@ class CaseLog:
             raise CaseLocked(f"{self.path}: this case log was opened by another process; open "
                              "the case again in this one")
         me = _holder_id()
-        with self._state:
-            if self._owner == me:
-                self._lock_depth += 1
-            elif self._owner is not None:
-                raise CaseLocked(f"{self.path}: another window or command is writing to this case")
-            else:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
-                locked = False
-                try:
-                    _lock(fd)
-                    locked = True
-                    lock_id = _file_id(os.fstat(fd))
-                    self._lock_fd, self._owner, self._lock_depth, self._lock_id = fd, me, 1, lock_id
-                    with _HELD_GUARD:
-                        _HELD[lock_id] = me
-                except BaseException as e:
-                    # Whatever interrupts this (a lock error, or KeyboardInterrupt between
-                    # two steps) leaves no lock behind: once the descriptor is recorded
-                    # the lock is released, before that the descriptor is closed.
-                    if self._lock_fd == fd:
-                        self._lock_depth = 1
-                        self._owner = me
-                        self._release_one_level()
-                    else:
-                        os.close(fd)
-                    # Only contention means another writer holds the lock. Any other lock
-                    # error (no locks available, an I/O error) is not evidence of a writer:
-                    # it propagates, so a reader falls back to the plain read and a torn
-                    # entry is reported, never excused as some writer's append.
-                    if not locked and isinstance(e, OSError) and e.errno in _CONTENDED:
-                        raise CaseLocked(f"{self.path}: another window or command is writing to this case") from e
-                    raise
+        entered = False
         try:
+            with self._state:
+                entered = self._enter(me)
             yield self
         finally:
-            with self._state:
-                # Only the holder releases, asked now rather than at entry: a forked
-                # child leaving a block it inherited carries its parent's identity from
-                # entry, but it is another process and never unlocks its parent's lock.
-                if self._owner == _holder_id():
+            if entered:
+                with self._state:
+                    # Released by the process that holds it, whichever thread runs this:
+                    # an abandoned block may be finalised by the garbage collector on
+                    # another thread. A forked child leaving a block it inherited is
+                    # another process and never unlocks its parent's lock.
+                    if self._owner is not None and self._owner[0] == os.getpid():
+                        self._release_one_level()
+
+    def _enter(self, me: tuple[int, int]) -> bool:
+        """Take or join the lock for `me` (call under _state); True once it is held."""
+        if self._owner == me:
+            self._lock_depth += 1
+        elif self._owner is not None:
+            raise CaseLocked(f"{self.path}: another window or command is writing to this case")
+        else:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            locked = False
+            try:
+                _lock(fd)
+                locked = True
+                lock_id = _file_id(os.fstat(fd))
+                self._lock_fd, self._owner, self._lock_depth, self._lock_id = fd, me, 1, lock_id
+                with _HELD_GUARD:
+                    _HELD[lock_id] = me
+            except BaseException as e:
+                # Whatever interrupts this (a lock error, or KeyboardInterrupt between
+                # two steps) leaves no lock behind: once the descriptor is recorded
+                # the lock is released, before that the descriptor is closed.
+                if self._lock_fd == fd:
+                    self._lock_depth = 1
+                    self._owner = me
                     self._release_one_level()
+                else:
+                    os.close(fd)
+                # Only contention means another writer holds the lock. Any other lock
+                # error (no locks available, an I/O error) is not evidence of a writer:
+                # it propagates, so a reader falls back to the plain read and a torn
+                # entry is reported, never excused as some writer's append.
+                if not locked and isinstance(e, OSError) and e.errno in _CONTENDED:
+                    raise CaseLocked(f"{self.path}: another window or command is writing to this case") from e
+                raise
+        return True
 
     def _release_one_level(self) -> None:
         """Leave one level of this process's writer lock (call under _state)."""
