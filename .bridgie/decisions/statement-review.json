@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 74,
+  "next_id": 75,
   "decisions": [
     {
       "id": "D1",
@@ -1546,6 +1546,24 @@
       "decided_at": "2026-11-19T17:43:23.853Z",
       "effect": "task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12",
       "created_at": "2026-11-19T17:39:23.586Z"
+    },
+    {
+      "id": "D74",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "D73 (owner, after the sixth T12 review): replace the reader rule in R43 and P15 (and the term append in progress) with a simpler one, keeping their ids. While anyone holds the case, a reader judges only the entries the log records as complete, from a read across which the head file did not change, and SHALL report a change, removal or reordering at or before them as broken, naming the entry; anything after them it SHALL report as being saved (the recorded entries, and the rest not yet checked), never as intact and never as broken. If no such read is possible within its retries, it reports the case as being saved and claims nothing about any entry. Whoever holds the case, sign-off included, and any reader of a free case, report an incomplete last entry as incomplete and name it. A lock the reader's own thread holds through another CaseLog object or path, and a lock that cannot be taken or tested, are not another holder. This supersedes D67's distinction between a holder that appends and one that only checks. Keep every other requirement, property and id.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-19T17:43:24.024Z",
+      "effect": "changes requested: D73 (owner, after the sixth T12 review): replace the reader rule in R43 and P15 (and the term append in progress) with a simpler one, keeping their ids. While anyone holds the case, a reader judges only the entries the log records as complete, from a read across which the head file did not change, and SHALL report a change, removal or reordering at or before them as broken, naming the entry; anything after them it SHALL report as being saved (the recorded entries, and the rest not yet checked), never as intact and never as broken. If no such read is possible within its retries, it reports the case as being saved and claims nothing about any entry. Whoever holds the case, sign-off included, and any reader of a free case, report an incomplete last entry as incomplete and name it. A lock the reader's own thread holds through another CaseLog object or path, and a lock that cannot be taken or tested, are not another holder. This supersedes D67's distinction between a holder that appends and one that only checks. Keep every other requirement, property and id.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-19T17:43:24.018Z"
     }
   ]
 }
