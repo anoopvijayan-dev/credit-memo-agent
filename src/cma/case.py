@@ -328,10 +328,12 @@ def _file_id(st: os.stat_result) -> tuple[int, int]:
 
 
 # The lock file carries the holder's state after the locked byte: "IDLE <pid>" from the
-# moment the lock is taken, "APPENDING <pid>" while an entry is written and recorded. Only
-# a holder marked mid-append excuses an incomplete last entry to a reader (R43): a holder
-# that only checks the log, or a crash that left an entry torn, excuses nothing. Every new
-# holder resets the mark, so one a crash left behind does not outlive the lock.
+# moment the lock is taken, "APPENDING <pid>" while an entry is written and recorded, and
+# "DROPPING <pid>" while a drop writes its repair entry. Only a holder marked as writing
+# excuses an unrecorded last entry to a reader (R43), and a drop excuses only its complete
+# repair entry, never the torn entry it removes: a holder that only checks the log, or a
+# crash that left an entry torn, excuses nothing. Every new holder resets the mark, so one
+# a crash left behind does not outlive the lock.
 _MARK_AT = 8
 _MARK_LEN = 32
 
@@ -413,37 +415,64 @@ class CaseLog:
             pass
         except OSError:  # the lock cannot be taken or tested: no writer is known, the read stands
             return check
-        # Another writer holds the lock. The log is only ever appended to, so the log read
-        # after a head holds every entry that head records; those entries were walked and
-        # matched, and a failure before or among them is real whatever moved since. The
-        # head read after the log can record more: every entry it records that the read
-        # holds must match it too, so judge by that later head over the lines read.
-        if isinstance(after, list) and after != before and raw is not None:
-            check = _check(raw, after[: raw.count(b"\n")])
-        # A failure only after the recorded entries is excused only while the holder is
-        # marked mid-append (R43); a holder that only checks, or a stale torn entry, is not.
-        if check.past_recorded and self._holder_mid_append():
-            return check.as_recorded()
-        return check
+        # Another writer holds the case. Judge a read only when the head held still across
+        # it: then the read holds every entry that head records, each walked and matched,
+        # and a failure at or before them is real whoever holds the case. A failure only
+        # after them is excused only while the holder is marked as writing it (R43): an
+        # append, or the repair entry of a drop (never the torn entry the drop removes). A
+        # holder that only checks, or a stale torn entry, excuses nothing. The mark is read
+        # after the log, so the head is looked at once more: if it moved, a write finished
+        # in between and the read is stale, so read again.
+        for attempt in range(READ_RETRIES + 1):
+            if attempt:
+                time.sleep(READ_PAUSE)
+                before = _read_head(self.head_path)
+                raw = self._read_log()
+                check = _check(raw, before)
+                after = _read_head(self.head_path)
+            if after != before:
+                continue
+            if not check.past_recorded:
+                return check
+            state = self._holder_writing()
+            if state == b"APPENDING" or (state == b"DROPPING" and not check.torn):
+                return check.as_recorded()
+            if _read_head(self.head_path) == after:
+                return check
+        # The head never held still: a writer holding the case kept recording entries. The
+        # entries the earlier head records were judged. Appends only add lines, so every
+        # line the read holds that the later head records must match it too, and a read
+        # with fewer lines than the earlier head records is missing entries. A drop
+        # replaces the log file, so a read caught across one is judged by the earlier
+        # head alone. What follows is that writer's.
+        if (isinstance(before, list) and isinstance(after, list) and raw is not None
+                and after[: len(before)] == before and self._holder_writing() != b"DROPPING"):
+            check = _check(raw, after[: max(len(before), raw.count(b"\n"))])
+        return check.as_recorded() if check.past_recorded else check
 
-    def _holder_mid_append(self) -> bool:
+    def _holder_writing(self) -> bytes | None:
+        """What the live holder is marked as writing: APPENDING, DROPPING, or None."""
         try:
             with open(self.lock_path, "rb") as f:
                 f.seek(_MARK_AT)
                 raw = f.read(_MARK_LEN)
         except OSError:
-            return False
+            return None
         parts = raw.split()
-        if len(parts) != 2 or parts[0] != b"APPENDING" or not parts[1].isdigit():
-            return False
-        return _alive(int(parts[1]))
+        if len(parts) != 2 or parts[0] not in (b"APPENDING", b"DROPPING") or not parts[1].isdigit():
+            return None
+        return parts[0] if _alive(int(parts[1])) else None
+
+    def _holder_mid_append(self) -> bool:
+        return self._holder_writing() == b"APPENDING"
 
     @contextmanager
-    def _appending(self) -> Iterator[None]:
-        """Mark the held lock mid-append while an entry is written and recorded."""
+    def _appending(self, state: str = "APPENDING") -> Iterator[None]:
+        """Mark the held lock as writing (an append, or a drop's repair entry) while an
+        entry is written and recorded."""
         fd = self._lock_fd
         if fd is not None:
-            _set_mark(fd, "APPENDING")
+            _set_mark(fd, state)
         try:
             yield
         finally:
@@ -595,7 +624,7 @@ class CaseLog:
                 raise CaseLogBroken(self.path, check.first_bad, check.reason, False)
             if check.head.position != expected:
                 raise LogConflict(expected, check.head.position)
-            with self._appending():
+            with self._appending("DROPPING"):
                 return self._replace_torn(check, by.strip())
 
     def _replace_torn(self, check: LogCheck, by: str) -> Entry:

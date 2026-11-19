@@ -538,6 +538,171 @@ def test_p15_a_forked_child_cannot_write_through_an_inherited_log_even_when_it_w
     log.append("override", {}, expected=1)  # the parent's own handle still writes
 
 
+def _stale_unrecorded(log, k):
+    """k recorded entries plus a complete line the head file does not record: the power
+    went between writing the line and replacing the head file."""
+    head = log.head_path.read_bytes()
+    log.append("override", {"n": k}, expected=k)
+    log.head_path.write_bytes(head)
+
+
+@pytest.mark.invariants
+def test_p15_a_reader_caught_across_a_drop_does_not_call_a_healthy_log_rewritten(tmp_path, monkeypatch):
+    # Pre-review: a drop replaces the log file; a reader that read the old log and then
+    # the new head judged the old unrecorded line against the drop entry's hash.
+    log = _log(tmp_path, 3)
+    _stale_unrecorded(log, 3)
+    go, done, release = threading.Event(), threading.Event(), threading.Event()
+
+    def dropper():
+        d = case.CaseLog(log.path)
+        with d.writer():
+            go.wait(5)
+            d.drop_torn_entry(expected=3, by="A. Underwriter")
+            done.set()
+            release.wait(5)
+
+    t = threading.Thread(target=dropper)
+    t.start()
+    reader, calls, real = case.CaseLog(log.path), {"n": 0}, case.CaseLog._read_log
+
+    def read(self):
+        raw = real(self)
+        if self is reader:
+            calls["n"] += 1
+            if calls["n"] == case.READ_RETRIES:  # the drop lands between this log read and the head
+                go.set()
+                done.wait(5)
+        return raw
+
+    monkeypatch.setattr(case.CaseLog, "_read_log", read)
+    try:
+        check = reader.verify()
+    finally:
+        monkeypatch.undo()
+        release.set()
+        t.join(10)
+    assert check.ok, check.reason
+    assert case.CaseLog(log.path).verify().ok
+
+
+@pytest.mark.invariants
+def test_p15_an_append_that_finishes_while_the_mark_is_read_is_not_reported_torn(tmp_path, monkeypatch):
+    # Pre-review: the mark is read after the log; a writer that finished in between had
+    # already set it back to IDLE, and the stale torn read was reported to be dropped.
+    log = _log(tmp_path, 3)
+    written, go, released = threading.Event(), threading.Event(), threading.Event()
+    writer = case.CaseLog(log.path)
+    real_head = case.CaseLog._write_head
+
+    def slow_head(self, hashes):
+        if self is writer:
+            written.set()
+            go.wait(5)
+        real_head(self, hashes)
+
+    monkeypatch.setattr(case.CaseLog, "_write_head", slow_head)
+    t = threading.Thread(target=lambda: (writer.append("override", {"n": 3}, expected=3), released.set()))
+    t.start()
+    assert written.wait(5)
+    reader = case.CaseLog(log.path)
+    real_state = case.CaseLog._holder_writing
+
+    def late_state(self):
+        if self is reader:
+            go.set()
+            released.wait(5)  # the append finishes and the mark is reset before it is read
+        return real_state(self)
+
+    monkeypatch.setattr(case.CaseLog, "_holder_writing", late_state)
+    try:
+        check = reader.verify()
+    finally:
+        go.set()
+        t.join(10)
+        monkeypatch.undo()
+    assert check.ok and not check.torn, check.reason
+
+
+@pytest.mark.invariants
+def test_p15_a_crash_torn_entry_being_dropped_is_still_reported_incomplete(tmp_path, monkeypatch):
+    # Pre-review: the drop marked the lock APPENDING, so a reader showed the entry a crash
+    # left torn as an append in progress. Only the drop's own repair entry is excused.
+    log = _log(tmp_path, 3)
+    _crash_mid_append(log, monkeypatch, 10)
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    inside, go = threading.Event(), threading.Event()
+    dropper = case.CaseLog(log.path)
+    real = case.CaseLog._replace_torn
+
+    def slow(self, check, by):
+        inside.set()
+        go.wait(5)
+        return real(self, check, by)
+
+    monkeypatch.setattr(case.CaseLog, "_replace_torn", slow)
+    t = threading.Thread(target=lambda: dropper.drop_torn_entry(expected=3, by="A. Underwriter"))
+    t.start()
+    assert inside.wait(5)
+    try:
+        check = case.CaseLog(log.path).verify()
+    finally:
+        go.set()
+        t.join(10)
+    assert check.torn and not check.in_progress and check.first_bad == 4
+
+
+@pytest.mark.invariants
+def test_p15_entries_removed_while_another_writer_appends_are_still_named(tmp_path, monkeypatch):
+    # Pre-review: the later head was cut to the lines read, which hid entries removed
+    # from the log while another writer's append was landing.
+    log = _log(tmp_path, 3)
+    written, go, head_done, release = (threading.Event() for _ in range(4))
+    writer = case.CaseLog(log.path)
+    real_head = case.CaseLog._write_head
+
+    def slow_head(self, hashes):
+        if self is writer:
+            written.set()
+            go.wait(5)
+        real_head(self, hashes)
+        if self is writer:
+            head_done.set()
+
+    def write_and_hold():
+        with writer.writer():
+            writer.append("override", {"n": 3}, expected=3)
+            release.wait(5)
+
+    monkeypatch.setattr(case.CaseLog, "_write_head", slow_head)
+    t = threading.Thread(target=write_and_hold)
+    t.start()
+    assert written.wait(5)
+    reader, calls, real_read = case.CaseLog(log.path), {"n": 0}, case.CaseLog._read_log
+
+    def read(self):
+        if self is reader:
+            calls["n"] += 1
+            if calls["n"] == case.READ_RETRIES:  # entries 3 and 4 are cut from the log
+                lines = log.path.read_bytes().split(b"\n")
+                log.path.write_bytes(b"\n".join(lines[:2]) + b"\n")
+                raw = real_read(self)
+                go.set()
+                head_done.wait(5)
+                return raw
+        return real_read(self)
+
+    monkeypatch.setattr(case.CaseLog, "_read_log", read)
+    try:
+        check = reader.verify()
+    finally:
+        monkeypatch.undo()
+        go.set()
+        release.set()
+        t.join(10)
+    assert not check.ok and check.first_bad == 3
+
+
 def test_torn_last_entry_blocks_appends_until_dropped(tmp_path, monkeypatch):
     log = _log(tmp_path, 2)
     lines = _lines(log)
@@ -1088,8 +1253,9 @@ def test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing(
     def busy(self):
         if self is reader:
             calls["n"] += 1
-            for _ in range(2):
-                other.append("override", {"n": calls["n"]}, expected=other.require_intact().position)
+            if calls["n"] <= case.READ_RETRIES:  # once the holder has the case, nobody else appends
+                for _ in range(2):
+                    other.append("override", {"n": calls["n"]}, expected=other.require_intact().position)
             if calls["n"] == case.READ_RETRIES:
                 stack.enter_context(holder.writer())
         return real(self)
