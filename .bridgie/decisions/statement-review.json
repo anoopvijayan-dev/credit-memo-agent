@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 89,
+  "next_id": 90,
   "decisions": [
     {
       "id": "D1",
@@ -1839,6 +1839,26 @@
       "decided_at": "2026-11-19T21:41:08.457Z",
       "effect": "changes requested: D86 (owner, after the tenth T03 review): R5 and R6 can both claim one credit. Amend R5 and R6 only as far as needed: a credit whose counterparty matches both a director or shareholder named in the profile and one of the applicant's other accounts named in the profile is ambiguous: it goes to unexplained money in and the judgement queue with both buckets as candidates, and only a per-line override (R17) or an own-account pairing (R8) settles it. Keep every other requirement, property and id.; re-run bridgie shape statement-review",
       "created_at": "2026-11-19T21:41:08.452Z"
+    },
+    {
+      "id": "D89",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:196–322 validates canonical entry bytes, chain links and recorded hashes, and identifies the first divergence. Lines 373–399 recognize the holding thread through folder aliases and check the whole log under lock. Lines 465–502 check head stability and limit a contended verdict to recorded entries. Lines 541–662 enforce writer exclusion, reject inherited writers, and prevent duplicate appends at a stale position. The Linux runner logs confirm the named tamper, rebuilt-chain, torn-entry, lost-head and contention tests. The production CLI calls verify at src/cma/cli.py:321. Sign-off integration is assigned to T27. The final fallback at src/cma/case.py:419 can still report a free case with an incomplete entry as being saved.); major: After the lock-probe retries are exhausted, the final fallback reports an incomplete entry as being saved even when the case is free throughout the read that produces the verdict. at src/cma/case.py:419; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T21:42:09.096Z"
     }
   ]
 }

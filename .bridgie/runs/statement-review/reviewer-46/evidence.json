@@ -1,0 +1,44 @@
+{
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:196–322 validates canonical entry bytes, chain links and recorded hashes, and identifies the first divergence. Lines 373–399 recognize the holding thread through folder aliases and check the whole log under lock. Lines 465–502 check head stability and limit a contended verdict to recorded entries. Lines 541–662 enforce writer exclusion, reject inherited writers, and prevent duplicate appends at a stale position. The Linux runner logs confirm the named tamper, rebuilt-chain, torn-entry, lost-head and contention tests. The production CLI calls verify at src/cma/cli.py:321. Sign-off integration is assigned to T27. The final fallback at src/cma/case.py:419 can still report a free case with an incomplete entry as being saved.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 419,
+      "criterion": "P15",
+      "claim": "After the lock-probe retries are exhausted, the final fallback reports an incomplete entry as being saved even when the case is free throughout the read that produces the verdict.",
+      "repro": "Leave two recorded entries and a partial third line. On each of the five attempts, have a writer hold the case for the initial shared-lock probe, then release it before the reader's post-read probe. After the fifth release, keep the case free. The post-read probe returns false and the loop ends. The unconditional final call to _held reads the unchanged head and partial tail, then returns in_progress with no bad entry. The free-case check should name entry 3 as incomplete."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's claimed exit 0 and 'appending' output for a contended check contradict the implementation and the passing contract test.",
+      "repro": "Read tests/test_case_log.py:1348 and the passing result in contracts-4.log. With two recorded entries, a partial third line and another writer holding the case, the test asserts exit 4 and output containing 'saved'."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1201,
+      "criterion": "P15",
+      "claim": "The runner confirms the rapid-append stress test passed. The producer's stronger claim that it exercises exactly two commits in each retry and contention at the fallback is unproven.",
+      "repro": "Inspect lines 1208–1216. The test uses a free-running appender and 40 checks. It has no synchronization or assertion for commits per retry or entry into the fallback. To prove the stronger claim, add a synchronized test that asserts those conditions and run python -m pytest -v -m invariants -k p15."
+    }
+  ],
+  "verdict": "fail"
+}

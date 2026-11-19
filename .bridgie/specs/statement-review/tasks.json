@@ -146,12 +146,12 @@
         "P15"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T12",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-45/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:196–315 validates canonical entries, chain links and the recorded head, and names the first divergence. Lines 371–383 recognize the current thread's lock through folder aliases. Lines 443–480 compare head snapshots and limit a contended read to recorded entries. Lines 527–614 enforce single-writer ownership and refuse inherited writers. The runner logs confirm the named Linux tamper, rebuilt-chain, contention and torn-entry tests. The criterion fails at lines 395–407 and 454–464 because a writer can release the case before the fallback read, leaving an incomplete entry that the reader still reports as being saved. The sign-off integration is assigned to T27 in the repository task list. The current production caller is src/cma/cli.py:321.); major: A reader can report an incomplete entry as being saved even though the case was free throughout the read that produced the verdict. The fallback relies on contention observed before that read. at src/cma/case.py:459; major: Losing the head file of a one-entry log makes the only committed entry eligible for destructive torn-entry repair. The producer's missing-head claim cites a test that uses three entries and misses this branch. at src/cma/case.py:303; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-46/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:196–322 validates canonical entry bytes, chain links and recorded hashes, and identifies the first divergence. Lines 373–399 recognize the holding thread through folder aliases and check the whole log under lock. Lines 465–502 check head stability and limit a contended verdict to recorded entries. Lines 541–662 enforce writer exclusion, reject inherited writers, and prevent duplicate appends at a stale position. The Linux runner logs confirm the named tamper, rebuilt-chain, torn-entry, lost-head and contention tests. The production CLI calls verify at src/cma/cli.py:321. Sign-off integration is assigned to T27. The final fallback at src/cma/case.py:419 can still report a free case with an incomplete entry as being saved.); major: After the lock-probe retries are exhausted, the final fallback reports an incomplete entry as being saved even when the case is free throughout the read that produces the verdict. at src/cma/case.py:419; reviewer verdict fail"
     },
     {
       "id": "T13",
