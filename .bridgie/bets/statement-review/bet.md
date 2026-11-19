@@ -240,6 +240,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-19 D103 (question): State it in the design only: under such interference a repair can remove another writer's entries, and a signed pack pins the head it saw (design default) — (recommended option, chosen under the owner's standing approval of 2026-11-19) → recorded [Anoop Vijayan]
 - 2026-11-19 D104 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-19 D100 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). The bank code beats the longer-phrase rule (D101); the longest alternative of one pattern counts (D102). → task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03 [Anoop Vijayan]
+- 2026-11-19 D105 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). With gate and case both held, a steady read still names a fault at or before the recorded entries; the lock is re-checked before the head write too. → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 
 ## Idea
 
