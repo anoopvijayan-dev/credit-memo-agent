@@ -1588,3 +1588,17 @@ def test_p_an_ambiguous_credit_records_every_kind_of_profile_name_it_matches(v2)
     desc = "FPS CREDIT CASH DEPOSIT JANE DOE ACME HOLDINGS"
     assert classify(_t(desc, 900.0), v2, profile=profile) == \
         (C.OTHER, "v2:conflict:payment_rail+cash_paid_in+profile:director+profile:own_account")
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("desc", ["FPS CREDIT JANE DOE ACME HOLDINGS", "JANE DOE ACME HOLDINGS"])
+def test_p_a_credit_naming_both_a_director_and_an_own_account_is_ambiguous(v2, desc):
+    """D86: R5 and R6 would both claim it, so it goes to the queue with both candidates;
+    either name alone still decides by R5 or R6."""
+    profile = ProfileNames(directors=("JANE DOE",), own_accounts=("ACME HOLDINGS",))
+    category, rule = classify(_t(desc, 900.0), v2, profile=profile)
+    assert category is C.OTHER and rule.startswith("v2:conflict:")
+    assert rule.endswith("profile:director+profile:own_account")
+    assert classify(_t("FPS CREDIT JANE DOE", 900.0), v2, profile=profile) == (C.DIRECTOR_FUNDING, "profile:director")
+    assert classify(_t("FPS CREDIT ACME HOLDINGS", 900.0), v2, profile=profile) == \
+        (C.OWN_ACCOUNT_TRANSFER, "profile:own_account")

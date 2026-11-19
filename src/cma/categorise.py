@@ -615,18 +615,20 @@ def _classify_credit(t: Transaction, desc: str, ruleset: Ruleset, profile: Profi
     verdict, (7) the default. Only an override (or an own-account pairing, applied over
     the whole statement) settles an ambiguous credit (D78): a profile name the wording
     matches is one more candidate, because the description cannot tell the payer from a
-    payment reference that names someone else."""
+    payment reference that names someone else. A credit naming both a director and an own
+    account is ambiguous too (D86)."""
     verdict = credit_verdict(ruleset, desc, t.amount)
     if verdict is not None and not verdict.ambiguous and verdict.rule.protected:
         return verdict.rule.category, f"{ruleset.id}:{verdict.rule.id}"
-    found = _profile(t, desc, profile)
-    if verdict is not None and verdict.ambiguous:
-        # Every kind of profile name the wording matches is a candidate (R4): a credit
-        # can name a director and an own account both.
-        candidates = [r.id for r in verdict.rules] + [ref for _, ref in _profile_matches(t, desc, profile)]
+    kinds = _profile_matches(t, desc, profile)
+    # Ambiguous when the table finds the wording ambiguous (R4), or when two kinds of
+    # profile name claim the credit, a director (R5) and an own account (R6) (D86). Every
+    # profile name the wording matches is then a candidate, never the settlement (D78).
+    if (verdict is not None and verdict.ambiguous) or len(kinds) > 1:
+        candidates = ([r.id for r in verdict.rules] if verdict is not None else []) + [ref for _, ref in kinds]
         return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(candidates)
-    if found:
-        return found
+    if kinds:
+        return kinds[0]
     for rule in firm_rules:
         if rule_matches(rule, desc, t.amount):
             return rule.category, f"firm:{rule.id}"
