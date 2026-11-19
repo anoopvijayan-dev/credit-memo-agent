@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 105,
+  "next_id": 106,
   "decisions": [
     {
       "id": "D1",
@@ -2163,6 +2163,26 @@
       "decided_at": "2026-11-19T22:59:50.581Z",
       "effect": "design approved",
       "created_at": "2026-11-19T22:59:07.217Z"
+    },
+    {
+      "id": "D105",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:195–322 validates canonical bytes, chain links, the recorded head and the first bad entry. Lines 413–456 handle same-thread aliases, free reads and writer handoff. Lines 565–689 enforce writer exclusion and reject inherited write handles. Lines 731–828 cover stale double submits, torn writes and recovery. The CLI consumes the verification result at src/cma/cli.py:318–338. Sign-off integration is scoped to T27 and has an integrity gate at src/cma/case.py:549–561. The runner logs show the named tamper, rebuilt-chain, concurrency and recovery cases passed. Boundary checks cover empty and malformed records, timestamps use UTC, the log performs no currency arithmetic, and local case paths scope the data. Two gaps remain: gate contention can suppress a stable diagnosis, and the head commit skips the lock recheck required by revision 10.); major: When both the gate and case lock are contended, verify skips the recorded entries on every retry even if the head is stable. It can therefore hide corruption that P15 requires it to name. at src/cma/case.py:483; major: The append checks lock identity before preparing the line, then commits the head without rechecking. A writer can publish a new head after its case lock has been replaced between those two writes. at src/cma/case.py:828; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T23:00:54.405Z"
     }
   ]
 }
