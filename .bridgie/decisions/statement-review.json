@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 79,
+  "next_id": 80,
   "decisions": [
     {
       "id": "D1",
@@ -1644,6 +1644,24 @@
       "decided_at": "2026-11-19T18:47:35.569Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-19T18:03:11.778Z"
+    },
+    {
+      "id": "D79",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "D78 and D76 (owner, after the ninth T03 review). (1) R4: only a per-line override (R17) or an own-account pairing (R8) settles an ambiguous credit. A case-profile name (R5, R6) that the credit's wording also matches adds its bucket as one more candidate and does not settle it, because the description cannot reliably tell the payer from a payment reference that names someone else. R5 and R6 still decide every credit the table does not find ambiguous; amend R5 and R6 only as far as they must say this. (2) Name cheque wording beside the payment rail in the line-type cue term, as a cue with no bucket, so that a cheque with cash paid-in wording is ambiguous by R4's own text (D70). Keep every other requirement, property and id.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-19T18:47:35.707Z",
+      "effect": "changes requested: D78 and D76 (owner, after the ninth T03 review). (1) R4: only a per-line override (R17) or an own-account pairing (R8) settles an ambiguous credit. A case-profile name (R5, R6) that the credit's wording also matches adds its bucket as one more candidate and does not settle it, because the description cannot reliably tell the payer from a payment reference that names someone else. R5 and R6 still decide every credit the table does not find ambiguous; amend R5 and R6 only as far as they must say this. (2) Name cheque wording beside the payment rail in the line-type cue term, as a cue with no bucket, so that a cheque with cash paid-in wording is ambiguous by R4's own text (D70). Keep every other requirement, property and id.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-19T18:47:35.703Z"
     }
   ]
 }
