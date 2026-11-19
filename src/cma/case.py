@@ -274,6 +274,11 @@ def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
         prev = entry.hash
         ends.append(ends[-1] + len(line) + 1)
 
+    if recorded is None and raw:
+        # Every writer creates the head file before the first line, so a log with no head
+        # beside it was damaged; nothing in it is a torn write to drop.
+        return LogCheck(Head(0, GENESIS), [], 1, "cannot be trusted: the head file beside the "
+                        "log is missing", False, 0)
     hashes: list[str] = recorded if isinstance(recorded, list) else []  # none yet: empty
     n, count = len(entries), len(hashes)
 
@@ -393,6 +398,13 @@ class CaseLog:
                 with self._reading():
                     return _check(self._read_log(), _read_head(self.head_path))
             except CaseLocked:
+                held = self._held()
+                # "Being saved" stands only if the case is still held after the read: a
+                # holder that let go meanwhile may have left an incomplete entry, which a
+                # read of the free case must name (R43). A fault at or before the recorded
+                # entries is real either way.
+                if held.first_bad is not None or self._still_held():
+                    return held
                 continue
             except FileNotFoundError:
                 # No lock file: no writer has ever started on this case (each creates it
@@ -429,6 +441,16 @@ class CaseLog:
                     _unlock(fd)
         finally:
             os.close(fd)
+
+    def _still_held(self) -> bool:
+        """Another holds the case right now (a lock that cannot be tested counts as not)."""
+        try:
+            with self._reading():
+                return False
+        except CaseLocked:
+            return True
+        except OSError:
+            return False
 
     def _only_readers_hold(self) -> bool:
         """The lock is held, and only shared (by readers), so a writer should wait."""
@@ -714,6 +736,11 @@ class CaseLog:
 
     def _write_entry(self, event: str, data: dict[str, Any], check: LogCheck) -> Entry:
         entry, line = self._encode(event, data, check.head)
+        if not check.entries and not self.head_path.exists():
+            # The head file exists before the first line does, so a crash during the first
+            # append leaves a torn entry under an empty head, and a missing head beside any
+            # entry is always damage, never a crash to repair (T12 review 9).
+            self._write_head([])
         created = not self.path.exists()
         fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:

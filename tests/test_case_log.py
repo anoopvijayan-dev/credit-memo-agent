@@ -1635,3 +1635,74 @@ def test_p15_a_writer_that_starts_while_a_check_reads_without_a_lock_file_is_see
         leave.set()
         started["t"].join(10)
     assert check.in_progress and not (check.ok and not check.in_progress)
+
+
+@pytest.mark.invariants
+def test_p15_a_holder_that_lets_go_during_the_read_leaves_its_incomplete_entry_named(tmp_path, monkeypatch):
+    # T12 review 9 / R43: the case was held at the probe and free by the read; "being saved"
+    # no longer stands, so the reader reads the free case and names the incomplete entry.
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    taken, leave, gone = threading.Event(), threading.Event(), threading.Event()
+
+    def hold_then_let_go():
+        with case.CaseLog(log.path).writer():
+            taken.set()
+            leave.wait(10)
+        gone.set()
+
+    t = threading.Thread(target=hold_then_let_go)
+    t.start()
+    assert taken.wait(5)
+    reader, real = case.CaseLog(log.path), case.CaseLog._read_log
+
+    def read(self):
+        if self is reader and not leave.is_set():
+            leave.set()  # the holder lets go during this read
+            assert gone.wait(5)
+        return real(self)
+
+    monkeypatch.setattr(case.CaseLog, "_read_log", read)
+    try:
+        check = reader.verify()
+    finally:
+        monkeypatch.undo()
+        leave.set()
+        t.join(10)
+    assert check.torn and check.first_bad == 3 and not check.in_progress
+
+
+@pytest.mark.invariants
+def test_p15_a_lost_head_file_never_makes_a_committed_entry_droppable(tmp_path):
+    # T12 review 9: with the head file gone, a one-entry log looked like a crashed first
+    # append, and its only committed entry could be dropped.
+    log = _log(tmp_path, 1)
+    log.head_path.unlink()
+    check = log.verify()
+    assert not check.ok and not check.torn and "head file" in check.reason
+    with pytest.raises(case.CaseLogBroken):
+        log.drop_torn_entry(expected=0, by="A. Underwriter")
+
+
+@pytest.mark.invariants
+def test_p15_a_crash_during_the_first_append_is_still_a_torn_entry_to_drop(tmp_path, monkeypatch):
+    # The head file is written (empty) before the first line, so this crash stays repairable.
+    log = case.CaseLog(tmp_path / "log.jsonl")
+    real = case._write_all
+
+    def torn_line(fd, data):  # the head file is written whole; the entry's line is cut
+        if data.startswith(b'{"count"'):
+            return real(fd, data)
+        real(fd, data[:10])
+        raise OSError("power lost")
+
+    monkeypatch.setattr(case, "_write_all", torn_line)
+    with pytest.raises(OSError):
+        log.append("override", {"n": 0}, expected=0)
+    monkeypatch.undo()
+    assert log.head_path.exists()
+    check = log.verify()
+    assert check.torn and check.first_bad == 1
+    log.drop_torn_entry(expected=0, by="A. Underwriter")
+    assert [e.event for e in log.entries()] == [case.TORN_DROPPED]
