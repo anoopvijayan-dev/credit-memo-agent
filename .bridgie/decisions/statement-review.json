@@ -1675,12 +1675,12 @@
         "kill task"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "take over manually",
+      "free_text": "Owner: take over with a pre-review before Codex. The reader takes the lock first (free: one read under the lock is the truth); only while someone else holds the case does it judge from steady reads, never calling the log intact; an untestable lock blames no other window; a check creates nothing; writers wait up to 0.2 s for a reader's probe.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-19T20:02:14.150Z",
+      "effect": "task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12",
       "created_at": "2026-11-19T18:50:03.207Z"
     },
     {
