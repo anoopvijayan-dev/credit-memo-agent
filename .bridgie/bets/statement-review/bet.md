@@ -216,6 +216,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-19 D83 (question): Both directions, as revision 8 writes it (design default; what T03 builds and tests) → recorded [Anoop Vijayan]
 - 2026-11-19 D84 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-19 D85 (unblock): take over manually — Owner: take over and send to Codex. A recorded entry with a cut-short line is named incomplete (damage, not droppable); a check that read without a lock file probes again if a writer took the lock meanwhile; Windows uses LockFileEx shared locks so checks share the case. → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
+- 2026-11-19 D87 (unblock): take over manually — Owner: take over and send to Codex. A reader that saw the case held re-probes after its read and names an incomplete entry if the holder let go; the first append writes an empty head file before its line, so a missing head beside any entry is damage, never a torn write to drop. → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 
 ## Idea
 
