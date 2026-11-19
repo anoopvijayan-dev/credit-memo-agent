@@ -248,6 +248,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-19 D108 (question): Before each step that changes a file a reader reads: the empty head record, the line and each rename; a temporary file is not one (design default; R42 as written) — (recommended option, chosen under the owner's standing approval of 2026-11-19) → recorded [Anoop Vijayan]
 - 2026-11-19 D109 (question): Name a fault at or before the recorded entries and otherwise claim nothing. In the next revision, write into R43 and P15 that a steady read gives the recorded entries only when one writer held the case through it (design default; what T12 builds since D105) — (recommended option, chosen under the owner's standing approval of 2026-11-19) → recorded [Anoop Vijayan]
 - 2026-11-19 D110 (question): Refuse such a pattern at load, naming the rule; a repeat of spaces, digits or letters alone stays allowed (design default; T03 adds one validator check before its review) — (recommended option, chosen under the owner's standing approval of 2026-11-19) → recorded [Anoop Vijayan]
+- 2026-11-19 D111 (approve_design): approve → design approved [Anoop Vijayan]
 
 ## Idea
 
