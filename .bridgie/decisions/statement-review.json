@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 87,
+  "next_id": 88,
   "decisions": [
     {
       "id": "D1",
@@ -1801,6 +1801,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-19T21:33:48.717Z"
+    },
+    {
+      "id": "D87",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:196–315 validates canonical entries, chain links and the recorded head, and names the first divergence. Lines 371–383 recognize the current thread's lock through folder aliases. Lines 443–480 compare head snapshots and limit a contended read to recorded entries. Lines 527–614 enforce single-writer ownership and refuse inherited writers. The runner logs confirm the named Linux tamper, rebuilt-chain, contention and torn-entry tests. The criterion fails at lines 395–407 and 454–464 because a writer can release the case before the fallback read, leaving an incomplete entry that the reader still reports as being saved. The sign-off integration is assigned to T27 in the repository task list. The current production caller is src/cma/cli.py:321.); major: A reader can report an incomplete entry as being saved even though the case was free throughout the read that produced the verdict. The fallback relies on contention observed before that read. at src/cma/case.py:459; major: Losing the head file of a one-entry log makes the only committed entry eligible for destructive torn-entry repair. The producer's missing-head claim cites a test that uses three entries and misses this branch. at src/cma/case.py:303; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T21:35:10.528Z"
     }
   ]
 }
