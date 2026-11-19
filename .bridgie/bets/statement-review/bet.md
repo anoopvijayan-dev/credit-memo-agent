@@ -217,6 +217,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-19 D84 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-19 D85 (unblock): take over manually — Owner: take over and send to Codex. A recorded entry with a cut-short line is named incomplete (damage, not droppable); a check that read without a lock file probes again if a writer took the lock meanwhile; Windows uses LockFileEx shared locks so checks share the case. → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 - 2026-11-19 D87 (unblock): take over manually — Owner: take over and send to Codex. A reader that saw the case held re-probes after its read and names an incomplete entry if the holder let go; the first append writes an empty head file before its line, so a missing head beside any entry is damage, never a torn write to drop. → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
+- 2026-11-19 D86 (unblock): take over manually — Owner: take over. An ambiguous credit records every kind of profile name it matches. A credit whose counterparty matches both a director (R5) and one of the applicant's own accounts (R6) goes to the judgement queue with both as candidates; R5 and R6 are amended to say so (approved before T03 is re-verified). → task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03 [Anoop Vijayan]
 
 ## Idea
 
