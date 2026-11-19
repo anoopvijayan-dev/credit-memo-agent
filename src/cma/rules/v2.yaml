@@ -148,6 +148,14 @@ rules:
     direction: in
     protected: true
     stage: line_type
+  # A cheque, like the rail, says what the money is not: cash. No category, so with cash
+  # paid-in wording the credit is ambiguous by the verdict (D70), never hidden by an
+  # exception on the cash list; on its own, the names decide.
+  - id: cheque
+    names: [CHEQUE, CHEQUES, CHQ]
+    direction: in
+    protected: true
+    stage: line_type
   # --- stage 2, name lists ---------------------------------------------------------
   # UK business lenders and merchant cash advance providers, named. STRIPE CAPITAL,
   # SHOPIFY CAPITAL and SUMUP CASH ADVANCE are lenders by the longer phrase.
@@ -258,7 +266,6 @@ rules:
       - POST OFFICE COUNTER DEPOSIT
       - PAYPOINT CASH
       - PAYPOINT DEPOSIT
-    unless: '(?<![^\W_])(?:CHEQUES?|CHQ)(?![^\W_])'
     direction: in
     category: cash_deposit
     stage: names

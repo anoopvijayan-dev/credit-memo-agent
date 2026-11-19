@@ -166,8 +166,12 @@ LISTS = {
         # cash wording on an electronic payment: the rail says it is not cash, so ambiguous
         ("FPS CREDIT CASH DEPOSIT", 200.00, C.OTHER, "v2:conflict:payment_rail+cash_paid_in"),
         ("BACS CREDIT POST OFFICE CASH", 200.00, C.OTHER, "v2:conflict:payment_rail+cash_paid_in"),
-        # a cheque is not cash; it stays unexplained for a person
-        ("CHEQUE PAID IN AT BRANCH", 900.00, C.OTHER, "v2:default"),
+        # a cheque is not cash: with cash paid-in wording the credit is ambiguous (D70)
+        ("CHEQUE PAID IN AT BRANCH", 900.00, C.OTHER, "v2:conflict:cheque+cash_paid_in"),
+        # T03 review 7: a cheque token used to hide explicit cash wording through an
+        # exception on the cash list, so the rail + cash check never saw the cash
+        ("FPS CASH DEPOSIT CHQ 1234", 900.00, C.OTHER, "v2:conflict:payment_rail+cheque+cash_paid_in"),
+        ("CASH DEPOSIT CHEQUE", 900.00, C.OTHER, "v2:conflict:cheque+cash_paid_in"),
         # cash wording with a director or lender name: names in two buckets, a judgement
         ("CASH DEPOSIT DIRECTOR", 3000.00, C.OTHER, "v2:conflict:director_funding+cash_paid_in"),
         ("CASH DEPOSIT IWOCA", 3000.00, C.OTHER, "v2:conflict:lender_drawdown+cash_paid_in"),
@@ -540,11 +544,11 @@ def test_v2_is_packaged_with_an_id_and_the_hash_of_its_file(v2):
     # line type first, then the protected name lists; cash paid in is not protected (design rev 3)
     assert [r.id for r in v2.protected] == ["returned_dd", "own_pots_savings", "hmrc_vat", "hmrc_paye",
                                             "hmrc_repayment", "returned_payment", "refunds", "payment_rail",
-                                            "lender_repayment", "lender_drawdown", "loan_repayment",
+                                            "cheque", "lender_repayment", "lender_drawdown", "loan_repayment",
                                             "director_funding", "loan_drawdown", "owner_drawings"]
-    # no rule's exception hides another list's cue or name: only wording on no list (a cheque)
+    # no rule's exception hides another list's cue or name (D70: the cheque is a cue now)
     unless = {r["id"]: r["unless"] for r in data["rules"] if "unless" in r}
-    assert unless == {"cash_paid_in": "(?<![^\\W_])(?:CHEQUES?|CHQ)(?![^\\W_])"}
+    assert unless == {}
 
 
 GOOD = {"id": "card", "names": ["STRIPE"], "direction": "in", "category": "revenue_card_settlement"}
