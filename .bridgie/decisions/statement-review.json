@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 107,
+  "next_id": 108,
   "decisions": [
     {
       "id": "D1",
@@ -2201,6 +2201,26 @@
       "decided_at": "2026-11-19T23:04:32.724Z",
       "effect": "changes requested: D101 (Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach).): say in R4 that a returned-payment code the bank prints at the start of the line settles the line type before the longer-phrase rule applies: it never counts as inside another rule's longer listed phrase (UNPAID DD TO SAVINGS on an own-pot list is still a returned payment). And per D102, a match's length is the longest any alternative of the rule's pattern or names can make at that start. Keep every other requirement, property and id.; re-run bridgie shape statement-review",
       "created_at": "2026-11-19T23:04:32.717Z"
+    },
+    {
+      "id": "D107",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:195–322 validates canonical bytes, chain links and the recorded head, naming the first discrepant or incomplete entry. Lines 413–456 handle same-thread aliases, free readers and writer handoff. Lines 569–695 enforce writer exclusion, reject inherited write handles and check lock identity. Lines 735–835 handle stale submissions and interrupted writes. src/cma/cli.py:318–338 exposes verification, and src/cma/case.py:554–566 provides the integrity gate for sign-off integration in T27. The runner logs confirm the named tamper, rebuilt-chain, stale submission, concurrency and recovery tests passed. The lane review covered empty and malformed entries, UTC timestamps, local filesystem permissions and case-folder isolation, and CLI exit-code consumers. The log performs no currency arithmetic and introduces no data migration. Dual contention still discards a stable recorded prefix, and several persistent writes can proceed after a lock replacement.); major: When both locks are contended, verify discards a successful stable read and eventually reports that nothing could be checked. P15 requires the reader to report the recorded entries it verified and the unchecked tail as being saved. at src/cma/case.py:488; major: The first append writes its log entry after initializing the empty head without rechecking the case lock between those two writes. at src/cma/case.py:826; major: The head replacement can publish an entry after the writer loses its case lock. The recovery path has the same gap when it replaces the log at line 777. at src/cma/case.py:808; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T23:05:45.582Z"
     }
   ]
 }
