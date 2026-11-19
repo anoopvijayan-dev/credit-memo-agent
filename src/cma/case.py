@@ -55,7 +55,7 @@ import os
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -327,6 +327,34 @@ def _file_id(st: os.stat_result) -> tuple[int, int]:
     return st.st_dev, st.st_ino
 
 
+# The lock file carries the holder's state after the locked byte: "IDLE <pid>" from the
+# moment the lock is taken, "APPENDING <pid>" while an entry is written and recorded. Only
+# a holder marked mid-append excuses an incomplete last entry to a reader (R43): a holder
+# that only checks the log, or a crash that left an entry torn, excuses nothing. Every new
+# holder resets the mark, so one a crash left behind does not outlive the lock.
+_MARK_AT = 8
+_MARK_LEN = 32
+
+
+def _set_mark(fd: int, state: str) -> None:
+    # Best effort: a mark that cannot be written only makes readers report what they see.
+    with suppress(OSError):
+        os.lseek(fd, _MARK_AT, os.SEEK_SET)
+        _write_all(fd, f"{state} {os.getpid()}".encode().ljust(_MARK_LEN))
+
+
+def _alive(pid: int) -> bool:
+    if os.name == "nt":  # pragma: no cover - the mark is reset as the lock is taken
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 class CaseLog:
     def __init__(self, path: Path | str):
         self.path = Path(path)
@@ -340,6 +368,7 @@ class CaseLog:
         self._owner: tuple[int, int] | None = None  # (process id, thread ident) of the holder
         self._lock_depth = 0
         self._lock_id: tuple[int, int] | None = None  # the lock file's identity while held
+        self._pid = os.getpid()  # a CaseLog belongs to the process that opened it (R42)
 
     # --- reading -----------------------------------------------------------------------
 
@@ -366,16 +395,17 @@ class CaseLog:
             # the log read next is never behind it, and a writer caught between the two
             # writes looks like a torn entry. Look again before believing one.
             before = _read_head(self.head_path)
-            check = _check(self._read_log(), before)
-            if not check.torn and _read_head(self.head_path) == before:
+            raw = self._read_log()
+            check = _check(raw, before)
+            after = _read_head(self.head_path)
+            if not check.torn and after == before:
                 return check
         # Still torn, or the head kept moving. Under the lock nothing moves, so if the lock
         # is free, one read there is the truth. An object a forked child inherited still
         # names its parent as holder whether or not the parent has let go, so the lock is
         # tested through a fresh handle: held now by the parent or anyone, it is refused;
         # free, it is taken and the read stands (R43: only a writer holding the case now).
-        inherited = self._owner is not None and self._owner[0] != os.getpid()
-        locker = CaseLog(self.path) if inherited else self
+        locker = CaseLog(self.path) if self._pid != os.getpid() else self
         try:
             with locker.writer():
                 return _check(self._read_log(), _read_head(self.head_path))
@@ -385,10 +415,40 @@ class CaseLog:
             return check
         # Another writer holds the lock. The log is only ever appended to, so the log read
         # after a head holds every entry that head records; those entries were walked and
-        # matched, and a failure before or among them is real whatever moved since. A
-        # failure only after them (a torn line, or entries appended after that head was
-        # read) is that writer's appends landing: report the log as recorded.
-        return check.as_recorded() if check.past_recorded else check
+        # matched, and a failure before or among them is real whatever moved since. The
+        # head read after the log can record more: every entry it records that the read
+        # holds must match it too, so judge by that later head over the lines read.
+        if isinstance(after, list) and after != before and raw is not None:
+            check = _check(raw, after[: raw.count(b"\n")])
+        # A failure only after the recorded entries is excused only while the holder is
+        # marked mid-append (R43); a holder that only checks, or a stale torn entry, is not.
+        if check.past_recorded and self._holder_mid_append():
+            return check.as_recorded()
+        return check
+
+    def _holder_mid_append(self) -> bool:
+        try:
+            with open(self.lock_path, "rb") as f:
+                f.seek(_MARK_AT)
+                raw = f.read(_MARK_LEN)
+        except OSError:
+            return False
+        parts = raw.split()
+        if len(parts) != 2 or parts[0] != b"APPENDING" or not parts[1].isdigit():
+            return False
+        return _alive(int(parts[1]))
+
+    @contextmanager
+    def _appending(self) -> Iterator[None]:
+        """Mark the held lock mid-append while an entry is written and recorded."""
+        fd = self._lock_fd
+        if fd is not None:
+            _set_mark(fd, "APPENDING")
+        try:
+            yield
+        finally:
+            if fd is not None:
+                _set_mark(fd, "IDLE")
 
     def _read_log(self) -> bytes | None:
         try:
@@ -425,6 +485,9 @@ class CaseLog:
         belongs to a thread, not to the object. Forking a process while it holds the lock is
         not supported: a child writing through an inherited CaseLog is refused, and leaving
         a block it inherited releases nothing."""
+        if self._pid != os.getpid():
+            raise CaseLocked(f"{self.path}: this case log was opened by another process; open "
+                             "the case again in this one")
         me = _holder_id()
         with self._state:
             if self._owner == me:
@@ -442,6 +505,7 @@ class CaseLog:
                     self._lock_fd, self._owner, self._lock_depth, self._lock_id = fd, me, 1, lock_id
                     with _HELD_GUARD:
                         _HELD[lock_id] = me
+                    _set_mark(fd, "IDLE")  # whatever a crashed holder left, nothing is mid-append
                 except BaseException as e:
                     # Whatever interrupts this (a lock error, or KeyboardInterrupt between
                     # two steps) leaves no lock behind: once the descriptor is recorded
@@ -531,29 +595,32 @@ class CaseLog:
                 raise CaseLogBroken(self.path, check.first_bad, check.reason, False)
             if check.head.position != expected:
                 raise LogConflict(expected, check.head.position)
-            # Write the intact prefix plus the drop entry to a temporary file and rename it
-            # over the log, so a crash leaves either the torn log or the repaired one, never
-            # a truncated log with no record of who dropped the entry. A crash after the
-            # rename and before the head file is replaced leaves the drop entry itself
-            # unrecorded: the log loads as torn at the same entry, and dropping it again
-            # repairs it.
-            intact = self.path.read_bytes()[: check.intact_bytes]
-            entry, line = self._encode(TORN_DROPPED, {"seq": check.first_bad, "by": by.strip()}, check.head)
-            tmp = self.path.with_name(self.path.name + ".tmp")
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            try:
-                _write_all(fd, intact + line)
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-            try:
-                _replace(tmp, self.path)
-            except OSError:
-                tmp.unlink(missing_ok=True)
-                raise
-            _fsync_dir(self.path.parent)
-            self._write_head([*(e.hash for e in check.entries), entry.hash])
-            return entry
+            with self._appending():
+                return self._replace_torn(check, by.strip())
+
+    def _replace_torn(self, check: LogCheck, by: str) -> Entry:
+        # Write the intact prefix plus the drop entry to a temporary file and rename it over
+        # the log, so a crash leaves either the torn log or the repaired one, never a
+        # truncated log with no record of who dropped the entry. A crash after the rename
+        # and before the head file is replaced leaves the drop entry itself unrecorded: the
+        # log loads as torn at the same entry, and dropping it again repairs it.
+        intact = self.path.read_bytes()[: check.intact_bytes]
+        entry, line = self._encode(TORN_DROPPED, {"seq": check.first_bad, "by": by}, check.head)
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            _write_all(fd, intact + line)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        try:
+            _replace(tmp, self.path)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
+        _fsync_dir(self.path.parent)
+        self._write_head([*(e.hash for e in check.entries), entry.hash])
+        return entry
 
     @staticmethod
     def _encode(event: str, data: dict[str, Any], head: Head) -> tuple[Entry, bytes]:
@@ -584,6 +651,10 @@ class CaseLog:
         _fsync_dir(self.head_path.parent)
 
     def _write(self, event: str, data: dict[str, Any], check: LogCheck) -> Entry:
+        with self._appending():
+            return self._write_entry(event, data, check)
+
+    def _write_entry(self, event: str, data: dict[str, Any], check: LogCheck) -> Entry:
         entry, line = self._encode(event, data, check.head)
         created = not self.path.exists()
         fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)

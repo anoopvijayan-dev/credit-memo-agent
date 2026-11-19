@@ -460,6 +460,84 @@ def test_p15_a_forked_childs_reader_reports_a_torn_entry_once_its_parent_has_let
     assert os.waitstatus_to_exitcode(status) == 0
 
 
+@pytest.mark.invariants
+def test_p15_a_stale_append_mark_from_a_dead_process_excuses_nothing(tmp_path):
+    # T12 review: only a live holder mid-append excuses an incomplete entry. A mark a
+    # crashed process left behind names a process that no longer runs.
+    log = _log(tmp_path, 1)
+    with open(log.lock_path, "r+b") as f:
+        f.seek(case._MARK_AT)
+        f.write(b"APPENDING 2147483646".ljust(case._MARK_LEN))
+    assert not log._holder_mid_append()
+    with log.writer():  # every new holder resets the mark
+        pass
+    with open(log.lock_path, "rb") as f:
+        f.seek(case._MARK_AT)
+        assert f.read(case._MARK_LEN).split()[0] == b"IDLE"
+
+
+@pytest.mark.invariants
+def test_p15_a_contended_reader_judges_by_the_head_read_after_the_log(tmp_path, monkeypatch):
+    # T12 review: the reader decided what was recorded from the head it read before its
+    # last log read, so damage to an entry a later head records was excused as an append.
+    log = _log(tmp_path, 4)
+    lines = _lines(log)
+    assert '"n":2' in lines[2]
+    tampered = "".join([*lines[:2], lines[2].replace('"n":2', '"n":7'), *lines[3:]]).encode()
+    real_head = case._read_head
+    calls = {"n": 0}
+
+    def head_then_newer(path):
+        calls["n"] += 1
+        hashes = real_head(path)
+        return hashes[:2] if calls["n"] % 2 else hashes  # before the log: older; after: newer
+
+    reader = case.CaseLog(log.path)
+    holder = case.CaseLog(log.path)
+    taken, leave = threading.Event(), threading.Event()
+
+    def hold_mid_append():
+        with holder.writer(), holder._appending():
+            taken.set()
+            leave.wait(10)
+
+    t = threading.Thread(target=hold_mid_append)
+    t.start()
+    assert taken.wait(5)
+    try:
+        monkeypatch.setattr(case, "READ_PAUSE", 0)
+        monkeypatch.setattr(case, "_read_head", head_then_newer)
+        monkeypatch.setattr(case.CaseLog, "_read_log", lambda self: tampered)
+        check = reader.verify()
+    finally:
+        monkeypatch.undo()
+        leave.set()
+        t.join(10)
+    assert not check.ok and not check.in_progress and check.first_bad == 3
+
+
+@pytest.mark.invariants
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX only")
+def test_p15_a_forked_child_cannot_write_through_an_inherited_log_even_when_it_was_free(tmp_path):
+    # T12 review / R42: a CaseLog belongs to the process that opened it; the child's
+    # writes through it are refused whether or not the lock was held at the fork.
+    log = _log(tmp_path, 1)
+    pid = os.fork()
+    if pid == 0:
+        code = 2
+        try:
+            log.append("override", {}, expected=1)
+            code = 1
+        except case.CaseLocked:
+            code = 0
+        finally:
+            os._exit(code)
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0
+    assert len(log.entries()) == 1
+    log.append("override", {}, expected=1)  # the parent's own handle still writes
+
+
 def test_torn_last_entry_blocks_appends_until_dropped(tmp_path, monkeypatch):
     log = _log(tmp_path, 2)
     lines = _lines(log)
@@ -848,7 +926,11 @@ def test_a_reader_during_an_append_does_not_report_a_torn_entry(tmp_path, monkey
 
     monkeypatch.setattr(case.CaseLog, "_write_head", slow_head)
     log.append("override", {"n": 99}, expected=2)
-    assert seen["check"].ok and seen["check"].head.position == 3
+    # Either the finished append (the head caught up within the retries) or, on a slow
+    # machine, the log as recorded with this append in progress: never a torn entry.
+    check = seen["check"]
+    assert check.ok and not check.torn
+    assert check.head.position == 3 or (check.in_progress and check.head.position == 2)
 
 
 def test_data_changed_by_another_thread_mid_append_cannot_break_the_entry(tmp_path, monkeypatch):
@@ -924,12 +1006,19 @@ def test_a_lock_holder_still_sees_a_torn_entry_while_a_reader_sees_it_recorded(t
         # another writer, so it must not excuse the torn entry as an append in progress.
         with pytest.raises(case.CaseLogBroken):
             case.CaseLog(log.path).require_intact()
-        # Another thread reading while this one holds the lock sees an append landing.
+        # T12 review: a holder that only checks the log excuses nothing: another thread
+        # reading sees the stale torn entry as torn
         seen = []
         t = threading.Thread(target=lambda: seen.append(case.CaseLog(log.path).verify()))
         t.start()
         t.join(10)
-        assert seen and seen[0].in_progress
+        assert seen and seen[0].torn and not seen[0].in_progress
+        # while the holder is mid-append, that reader sees the log as recorded instead
+        with log._appending():
+            t = threading.Thread(target=lambda: seen.append(case.CaseLog(log.path).verify()))
+            t.start()
+            t.join(10)
+        assert seen[1].in_progress and seen[1].ok
 
 
 def test_a_crash_after_the_rename_while_dropping_leaves_a_torn_log_that_drops_again(tmp_path, monkeypatch):
@@ -1009,8 +1098,10 @@ def test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing(
         monkeypatch.setattr(case.CaseLog, "_read_log", busy)
         check = reader.verify()
     monkeypatch.undo()
-    assert check.ok and not check.torn and check.in_progress
-    assert 2 <= check.head.position <= 2 + 2 * case.READ_RETRIES
+    # T12 review: the head read after the log records every entry the read holds, so the
+    # reader judges by it and reports the whole log intact, not an older head's prefix
+    assert check.ok and not check.torn
+    assert check.head.position == 2 + 2 * case.READ_RETRIES
     assert [e.seq for e in check.entries] == list(range(1, check.head.position + 1))
     assert reader.verify().ok  # once the writers are gone, the whole log is intact
 
@@ -1124,8 +1215,9 @@ def test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_
     _crash_mid_append(log, monkeypatch, 10)
     taken, leave = threading.Event(), threading.Event()
 
-    def other_command():  # another command holds the lock: a thread, not this one
-        with case.for_case(folder).writer():
+    def other_command():  # another command holds the lock mid-append: a thread, not this one
+        held = case.for_case(folder)
+        with held.writer(), held._appending():
             taken.set()
             leave.wait(10)
 
