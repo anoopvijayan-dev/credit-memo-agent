@@ -187,6 +187,7 @@ The four verify-27 findings must each become a test with the R4 outcome: HMRC cr
 3. Word boundaries must be Unicode-aware, so an acquirer or gateway name inside a longer Unicode word (a merchant name with accented letters around STRIPE, for example) does not match as that name.
 D61 (owner): when rules agree on the bucket but carry different categories, a fixed order in the table decides, the category with more checks first: cash deposit, then customer transfer, then card settlement; a returned payment before a refund. Encode it in the table, not in rule order, and test it, including that shuffling rule order within a stage changes no category.
 Each finding becomes a test with the R4 outcome; keep the four verify-27 cases and the shuffle test. → task T03 gets one more attempt [Anoop Vijayan]
+- 2026-11-19 D63 (unblock): take over manually — Owner: scope it, simplify, take over. Forking a process while it holds the case-log lock is not supported (the tool never forks); the fork machinery is removed. A child writing through an inherited CaseLog is refused and leaving an inherited block releases nothing (holder checked at exit). The holder registry is keyed by the lock file's device and inode, so a symlinked path is the same file. → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 
 ## Idea
 

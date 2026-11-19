@@ -1339,12 +1339,12 @@
         "kill task"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "take over manually",
+      "free_text": "Owner: scope it, simplify, take over. Forking a process while it holds the case-log lock is not supported (the tool never forks); the fork machinery is removed. A child writing through an inherited CaseLog is refused and leaving an inherited block releases nothing (holder checked at exit). The holder registry is keyed by the lock file's device and inode, so a symlinked path is the same file.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-19T08:38:36.754Z",
+      "effect": "task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12",
       "created_at": "2026-11-19T08:18:29.881Z"
     },
     {
