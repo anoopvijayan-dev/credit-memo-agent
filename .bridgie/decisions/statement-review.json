@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 66,
+  "next_id": 69,
   "decisions": [
     {
       "id": "D1",
@@ -1384,6 +1384,68 @@
       "decided_at": "2026-11-19T08:38:36.925Z",
       "effect": "changes requested: D63 (owner, after the fifth T12 review): state the case log's concurrency scope where R42/R43 and P15 sit, without changing their ids: one writer at a time per case across windows, commands, threads and separate CaseLog objects in one process, and a reader never excuses a torn or tampered log as another writer's append; forking a process while it holds the case-log lock is not supported (the tool never forks), and a forked child that writes through an inherited CaseLog is refused. Case folders must be on a local disk. Keep every other requirement, property and id as they are.; re-run bridgie shape statement-review",
       "created_at": "2026-11-19T08:38:36.918Z"
+    },
+    {
+      "id": "D66",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-05"
+      },
+      "context": "Case folders on a network share (R42 scope, D65). The owner's scope says case folders must be on a local disk, because on a network share the operating system may emulate the lock per process, and then two CaseLog objects in one process could both write. Nothing detects a share today, and R32 warns only for OneDrive, Dropbox, Google Drive and iCloud Drive. Firms often redirect Documents to a server, so an underwriter who points CMA_HOME there would not be told. What should the tool do?",
+      "options": [
+        "State it only: the README and the trial sheet say local disk, and nothing detects a share (design default; no other requirement changes)",
+        "Warn before creating a case on a network file system, as R32 does for sync folders (amends R32 in a later revision)",
+        "Refuse a case root on a network file system (amends R31 in a later revision)"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T09:18:26.025Z"
+    },
+    {
+      "id": "D67",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-05"
+      },
+      "context": "How to read 'a reader never excuses a torn or tampered log as another writer's append' (D65; R43, P15). A writer adds its entry and then records it as complete. A reader that looks in between, while that writer still holds the case, sees an incomplete last entry and cannot tell it from one a crash left. The design shows the recorded entries and an append in progress only in that moment and never shows the entry as complete. Anything wrong at or before the recorded entries is reported whoever holds the case. A lock held by the reader's own thread through another handle or path, or a lock error, does not count as another writer (D50, verify-34). Sign-off decides while holding the case, so it always sees a torn entry. This is what T12 builds. Read literally, 'never' would make every reader report an incomplete entry even while another window's save is landing.",
+      "options": [
+        "Only another writer holding the case excuses, and only after the recorded entries (design default; what T12 builds)",
+        "Never: every reader reports an incomplete last entry, so a second window warns of a broken log whenever the first one saves",
+        "Readers wait for the lock before reporting, so a stuck writer stalls every window"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T09:18:26.031Z"
+    },
+    {
+      "id": "D68",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Approve the design and requirements (R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R18 R19 R20 R21 R22 R23 R24 R25 R26 R27 R28 R29 R30 R31 R32 R33 R34 R35 R36 R37 R38 R39 R40 R41 R42 R43 R44 R45 R46 R47 R48 R50 R51 R52 R53 R54 R55 R56 P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20) for 'statement-review'? Branch bridgie/statement-review from claude/busy-ride-h88y5r.",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T09:18:26.036Z"
     }
   ]
 }
