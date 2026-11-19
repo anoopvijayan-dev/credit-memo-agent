@@ -432,6 +432,34 @@ def test_p15_the_holder_sees_a_torn_entry_through_another_spelling_of_the_path(t
         case.CaseLog(alias / log.path.name).require_intact()
 
 
+@pytest.mark.invariants
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX only")
+def test_p15_a_forked_childs_reader_reports_a_torn_entry_once_its_parent_has_let_go(tmp_path, monkeypatch):
+    # R43 (revision 5): only a writer holding the case now excuses an incomplete entry. An
+    # object inherited across a fork still names the parent after the parent lets go.
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    go_r, go_w = os.pipe()
+    pid = None
+    with log.writer():
+        pid = os.fork()
+        if pid == 0:
+            code = 2
+            try:
+                os.close(go_w)
+                os.read(go_r, 1)  # the parent has let go
+                check = log.verify()
+                code = 0 if check.torn and not check.in_progress and check.first_bad == 3 else 1
+            finally:
+                os._exit(code)
+        os.close(go_r)
+    os.write(go_w, b"x")
+    os.close(go_w)
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0
+
+
 def test_torn_last_entry_blocks_appends_until_dropped(tmp_path, monkeypatch):
     log = _log(tmp_path, 2)
     lines = _lines(log)

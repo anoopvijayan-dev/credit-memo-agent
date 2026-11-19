@@ -370,9 +370,14 @@ class CaseLog:
             if not check.torn and _read_head(self.head_path) == before:
                 return check
         # Still torn, or the head kept moving. Under the lock nothing moves, so if the lock
-        # is free, one read there is the truth.
+        # is free, one read there is the truth. An object a forked child inherited still
+        # names its parent as holder whether or not the parent has let go, so the lock is
+        # tested through a fresh handle: held now by the parent or anyone, it is refused;
+        # free, it is taken and the read stands (R43: only a writer holding the case now).
+        inherited = self._owner is not None and self._owner[0] != os.getpid()
+        locker = CaseLog(self.path) if inherited else self
         try:
-            with self.writer():
+            with locker.writer():
                 return _check(self._read_log(), _read_head(self.head_path))
         except CaseLocked:
             pass
