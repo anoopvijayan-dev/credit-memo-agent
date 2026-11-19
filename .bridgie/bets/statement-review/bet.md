@@ -181,6 +181,12 @@ The four verify-27 findings must each become a test with the R4 outcome: HMRC cr
 - 2026-11-19 D59 (unblock): take over manually — Owner: take over, with an independent pre-review before Codex. Each writer acquisition carries a token and only the block that took or joined it releases it; at fork the child drops every inherited writer state and closes its copy of the lock descriptor; six invariants p15 fork tests. → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 - 2026-11-19 D61 (question): More checks first: cash deposit, then customer transfer, then card settlement; returned payment before refund (design default) → recorded [Anoop Vijayan]
 - 2026-11-19 D62 (approve_design): approve → design approved [Anoop Vijayan]
+- 2026-11-19 D58 (unblock): retry with guidance — Owner (D58, D60-D62): R4 is reworded (design revision 4). T03 owns the categoriser only: mark an ambiguous credit as ambiguous, place it in unexplained money in, and record as its candidates every rule it matched in EITHER stage (a match inside a longer listed phrase counts only as the longer phrase; a payment-rail cue can be a candidate). Listing it in the judgement queue is R15's (task T21), not T03's: do not build the queue. Fix the three real findings from the fifth review:
+1. A bucketed line-type cue must not bypass the rail + cash paid-in ambiguity: whenever a payment rail and cash paid-in wording both match, the credit is ambiguous, whatever other cues match.
+2. Candidates must include the matched rules from the stage that did not decide, as well as the deciding stage.
+3. Word boundaries must be Unicode-aware, so an acquirer or gateway name inside a longer Unicode word (a merchant name with accented letters around STRIPE, for example) does not match as that name.
+D61 (owner): when rules agree on the bucket but carry different categories, a fixed order in the table decides, the category with more checks first: cash deposit, then customer transfer, then card settlement; a returned payment before a refund. Encode it in the table, not in rule order, and test it, including that shuffling rule order within a stage changes no category.
+Each finding becomes a test with the R4 outcome; keep the four verify-27 cases and the shuffle test. → task T03 gets one more attempt [Anoop Vijayan]
 
 ## Idea
 
