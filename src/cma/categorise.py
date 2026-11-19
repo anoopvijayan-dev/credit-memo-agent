@@ -133,28 +133,38 @@ class Ruleset:
         return tuple(r for r in self.rules if not r.protected)
 
 
-def _mark_ranges() -> str:
-    """Every combining mark (Unicode general category M: Mn, Mc, Me) as a character-class
-    body, from the Unicode database this Python ships, not a hand-kept list of blocks."""
-    ranges: list[tuple[int, int]] = []
+def _unicode_classes() -> tuple[str, str]:
+    """Character-class bodies, from one pass over the Unicode database this Python ships:
+    every combining mark (general category M: Mn, Mc, Me) as ranges, and every dash (Pd)
+    and invisible format character (Cf) escaped one by one."""
+    marks: list[tuple[int, int]] = []
+    gaps: list[str] = []
     start = prev = None
     for cp in range(sys.maxunicode + 1):
-        if unicodedata.category(chr(cp))[0] == "M":
+        cat = unicodedata.category(chr(cp))
+        if cat[0] == "M":
             if start is None:
                 start = cp
             prev = cp
-        elif start is not None:
-            ranges.append((start, prev))
+            continue
+        if start is not None:
+            marks.append((start, prev))
             start = None
+        if cat in ("Pd", "Cf"):
+            gaps.append(re.escape(chr(cp)))
     if start is not None:
-        ranges.append((start, prev))
-    return "".join(f"\\U{a:08x}" if a == b else f"\\U{a:08x}-\\U{b:08x}" for a, b in ranges)
+        marks.append((start, prev))
+    ranges = "".join(f"\\U{a:08x}" if a == b else f"\\U{a:08x}-\\U{b:08x}" for a, b in marks)
+    return ranges, "".join(gaps)
+
+
+_MARK_CLASS, _DASH_AND_INVISIBLE_CLASS = _unicode_classes()
 
 
 # Whole-word edges in any script: the character on each side is not a letter or a digit
 # (str patterns are Unicode, so [^\W_] is a letter or digit in any alphabet), nor a
 # combining mark, which belongs to the letter before it.
-_MARKS = _mark_ranges()
+_MARKS = _MARK_CLASS
 _WORD_CHAR = rf"(?:[^\W_]|[{_MARKS}])"
 WORD_START = rf"(?<![^\W_])(?<![{_MARKS}])"
 WORD_END = rf"(?![^\W_])(?![{_MARKS}])"
@@ -175,7 +185,11 @@ def _mark_aware(pattern: str) -> str:
 # What may stand between the letters of a listed name in a description: spaces, hyphens,
 # dots and slashes, or nothing (D71). Bank text spells one name many ways (SUMUP, SUM UP,
 # SUM-UP; FASTER PAYMENT, FASTER-PAYMENT), and a list cannot hold every spelling.
-_SEPARATORS = "\\s\\-./"
+# Every dash (Pd: hyphen, en and em dash and the rest), the minus sign, and every invisible
+# format character (Cf: soft hyphen, zero-width space and joiner, byte order mark) count as
+# separators too, so a typographic dash or an invisible character cannot hide a listed
+# name (T03 review 9). Both are fixed sets, built once.
+_SEPARATORS = "\\s./\u2212" + _DASH_AND_INVISIBLE_CLASS
 _SEPARATOR_RUN = re.compile(rf"[{_SEPARATORS}]+")
 
 
@@ -193,6 +207,8 @@ def names_pattern(names: Sequence[str]) -> str:
     either side (WORD_START, WORD_END)."""
     alts = sorted({_spelling_free(n) for n in names if _SEPARATOR_RUN.sub("", _fold(n))},
                   key=lambda a: (-len(a), a))
+    if not alts:  # nothing but separators: a name that names nothing matches nothing
+        return "(?!)"
     return WORD_START + "(?:" + "|".join(alts) + ")" + WORD_END
 
 
@@ -458,7 +474,9 @@ class ProfileNames:
 
 def _names_in(names: Sequence[str], description: str) -> bool:
     """`description` folded (_fold)."""
-    names = [n for n in names if n.strip()]
+    # A profile value of only spaces, dashes, dots or invisible characters names no one
+    # (T03 review 9): it must not settle an ambiguous credit by matching everywhere.
+    names = [n for n in names if _SEPARATOR_RUN.sub("", _fold(n))]
     return bool(names) and re.search(names_pattern(names), description) is not None
 
 

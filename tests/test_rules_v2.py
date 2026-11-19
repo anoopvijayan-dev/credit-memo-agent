@@ -1541,3 +1541,26 @@ def test_every_listed_name_matches_its_rule_whatever_the_spacing(v2):
 ])
 def test_spelling_and_advance_wording_never_reach_trading_by_accident(v2, desc, category, rule):
     assert classify(_t(desc, 100.0), v2) == (category, rule)
+
+
+# --- T03 review 9: typographic dashes, invisible characters, empty profile names ------
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("gap", ["–", "—", "−", "­", "​", "﻿", "‑"])  # noqa: RUF001 - the look-alike dashes are the test
+def test_a_typographic_dash_or_invisible_character_hides_no_listed_name(v2, gap):
+    """En and em dash, minus, soft hyphen, zero-width space, byte order mark and the
+    non-breaking hyphen all separate like a space: the rail is still the rail."""
+    desc = f"FASTER{gap}PAYMENT CASH DEPOSIT"
+    assert classify(_t(desc, 200.0), v2) == (C.OTHER, "v2:conflict:payment_rail+cash_paid_in"), repr(desc)
+    assert classify(_t(f"SUM{gap}UP CASH ADVANCE", 200.0), v2) == (C.LOAN_DRAWDOWN, "v2:lender_drawdown")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("value", ["-", " . ", "–", "​", "/ /", " "])  # noqa: RUF001
+def test_a_profile_value_of_only_separators_names_no_one(v2, value):
+    """A director or own-account value that is all separators matches nothing, so it can
+    neither settle an ambiguous credit nor move any line."""
+    profile = ProfileNames(directors=(value,), own_accounts=(value,))
+    for desc in ("FPS CREDIT CASH DEPOSIT", "CASH DEPOSIT DIRECTOR", "STRIPE PAYMENTS UK"):
+        assert classify(_t(desc, 300.0), v2, profile=profile) == classify(_t(desc, 300.0), v2), (value, desc)
+    assert categorise.names_pattern([value]) == "(?!)"
