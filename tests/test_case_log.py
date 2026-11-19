@@ -1713,8 +1713,8 @@ def test_p15_a_crash_during_the_first_append_is_still_a_torn_entry_to_drop(tmp_p
 
 @pytest.mark.invariants
 def test_p15_a_case_writers_keep_taking_gets_no_verdict(tmp_path, monkeypatch):
-    # R43: if writers pass the gate at every attempt, no read can be held against one
-    # writer or made of a free case, so nothing is claimed.
+    # R43: the gate busy and the case held at every attempt: no read can be held against
+    # one writer or made of a free case, so the case is being saved and nothing is claimed.
     log = _log(tmp_path, 2)
     _crash_mid_append(log, monkeypatch, 10)
     monkeypatch.setattr(case, "READ_PAUSE", 0)
@@ -1724,9 +1724,9 @@ def test_p15_a_case_writers_keep_taking_gets_no_verdict(tmp_path, monkeypatch):
         yield  # pragma: no cover
 
     monkeypatch.setattr(case.CaseLog, "_shared", contextlib.contextmanager(gate_busy))
+    monkeypatch.setattr(case, "_try_shared", lambda fd: False)  # and the case lock is held
     check = case.CaseLog(log.path).verify()
     monkeypatch.undo()
-    # R43: no such read within the retries: being saved, and nothing claimed about any entry
     assert not check.checked and check.in_progress and check.first_bad is None
     assert case.CaseLog(log.path).verify().torn  # free and steady: the entry is named
 
@@ -1804,3 +1804,21 @@ def test_p15_a_holder_whose_lock_file_was_replaced_writes_nothing(tmp_path):
         with pytest.raises(case.CaseLocked, match="replaced"):
             a.append("override", {"who": "a"}, expected=2)
     assert [e.data for e in log.entries()][-1] == {"who": "b"}
+
+
+
+@pytest.mark.invariants
+def test_p15_a_writer_paused_at_the_gate_does_not_hide_a_torn_entry(tmp_path, monkeypatch):
+    # T12 review 13 / R43: a writer holding the gate has not taken the case; with the case
+    # lock free, the check holds it shared (keeping that writer out) and names the entry.
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    gate = os.open(log.gate_path, os.O_RDWR)
+    try:
+        assert case._try_exclusive(gate)  # a writer, paused at the gate
+        check = case.CaseLog(log.path).verify()
+    finally:
+        case._unlock(gate)
+        os.close(gate)
+    assert check.checked and check.torn and check.first_bad == 3 and not check.in_progress

@@ -459,7 +459,27 @@ class CaseLog:
                             with suppress(OSError):  # free the lock at once
                                 _unlock(case_fd)
                         os.close(case_fd)
-            except CaseLocked:  # a writer is passing the gate this moment: look again
+            except CaseLocked:
+                # A writer is at the gate (passing it, or paused there): it does not hold the
+                # case yet. If the case lock is free, holding it shared keeps that writer
+                # out too, so one read under it is the truth; if it is held, look again.
+                try:
+                    case_fd = os.open(self.lock_path, _PROBE_FLAGS)
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    return self._untested()
+                try:
+                    if _try_shared(case_fd):
+                        try:
+                            return _check(self._read_log(), _read_head(self.head_path))
+                        finally:
+                            with suppress(OSError):
+                                _unlock(case_fd)
+                except OSError:
+                    return self._untested()
+                finally:
+                    os.close(case_fd)
                 continue
             except FileNotFoundError:
                 # No gate: no writer has ever started on this case (each creates it first),
