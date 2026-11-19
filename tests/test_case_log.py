@@ -9,6 +9,7 @@ import contextlib
 import json
 import os
 import threading
+import time
 
 import pytest
 
@@ -262,7 +263,7 @@ def test_p15_a_lock_error_is_not_a_live_writer_so_a_torn_entry_is_still_reported
     _crash_mid_append(log, monkeypatch, 5)
     monkeypatch.setattr(case, "READ_PAUSE", 0)
 
-    def broken_lock(fd):
+    def broken_lock(fd, shared=False):
         raise OSError(errno.ENOLCK, "no locks available")
 
     monkeypatch.setattr(case, "_lock", broken_lock)
@@ -278,7 +279,7 @@ def test_p15_a_contended_lock_still_reads_as_another_writer(tmp_path, monkeypatc
     import errno
     log = _log(tmp_path, 1)
 
-    def held(fd):
+    def held(fd, shared=False):
         raise OSError(errno.EWOULDBLOCK, "held")
 
     monkeypatch.setattr(case, "_lock", held)
@@ -363,7 +364,7 @@ def test_p15_an_interrupt_after_the_lock_is_taken_leaves_no_lock(tmp_path, monke
     log = _log(tmp_path, 1)
     real = case._lock
 
-    def lock_then_interrupt(fd):
+    def lock_then_interrupt(fd, shared=False):
         real(fd)
         raise KeyboardInterrupt
 
@@ -1378,7 +1379,7 @@ def test_p15_with_the_lock_untestable_an_unsteady_read_never_calls_a_healthy_log
                 writer._write_entry("override", {"x": 1}, c)
         return real_read(self)
 
-    def no_locks(fd):
+    def no_locks(fd, shared=False):
         raise OSError(errno.ENOLCK, "No locks available")
 
     monkeypatch.setattr(case, "READ_PAUSE", 0)
@@ -1514,7 +1515,7 @@ def test_p15_an_untestable_lock_with_unsteady_reads_blames_no_other_window(tmp_p
         hashes = real_head(path)
         return hashes[:2] if calls["n"] % 2 else hashes
 
-    def no_locks(fd):
+    def no_locks(fd, shared=False):
         raise OSError(errno.ENOLCK, "No locks available")
 
     monkeypatch.setattr(case, "READ_PAUSE", 0)
@@ -1525,3 +1526,67 @@ def test_p15_an_untestable_lock_with_unsteady_reads_blames_no_other_window(tmp_p
     monkeypatch.undo()
     assert not check.checked and not check.in_progress and check.first_bad is None
     assert r.exit_code == 4 and "another window" not in r.output and "could not be checked" in r.output
+
+
+@pytest.mark.invariants
+@pytest.mark.skipif(not case._SHARED_LOCKS, reason="shared locks are POSIX only")
+@pytest.mark.parametrize("torn", [False, True])
+def test_p15_two_checks_at_once_never_see_each_other_as_a_save(tmp_path, monkeypatch, torn):
+    # Pre-review (rev 7): a check held the lock exclusively, so a second check saw the case
+    # held and reported "being saved" (exit 4) for an intact or a torn log. A check is not a
+    # case-log writer: checks share the lock.
+    log = _log(tmp_path, 3)
+    if torn:
+        _crash_mid_append(log, monkeypatch, 10)
+    other, taken, leave = case.CaseLog(log.path), threading.Event(), threading.Event()
+
+    def checking():
+        with other._reading():
+            taken.set()
+            leave.wait(10)
+
+    t = threading.Thread(target=checking)
+    t.start()
+    assert taken.wait(5)
+    try:
+        check = case.CaseLog(log.path).verify()
+    finally:
+        leave.set()
+        t.join(10)
+    assert not check.in_progress and check.checked
+    assert (check.torn and check.first_bad == 4) if torn else check.ok
+
+
+@pytest.mark.invariants
+@pytest.mark.skipif(not case._SHARED_LOCKS, reason="shared locks are POSIX only")
+def test_p15_a_save_waits_out_a_long_check_instead_of_being_refused(tmp_path):
+    # Pre-review (rev 7) / R42: only a writer refuses a writer. A check longer than
+    # WRITER_WAIT used to make an overlapping save fail with CaseLocked.
+    log = _log(tmp_path, 1)
+    taken = threading.Event()
+
+    def long_check():
+        with log._reading():
+            taken.set()
+            time.sleep(case.WRITER_WAIT * 3)
+
+    t = threading.Thread(target=long_check)
+    t.start()
+    assert taken.wait(5)
+    case.CaseLog(log.path).append("override", {}, expected=1)  # waits, then saves
+    t.join(10)
+    assert len(log.entries()) == 2
+
+
+def test_the_held_lock_registry_is_reentrant_on_its_thread():
+    # Pre-review (rev 7): like _state, so a writer block finalised by the garbage collector
+    # inside a registry region on the same thread cannot deadlock it.
+    done = threading.Event()
+
+    def reenter():
+        with case._HELD_GUARD, case._HELD_GUARD:
+            done.set()
+
+    t = threading.Thread(target=reenter, daemon=True)
+    t.start()
+    assert done.wait(5)

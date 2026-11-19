@@ -55,7 +55,7 @@ import os
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -67,7 +67,8 @@ ENTRY_FIELDS = frozenset((*HASHED_FIELDS, "hash"))
 TORN_DROPPED = "torn_entry_dropped"
 HEAD_FIELDS = frozenset(("count", "hash", "hashes"))
 READ_RETRIES, READ_PAUSE = 5, 0.02  # seconds; a writer paused for longer is handled in verify
-WRITER_WAIT = 0.2  # seconds a writer waits out another's hold (a reader's probe) before refusing
+WRITER_WAIT = 0.2  # seconds a writer waits for another writer's hold to end before refusing
+READER_WAIT = 10.0  # seconds a writer waits while only readers hold the case (R42: a reader is no writer)
 _UNREADABLE = object()
 
 
@@ -335,7 +336,7 @@ def _holder_id() -> tuple[int, int]:
 # the holder: its own fallback lock would be refused by its own thread, which is not
 # another writer.
 _HELD: dict[tuple[int, int], tuple[int, int]] = {}
-_HELD_GUARD = threading.Lock()
+_HELD_GUARD = threading.RLock()  # reentrant, like _state: a cleanup run by the GC cannot deadlock
 
 
 def _file_id(st: os.stat_result) -> tuple[int, int]:
@@ -380,12 +381,11 @@ class CaseLog:
         # before the case counts as held. An object a forked child inherited still names
         # its parent as holder whether or not the parent has let go, so the lock is tested
         # through a fresh handle.
-        locker = CaseLog(self.path) if self._pid != os.getpid() else self
         for attempt in range(READ_RETRIES):
             if attempt:
                 time.sleep(READ_PAUSE)
             try:
-                with locker.writer(wait=0, create=False):
+                with self._reading():
                     return _check(self._read_log(), _read_head(self.head_path))
             except CaseLocked:
                 continue
@@ -400,6 +400,40 @@ class CaseLog:
             except OSError:
                 return self._untested()
         return self._held()
+
+    @contextmanager
+    def _reading(self) -> Iterator[None]:
+        """Hold the case's lock shared for one read, through a fresh descriptor (so an
+        object a forked child inherited tests the lock as it is now). Readers never
+        exclude each other; a writer holding the case refuses it with CaseLocked, and a
+        writer waits for readers (R42: a reader is not a case-log writer). Where the
+        platform has no shared lock (Windows) the hold is exclusive and brief. A missing
+        lock file raises FileNotFoundError and nothing is created."""
+        fd = os.open(self.lock_path, _PROBE_FLAGS)
+        try:
+            try:
+                _lock(fd, shared=True)
+            except OSError as e:
+                if e.errno in _CONTENDED:
+                    raise CaseLocked(f"{self.path}: another window or command is writing to this case") from e
+                raise
+            try:
+                yield
+            finally:
+                with suppress(OSError):
+                    _unlock(fd)
+        finally:
+            os.close(fd)
+
+    def _only_readers_hold(self) -> bool:
+        """The lock is held, and only shared (by readers), so a writer should wait."""
+        if not _SHARED_LOCKS:
+            return False
+        try:
+            with self._reading():
+                return True
+        except (CaseLocked, OSError):
+            return False
 
     def _steady(self) -> LogCheck | None:
         """A read across which the head file did not change, or None if every read moved:
@@ -476,7 +510,8 @@ class CaseLog:
     @contextmanager
     def writer(self, *, wait: float | None = None, create: bool = True) -> Iterator[CaseLog]:
         """Hold the case's single-writer lock; refuses if another writer still holds it after
-        `wait` seconds (WRITER_WAIT by default: a reader's probe holds it only a moment).
+        `wait` seconds (WRITER_WAIT by default). While only readers hold the case (a check
+        takes the lock shared), it waits for them, up to READER_WAIT.
 
         The thread that holds it may nest (a sign-off holds the lock across its checks and
         its append). Any other writer is refused, whether it is another process, another
@@ -489,7 +524,8 @@ class CaseLog:
                              "the case again in this one")
         me = _holder_id()
         entered = False
-        deadline = time.monotonic() + (WRITER_WAIT if wait is None else wait)
+        start = time.monotonic()
+        deadline = start + (WRITER_WAIT if wait is None else wait)
         try:
             while True:
                 try:
@@ -497,9 +533,10 @@ class CaseLog:
                         entered = self._enter(me, create)
                     break
                 except CaseLocked:
-                    # A reader's probe holds the lock for a moment: wait briefly before
-                    # refusing, so a check in another window never refuses a save.
-                    if time.monotonic() >= deadline:
+                    # Another writer: wait briefly, then refuse (R42). Only readers: they
+                    # are no writer and finish their read, so wait for them (READER_WAIT).
+                    limit = start + READER_WAIT if self._only_readers_hold() else deadline
+                    if time.monotonic() >= limit:
                         raise
                     time.sleep(READ_PAUSE)
             yield self
@@ -724,7 +761,10 @@ if os.name == "nt":  # pragma: no cover - exercised on Windows only
     # msvcrt.locking reports a region another process holds as EACCES or EDEADLOCK.
     _CONTENDED = {errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)}
 
-    def _lock(fd: int) -> None:
+    _SHARED_LOCKS = False  # msvcrt has no shared lock: a reader's hold is exclusive and brief
+    _PROBE_FLAGS = os.O_RDWR
+
+    def _lock(fd: int, shared: bool = False) -> None:
         msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
 
     def _unlock(fd: int) -> None:
@@ -737,8 +777,11 @@ else:
     # flock with LOCK_NB reports a lock another process holds as EWOULDBLOCK (EAGAIN).
     _CONTENDED = {errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES}
 
-    def _lock(fd: int) -> None:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    _SHARED_LOCKS = True
+    _PROBE_FLAGS = os.O_RDONLY  # a reader needs only read access to take a shared lock
+
+    def _lock(fd: int, shared: bool = False) -> None:
+        fcntl.flock(fd, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
 
     def _unlock(fd: int) -> None:
         fcntl.flock(fd, fcntl.LOCK_UN)
