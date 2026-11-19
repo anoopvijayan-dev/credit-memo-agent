@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 101,
+  "next_id": 105,
   "decisions": [
     {
       "id": "D1",
@@ -2078,6 +2078,91 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-19T22:37:27.045Z"
+    },
+    {
+      "id": "D101",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-10"
+      },
+      "context": "R4: the bank's code against a longer listed phrase (verify-53, first major). R4 says a returned-payment code the bank prints at the start of the line (UNPAID DD) settles the line type on its own. It also says a match inside a longer listed phrase counts only as the longer phrase. The shipped table never makes the two meet, but a table edit can. With UNPAID DD TO SAVINGS on the own-pot list, T03 at d507393 counts the bank's code as inside the longer phrase, and the credit becomes an own-account transfer. The reviewer reads R4 as giving the code the line type. The design (C1 step 2) lets the bank's code settle the line type before the longer-phrase rule applies, so the credit is a returned payment. Both readings are non-trading, so M2 does not move; M7 and the returned-DD indicator do.",
+      "options": [
+        "The bank's code settles the line type before the longer-phrase rule; say so in R4 in the next revision (design default; what verify-53 expects)",
+        "The bank's code settles the line type before the longer-phrase rule; leave R4's text as it is",
+        "Refuse at load any other rule whose names begin with a listed bank code, and leave R4 as it is (a pattern on another rule could still match there)",
+        "A longer listed phrase outranks the bank's code; amend R4 to say so"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T22:59:07.204Z"
+    },
+    {
+      "id": "D102",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-10"
+      },
+      "context": "R4: alternatives inside one pattern (verify-53, second major). Since D97 a rule's pattern and its names are scanned separately and the longest match at each start is kept. Inside one pattern, though, Python's engine returns the first alternative that matches at a start. With ACME and ACME FASTER PAYMENT LTD written as two alternatives of one pattern, the shorter one wins. The rail inside the longer phrase then survives, and ACME FASTER PAYMENT LTD CASH DEPOSIT becomes ambiguous instead of trading receipts. The design (C1 step 1) takes the longest match any alternative can make at a start, so the order of alternatives picks nothing, just as rule order picks nothing. The standard engine does not do this: the build needs a longest-match engine, or a matcher its tests prove equivalent, and must still meet the 2-second target at 10,000 lines (R52). No shipped pattern has two alternatives that start at the same place.",
+      "options": [
+        "The longest match any alternative can make at a start (design default)",
+        "Refuse v2 patterns that have alternatives or optional groups, so phrases go on names lists (five shipped patterns move to names, which changes their whole-word and separator behaviour)",
+        "Keep the first alternative, and say in the design that a longer phrase must be a name or its own rule to count as longer"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T22:59:07.209Z"
+    },
+    {
+      "id": "D103",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-10"
+      },
+      "context": "A repair under lock-file interference (R42 and P15 scope, D99). D99 says that if removing or replacing a lock file still lets two writers append, the log they leave is reported broken, never intact. That holds for appends: two entries claim one position, so the chain or the head record fails there. Dropping a damaged (torn) entry is not an append. It rewrites the log through a temporary file and a rename, so that a crash leaves either the old log or the repaired one. Suppose interference lets a second writer take the case, drop the same torn entry and append, all between the first writer's re-check and its rename. The rename then removes the second writer's entries, the first writer's head record matches what is left, and the log reads intact. The design states this as part of the scope, like a hand edit of the log and its head record together, which only a signed pack's pinned head shows.",
+      "options": [
+        "State it in the design only: under such interference a repair can remove another writer's entries, and a signed pack pins the head it saw (design default)",
+        "State it in R42 and P15's scope too, in the next revision",
+        "Make a repair an append (the torn bytes stay, closed off and named by a drop entry), so 'broken, never intact' covers repairs too; T12 changes its log format and reader"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T22:59:07.213Z"
+    },
+    {
+      "id": "D104",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Approve the design and requirements (R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R18 R19 R20 R21 R22 R23 R24 R25 R26 R27 R28 R29 R30 R31 R32 R33 R34 R35 R36 R37 R38 R39 R40 R41 R42 R43 R44 R45 R46 R47 R48 R50 R51 R52 R53 R54 R55 R56 P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20) for 'statement-review'? Branch bridgie/statement-review from claude/busy-ride-h88y5r.",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T22:59:07.217Z"
     }
   ]
 }
