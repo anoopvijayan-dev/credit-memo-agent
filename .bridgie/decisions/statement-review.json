@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 100,
+  "next_id": 101,
   "decisions": [
     {
       "id": "D1",
@@ -2058,6 +2058,26 @@
       "decided_at": "2026-11-19T22:34:46.272Z",
       "effect": "changes requested: D98 (Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). after the thirteenth T12 review): state in R42 and P15's scope, keeping their ids, that the case folder's lock files (the gate and the case lock beside the log) are the tool's own. Removing or replacing them while the case is in use is outside R42's single-writer guarantee, as hand-editing the log is: a writer re-checks its lock before each write and refuses if it was removed or replaced, and if such interference still lets two writers append, the log they leave is reported broken (R43), never intact. Keep every other requirement, property and id.; re-run bridgie shape statement-review",
       "created_at": "2026-11-19T22:34:46.268Z"
+    },
+    {
+      "id": "D100",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Mapped the shipped lists to src/cma/rules/v2.yaml:74,117,128,137,146,155,163,211,254,277,304,339,356,373,394. Traced the ambiguity stages, longer-phrase filter and bank-code exception through src/cma/categorise.py:565,614, and verified override precedence, profile candidates and firm-rule exclusion at lines 641 and 679–705. Traced cma run and line provenance through src/cma/graph.py:221,250 and src/cma/cli.py:229. specified-3.log confirms the table-driven cases and v2 CLI provenance test passed. Reviewed repeat submission, concurrent calls, sign and Unicode boundaries, currency and date handling, partial failure, override authorization, profile isolation, rollback and evidence consumers. Two accepted table edits violate R4's longer-phrase or bank-code behavior.); major: The longer-phrase filter can erase a valid bank return code before the code gets its required precedence. at src/cma/categorise.py:618; major: The span scan still loses longer alternatives inside a single regex. The passing regression at tests/test_rules_v2.py:1656 exercises a short regex and a separate longer name. at src/cma/categorise.py:558; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T22:37:27.045Z"
     }
   ]
 }

@@ -40,12 +40,12 @@
         "T01",
         "T02"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 6,
       "max_attempts": 6,
       "branch": "bridgie-task/statement-review/T03",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-51/evidence.json",
-      "escalation": "blocked after 6 attempts. Last verdict fail: R4 fail (Mapped the shipped lists to src/cma/rules/v2.yaml:74,118,137,146,155,163,254,277,304,339,356,373,394. Traced bucket precedence and candidate recording through src/cma/categorise.py:545,595,659 and CLI provenance through src/cma/graph.py:221,250. The full runner log confirms the list cases and v2 CLI test passed. Reviewed repeat categorisation, per-call state and concurrent table selection, sign and Unicode boundaries, currency and date handling, partial failure, override and firm-rule precedence, profile isolation, and evidence consumers and rollback. Two accepted table edits violate R4's ambiguity rules, as detailed below.); major: The validator still lets ordinary returned-payment wording acquire the bank-code exception. The passing test only tries to set the flag on a rule in the refund category. at src/cma/categorise.py:304; major: The span scan finds overlapping matches at different starts, but captures only the first successful alternative at a given start. An accepted mixed pattern-and-names rule can therefore miss a longer listed phrase and report a false conflict. at src/cma/categorise.py:541; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-53/evidence.json",
+      "escalation": "blocked after 6 attempts. Last verdict fail: R4 fail (Mapped the shipped lists to src/cma/rules/v2.yaml:74,117,128,137,146,155,163,211,254,277,304,339,356,373,394. Traced the ambiguity stages, longer-phrase filter and bank-code exception through src/cma/categorise.py:565,614, and verified override precedence, profile candidates and firm-rule exclusion at lines 641 and 679–705. Traced cma run and line provenance through src/cma/graph.py:221,250 and src/cma/cli.py:229. specified-3.log confirms the table-driven cases and v2 CLI provenance test passed. Reviewed repeat submission, concurrent calls, sign and Unicode boundaries, currency and date handling, partial failure, override authorization, profile isolation, rollback and evidence consumers. Two accepted table edits violate R4's longer-phrase or bank-code behavior.); major: The longer-phrase filter can erase a valid bank return code before the code gets its required precedence. at src/cma/categorise.py:618; major: The span scan still loses longer alternatives inside a single regex. The passing regression at tests/test_rules_v2.py:1656 exercises a short regex and a separate longer name. at src/cma/categorise.py:558; reviewer verdict fail"
     },
     {
       "id": "T04",
