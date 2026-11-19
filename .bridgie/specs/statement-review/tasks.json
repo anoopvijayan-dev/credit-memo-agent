@@ -146,12 +146,12 @@
         "P15"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T12",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-49/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:196–322 validates canonical entry bytes, chain links and the recorded head. Lines 401–427 check the whole log under the reader's own or a shared lock, including folder aliases. Lines 504–541 require a stable head for contended reads. Lines 551–563 expose the integrity gate intended for sign-off. Lines 588–640 enforce writer exclusion and refuse inherited writers, lines 680–706 reject stale duplicate appends, and lines 708–797 cover torn-write recovery and persistence order. The runner logs confirm the named tamper, rebuilt-chain, recovery, writer-exclusion and CLI tests. The lock handoff at lines 434–442 can still mask an incomplete entry read while the case was free.); major: Two different lock holds can have the same observed generation because the second writer acquires the OS lock at line 632 before incrementing the generation at line 640. The reader can therefore report an incomplete entry read while the case was free as being saved and suppress its entry number. at src/cma/case.py:440; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-52/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:156–322 checks canonical bytes, chain links, the recorded head and the first bad entry. Lines 413–456 handle holder aliases, free reads and writer handoff. Lines 494–519 retry when the head changes or the lock cannot be tested. Lines 529–541 provide the integrity gate intended for sign-off, whose production caller is scoped to T27. Lines 565–640 enforce normal writer exclusion and reject inherited handles. Lines 691–808 cover stale double submits, torn writes, recovery and persistence order. Entry timestamps are UTC at line 174 and the log performs no currency arithmetic. src/cma/cli.py:318–338 is the production check path and uses OS path permissions. The runner logs confirm the named Linux tamper, rebuilt-chain, CLI, writer and recovery tests. A writer paused before acquiring the case lock can still hide a torn entry, and replacing the lock file after validation can let two appends write the same sequence.); major: An occupied gate is treated as proof of a case writer even when the case lock is free. The reader exhausts its retries without checking the log and suppresses the incomplete entry number. at src/cma/case.py:474; major: The lock identity check leaves a race between validation and the append. Replacing the lock file during that interval lets a second writer commit at the same expected position. at src/cma/case.py:792; reviewer verdict fail"
     },
     {
       "id": "T13",

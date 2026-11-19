@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 98,
+  "next_id": 99,
   "decisions": [
     {
       "id": "D1",
@@ -2020,6 +2020,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-19T22:29:43.539Z"
+    },
+    {
+      "id": "D98",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:156–322 checks canonical bytes, chain links, the recorded head and the first bad entry. Lines 413–456 handle holder aliases, free reads and writer handoff. Lines 494–519 retry when the head changes or the lock cannot be tested. Lines 529–541 provide the integrity gate intended for sign-off, whose production caller is scoped to T27. Lines 565–640 enforce normal writer exclusion and reject inherited handles. Lines 691–808 cover stale double submits, torn writes, recovery and persistence order. Entry timestamps are UTC at line 174 and the log performs no currency arithmetic. src/cma/cli.py:318–338 is the production check path and uses OS path permissions. The runner logs confirm the named Linux tamper, rebuilt-chain, CLI, writer and recovery tests. A writer paused before acquiring the case lock can still hide a torn entry, and replacing the lock file after validation can let two appends write the same sequence.); major: An occupied gate is treated as proof of a case writer even when the case lock is free. The reader exhausts its retries without checking the log and suppresses the incomplete entry number. at src/cma/case.py:474; major: The lock identity check leaves a race between validation and the append. Replacing the lock file during that interval lets a second writer commit at the same expected position. at src/cma/case.py:792; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T22:31:19.174Z"
     }
   ]
 }
