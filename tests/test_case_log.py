@@ -461,59 +461,44 @@ def test_p15_a_forked_childs_reader_reports_a_torn_entry_once_its_parent_has_let
 
 
 @pytest.mark.invariants
-def test_p15_a_stale_append_mark_from_a_dead_process_excuses_nothing(tmp_path):
-    # T12 review: only a live holder mid-append excuses an incomplete entry. A mark a
-    # crashed process left behind names a process that no longer runs.
-    log = _log(tmp_path, 1)
-    with open(log.lock_path, "r+b") as f:
-        f.seek(case._MARK_AT)
-        f.write(b"APPENDING 2147483646".ljust(case._MARK_LEN))
-    assert not log._holder_mid_append()
-    with log.writer():  # every new holder resets the mark
-        pass
-    with open(log.lock_path, "rb") as f:
-        f.seek(case._MARK_AT)
-        assert f.read(case._MARK_LEN).split()[0] == b"IDLE"
-
-
-@pytest.mark.invariants
-def test_p15_a_contended_reader_judges_by_the_head_read_after_the_log(tmp_path, monkeypatch):
-    # T12 review: the reader decided what was recorded from the head it read before its
-    # last log read, so damage to an entry a later head records was excused as an append.
+def test_p15_a_held_cases_recorded_entries_are_judged_strictly_and_an_unsteady_read_claims_nothing(
+        tmp_path, monkeypatch):
+    # R43 (revision 6, D73): while anyone holds the case, the entries the log records as
+    # complete are judged from every read; nothing after them is called intact or broken.
     log = _log(tmp_path, 4)
     lines = _lines(log)
-    assert '"n":2' in lines[2]
     tampered = "".join([*lines[:2], lines[2].replace('"n":2', '"n":7'), *lines[3:]]).encode()
-    real_head = case._read_head
-    calls = {"n": 0}
+    holder, taken, leave = case.CaseLog(log.path), threading.Event(), threading.Event()
 
-    def head_then_newer(path):
-        calls["n"] += 1
-        hashes = real_head(path)
-        return hashes[:2] if calls["n"] % 2 else hashes  # before the log: older; after: newer
-
-    reader = case.CaseLog(log.path)
-    holder = case.CaseLog(log.path)
-    taken, leave = threading.Event(), threading.Event()
-
-    def hold_mid_append():
-        with holder.writer(), holder._appending():
+    def hold():
+        with holder.writer():
             taken.set()
             leave.wait(10)
 
-    t = threading.Thread(target=hold_mid_append)
+    t = threading.Thread(target=hold)
     t.start()
     assert taken.wait(5)
+    real_head, calls = case._read_head, {"n": 0}
+
+    def head_keeps_moving(path):
+        calls["n"] += 1
+        hashes = real_head(path)
+        return hashes[:2] if calls["n"] % 2 else hashes  # never the same twice in a row
+
     try:
         monkeypatch.setattr(case, "READ_PAUSE", 0)
-        monkeypatch.setattr(case, "_read_head", head_then_newer)
         monkeypatch.setattr(case.CaseLog, "_read_log", lambda self: tampered)
-        check = reader.verify()
+        check = case.CaseLog(log.path).verify()  # entry 3 is recorded: damage is named
+        assert not check.ok and check.first_bad == 3 and not check.in_progress
+        monkeypatch.setattr(case, "_read_head", head_keeps_moving)
+        check = case.CaseLog(log.path).verify()  # entry 3 is past the head it was read with
+        assert not check.checked and not check.ok and check.first_bad is None and check.in_progress
+        with pytest.raises(case.CaseLocked):
+            case.CaseLog(log.path).require_intact()
     finally:
         monkeypatch.undo()
         leave.set()
         t.join(10)
-    assert not check.ok and not check.in_progress and check.first_bad == 3
 
 
 @pytest.mark.invariants
@@ -587,11 +572,11 @@ def test_p15_a_reader_caught_across_a_drop_does_not_call_a_healthy_log_rewritten
 
 
 @pytest.mark.invariants
-def test_p15_an_append_that_finishes_while_the_mark_is_read_is_not_reported_torn(tmp_path, monkeypatch):
-    # Pre-review: the mark is read after the log; a writer that finished in between had
-    # already set it back to IDLE, and the stale torn read was reported to be dropped.
+def test_p15_a_reader_during_a_slow_append_reports_it_being_saved_never_torn(tmp_path, monkeypatch):
+    # An append whose head file is slow: the case is held, so the reader reports the
+    # recorded entries and the new line as being saved; once free, the log is whole.
     log = _log(tmp_path, 3)
-    written, go, released = threading.Event(), threading.Event(), threading.Event()
+    written, go = threading.Event(), threading.Event()
     writer = case.CaseLog(log.path)
     real_head = case.CaseLog._write_head
 
@@ -602,35 +587,29 @@ def test_p15_an_append_that_finishes_while_the_mark_is_read_is_not_reported_torn
         real_head(self, hashes)
 
     monkeypatch.setattr(case.CaseLog, "_write_head", slow_head)
-    t = threading.Thread(target=lambda: (writer.append("override", {"n": 3}, expected=3), released.set()))
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    t = threading.Thread(target=lambda: writer.append("override", {"n": 3}, expected=3))
     t.start()
     assert written.wait(5)
-    reader = case.CaseLog(log.path)
-    real_state = case.CaseLog._holder_writing
-
-    def late_state(self):
-        if self is reader:
-            go.set()
-            released.wait(5)  # the append finishes and the mark is reset before it is read
-        return real_state(self)
-
-    monkeypatch.setattr(case.CaseLog, "_holder_writing", late_state)
     try:
-        check = reader.verify()
+        check = case.CaseLog(log.path).verify()
     finally:
         go.set()
         t.join(10)
-        monkeypatch.undo()
-    assert check.ok and not check.torn, check.reason
+    assert check.in_progress and check.ok and not check.torn and check.head.position == 3
+    after = case.CaseLog(log.path).verify()
+    assert after.ok and not after.in_progress and after.head.position == 4
 
 
 @pytest.mark.invariants
-def test_p15_a_crash_torn_entry_being_dropped_is_still_reported_incomplete(tmp_path, monkeypatch):
-    # Pre-review: the drop marked the lock APPENDING, so a reader showed the entry a crash
-    # left torn as an append in progress. Only the drop's own repair entry is excused.
+def test_p15_a_torn_entry_is_being_saved_while_held_and_named_once_the_case_is_free(tmp_path, monkeypatch):
+    # R43 (revision 6): while a drop holds the case, a reader reports the recorded entries
+    # and the rest as being saved, never intact; free, a torn entry is named.
     log = _log(tmp_path, 3)
     _crash_mid_append(log, monkeypatch, 10)
     monkeypatch.setattr(case, "READ_PAUSE", 0)
+    free = case.CaseLog(log.path).verify()
+    assert free.torn and free.first_bad == 4 and not free.in_progress
     inside, go = threading.Event(), threading.Event()
     dropper = case.CaseLog(log.path)
     real = case.CaseLog._replace_torn
@@ -645,11 +624,13 @@ def test_p15_a_crash_torn_entry_being_dropped_is_still_reported_incomplete(tmp_p
     t.start()
     assert inside.wait(5)
     try:
-        check = case.CaseLog(log.path).verify()
+        held = case.CaseLog(log.path).verify()
     finally:
         go.set()
         t.join(10)
-    assert check.torn and not check.in_progress and check.first_bad == 4
+    assert held.in_progress and held.first_bad is None and held.head.position == 3
+    done = case.CaseLog(log.path).verify()
+    assert done.ok and done.head.position == 4 and done.entries[-1].event == case.TORN_DROPPED
 
 
 @pytest.mark.invariants
@@ -1171,19 +1152,13 @@ def test_a_lock_holder_still_sees_a_torn_entry_while_a_reader_sees_it_recorded(t
         # another writer, so it must not excuse the torn entry as an append in progress.
         with pytest.raises(case.CaseLogBroken):
             case.CaseLog(log.path).require_intact()
-        # T12 review: a holder that only checks the log excuses nothing: another thread
-        # reading sees the stale torn entry as torn
+        # R43 (revision 6, D73): another thread reading while this one holds the case
+        # reports the recorded entries and the rest as being saved, never intact or broken
         seen = []
         t = threading.Thread(target=lambda: seen.append(case.CaseLog(log.path).verify()))
         t.start()
         t.join(10)
-        assert seen and seen[0].torn and not seen[0].in_progress
-        # while the holder is mid-append, that reader sees the log as recorded instead
-        with log._appending():
-            t = threading.Thread(target=lambda: seen.append(case.CaseLog(log.path).verify()))
-            t.start()
-            t.join(10)
-        assert seen[1].in_progress and seen[1].ok
+        assert seen and seen[0].in_progress and seen[0].first_bad is None and seen[0].head.position == 2
 
 
 def test_a_crash_after_the_rename_while_dropping_leaves_a_torn_log_that_drops_again(tmp_path, monkeypatch):
@@ -1381,9 +1356,9 @@ def test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_
     _crash_mid_append(log, monkeypatch, 10)
     taken, leave = threading.Event(), threading.Event()
 
-    def other_command():  # another command holds the lock mid-append: a thread, not this one
+    def other_command():  # another command holds the case: a thread, not this one
         held = case.for_case(folder)
-        with held.writer(), held._appending():
+        with held.writer():
             taken.set()
             leave.wait(10)
 
@@ -1396,6 +1371,16 @@ def test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_
         leave.set()
         t.join(10)
     assert r.exit_code == 0, r.output
-    assert "2 entries" in r.output and "appending" in r.output
+    assert "2 recorded entries" in r.output and "saving" in r.output and "not checked" in r.output
     r = _check_cli(folder)  # the lock free again: the torn entry is named
     assert r.exit_code == 3 and "entry 3" in r.output and "incomplete" in r.output
+
+
+def test_case_check_says_try_again_when_nothing_could_be_checked(tmp_path, monkeypatch):
+    # R43 (revision 6): with no steady read while another holds the case, nothing is
+    # claimed: neither intact (exit 0) nor broken (exit 3).
+    folder, _ = _case_dir(tmp_path, 2)
+    unchecked = case.LogCheck(case.Head(0, case.GENESIS), [], in_progress=True, checked=False)
+    monkeypatch.setattr(case.CaseLog, "verify", lambda self: unchecked)
+    r = _check_cli(folder)
+    assert r.exit_code == 4 and "being saved" in r.output and "intact" not in r.output

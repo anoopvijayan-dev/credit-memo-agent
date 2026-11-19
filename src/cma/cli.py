@@ -309,20 +309,30 @@ def import_monzo(
 def case_check(folder: Path = typer.Argument(..., help="The case folder (cases/<id>).")):
     """Load a case's log and check its hash chain against its head file (R43).
 
-    Exit 0 when it is intact, 3 when an entry was changed, removed, reordered or not
-    finished, naming the first bad entry. Entries are named by number, never quoted."""
+    Exit 0 when it is intact (or, while another window or command holds the case, when
+    its recorded entries are and the rest is being saved), 3 when an entry was changed,
+    removed, reordered or not finished, naming the first bad entry, and 4 when the case is
+    being saved and nothing could be checked yet. Entries are named by number, never quoted."""
     from . import case
 
     if not folder.is_dir():
         console.print(f"[red]No case folder at {folder}.[/red]")
         raise typer.Exit(code=2)
     check = case.for_case(folder).verify()
+    if not check.checked:
+        console.print("Case log is being saved by another window or command; nothing could be "
+                      "checked yet. Check again in a moment.")
+        raise typer.Exit(code=4)
     if not check.ok:
         console.print(f"[red]Case log broken:[/red] entry {check.first_bad} {check.reason}.")
         console.print("Nothing may be recorded or signed off on this case until it is resolved.")
         raise typer.Exit(code=3)
-    note = "; another window or command is appending" if check.in_progress else ""
-    console.print(f"case log intact: {check.head.position} entries, head {check.head.hash[:12]}{note}")
+    if check.in_progress:  # R43: the recorded entries check out; the rest is not checked yet
+        console.print(f"case log: {check.head.position} recorded entries intact, head "
+                      f"{check.head.hash[:12]}; another window or command is saving, the rest "
+                      "is not checked yet")
+        return
+    console.print(f"case log intact: {check.head.position} entries, head {check.head.hash[:12]}")
 
 
 @app.command()
