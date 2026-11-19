@@ -1,0 +1,52 @@
+{
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:195–322 validates canonical bytes, chain links and the recorded head, and identifies the first discrepant or incomplete entry. Lines 413–500 distinguish the owning thread, a free case, a steady read under the gate and dual contention. Lines 580–695 enforce writer ownership and reject inherited writes. Lines 716–758 handle duplicate submissions and gate recovery on the last intact position. The CLI exposes the check at src/cma/cli.py:309–338, and src/cma/case.py:554–566 supplies the sign-off guard for T27. The runner logs show the named tamper, rebuilt-chain, torn-entry, concurrency, recovery and CLI contract tests passed. The lane review covered empty and malformed inputs, UTC timestamps, local filesystem permissions, case-folder isolation and CLI exit-code consumers. The change performs no currency arithmetic or migration. The entry write and retried publishing renames can still proceed after the case lock is replaced.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-56/invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 833,
+      "criterion": "P15",
+      "claim": "The append checks the case lock before opening the log. If the lock goes away during that open, it still writes the entry before the next lock check refuses head publication.",
+      "repro": "Start with one committed entry. Wrap os.open for the append-mode log open so it removes the case lock after the real open returns. Append with expected=1. The call raises CaseLocked at head publication, but the log has already gained entry 2."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 852,
+      "criterion": "P15",
+      "claim": "The Windows rename retry loop can publish the head or repaired log after lock replacement during the retry pause. The callers at lines 777 and 811 check ownership once before entering the loop.",
+      "repro": "Extend the simulated Windows sharing-violation test at tests/test_case_log.py:396 to exercise an append or repair publication. Inject PermissionError on the first rename, replace the case lock during the retry pause, and let the next rename succeed. The destination changes despite the lost lock."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer claim says a check during another writer's save exits 0 with 'appending'. The implemented and runner-tested contract is exit 4 with 'being saved'.",
+      "repro": "Compare the claim with tests/test_case_log.py:1328 and the passing row in contracts-4.log. The test requires exit 4 and the recorded-entry count."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1202,
+      "criterion": "P15",
+      "claim": "The producer's disposition claims the passing stress test forces two commits during every read attempt and lock contention at fallback. The test runs an unsynchronized writer and checks that none of 40 reads reports a bad entry. The exact schedule and claimed fallback result are not proven.",
+      "repro": "Inspect the test and its passing row in specified-3.log. To prove the claimed schedule, add a synchronized test that forces and asserts two commits per attempt and the required lock state, then run python -m pytest -v tests/test_case_log.py -k reader_never_reports_a_healthy_log_broken."
+    }
+  ],
+  "verdict": "fail"
+}

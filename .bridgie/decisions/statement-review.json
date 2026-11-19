@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 114,
+  "next_id": 115,
   "decisions": [
     {
       "id": "D1",
@@ -2338,6 +2338,26 @@
       "decided_at": "2026-11-19T23:49:12.656Z",
       "effect": "design approved",
       "created_at": "2026-11-19T23:48:59.489Z"
+    },
+    {
+      "id": "D114",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:195–322 validates canonical bytes, chain links and the recorded head, and identifies the first discrepant or incomplete entry. Lines 413–500 distinguish the owning thread, a free case, a steady read under the gate and dual contention. Lines 580–695 enforce writer ownership and reject inherited writes. Lines 716–758 handle duplicate submissions and gate recovery on the last intact position. The CLI exposes the check at src/cma/cli.py:309–338, and src/cma/case.py:554–566 supplies the sign-off guard for T27. The runner logs show the named tamper, rebuilt-chain, torn-entry, concurrency, recovery and CLI contract tests passed. The lane review covered empty and malformed inputs, UTC timestamps, local filesystem permissions, case-folder isolation and CLI exit-code consumers. The change performs no currency arithmetic or migration. The entry write and retried publishing renames can still proceed after the case lock is replaced.); major: The append checks the case lock before opening the log. If the lock goes away during that open, it still writes the entry before the next lock check refuses head publication. at src/cma/case.py:833; major: The Windows rename retry loop can publish the head or repaired log after lock replacement during the retry pause. The callers at lines 777 and 811 check ownership once before entering the loop. at src/cma/case.py:852; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T23:50:47.288Z"
     }
   ]
 }
