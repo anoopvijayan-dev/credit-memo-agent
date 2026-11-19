@@ -1386,6 +1386,7 @@ def test_p15_with_the_lock_untestable_an_unsteady_read_never_calls_a_healthy_log
     monkeypatch.setattr(case, "READ_PAUSE", 0)
     monkeypatch.setattr(case.CaseLog, "_read_log", busy)
     monkeypatch.setattr(case, "_lock", no_locks)
+    monkeypatch.setattr(case.CaseLog, "_require_lock_in_place", lambda self: None)  # harness appends
     check = reader.verify()
     monkeypatch.undo()
     assert check.first_bad is None, check.reason  # never broken
@@ -1612,6 +1613,7 @@ def test_p15_a_writer_that_starts_while_a_check_reads_without_a_lock_file_is_see
     # created and took the lock meanwhile must make it probe again, not call the log intact.
     log = _log(tmp_path, 2)
     log.lock_path.unlink()
+    log.gate_path.unlink()  # no gate: no writer has ever started here, as far as a check knows
     taken, leave = threading.Event(), threading.Event()
 
     def writer_starts():
@@ -1724,7 +1726,8 @@ def test_p15_a_case_writers_keep_taking_gets_no_verdict(tmp_path, monkeypatch):
     monkeypatch.setattr(case.CaseLog, "_shared", contextlib.contextmanager(gate_busy))
     check = case.CaseLog(log.path).verify()
     monkeypatch.undo()
-    assert not check.checked and not check.in_progress and check.first_bad is None
+    # R43: no such read within the retries: being saved, and nothing claimed about any entry
+    assert not check.checked and check.in_progress and check.first_bad is None
     assert case.CaseLog(log.path).verify().torn  # free and steady: the entry is named
 
 
@@ -1774,3 +1777,30 @@ def test_p15_no_writer_takes_the_case_during_a_read_so_a_handover_is_never_being
         b.join(10)
     assert check.torn and check.first_bad == 3 and not check.in_progress
     assert b_took["at"] >= done - 0.5  # B took the case only once the reader let the gate go
+
+
+@pytest.mark.invariants
+def test_p15_a_missing_lock_file_beside_the_gate_still_gets_the_truth(tmp_path, monkeypatch):
+    # Pre-review (gate): with the gate but no case lock file, no writer holds the case and
+    # none can take it while the check holds the gate, so a torn entry is named.
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    log.lock_path.unlink()
+    check = case.CaseLog(log.path).verify()
+    assert check.checked and check.torn and check.first_bad == 3 and not check.in_progress
+    assert not log.lock_path.exists()  # a check writes nothing
+
+
+@pytest.mark.invariants
+def test_p15_a_holder_whose_lock_file_was_replaced_writes_nothing(tmp_path):
+    # Pre-review (gate) / P15: someone deletes the lock file while A holds it; B takes a new
+    # one. A's lock guards nothing now, so A's next write is refused and only B writes.
+    log = _log(tmp_path, 1)
+    a = case.CaseLog(log.path)
+    with a.writer():
+        log.lock_path.unlink()
+        b = case.CaseLog(log.path)
+        b.append("override", {"who": "b"}, expected=1)
+        with pytest.raises(case.CaseLocked, match="replaced"):
+            a.append("override", {"who": "a"}, expected=2)
+    assert [e.data for e in log.entries()][-1] == {"who": "b"}

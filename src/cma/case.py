@@ -437,15 +437,27 @@ class CaseLog:
                 time.sleep(READ_PAUSE)
             try:
                 with self._shared(self.gate_path):
-                    case_fd = os.open(self.lock_path, _PROBE_FLAGS)
+                    try:
+                        case_fd = os.open(self.lock_path, _PROBE_FLAGS)
+                    except FileNotFoundError:
+                        # Behind the gate with no case lock file: no writer holds the case,
+                        # and none can take it while the gate is held, so one read is the
+                        # truth.
+                        return _check(self._read_log(), _read_head(self.head_path))
+                    locked = False
                     try:
                         if _try_shared(case_fd):
+                            locked = True
                             return _check(self._read_log(), _read_head(self.head_path))
                         check = self._steady()
                         if _try_shared(case_fd):  # its writer let go during the read
+                            locked = True
                             return _check(self._read_log(), _read_head(self.head_path))
                         return _held_result(check)
                     finally:
+                        if locked:  # released before closing: on Windows a close may not
+                            with suppress(OSError):  # free the lock at once
+                                _unlock(case_fd)
                         os.close(case_fd)
             except CaseLocked:  # a writer is passing the gate this moment: look again
                 continue
@@ -459,8 +471,8 @@ class CaseLog:
                 continue
             except OSError:
                 return self._untested()
-        return _unchecked("could not be checked: writers kept taking the case during every "
-                          "read", in_progress=False)
+        return _unchecked("being saved: writers kept taking the case during every read",
+                          in_progress=True)
 
     @contextmanager
     def _shared(self, path: Path) -> Iterator[None]:
@@ -619,6 +631,10 @@ class CaseLog:
             _lock(fd)
             locked = True
             lock_id = _file_id(os.fstat(fd))
+            if lock_id != _file_id(os.stat(self.lock_path)):
+                # The file was replaced between opening and locking it: this lock guards
+                # nothing, so refuse rather than hold beside the holder of the new one.
+                raise CaseLocked(f"{self.path}: the case lock file changed while it was taken")
             self._lock_fd, self._owner, self._lock_depth, self._lock_id = fd, me, 1, lock_id
             with _HELD_GUARD:
                 _HELD[lock_id] = me
@@ -639,6 +655,18 @@ class CaseLog:
             if not locked and isinstance(e, OSError) and e.errno in _CONTENDED:
                 raise CaseLocked(f"{self.path}: another window or command is writing to this case") from e
             raise
+
+    def _require_lock_in_place(self) -> None:
+        """Before a write: the lock this writer holds is still the case's lock file. If the
+        file was deleted or replaced, another writer could hold the new one, so nothing is
+        written (P15: at most one writer holds the case)."""
+        try:
+            in_place = self._lock_id == _file_id(os.stat(self.lock_path))
+        except OSError:
+            in_place = False
+        if not in_place:
+            raise CaseLocked(f"{self.path}: the case lock file was removed or replaced while this "
+                             "window held the case; nothing was written")
 
     def _release_one_level(self) -> None:
         """Leave one level of this process's writer lock (call under _state)."""
@@ -705,6 +733,7 @@ class CaseLog:
             return self._replace_torn(check, by.strip())
 
     def _replace_torn(self, check: LogCheck, by: str) -> Entry:
+        self._require_lock_in_place()
         # Write the intact prefix plus the drop entry to a temporary file and rename it over
         # the log, so a crash leaves either the torn log or the repaired one, never a
         # truncated log with no record of who dropped the entry. A crash after the rename
@@ -760,6 +789,7 @@ class CaseLog:
         return self._write_entry(event, data, check)
 
     def _write_entry(self, event: str, data: dict[str, Any], check: LogCheck) -> Entry:
+        self._require_lock_in_place()
         entry, line = self._encode(event, data, check.head)
         if not check.entries and not self.head_path.exists():
             # The head file exists before the first line does, so a crash during the first
