@@ -1373,8 +1373,10 @@ def test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_
     finally:
         leave.set()
         t.join(10)
-    assert r.exit_code == 0, r.output
-    assert "2 recorded entries" in r.output and "saving" in r.output and "not checked" in r.output
+    # D75: being saved is never intact: exit 4, the recorded entries named, the rest unchecked
+    assert r.exit_code == 4, r.output
+    assert "2 recorded entries" in r.output and "saved" in r.output and "not" in r.output
+    assert "Case log broken" not in r.output and "intact" not in r.output
     r = _check_cli(folder)  # the lock free again: the torn entry is named
     assert r.exit_code == 3 and "entry 3" in r.output and "incomplete" in r.output
 
