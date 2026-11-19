@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 65,
+  "next_id": 66,
   "decisions": [
     {
       "id": "D1",
@@ -1366,6 +1366,24 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-19T08:38:18.600Z"
+    },
+    {
+      "id": "D65",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "D63 (owner, after the fifth T12 review): state the case log's concurrency scope where R42/R43 and P15 sit, without changing their ids: one writer at a time per case across windows, commands, threads and separate CaseLog objects in one process, and a reader never excuses a torn or tampered log as another writer's append; forking a process while it holds the case-log lock is not supported (the tool never forks), and a forked child that writes through an inherited CaseLog is refused. Case folders must be on a local disk. Keep every other requirement, property and id as they are.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-19T08:38:36.925Z",
+      "effect": "changes requested: D63 (owner, after the fifth T12 review): state the case log's concurrency scope where R42/R43 and P15 sit, without changing their ids: one writer at a time per case across windows, commands, threads and separate CaseLog objects in one process, and a reader never excuses a torn or tampered log as another writer's append; forking a process while it holds the case-log lock is not supported (the tool never forks), and a forked child that writes through an inherited CaseLog is refused. Case folders must be on a local disk. Keep every other requirement, property and id as they are.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-19T08:38:36.918Z"
     }
   ]
 }
