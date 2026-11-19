@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 86,
+  "next_id": 87,
   "decisions": [
     {
       "id": "D1",
@@ -1781,6 +1781,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-19T21:30:44.630Z"
+    },
+    {
+      "id": "D86",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Reviewed the supplied revision 8 of R4. The shipped tables cover own-account moves, HMRC, refunds, payment rails and cheques at src/cma/rules/v2.yaml:63–160, lenders and MCA providers at :162–241, cash deposits and explained credits at :253–280, and trading providers and cash withdrawals at :298–405. src/cma/categorise.py:497–559 filters contained phrases, gives the leading bank code precedence, and applies the two-stage ambiguity rules. The per-line override takes precedence at :573–574. At :595–618, an ambiguous credit remains OTHER and bypasses firm rules, but the director match short-circuits the own-account match, so a credit matching both profile-name kinds loses one required candidate. src/cma/models.py:57–65 maps cash deposits to trading receipts and OTHER to unexplained. src/cma/graph.py:250–253 applies the selected table and :210–224 exports line provenance. The runner logged 724 passing tests, including table-driven provenance, CLI output, repeat categorisation, rollback, historical checkpoint replay, and offline evals under both rulesets. Source review covered duplicate input, concurrent updates, sign and Unicode boundaries, currency and date handling, partial output writes, authorisation and data-root isolation, and CLI, checkpoint and MCP consumers. No tests were run or files changed during review.); major: An ambiguous credit that matches both a director or shareholder name and an own-account name records only the director candidate. R4 requires both candidate kinds. at src/cma/categorise.py:617; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T21:33:48.717Z"
     }
   ]
 }
