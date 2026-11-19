@@ -70,6 +70,8 @@ LISTS = {
         ("SUMUP FEES", -4.50, C.SUPPLIER, "v2:default"),
         # whole words only: a payer who merely contains an acquirer's letters is not one
         ("DOJOMATIC LTD", 50.00, C.OTHER, "v2:default"),
+        # whole words in any script: an accented letter is a letter (verify-32)
+        ("FPS CREDIT CAFÉWORLDPAY LTD", 50.00, C.OTHER, "v2:default"),
     ],
     "payment_gateways": [
         ("STRIPE PAYMENTS UK LTD", 2300.00, C.REVENUE_CARD, "v2:payment_gateways"),
@@ -211,6 +213,12 @@ LISTS = {
         ("REFUND DIRECTOR TRAINING LTD", 75.00, C.REFUND_IN, "v2:refunds"),
         ("IWOCA REFUND", -50.00, C.LOAN_REPAYMENT, "v2:lender_repayment"),  # money out stays debt service
         ("UNPAID DD BRITISH GAS", 75.00, C.RETURNED_DD, "v2:returned_dd"),
+        # a returned direct debit in words, not the bank's code: a returned payment
+        ("RETURNED DD BRITISH GAS", 75.00, C.RETURNED_DD, "v2:returned_payment"),
+        ("FPS CREDIT DIRECT DEBIT RETURNED ACME", 75.00, C.RETURNED_DD, "v2:returned_payment"),
+        # returned-payment and refund wording agree on the bucket: the table's category
+        # order (D61) makes it a returned payment, which M7 and the indicator count
+        ("RETURNED DD REFUND", 75.00, C.RETURNED_DD, "v2:returned_payment"),
     ],
     "explained_non_trading": [
         ("INTEREST PAID", 3.10, C.OTHER_EXPLAINED_IN, "v2:explained_non_trading"),
@@ -356,8 +364,9 @@ def test_an_explicit_pot_move_beats_protected_wording_in_the_pot_name(v2):
             desc = f"TFR {pot} {word} RESERVE"
             assert classify(_t(desc, -300.0), v2) == (C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"), desc
             got = classify(_t(desc, 300.0), v2)
+            # the candidates are every rule it matched in either stage: TFR is a payment rail
             assert got[0] is C.OTHER and set(got[1].split(":conflict:")[1].split("+")) == \
-                {"own_pots_savings", "hmrc_repayment"}, (desc, got)
+                {"own_pots_savings", "hmrc_repayment", "payment_rail"}, (desc, got)
     # only a returned direct debit is tried before an explicit pot move
     assert [r.id for r in v2.rules].index("own_pots_savings") == 1
 
@@ -401,6 +410,14 @@ def test_line_type_cue_beats_every_name_list_in_a_full_matrix(v2):
             for pot in _list("own_pots_savings"):
                 for desc in (f"TFR {pot} {name}", f"{name} {pot}"):
                     for amt in (300.0, -300.0):
+                        rail = amt > 0 and "payment_rail" in {r.id for r in categorise.credit_matches(v2, desc, amt)}
+                        if list_id == "cash_venues" and rail:
+                            # a rail with cash wording is ambiguous whatever cue matches (rev 4),
+                            # and every rule it matched is a candidate, the pot move included
+                            got = classify(_t(desc, amt), v2, firm_rules=firm)
+                            assert got[0] is C.OTHER and {"payment_rail", "cash_paid_in", "own_pots_savings"} <= \
+                                set(got[1].split(":conflict:")[1].split("+")), (desc, got)
+                            continue
                         assert classify(_t(desc, amt), v2, profile=profile, firm_rules=firm) == \
                             (C.OWN_ACCOUNT_TRANSFER, "v2:own_pots_savings"), (list_id, desc, amt)
             for rail in RAILS:
@@ -522,12 +539,12 @@ def test_v2_is_packaged_with_an_id_and_the_hash_of_its_file(v2):
     assert flags == sorted(flags, reverse=True)
     # line type first, then the protected name lists; cash paid in is not protected (design rev 3)
     assert [r.id for r in v2.protected] == ["returned_dd", "own_pots_savings", "hmrc_vat", "hmrc_paye",
-                                            "hmrc_repayment", "refunds", "payment_rail",
+                                            "hmrc_repayment", "returned_payment", "refunds", "payment_rail",
                                             "lender_repayment", "lender_drawdown", "loan_repayment",
                                             "director_funding", "loan_drawdown", "owner_drawings"]
     # no rule's exception hides another list's cue or name: only wording on no list (a cheque)
     unless = {r["id"]: r["unless"] for r in data["rules"] if "unless" in r}
-    assert unless == {"cash_paid_in": "(?<![A-Z0-9])(?:CHEQUES?|CHQ)(?![A-Z0-9])"}
+    assert unless == {"cash_paid_in": "(?<![^\\W_])(?:CHEQUES?|CHQ)(?![^\\W_])"}
 
 
 GOOD = {"id": "card", "names": ["STRIPE"], "direction": "in", "category": "revenue_card_settlement"}
@@ -927,7 +944,9 @@ def test_a_v2_table_must_keep_its_stages(mutate, message):
 @pytest.mark.invariants
 @pytest.mark.parametrize("desc, amount, category, rule_id", [
     # verify-27: an HMRC credit with explicit savings move wording: HMRC and own-account cues disagree
-    ("BACS CREDIT HMRC VAT REPAYMENT REF TO SAVINGS", 1200.00, C.OTHER, "v2:conflict:own_pots_savings+hmrc_repayment"),
+    # (revision 4: the candidates are every rule matched in either stage, so BACS's rail is one)
+    ("BACS CREDIT HMRC VAT REPAYMENT REF TO SAVINGS", 1200.00, C.OTHER,
+     "v2:conflict:own_pots_savings+hmrc_repayment+payment_rail"),
     # verify-27: counter cash at a branch whose name holds a generic explained word: names disagree
     ("COUNTER DEPOSIT GRANT ST BRANCH", 500.00, C.OTHER, "v2:conflict:cash_paid_in+explained_non_trading"),
     # verify-27: a bare pot label in an external payment is no move wording: not own-account
@@ -947,7 +966,8 @@ def test_cma_run_under_v2_lists_the_verify27_repros_as_unexplained_with_their_ca
 
     monkeypatch.setenv("CMA_RULESET", "v2")
     expect = {"STRIPE PAYMENTS UK LTD": ("revenue_card_settlement", "v2:payment_gateways"),
-              "BACS CREDIT HMRC VAT REPAYMENT REF TO SAVINGS": ("other", "v2:conflict:own_pots_savings+hmrc_repayment"),
+              "BACS CREDIT HMRC VAT REPAYMENT REF TO SAVINGS":
+                  ("other", "v2:conflict:own_pots_savings+hmrc_repayment+payment_rail"),
               "COUNTER DEPOSIT GRANT ST BRANCH": ("other", "v2:conflict:cash_paid_in+explained_non_trading"),
               "FPS CREDIT ACME LTD REF TAX POT": ("other", "v2:default"),
               "CARD REFUND FROM SAVINGS AND LOANS LTD": ("other", "v2:conflict:own_pots_savings+refunds"),
@@ -1027,18 +1047,20 @@ def _credit_samples() -> list[str]:
 
 
 def _verdict_key(category: Category, rule_id: str) -> tuple:
-    """The verdict, which must not depend on list order: the money-in bucket, and for an
-    ambiguous credit the set of candidates. Among agreeing rules (one bucket) the rule
-    recorded is the first in table order (design C1), so the rule id is not compared."""
+    """The verdict, which must not depend on list order: the category (and so the money-in
+    bucket), and for an ambiguous credit the set of candidates. Among agreeing rules of one
+    category the rule recorded is the first in table order (design C1 step 6), so the rule
+    id is not compared."""
     if ":conflict:" in rule_id:
-        return CREDIT_BUCKET[category], frozenset(rule_id.split(":conflict:", 1)[1].split("+"))
-    return CREDIT_BUCKET[category], None
+        return category, frozenset(rule_id.split(":conflict:", 1)[1].split("+"))
+    return category, None
 
 
 @pytest.mark.invariants
 def test_p_shuffling_lists_within_a_stage_gives_the_same_verdict_on_every_credit(v2):
     """Design Rollout: the verdict on a credit does not depend on the order of the lists
-    within a stage (D52). Every stage of the table is shuffled with several seeds."""
+    within a stage (D52), and neither does the category inside a bucket (D61: the table's
+    declared order). Every stage of the table is shuffled with several seeds."""
     import random
 
     descs = _credit_samples()
@@ -1049,31 +1071,35 @@ def test_p_shuffling_lists_within_a_stage_gives_the_same_verdict_on_every_credit
         names = [r for r in v2.rules if r.stage == "names"]
         rng.shuffle(cues)
         rng.shuffle(names)
-        shuffled = categorise.Ruleset(id="v2", sha256=v2.sha256, rules=tuple(cues + names))
+        shuffled = categorise.Ruleset(id="v2", sha256=v2.sha256, rules=tuple(cues + names),
+                                      category_order=v2.category_order)
         got = [_verdict_key(*classify(_t(d, 100.0), shuffled)) for d in descs]
         assert got == want, [(d, a, b) for d, a, b in zip(descs, got, want, strict=True) if a != b][:5]
 
 
-def _expected_verdict(parts: list[list[Rule]]) -> tuple[Bucket, set[str] | None]:
-    """R4's ambiguity policy, written out again from the rules each part matches alone."""
-    rules = {r.id: r for p in parts for r in p}.values()
-    bank = [r for r in rules if r.id == "returned_dd"]
-    if bank:
-        return Bucket.REFUNDS_RETURNED, None
+# D61, written out again here: inside a bucket, the category with more checks first.
+CATEGORY_ORDER = [C.CASH_DEPOSIT, C.REVENUE_TRANSFER, C.REVENUE_CARD, C.RETURNED_DD, C.REFUND_IN]
+
+
+def _expected_verdict(parts: list[list[Rule]]) -> tuple[Category, frozenset[str] | None]:
+    """R4's ambiguity policy (design C1 revision 4), written out again from the rules each
+    part matches alone."""
+    rules = list({r.id: r for p in parts for r in p}.values())
+    every = frozenset(r.id for r in rules)
+    if any(r.id == "returned_dd" for r in rules):
+        return C.RETURNED_DD, None
     cues = [r for r in rules if r.stage == "line_type" and r.category is not None]
     names = [r for r in rules if r.stage == "names"]
     rails = [r for r in rules if r.stage == "line_type" and r.category is None]
-    if cues:
-        deciding = cues
-    elif rails and any(r.category is C.CASH_DEPOSIT for r in names):
-        return Bucket.UNEXPLAINED, {r.id for r in rails + names}
-    else:
-        deciding = names
+    if rails and any(r.category is C.CASH_DEPOSIT for r in names):
+        return C.OTHER, every
+    deciding = cues or names
     if not deciding:
-        return Bucket.UNEXPLAINED, None
+        return C.OTHER, None
     if len({CREDIT_BUCKET[r.category] for r in deciding}) > 1:
-        return Bucket.UNEXPLAINED, {r.id for r in deciding}
-    return CREDIT_BUCKET[deciding[0].category], None
+        return C.OTHER, every
+    cats = {r.category for r in deciding}
+    return min(cats, key=lambda c: CATEGORY_ORDER.index(c) if c in CATEGORY_ORDER else -1), None
 
 
 @pytest.mark.invariants
@@ -1097,9 +1123,8 @@ def test_p_pairwise_matrix_every_two_credit_lists_combine_by_the_policy_alone(v2
                 a = categorise.credit_matches(v2, first, 100.0)
                 b = categorise.credit_matches(v2, second, 100.0)
                 assert {r.id for r in categorise.credit_matches(v2, desc, 100.0)} == {r.id for r in a + b}, desc
-                bucket, candidates = _expected_verdict([a, b])
                 got = classify(_t(desc, 100.0), v2)
-                assert _verdict_key(*got) == (bucket, candidates), (desc, got)
+                assert _verdict_key(*got) == _expected_verdict([a, b]), (desc, got)
                 checked += 1
     assert checked > 1000
 
@@ -1132,3 +1157,272 @@ def test_only_the_banks_returned_payment_code_is_anchored_so_only_it_settles_a_c
     # payer wording cannot take the bank code's place: UNPAID DD later in the line is not anchored
     got = classify(_t("REFUND REF UNPAID DD", 50.0), v2)
     assert got == (C.REFUND_IN, "v2:refunds")
+
+
+# --- revision 4 (D58, D60, D61): the fifth review's findings ----------------------------------
+
+def _conflict(rule_id: str) -> list[str]:
+    assert ":conflict:" in rule_id, rule_id
+    return rule_id.split(":conflict:", 1)[1].split("+")
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("desc, rule_id", [
+    # verify-32 finding 1: a bucketed cue no longer returns before the rail-plus-cash check
+    ("BACS CREDIT HMRC CASH PAID IN", "v2:conflict:hmrc_repayment+payment_rail+cash_paid_in"),
+    ("FPS CREDIT REFUND CASH DEPOSIT", "v2:conflict:refunds+payment_rail+cash_paid_in"),
+    ("FPS CREDIT FROM SAVINGS COUNTER CREDIT", "v2:conflict:own_pots_savings+payment_rail+cash_paid_in"),
+    ("FPS CREDIT RETURNED DD CASH DEPOSIT", "v2:conflict:returned_payment+payment_rail+cash_paid_in"),
+])
+def test_p_r4_a_rail_with_cash_wording_is_ambiguous_whatever_cue_matches(v2, desc, rule_id):
+    assert classify(_t(desc, 500.0), v2) == (C.OTHER, rule_id)
+
+
+@pytest.mark.invariants
+def test_p_r4_rail_plus_cash_beats_every_bucketed_cue_in_a_full_matrix(v2):
+    """Every rail, crossed with every credit cue with a bucket (not the bank's own code) and every
+    cash paid-in phrase: ambiguous, with the rail, the cue and the cash wording among the
+    candidates, and never trading receipts."""
+    data = yaml.safe_load(resources.files("cma.rules").joinpath("v2.yaml").read_bytes())
+    cues = {r["id"]: r["names"] for r in data["rules"]
+            if r["stage"] == "line_type" and "names" in r and "category" in r and r["direction"] != "out"}
+    assert set(cues) == {"own_pots_savings", "hmrc_repayment", "returned_payment", "refunds"}
+    checked = 0
+    for rail in RAILS:
+        for cue_names in cues.values():
+            for cue in cue_names:
+                for cash in _list("cash_paid_in"):
+                    desc = f"{rail} {cue} {cash}"
+                    matched = {r.id for r in categorise.credit_matches(v2, desc, 500.0)}
+                    if "payment_rail" not in matched or "cash_paid_in" not in matched:
+                        continue  # a rail word swallowed by a longer listed phrase (POT TRANSFER) is no rail
+                    got = classify(_t(desc, 500.0), v2)
+                    assert got[0] is C.OTHER, (desc, got)
+                    assert set(_conflict(got[1])) == matched, (desc, got)
+                    checked += 1
+    assert checked > 1000
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("desc, rule_id", [
+    # verify-32 finding 2: the gateway and the rail, outranked by the cues, are still candidates
+    ("FPS CREDIT HMRC TO SAVINGS STRIPE", "v2:conflict:own_pots_savings+hmrc_repayment+payment_rail+payment_gateways"),
+    ("CARD REFUND FROM SAVINGS STRIPE", "v2:conflict:own_pots_savings+refunds+payment_gateways"),
+    ("HMRC TO SAVINGS DIRECTOR INV 4", "v2:conflict:own_pots_savings+hmrc_repayment+director_funding+invoice_transfer"),
+    # names decide, the rail is still recorded
+    ("FPS CREDIT CLEARPAY FINANCE LTD", "v2:conflict:payment_rail+loan_drawdown+payment_gateways"),
+    # a match inside a longer listed phrase still counts only as the longer phrase
+    ("TO SAVINGS HMRC REFUND STRIPE CAPITAL", "v2:conflict:own_pots_savings+hmrc_repayment+lender_drawdown"),
+])
+def test_p_r4_candidates_are_every_rule_matched_in_either_stage(v2, desc, rule_id):
+    assert classify(_t(desc, 500.0), v2) == (C.OTHER, rule_id)
+
+
+@pytest.mark.invariants
+def test_p_r4_every_ambiguous_credit_records_exactly_its_matches_in_table_order(v2):
+    """Over every sample credit: an ambiguous credit's candidates are exactly the rules it
+    matched (after the longer-phrase filter), from both stages, written in table order."""
+    position = {r.id: i for i, r in enumerate(v2.rules)}
+    seen = 0
+    for d in _credit_samples():
+        cat, rid = classify(_t(d, 100.0), v2)
+        if ":conflict:" not in rid:
+            continue
+        got = _conflict(rid)
+        assert cat is C.OTHER
+        assert got == [r.id for r in categorise.credit_matches(v2, d, 100.0)], d
+        assert got == sorted(got, key=position.__getitem__), d
+        seen += 1
+    assert seen > 100
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("desc", [
+    "FPS CREDIT CAFÉSTRIPE LTD",            # verify-32 finding 3
+    "FPS CREDIT CAFÉSTRIPE LTD",      # the same, with the accent as a combining mark
+    "FPS CREDIT STRIPEÉ LTD",
+    "FPS CREDIT \u03b1\u03b2\u03b3STRIPE".upper(),  # Greek letters
+    "FPS CREDIT STRIPEЖ",                   # Cyrillic
+    "FPS CREDIT ٣STRIPE",                   # an Arabic-Indic digit
+    "FPS CREDIT ÉWORLDPAY",
+    "FPS CREDIT DELIVEROOÑ",
+])
+def test_p_r4_a_listed_name_inside_a_longer_word_in_any_script_is_not_that_name(v2, desc):
+    assert classify(_t(desc, 500.0), v2) == (C.OTHER, "v2:default")
+
+
+@pytest.mark.invariants
+def test_p_r4_unicode_neighbours_that_are_not_letters_still_separate_words(v2):
+    assert classify(_t("FPS CREDIT CAFÉ STRIPE LTD", 500.0), v2) == (C.REVENUE_CARD, "v2:payment_gateways")
+    assert classify(_t("café stripe ltd", 500.0), v2) == (C.REVENUE_CARD, "v2:payment_gateways")
+    assert classify(_t("FPS CREDIT «STRIPE»", 500.0), v2) == (C.REVENUE_CARD, "v2:payment_gateways")
+    assert classify(_t("FPS CREDIT STRIPE\u2013PAYOUT", 500.0), v2) == (C.REVENUE_CARD, "v2:payment_gateways")
+
+
+@pytest.mark.invariants
+def test_p_r4_profile_names_share_the_unicode_whole_word_rule(v2):
+    profile = ProfileNames(directors=("JANE DOE",), own_accounts=("ACME",))
+    assert classify(_t("FPS CREDIT ÉJANE DOE", 500.0), v2, profile=profile) == (C.OTHER, "v2:default")
+    assert classify(_t("FPS CREDIT JANE DOE", 500.0), v2, profile=profile) == (C.DIRECTOR_FUNDING, "profile:director")
+    assert classify(_t("FPS CREDIT ACMEÉ", 500.0), v2, profile=profile) == (C.OTHER, "v2:default")
+    assert classify(_t("FPS CREDIT ACME", 500.0), v2, profile=profile) == \
+        (C.OWN_ACCOUNT_TRANSFER, "profile:own_account")
+    # an accented name in the profile matches its accented word, composed or not
+    accented = ProfileNames(directors=("JOSÉ",))
+    assert classify(_t("FPS CREDIT JOSÉ", 500.0), v2, profile=accented) == \
+        (C.DIRECTOR_FUNDING, "profile:director")
+
+
+# D61: the category inside one bucket comes from the table's declared order.
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("desc, category, rule_id", [
+    ("FPS CREDIT STRIPE INV 17", C.REVENUE_TRANSFER, "v2:invoice_transfer"),
+    ("WORLDPAY INV 17", C.REVENUE_TRANSFER, "v2:invoice_transfer"),
+    ("CASH DEPOSIT INV 12", C.CASH_DEPOSIT, "v2:cash_paid_in"),
+    ("CASH DEPOSIT WORLDPAY", C.CASH_DEPOSIT, "v2:cash_paid_in"),
+    ("RETURNED DD REFUND", C.RETURNED_DD, "v2:returned_payment"),
+    ("REFUND DIRECT DEBIT RETURNED", C.RETURNED_DD, "v2:returned_payment"),
+])
+def test_p_r4_category_inside_a_bucket_follows_the_declared_order(v2, desc, category, rule_id):
+    assert classify(_t(desc, 100.0), v2) == (category, rule_id)
+
+
+@pytest.mark.contracts
+def test_v2_declares_its_category_order_in_the_table(v2):
+    data = yaml.safe_load(resources.files("cma.rules").joinpath("v2.yaml").read_bytes())
+    assert data["category_order"] == [c.value for c in CATEGORY_ORDER]
+    assert v2.category_order == tuple(CATEGORY_ORDER)
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("mutate, message", [
+    (lambda d: d.pop("category_order"), "bucket trading_receipts has categories"),
+    (lambda d: d["category_order"].remove("refund_in"), "bucket refunds_returned_payments_in"),
+    (lambda d: d["category_order"].append("cash_deposit"), "listed twice"),
+    (lambda d: d["category_order"].append("nonsense"), "'nonsense' is not a category"),
+    (lambda d: d.update(category_order="cash_deposit"), "must be a list"),
+])
+def test_a_v2_table_must_order_every_bucket_with_two_categories(mutate, message):
+    import copy
+    data = copy.deepcopy(yaml.safe_load(resources.files("cma.rules").joinpath("v2.yaml").read_bytes()))
+    mutate(data)
+    with pytest.raises(RulesetError, match=message):
+        validate_ruleset(data, "v2")
+
+
+@pytest.mark.contracts
+def test_a_frozen_table_has_no_category_order():
+    with pytest.raises(RulesetError, match="frozen table has no category_order"):
+        validate_ruleset({"id": "v1", "frozen": True, "category_order": [], "rules": [GOOD]}, "v1")
+
+
+def _shuffled(v2, rng) -> categorise.Ruleset:
+    """v2 with its rules shuffled inside each stage. Debits read the protected rules first,
+    so the shuffle keeps protected before unprotected within a stage (as the validator does)."""
+    groups: list[list[Rule]] = []
+    for stage in ("line_type", "names"):
+        for protected in (True, False):
+            g = [r for r in v2.rules if r.stage == stage and r.protected is protected]
+            rng.shuffle(g)
+            groups.append(g)
+    return categorise.Ruleset(id="v2", sha256=v2.sha256, rules=tuple(r for g in groups for r in g),
+                              category_order=v2.category_order)
+
+
+def _figures(s: Statement) -> list[tuple]:
+    return [(m.id, m.value, tuple(m.evidence)) for m in metrics.compute(s)]
+
+
+def _statement(rows: list[tuple[str, float]]) -> Statement:
+    bal, txns = 1000.0, []
+    for i, (desc, amount) in enumerate(rows, start=1):
+        bal = round(bal + amount, 2)
+        txns.append(Transaction(id=f"T{i:04d}", date=date(2026, 1, 1) + timedelta(days=i % 180), description=desc,
+                                amount=amount, balance=bal))
+    return Statement(account_name="shuffle", transactions=txns)
+
+
+@pytest.mark.invariants
+def test_p_r4_round_trip_statement_keeps_its_category_and_m2_when_rules_are_reordered(v2):
+    """verify-32 minor: with the invoice rule before the gateway rule, the credit used to
+    become a customer transfer and leave M2 through the round-trip check. The declared
+    order makes it a customer transfer whatever the rule order, so M2 cannot move."""
+    rows = [("FPS DEBIT STRIPE", -100.0), ("FPS CREDIT STRIPE INV 17", 100.0)]
+    names = [r for r in v2.rules if r.stage == "names"]
+    inv = next(r for r in names if r.id == "invoice_transfer")
+    swapped = categorise.Ruleset(
+        id="v2", sha256=v2.sha256, category_order=v2.category_order,
+        rules=tuple([r for r in v2.rules if r.stage == "line_type"] + [inv] + [r for r in names if r is not inv]))
+    want = categorise.categorise(_statement(rows), v2)
+    got = categorise.categorise(_statement(rows), swapped)
+    assert [(t.category, t.rule_id) for t in want.transactions] == [(t.category, t.rule_id) for t in got.transactions]
+    assert want.transactions[1].category is C.OTHER and want.transactions[1].rule_id == "v2:round_trip"
+    assert _figures(want) == _figures(got)
+
+
+@pytest.mark.invariants
+def test_p_r4_shuffling_rules_within_a_stage_changes_no_category_or_figure_on_whole_statements(v2, tmp_path):
+    """Design Rollout (revision 4): shuffle the rules within each stage and recategorise
+    whole statements (round-trip and reversal passes included): every line's category and
+    every figure are unchanged. Statements: every sample credit with matching debits (so
+    round trips fire), and the committed synthetic and example corpus."""
+    import random
+
+    credits = _credit_samples()
+    rows = [(d, 100.0 + i % 7) for i, d in enumerate(credits)]
+    rows += [("FPS DEBIT STRIPE", -50.0), ("FPS CREDIT STRIPE INV 17", 50.0), ("FPS DEBIT WORLDPAY", -40.0),
+             ("WORLDPAY INV 3", 40.0), ("DD BRITISH GAS", -75.0), ("RETURNED DD BRITISH GAS REFUND", 75.0),
+             ("IWOCA LOAN", -10.0), ("RENT LOAN", -10.0), ("TFR TO SAVINGS RENT", -10.0), ("CASH WITHDRAWAL", -60.0)]
+    corpus = [_statement(rows)] + [s for _, s, _, _ in _corpus_statements(tmp_path)[:6]]
+    want = []
+    for s in corpus:
+        c = categorise.categorise(s.model_copy(deep=True), v2)
+        want.append(([(t.category, t.reverses) for t in c.transactions], _figures(c)))
+    for seed in range(6):
+        shuffled = _shuffled(v2, random.Random(seed))
+        for s, (cats, figs) in zip(corpus, want, strict=True):
+            c = categorise.categorise(s.model_copy(deep=True), shuffled)
+            got = [(t.category, t.reverses) for t in c.transactions]
+            assert got == cats, [(t.description, a, b) for t, a, b in zip(c.transactions, got, cats, strict=True)
+                                 if a != b][:5]
+            assert _figures(c) == figs
+
+
+@pytest.mark.contracts
+def test_cma_run_under_v2_records_the_verify32_repros_with_every_candidate(tmp_path, monkeypatch):
+    """End to end through cma run: each verify-32 repro takes R4's outcome in the evidence
+    lines (the conflict form with every candidate from either stage), and only the
+    genuine gateway payout is in M2; the ambiguous and unmatched credits are in M16."""
+    from cma.cli import app
+
+    monkeypatch.setenv("CMA_RULESET", "v2")
+    expect = {
+        "STRIPE PAYMENTS UK LTD": ("revenue_card_settlement", "v2:payment_gateways"),
+        "BACS CREDIT HMRC CASH PAID IN": ("other", "v2:conflict:hmrc_repayment+payment_rail+cash_paid_in"),
+        "FPS CREDIT HMRC TO SAVINGS STRIPE":
+            ("other", "v2:conflict:own_pots_savings+hmrc_repayment+payment_rail+payment_gateways"),
+        "FPS CREDIT CAFÉSTRIPE LTD": ("other", "v2:default"),
+        "CARD TESCO": ("supplier", "v2:default"),
+    }
+    amounts = [2000.0, 500.0, 500.0, 500.0, -45.0]
+    path = tmp_path / "s.csv"
+    bal = 1000.0
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["id", "date", "description", "amount", "balance"])
+        for i, (desc, amount) in enumerate(list(zip(expect, amounts, strict=True)) * 4, start=1):
+            bal = round(bal + amount, 2)
+            w.writerow([f"T{i:03d}", (date(2026, 1, 1) + timedelta(days=5 * i)).isoformat(), desc,
+                        f"{amount:.2f}", f"{bal:.2f}"])
+    r = CliRunner().invoke(app, ["run", str(path), "--yes", "--reviewer", "A", "--out", str(tmp_path / "m.md")])
+    assert r.exit_code == 0, r.output
+    record = json.loads((tmp_path / "m.evidence.json").read_text(encoding="utf-8"))
+    lines = {d["id"]: d for d in record["lines"]}
+    txns = ingest.load_csv(path).transactions
+    for t in txns:
+        assert (lines[t.id]["category"], lines[t.id]["rule_id"]) == expect[t.description], t.description
+    m = {x["id"]: x for x in record["metrics"]}
+    stripe = {t.id for t in txns if t.description == "STRIPE PAYMENTS UK LTD"}
+    assert set(m["M2"]["evidence"]) == stripe
+    assert {t.id for t in txns if t.amount > 0} - stripe <= set(m["M16"]["evidence"])

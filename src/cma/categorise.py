@@ -15,13 +15,22 @@ cash advance providers, own pots and savings, cash paid in, cash-withdrawal word
 HMRC, refunds, explained non-trading money in). The matching passes below (reversals,
 round trips) stay in code.
 
-A v2 credit gets a verdict (design C1, R4): every matching rule is collected, a match
-inside a longer match from another rule counts only as the longer one, the bank's own
-returned-payment code settles the line alone, otherwise line-type cues decide when any
-cue with a category matches and the name lists decide when none does. Rules in one
-money-in bucket agree (the first in table order is recorded); rules in two or more, or a
-payment rail with cash paid-in wording, make the credit ambiguous. The verdict does not
-depend on the order of rules within a stage.
+A v2 credit gets a verdict (design C1 revision 4, R4): every matching rule from both
+stages is collected, and a match inside a longer match from another rule counts only as
+the longer one. The bank's own returned-payment code settles the line alone. A payment
+rail with cash paid-in wording is ambiguous, whatever other cue matches. Otherwise
+line-type cues decide when any cue with a category matches, and the name lists decide
+when none does. Rules in one money-in bucket agree; rules in two or more make the credit
+ambiguous, and its candidates are every rule it matched in either stage, the rail
+included. Inside the bucket decided, the table's declared category order picks the
+category (cash deposit, then customer transfer, then card settlement; returned payment,
+then refund), and the first deciding rule in table order carrying it is recorded. Neither
+bucket nor category depends on the order of rules within a stage.
+
+Words match whole in any script: a listed name, and a name from the case profile, matches
+only where the character on each side is not a letter or a digit (CAFÉSTRIPE does not
+contain STRIPE). Descriptions are compared in Unicode NFC form, so a decomposed accent
+counts as part of its letter.
 
 Precedence, highest first: a per-line override; a protected verdict (the line-type cues,
 lender, director, capital-introduced, shareholder and generic loan wording); the case
@@ -52,6 +61,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
@@ -70,7 +80,7 @@ RULESET_ENV = "CMA_RULESET"
 RULESETS = ("v1", "v2")
 DEFAULT_RULESET = "v1"
 DIRECTIONS = ("in", "out", "any")
-TABLE_KEYS = {"id", "frozen", "rules"}
+TABLE_KEYS = {"id", "frozen", "rules", "category_order"}
 RULE_KEYS = {"id", "direction", "category"}  # required, plus a pattern or names
 # A line-type rule may have no category: a cue that only says how the money moved (the
 # payment rail). It never sets a category itself.
@@ -108,6 +118,9 @@ class Ruleset:
     sha256: str
     rules: tuple[Rule, ...]
     frozen: bool = False  # a frozen table (v1) keeps plain first-match order, to reproduce its history
+    # Inside one money-in bucket, the category a credit takes when its deciding rules agree
+    # on the bucket but carry different categories: the first in this order (design C1 step 6).
+    category_order: tuple[Category, ...] = ()
 
     @property
     def protected(self) -> tuple[Rule, ...]:
@@ -118,12 +131,26 @@ class Ruleset:
         return tuple(r for r in self.rules if not r.protected)
 
 
+# Whole-word edges in any script: the character on each side is not a letter or a digit
+# (str patterns are Unicode, so [^\W_] is a letter or digit in any alphabet), nor a
+# combining mark that belongs to the letter before it.
+_MARKS = "\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f"
+WORD_START = rf"(?<![^\W_])(?<![{_MARKS}])"
+WORD_END = rf"(?![^\W_])(?![{_MARKS}])"
+
+
 def names_pattern(names: Sequence[str]) -> str:
     """A pattern matching any of `names` as whole words in an upper-cased description,
     with any run of spaces between words. A name's other characters (".", "-", "&",
-    digits) are matched literally."""
-    alts = sorted({r"\s+".join(re.escape(w) for w in n.upper().split()) for n in names}, key=lambda a: (-len(a), a))
-    return r"(?<![A-Z0-9])(?:" + "|".join(alts) + r")(?![A-Z0-9])"
+    digits) are matched literally. Whole means no letter or digit of any script on
+    either side (WORD_START, WORD_END)."""
+    alts = sorted({r"\s+".join(re.escape(w) for w in _fold(n).split()) for n in names}, key=lambda a: (-len(a), a))
+    return WORD_START + "(?:" + "|".join(alts) + ")" + WORD_END
+
+
+def _fold(text: str) -> str:
+    """The form every description and listed name is matched in: NFC, upper case."""
+    return unicodedata.normalize("NFC", text).upper()
 
 
 def _compile_problem(pattern: str) -> str | None:
@@ -214,8 +241,40 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
             problem = _compile_problem(_rule_pattern_text(r))
             if problem:
                 problems.append(f"{where}: pattern and names do not compile together ({problem})")
+    problems += _category_order_problems(data, rules)
     if problems:
         raise RulesetError(f"{source}: " + "; ".join(problems))
+
+
+def _category_order_problems(data: dict, rules: list) -> list[str]:
+    """A table that is not frozen declares the category order inside every money-in bucket
+    its credit rules reach with more than one category, so rule order never picks one."""
+    order = data.get("category_order")
+    frozen = data.get("frozen")
+    if frozen is True:
+        return ["a frozen table has no category_order"] if "category_order" in data else []
+    if frozen is not False:
+        return []
+    if order is None:
+        order = []
+    if not isinstance(order, list) or not all(isinstance(c, str) for c in order):
+        return ["category_order must be a list of categories"]
+    categories = {c.value for c in Category}
+    problems = [f"category_order: {c!r} is not a category" for c in order if c not in categories]
+    if len(set(order)) != len(order):
+        problems.append("category_order: a category is listed twice")
+    credit_cats = {r["category"] for r in rules if isinstance(r, dict) and r.get("direction") in ("in", "any")
+                   and isinstance(r.get("category"), str) and r["category"] in categories}
+    by_bucket: dict[object, set[str]] = {}
+    for c in credit_cats:
+        by_bucket.setdefault(CREDIT_BUCKET.get(Category(c), c), set()).add(c)
+    for bucket, cats in sorted(by_bucket.items(), key=lambda kv: str(kv[0])):
+        missing = sorted(cats - set(order)) if len(cats) > 1 else []
+        if missing:
+            name = getattr(bucket, "value", bucket)
+            problems.append(f"category_order: bucket {name} has categories {sorted(cats)} but does not order "
+                            f"{missing}")
+    return problems
 
 
 def _rule_pattern_text(r: dict) -> str:
@@ -234,6 +293,7 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) 
         id=data["id"],
         sha256=sha256,
         frozen=bool(data.get("frozen", False)),
+        category_order=tuple(Category(c) for c in data.get("category_order") or ()),
         rules=tuple(
             Rule(r["id"], _rule_pattern(r), r["direction"], Category(r["category"]) if "category" in r else None,
                  protected=r.get("protected", False), stage=r.get("stage"),
@@ -341,6 +401,7 @@ class ProfileNames:
 
 
 def _names_in(names: Sequence[str], description: str) -> bool:
+    """`description` folded (_fold)."""
     names = [n for n in names if n.strip()]
     return bool(names) and re.search(names_pattern(names), description) is not None
 
@@ -353,7 +414,7 @@ def credit_matches(ruleset: Ruleset, description: str, amount: float) -> list[Ru
     """Every rule of `ruleset` that matches a line, in table order, less those whose every
     match lies inside a longer match of another rule (STRIPE inside STRIPE CAPITAL, REFUND
     inside HMRC REFUND, LOAN inside DIRECTOR LOAN): those count only as the longer one."""
-    desc = description.upper()
+    desc = _fold(description)
     matched = [(r, _spans(r, desc)) for r in ruleset.rules if rule_matches(r, desc, amount)]
 
     def inside_longer(rule: Rule, spans: list[tuple[int, int]]) -> bool:
@@ -366,7 +427,7 @@ def credit_matches(ruleset: Ruleset, description: str, amount: float) -> list[Ru
 @dataclass(frozen=True)
 class Verdict:
     """What the table says about a credit: the rule that settles it, or, when the wording
-    points to more than one money-in bucket, every candidate rule."""
+    is ambiguous, every candidate rule it matched in either stage, in table order."""
 
     rules: tuple[Rule, ...]
     ambiguous: bool = False
@@ -380,28 +441,40 @@ def _bucket(rule: Rule) -> object:
     return CREDIT_BUCKET.get(rule.category, rule.category) if rule.category is not None else None
 
 
-def _decide(rules: Sequence[Rule]) -> Verdict:
-    if len({_bucket(r) for r in rules}) > 1:
-        return Verdict(tuple(rules), ambiguous=True)
-    return Verdict((rules[0],))
+def _decide(ruleset: Ruleset, deciding: Sequence[Rule], candidates: Sequence[Rule]) -> Verdict:
+    """Design C1 steps 4 to 7 over the deciding stage's rules (each with a category)."""
+    if len({_bucket(r) for r in deciding}) > 1:
+        return Verdict(tuple(candidates), ambiguous=True)
+    order = ruleset.category_order
+    position = {r.id: i for i, r in enumerate(ruleset.rules)}
+
+    def rank(c: Category) -> tuple[int, int]:
+        # Every category a bucket can hold twice is in the declared order (the validator
+        # insists); the table position is only a deterministic fallback for a hand-built table.
+        first = min(position.get(r.id, 0) for r in deciding if r.category is c)
+        return (order.index(c) if c in order else len(order), first)
+
+    category = min({r.category for r in deciding}, key=rank)  # type: ignore[arg-type]
+    chosen = [r for r in deciding if r.category is category]
+    return Verdict((min(chosen, key=lambda r: position.get(r.id, 0)),))
 
 
 def credit_verdict(ruleset: Ruleset, description: str, amount: float) -> Verdict | None:
-    """R4's verdict on a credit under a table that is not frozen, or None when no rule
-    with a category matches."""
-    rules = credit_matches(ruleset, description, amount)
+    """R4's verdict on a credit under a table that is not frozen (design C1, revision 4),
+    or None when no rule with a category decides it."""
+    rules = credit_matches(ruleset, description, amount)  # step 1, both stages, in table order
     cues = [r for r in rules if r.stage == "line_type"]
     bank = [r for r in cues if r.category is not None and r.pattern.pattern.startswith("^")]
-    if bank:  # the bank's own code at the start of the line (UNPAID DD), not payer wording
+    if bank:  # step 2: the bank's own code at the start of the line (UNPAID DD), not payer wording
         return Verdict((bank[0],))
-    bucketed = [r for r in cues if r.category is not None]
-    if bucketed:
-        return _decide(bucketed)
-    names = [r for r in rules if r.stage == "names" and r.category is not None]
     rails = [r for r in cues if r.category is None]
+    names = [r for r in rules if r.stage == "names" and r.category is not None]
     if rails and any(r.category is Category.CASH_DEPOSIT for r in names):
-        return Verdict(tuple(rails + names), ambiguous=True)  # electronic money is not cash
-    return _decide(names) if names else None
+        return Verdict(tuple(rules), ambiguous=True)  # step 3: electronic money is not cash
+    bucketed = [r for r in cues if r.category is not None]
+    if bucketed:  # step 4: the cues decide
+        return _decide(ruleset, bucketed, rules)
+    return _decide(ruleset, names, rules) if names else None  # step 5: the names decide
 
 
 def classify(
@@ -416,7 +489,8 @@ def classify(
     ruleset = ruleset or active_ruleset()
     if override is not None:
         return override.category, override.ref
-    desc = t.description.upper()
+    # The frozen table matches the description exactly as it always did (R54).
+    desc = t.description.upper() if ruleset.frozen else _fold(t.description)
     if t.amount > 0 and not ruleset.frozen:
         return _classify_credit(t, desc, ruleset, profile, firm_rules)
     for rule in ruleset.protected:

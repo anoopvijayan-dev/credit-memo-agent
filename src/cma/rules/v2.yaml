@@ -14,15 +14,21 @@
 # says the money did not arrive as cash. Stage 2, `names`, says who sent the money or what
 # it is for.
 #
-# The verdict on a credit (src/cma/categorise.py) collects every matching rule. A match
-# inside a longer match from another rule counts only as the longer one (STRIPE inside
-# STRIPE CAPITAL, REFUND inside HMRC REFUND, LOAN inside DIRECTOR LOAN). The bank's own
-# returned-payment code at the start of the line settles it alone. Otherwise the cues
-# decide when any cue with a category matches; with none, the names decide (a rail with
-# cash paid-in wording is ambiguous). Rules in one money-in bucket agree; rules in two or
-# more make the credit ambiguous: unexplained money in, every candidate recorded, for the
-# underwriter. The verdict does not depend on the order of rules within a stage. Debits
-# keep first-match order through the same stages.
+# The verdict on a credit (src/cma/categorise.py, design C1 revision 4) collects every
+# matching rule from both stages. A match inside a longer match from another rule counts
+# only as the longer one (STRIPE inside STRIPE CAPITAL, REFUND inside HMRC REFUND, LOAN
+# inside DIRECTOR LOAN). The bank's own returned-payment code at the start of the line
+# settles it alone. A payment rail with cash paid-in wording is ambiguous, whatever other
+# cue matches. Otherwise the cues decide when any cue with a category matches; with none,
+# the names decide. Rules in one money-in bucket agree; rules in two or more make the
+# credit ambiguous: unexplained money in, with every rule it matched in either stage (the
+# rail included) recorded as its candidates, for the underwriter. Inside the bucket
+# decided, `category_order` below picks the category. Neither bucket nor category depends
+# on the order of rules within a stage. Debits keep first-match order through the same
+# stages.
+#
+# Names match whole words in any script: no letter or digit on either side, so
+# CAFÉSTRIPE LTD does not contain STRIPE.
 #
 # No hidden tie-breaks: an `unless` may exclude wording that is on no list (a cheque is
 # not cash), never another list's cue or name. Where two lists' wording meets, a longer
@@ -39,6 +45,18 @@
 # only capital introduced, injected or contributed is director funding.
 id: v2
 frozen: false
+# Inside one money-in bucket, when the deciding rules agree on the bucket but carry
+# different categories, the first category in this order is the line's (D61): the one
+# that brings more checks first. Trading receipts: cash deposit (M18 and the cash
+# indicators), then customer transfer (the round-trip check, M15), then card settlement.
+# Refunds and returned payments: returned payment (M7, reversal linking, the returned-DD
+# indicator), then refund.
+category_order:
+  - cash_deposit
+  - revenue_transfer
+  - revenue_card_settlement
+  - returned_dd
+  - refund_in
 rules:
   # --- stage 1, line type: explicit wording, protected -----------------------------
   # The bank's own returned-payment code, at the start of the line: settles it alone.
@@ -100,6 +118,16 @@ rules:
             HMRC SA REFUND]
     direction: in
     category: hmrc_repayment
+    protected: true
+    stage: line_type
+  # A returned direct debit in words, anywhere in the line ("RETURNED DD", "DIRECT DEBIT
+  # RETURNED"). Not the bank's code (that is returned_dd, at the start), so it does not
+  # settle the line alone; with refund wording, the category order makes it a returned
+  # payment.
+  - id: returned_payment
+    names: [RETURNED DD, RETURNED DIRECT DEBIT, DD RETURNED, DIRECT DEBIT RETURNED, UNPAID DIRECT DEBIT]
+    direction: in
+    category: returned_dd
     protected: true
     stage: line_type
   # Money given back: a refund, reversal, returned payment or chargeback, from anyone,
@@ -230,7 +258,7 @@ rules:
       - POST OFFICE COUNTER DEPOSIT
       - PAYPOINT CASH
       - PAYPOINT DEPOSIT
-    unless: '(?<![A-Z0-9])(?:CHEQUES?|CHQ)(?![A-Z0-9])'
+    unless: '(?<![^\W_])(?:CHEQUES?|CHQ)(?![^\W_])'
     direction: in
     category: cash_deposit
     stage: names
