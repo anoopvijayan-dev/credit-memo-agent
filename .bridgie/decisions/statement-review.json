@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 73,
+  "next_id": 74,
   "decisions": [
     {
       "id": "D1",
@@ -1526,6 +1526,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-19T17:37:57.409Z"
+    },
+    {
+      "id": "D73",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:164, :196 and :252 validate canonical entry bytes, chain links and recorded hashes. src/cma/case.py:517 rejects inherited writers, :529 takes the exclusive lock, :609 checks the expected position, and :686 writes the entry before updating the head. src/cma/cli.py:319 is the only production verification caller. The runner logs confirm the named tamper, rebuild, torn-tail, duplicate-submit, writer contention, inherited-handle, strict JSON, UTC and repair-failure tests passed. Each case folder has its own files and currency stays opaque to the log. The contended read can still hide committed damage or misclassify a live repair.); major: A reader can report the log intact with an append in progress after the entry it read has already committed and been damaged. The APPENDING branch skips the head recheck and cannot distinguish successive appends by the same holder. at src/cma/case.py:439; major: The exhausted-retry path can hide removal of an entry that had already committed before the reader read the log. at src/cma/case.py:450; major: A reader reports a live repair entry as incomplete. The DROPPING exception requires a non-torn result, but the verifier classifies a valid complete line exactly one entry ahead of the head as torn. at src/cma/case.py:438; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T17:39:23.586Z"
     }
   ]
 }
