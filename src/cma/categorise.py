@@ -172,12 +172,27 @@ def _mark_aware(pattern: str) -> str:
     return _PLAIN_B.sub(lambda m: m.group(1) + _BOUNDARY, pattern)
 
 
+# What may stand between the letters of a listed name in a description: spaces, hyphens,
+# dots and slashes, or nothing (D71). Bank text spells one name many ways (SUMUP, SUM UP,
+# SUM-UP; FASTER PAYMENT, FASTER-PAYMENT), and a list cannot hold every spelling.
+_SEPARATORS = "\\s\\-./"
+_SEPARATOR_RUN = re.compile(rf"[{_SEPARATORS}]+")
+
+
+def _spelling_free(name: str) -> str:
+    """A listed name as a pattern that ignores spacing, hyphens, dots and slashes between
+    its characters; every other character ("&", digits, letters) is matched literally."""
+    compact = _SEPARATOR_RUN.sub("", _fold(name))
+    return f"[{_SEPARATORS}]*".join(re.escape(c) for c in compact)
+
+
 def names_pattern(names: Sequence[str]) -> str:
     """A pattern matching any of `names` as whole words in an upper-cased description,
-    with any run of spaces between words. A name's other characters (".", "-", "&",
-    digits) are matched literally. Whole means no letter or digit of any script on
+    whatever spaces, hyphens, dots or slashes stand between the name's characters
+    (_spelling_free). Whole means no letter, digit or combining mark of any script on
     either side (WORD_START, WORD_END)."""
-    alts = sorted({r"\s+".join(re.escape(w) for w in _fold(n).split()) for n in names}, key=lambda a: (-len(a), a))
+    alts = sorted({_spelling_free(n) for n in names if _SEPARATOR_RUN.sub("", _fold(n))},
+                  key=lambda a: (-len(a), a))
     return WORD_START + "(?:" + "|".join(alts) + ")" + WORD_END
 
 

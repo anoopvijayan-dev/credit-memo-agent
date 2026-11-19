@@ -232,6 +232,9 @@ rules:
     stage: names
   - id: loan_drawdown
     pattern: '\bLOAN\b|FINANCE\b'
+    # advance wording (D71): a card provider that also lends, with advance wording, is
+    # ambiguous between trading and lending, never trading receipts alone
+    names: [CASH ADVANCE, MERCHANT ADVANCE, BUSINESS ADVANCE]
     direction: in
     category: loan_drawdown
     protected: true

@@ -1046,7 +1046,7 @@ def _credit_samples() -> list[str]:
     for a in ("TO SAVINGS", "REFUND", "HMRC", "FPS", "COUNTER DEPOSIT", "IWOCA", "CAPITAL INTRODUCED", "LOAN",
               "GRANT", "WORLDPAY", "STRIPE", "ETSY", "DELIVEROO", "INV 12"):
         for b in names:
-            descs.append(f"{a} / {b}")
+            descs.append(f"{a} | {b}")
     return descs
 
 
@@ -1123,7 +1123,9 @@ def test_p_pairwise_matrix_every_two_credit_lists_combine_by_the_policy_alone(v2
                 if other == rid:
                     continue
                 first, second = (sample, name) if other == "returned_dd" else (name, sample)
-                desc = f"{first} / {second}"
+                # "|" is not a separator names skip (D71), so two wordings never fuse into
+                # one listed phrase across the join; "/" would (HMRC / REFUND = HMRC REFUND)
+                desc = f"{first} | {second}"
                 a = categorise.credit_matches(v2, first, 100.0)
                 b = categorise.credit_matches(v2, second, 100.0)
                 assert {r.id for r in categorise.credit_matches(v2, desc, 100.0)} == {r.id for r in a + b}, desc
@@ -1493,3 +1495,49 @@ def test_a_frozen_table_keeps_its_patterns_exactly():
     v1 = load_ruleset("v1")
     written = {r["id"]: r["pattern"] for r in raw["rules"] if "pattern" in r}
     assert written and all(r.pattern.pattern == written[r.id] for r in v1.rules if r.id in written)
+
+
+# --- T03 review 7 (D71): spelling variants of listed names -----------------------------
+
+def _listed_names():
+    raw = yaml.safe_load(resources.files("cma.rules").joinpath("v2.yaml").read_text(encoding="utf-8"))
+    return [(r["id"], n) for r in raw["rules"] for n in r.get("names", [])]
+
+
+def _spellings(name: str) -> set[str]:
+    words = name.split()
+    out = {"".join(words), "-".join(words), ".".join(words), " - ".join(words), "/".join(words)}
+    compact = "".join(words)
+    if len(compact) >= 4:  # a space inside a run-together name: SUMUP as SUM UP
+        out.add(compact[:2] + " " + compact[2:])
+    return out
+
+
+@pytest.mark.contracts
+def test_every_listed_name_matches_its_rule_whatever_the_spacing(v2):
+    """D71: a list cannot hold every spelling, so names ignore spaces, hyphens, dots and
+    slashes between their characters. Each spelling still hits the name's own rule."""
+    rules = {r.id: r for r in v2.rules}
+    checked = 0
+    for rule_id, name in _listed_names():
+        for spelling in _spellings(name.upper()):
+            desc = f"REF {spelling} 01"
+            assert rules[rule_id].pattern.search(categorise._fold(desc)), (rule_id, name, spelling)
+            checked += 1
+    assert checked > 500
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize(("desc", "category", "rule"), [
+    # the reviewer's cases
+    ("FASTER-PAYMENT CASH DEPOSIT", C.OTHER, "v2:conflict:payment_rail+cash_paid_in"),
+    ("SUM UP CASH ADVANCE", C.LOAN_DRAWDOWN, "v2:lender_drawdown"),
+    # an advance from a provider no list names as a lender is lending, never trading
+    ("SQUARE CASH ADVANCE", C.LOAN_DRAWDOWN, "v2:loan_drawdown"),
+    # a listed card provider with advance wording: trading and lending, so ambiguous
+    ("ZETTLE MERCHANT ADVANCE", C.OTHER, "v2:conflict:loan_drawdown+card_acquirers"),
+    # a customer's advance payment is not advance wording
+    ("ADVANCE PAYMENT INV 123", C.REVENUE_TRANSFER, "v2:invoice_transfer"),
+])
+def test_spelling_and_advance_wording_never_reach_trading_by_accident(v2, desc, category, rule):
+    assert classify(_t(desc, 100.0), v2) == (category, rule)
