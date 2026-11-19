@@ -206,6 +206,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-19 D75 (question): Exit 4 whenever the case is being saved; exit 0 only for a whole intact log (design default) → recorded [Anoop Vijayan]
 - 2026-11-19 D76 (question): Name cheque wording beside the rail in the line-type cue term in the next revision, so R4's text says what D70 built → recorded [Anoop Vijayan]
 - 2026-11-19 D77 (approve_design): approve → design approved [Anoop Vijayan]
+- 2026-11-19 D78 (unblock): take over manually — Owner: profile names do not settle an ambiguous credit. For a credit the table finds ambiguous, a matching profile name adds its bucket as one more candidate; only a per-line override, or an own-account pairing (R8, matched by amount and date, not text), settles it. Unambiguous credits still follow R5 and R6. R4 is amended (with D76) and approved before T03 is re-verified. → task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03 [Anoop Vijayan]
 
 ## Idea
 
