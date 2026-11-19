@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 80,
+  "next_id": 81,
   "decisions": [
     {
       "id": "D1",
@@ -1662,6 +1662,26 @@
       "decided_at": "2026-11-19T18:47:35.707Z",
       "effect": "changes requested: D78 and D76 (owner, after the ninth T03 review). (1) R4: only a per-line override (R17) or an own-account pairing (R8) settles an ambiguous credit. A case-profile name (R5, R6) that the credit's wording also matches adds its bucket as one more candidate and does not settle it, because the description cannot reliably tell the payer from a payment reference that names someone else. R5 and R6 still decide every credit the table does not find ambiguous; amend R5 and R6 only as far as they must say this. (2) Name cheque wording beside the payment rail in the line-type cue term, as a cue with no bucket, so that a cheque with cash paid-in wording is ambiguous by R4's own text (D70). Keep every other requirement, property and id.; re-run bridgie shape statement-review",
       "created_at": "2026-11-19T18:47:35.703Z"
+    },
+    {
+      "id": "D80",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:196 and :255 validate canonical entry bytes, links and recorded hashes. Lines 295–309 classify and name the first torn or missing entry. Lines 365–378 recognize the reader's own lock across aliased folder paths. Lines 483–519 enforce the writer lock and reject inherited writers, line 582 rejects duplicate submissions at a stale position, and lines 657–668 write the log before the head. src/cma/cli.py:321 is the sole production verification caller. The runner logs confirm the named tamper, rebuild, torn-tail, repair-failure, lock contention, duplicate-submit, UTC, strict JSON and CLI contract tests passed. The log treats currency as payload data and uses separate files per case folder. The nonholder read path can still report integrity or damage from a moving head, and its lock-error path can incorrectly report a live holder.); major: The reader returns a verdict on recorded entries from a read across which the head changed. The fast path ignores the stability flag for both an intact snapshot and damage within the recorded prefix. The post-contention path repeats the same check at line 425. at src/cma/case.py:389; major: A stable snapshot with no trailing bytes bypasses the lock probe. The CLI can report the entire log intact while another writer holds the case. at src/cma/case.py:296; major: An untestable lock is reported as another holder when reads remain unstable. The lock-error branch returns the same being-saved result as proven contention, and src/cma/cli.py:322 attributes it to another window or command. at src/cma/case.py:417; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-19T18:50:03.207Z"
     }
   ]
 }

@@ -1,0 +1,109 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:196 and :255 validate canonical entry bytes, links and recorded hashes. Lines 295–309 classify and name the first torn or missing entry. Lines 365–378 recognize the reader's own lock across aliased folder paths. Lines 483–519 enforce the writer lock and reject inherited writers, line 582 rejects duplicate submissions at a stale position, and lines 657–668 write the log before the head. src/cma/cli.py:321 is the sole production verification caller. The runner logs confirm the named tamper, rebuild, torn-tail, repair-failure, lock contention, duplicate-submit, UTC, strict JSON and CLI contract tests passed. The log treats currency as payload data and uses separate files per case folder. The nonholder read path can still report integrity or damage from a moving head, and its lock-error path can incorrectly report a live holder.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-42/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-42/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-42/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-42/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-42/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-42/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-42/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 389,
+      "criterion": "P15",
+      "claim": "The reader returns a verdict on recorded entries from a read across which the head changed. The fast path ignores the stability flag for both an intact snapshot and damage within the recorded prefix. The post-contention path repeats the same check at line 425.",
+      "repro": "Start with two recorded entries. In another thread, hold writer(), append entry 3, and pause at _write_head after its line has reached disk. Change entry 2's data without updating its hash. Let the reader capture head 2 and the damaged log, then allow the writer to publish head 3 before the reader's second head read. Keep the writer lock held. The reader immediately reports entry 2 broken based on that moving-head read. It must retry and use a stable read before naming the entry."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 296,
+      "criterion": "P15",
+      "claim": "A stable snapshot with no trailing bytes bypasses the lock probe. The CLI can report the entire log intact while another writer holds the case.",
+      "repro": "Commit two entries. From another thread or process, enter writer() and pause before appending anything. Run cma case check on the same case folder. It exits 0 and prints 'case log intact' while the writer still holds the case. The held-case response should report that the two recorded entries checked out and that the case is being saved."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 417,
+      "criterion": "P15",
+      "claim": "An untestable lock is reported as another holder when reads remain unstable. The lock-error branch returns the same being-saved result as proven contention, and src/cma/cli.py:322 attributes it to another window or command.",
+      "repro": "Use the setup of test_p15_with_the_lock_untestable_an_unsteady_read_never_calls_a_healthy_log_broken at tests/test_case_log.py:1395. Advance the head during each read and make _lock raise ENOLCK. Pass the resulting check through cma case check. It exits 4 and says another window or command is saving even though the lock could not be tested. The existing test verifies that no entry is judged but leaves the holder attribution unchecked."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1377,
+      "criterion": "P15",
+      "claim": "The producer's exit 0 and 'appending' claim contradicts the passing contract test and current CLI behavior.",
+      "repro": "Inspect the named PASS in contracts-4.log and the assertion at this line. With another writer holding the case over a torn tail, the contract expects exit 4 and 'being saved'."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 318,
+      "criterion": "P15",
+      "claim": "The producer's owner-only authorization claim exceeds the CLI's checks. The permission test covers newly created files, while the CLI accepts any directory and relies on the files' existing OS permissions.",
+      "repro": "Use a case folder owned by OS user A with its directory and intact log and head readable by OS user B. Run cma case check as B. The command reports the entry count and abbreviated head hash without checking ownership. Owner-only case roots are covered by R31."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
