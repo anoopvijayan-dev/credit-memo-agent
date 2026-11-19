@@ -1602,3 +1602,16 @@ def test_p_a_credit_naming_both_a_director_and_an_own_account_is_ambiguous(v2, d
     assert classify(_t("FPS CREDIT JANE DOE", 900.0), v2, profile=profile) == (C.DIRECTOR_FUNDING, "profile:director")
     assert classify(_t("FPS CREDIT ACME HOLDINGS", 900.0), v2, profile=profile) == \
         (C.OWN_ACCOUNT_TRANSFER, "profile:own_account")
+
+
+@pytest.mark.invariants
+def test_p_a_credit_ambiguous_only_by_two_profile_names_records_every_rule_it_matched(v2):
+    """D90: the candidates term is every rule matched in either stage, then both profile
+    kinds, even when the table alone would have decided the credit."""
+    profile = ProfileNames(directors=("JANE DOE",), own_accounts=("ACME HOLDINGS",))
+    desc = "FPS CREDIT STRIPE INV 17 JANE DOE ACME HOLDINGS"
+    category, rule = classify(_t(desc, 900.0), v2, profile=profile)
+    matched = [r.id for r in categorise.credit_matches(v2, categorise._fold(desc), 900.0)]
+    assert category is C.OTHER
+    assert rule == "v2:conflict:" + "+".join([*matched, "profile:director", "profile:own_account"])
+    assert {"payment_rail", "invoice_transfer"} <= set(matched)

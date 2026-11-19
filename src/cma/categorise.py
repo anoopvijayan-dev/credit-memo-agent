@@ -625,7 +625,11 @@ def _classify_credit(t: Transaction, desc: str, ruleset: Ruleset, profile: Profi
     # profile name claim the credit, a director (R5) and an own account (R6) (D86). Every
     # profile name the wording matches is then a candidate, never the settlement (D78).
     if (verdict is not None and verdict.ambiguous) or len(kinds) > 1:
-        candidates = ([r.id for r in verdict.rules] if verdict is not None else []) + [ref for _, ref in kinds]
+        # The candidates term (R4): every rule matched in either stage, then each kind of
+        # profile name. An ambiguous verdict already carries them; a credit made ambiguous
+        # only by two profile names takes them from the table's matches (D90).
+        rules = verdict.rules if verdict is not None and verdict.ambiguous else credit_matches(ruleset, desc, t.amount)
+        candidates = [r.id for r in rules] + [ref for _, ref in kinds]
         return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(candidates)
     if kinds:
         return kinds[0]
