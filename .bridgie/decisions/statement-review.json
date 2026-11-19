@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 112,
+  "next_id": 113,
   "decisions": [
     {
       "id": "D1",
@@ -2302,6 +2302,24 @@
       "decided_at": "2026-11-19T23:27:42.700Z",
       "effect": "design approved",
       "created_at": "2026-11-19T23:27:20.008Z"
+    },
+    {
+      "id": "D112",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "D109 (recommended option, chosen under the owner's standing approval of 2026-11-19): write into R43 and P15, keeping their ids, that a steady read gives the recorded entries only when one writer held the case through it (the reader held the gate, or the case lock was free and held shared by the reader). When the gate is busy and the case lock is held, a reader names a fault at or before the recorded entries from a steady read and otherwise claims nothing (the case is being saved, nothing claimed). And per D108, R42's re-check before each write means before each step that changes a file a reader reads: the empty head record, the line and each rename; a temporary file is not one. Keep every other requirement, property and id.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-19T23:28:15.694Z",
+      "effect": "changes requested: D109 (recommended option, chosen under the owner's standing approval of 2026-11-19): write into R43 and P15, keeping their ids, that a steady read gives the recorded entries only when one writer held the case through it (the reader held the gate, or the case lock was free and held shared by the reader). When the gate is busy and the case lock is held, a reader names a fault at or before the recorded entries from a steady read and otherwise claims nothing (the case is being saved, nothing claimed). And per D108, R42's re-check before each write means before each step that changes a file a reader reads: the empty head record, the line and each rename; a temporary file is not one. Keep every other requirement, property and id.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-19T23:28:15.466Z"
     }
   ]
 }
