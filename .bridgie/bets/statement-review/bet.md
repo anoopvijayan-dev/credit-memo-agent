@@ -224,6 +224,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-19 D89 (unblock): take over manually — Owner: take over and send to Codex. Every path that reports being saved stands only on a hold that lasted through the read; a case that changed hands on every attempt gets no verdict ('could not be checked'). → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 - 2026-11-19 D90 (question): Every rule matched in either stage, then both profile kinds, as the term says (design default; T03 changes one line before re-verify) → recorded [Anoop Vijayan]
 - 2026-11-19 D91 (question): R5 and R6 point to R15; T21 builds the queue (design default, follows D60) → recorded [Anoop Vijayan]
+- 2026-11-19 D92 (approve_design): approve → design approved [Anoop Vijayan]
 
 ## Idea
 
