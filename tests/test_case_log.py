@@ -356,179 +356,6 @@ def test_p15_a_forked_child_leaving_the_writer_does_not_release_its_parents_lock
 
 
 @pytest.mark.invariants
-@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX only")
-def test_p15_a_forked_child_writes_once_its_parent_has_released_the_lock(tmp_path):
-    # Ownership inherited from the parent is dropped in the child, so it is not refused
-    # for ever: it takes its own lock, which is free once the parent has left.
-    log = _log(tmp_path, 1)
-    go_r, go_w = os.pipe()
-    with log.writer():
-        pid = os.fork()
-        if pid == 0:
-            code = 2
-            try:
-                os.close(go_w)
-                os.read(go_r, 1)  # wait until the parent has released
-                log.append("override", {}, expected=1)
-                code = 0
-            finally:
-                os._exit(code)
-        os.close(go_r)
-    os.write(go_w, b"x")
-    os.close(go_w)
-    _, status = os.waitpid(pid, 0)
-    assert os.waitstatus_to_exitcode(status) == 0
-    assert len(log.entries()) == 2
-
-
-@pytest.mark.invariants
-@pytest.mark.skipif(not hasattr(os, "register_at_fork"), reason="fork is POSIX only")
-def test_p15_a_fork_while_another_thread_holds_the_state_lock_does_not_hang_the_child(tmp_path):
-    import signal
-    log = _log(tmp_path, 1)
-    log._state.acquire()  # as another thread would, mid-check, at the moment of the fork
-    try:
-        pid = os.fork()
-        if pid == 0:
-            code = 2
-            try:
-                signal.alarm(5)  # a hang ends the child with SIGALRM instead of passing
-                log.append("override", {}, expected=1)
-                code = 0
-            finally:
-                os._exit(code)
-    finally:
-        log._state.release()
-    _, status = os.waitpid(pid, 0)
-    assert os.waitstatus_to_exitcode(status) == 0
-    assert len(log.entries()) == 2
-
-
-@pytest.mark.invariants
-@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX only")
-def test_p15_leaving_an_inherited_block_never_releases_a_lock_the_child_took(tmp_path):
-    # T12 review: in a child, another thread took its own writer lock, and the main thread
-    # leaving the block it inherited from the parent released that thread's lock.
-    import threading
-    log = _log(tmp_path, 1)
-    go_r, go_w = os.pipe()
-    taken, leave = threading.Event(), threading.Event()
-
-    def other():
-        with log.writer():
-            taken.set()
-            leave.wait(5)
-
-    t = threading.Thread(target=other)
-    pid = None
-    try:
-        with log.writer():
-            pid = os.fork()
-            if pid == 0:
-                os.close(go_w)
-                os.read(go_r, 1)  # the parent has released its lock
-                t.start()
-                assert taken.wait(5)
-        if pid == 0:  # the child has just left the inherited block while t holds a lock
-            code = 0
-            try:
-                with case.CaseLog(log.path).writer():
-                    code = 1  # the lock was released under t
-            except case.CaseLocked:
-                pass
-            leave.set()
-            t.join(5)
-            os._exit(code)
-    except BaseException:
-        if pid == 0:
-            os._exit(2)
-        raise
-    os.close(go_r)
-    os.write(go_w, b"x")
-    os.close(go_w)
-    _, status = os.waitpid(pid, 0)
-    assert os.waitstatus_to_exitcode(status) == 0
-
-
-@pytest.mark.invariants
-@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX only")
-def test_p15_a_surviving_child_does_not_keep_a_dead_writers_lock(tmp_path):
-    # T12 review: the child kept its copy of the lock descriptor, so when the writer died
-    # the lock stayed held until the child exited.
-    log = _log(tmp_path, 1)
-    ready_r, ready_w = os.pipe()
-    go_r, go_w = os.pipe()
-    with log.writer():
-        pid = os.fork()
-        if pid == 0:
-            os.close(ready_r)
-            os.close(go_w)
-            os.write(ready_w, b"x")  # the fork hook has run in this child
-            os.read(go_r, 1)
-            os._exit(0)
-        os.close(ready_w)
-        os.close(go_r)
-        os.read(ready_r, 1)
-        os.close(log._lock_fd)  # the writer dies: its descriptor closes with no unlock
-        log._lock_fd = None
-        try:
-            with case.CaseLog(log.path).writer():  # free, though the child still runs
-                pass
-        finally:
-            os.write(go_w, b"x")
-            os.close(go_w)
-            os.close(ready_r)
-            os.waitpid(pid, 0)
-
-
-@pytest.mark.invariants
-@pytest.mark.skipif(not (hasattr(os, "fork") and os.path.isdir("/proc/self/fd")),
-                    reason="fork and /proc are POSIX/Linux only")
-@pytest.mark.filterwarnings("ignore:This process .* is multi-threaded:DeprecationWarning")
-def test_p15_a_fork_never_lands_inside_an_acquisition(tmp_path, monkeypatch):
-    # Pre-review: a fork between flock and recording the descriptor left the child a copy
-    # the fork hook could not see, so the lock outlived a dead parent.
-    log = _log(tmp_path, 1)
-    real = case._lock
-    locked, go, done = threading.Event(), threading.Event(), threading.Event()
-
-    def slow_lock(fd):
-        real(fd)
-        locked.set()
-        go.wait(10)
-
-    monkeypatch.setattr(case, "_lock", slow_lock)
-
-    def hold():
-        with log.writer():
-            done.wait(10)
-
-    holder = threading.Thread(target=hold)
-    holder.start()
-    assert locked.wait(5)
-    forked = {}
-
-    def forker():
-        pid = os.fork()
-        if pid == 0:  # exit 0 if no descriptor on the lock file survived into the child
-            lock = os.path.realpath(log.lock_path)
-            held = [f for f in os.listdir("/proc/self/fd")
-                    if os.path.realpath(f"/proc/self/fd/{f}") == lock]
-            os._exit(1 if held else 0)
-        forked["status"] = os.waitpid(pid, 0)[1]
-
-    f = threading.Thread(target=forker)
-    f.start()
-    f.join(0.3)
-    assert f.is_alive()  # the fork waits for the acquisition to finish
-    go.set()
-    f.join(10)
-    done.set()
-    holder.join(10)
-    assert os.waitstatus_to_exitcode(forked["status"]) == 0
-
-
-@pytest.mark.invariants
 def test_p15_an_interrupt_after_the_lock_is_taken_leaves_no_lock(tmp_path, monkeypatch):
     # Pre-review: KeyboardInterrupt after flock but before the descriptor was recorded
     # leaked it, and every writer in the process was refused from then on.
@@ -587,6 +414,22 @@ def test_a_rename_blocked_by_a_windows_reader_is_retried_not_failed(tmp_path, mo
     with pytest.raises(PermissionError):  # elsewhere a permission error is real at once
         case._replace(src, dst)
     assert len(calls) == 1
+
+
+@pytest.mark.invariants
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="needs symlinks")
+def test_p15_the_holder_sees_a_torn_entry_through_another_spelling_of_the_path(tmp_path, monkeypatch):
+    # T12 review: a second CaseLog opened through a symlinked folder was not recognised as
+    # the holder, so its refused fallback lock excused a torn entry as an append landing.
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    alias = tmp_path / "alias"
+    try:
+        os.symlink(log.path.parent, alias, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks not permitted here")
+    with log.writer(), pytest.raises(case.CaseLogBroken):
+        case.CaseLog(alias / log.path.name).require_intact()
 
 
 def test_torn_last_entry_blocks_appends_until_dropped(tmp_path, monkeypatch):

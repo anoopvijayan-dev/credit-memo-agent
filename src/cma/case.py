@@ -36,8 +36,9 @@ lock file and re-reads the log under it, and the caller states the position it l
 saw. A second tab or terminal that read an older position gets LogConflict and reloads;
 one that tries while another holds the lock gets CaseLocked, including another thread
 using the same CaseLog object. The operating system drops the lock when its holder
-dies, so a crash never leaves the case locked. A forked child never holds or releases
-its parent's lock; it takes its own. Case folders must be on a local disk: on a network
+dies, so a crash never leaves the case locked. Forking a process while it holds the lock
+is not supported (the tool never does): a child is refused through an inherited CaseLog,
+and leaving an inherited block releases nothing. Case folders must be on a local disk: on a network
 share the operating system may emulate the lock per process, which does not separate
 two CaseLog objects in one process.
 
@@ -53,9 +54,8 @@ import json
 import os
 import threading
 import time
-import weakref
 from collections.abc import Iterator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -308,67 +308,23 @@ def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
 
 
 def _holder_id() -> tuple[int, int]:
-    """Who holds a writer lock: the process and the thread. The thread ident alone
-    survives a fork, so a child would pass for its parent and append unlocked."""
+    """Who holds a writer lock: the process and the thread. With the process in it, a
+    forked child never passes for its parent (forking while holding is not supported; a
+    child is refused rather than let in)."""
     return os.getpid(), threading.get_ident()
 
 
-# Every live CaseLog, so a forked child can replace their thread locks (below).
-_LIVE: weakref.WeakSet[CaseLog] = weakref.WeakSet()
-
-# The writer locks this process holds, by lock file, with the (process, thread) holding
-# each. A second CaseLog on the same file in the holding thread reads as the holder: its
-# own fallback lock would be refused by its own thread, which is not another writer.
-_HELD: dict[str, tuple[int, int]] = {}
+# The writer locks this process holds, by the lock file's identity (device and inode, so
+# two spellings of one path, a symlink included, are the same file), with the (process,
+# thread) holding each. A second CaseLog on the same file in the holding thread reads as
+# the holder: its own fallback lock would be refused by its own thread, which is not
+# another writer.
+_HELD: dict[tuple[int, int], tuple[int, int]] = {}
 _HELD_GUARD = threading.Lock()
-_FORK_HELD: list[CaseLog] = []
 
 
-def _held_key(lock_path: Path) -> str:
-    return os.path.normcase(os.path.abspath(lock_path))
-
-
-def _before_fork() -> None:
-    # A fork never lands inside an acquisition or release: every state lock is held across
-    # it, so the child never inherits a lock descriptor that is not yet recorded.
-    _FORK_HELD[:] = list(_LIVE)
-    for log in _FORK_HELD:
-        log._state.acquire()
-    _HELD_GUARD.acquire()
-
-
-def _after_fork_in_parent() -> None:
-    _HELD_GUARD.release()
-    for log in reversed(_FORK_HELD):
-        log._state.release()
-    _FORK_HELD.clear()
-
-
-def _after_fork_in_child() -> None:
-    # A child starts with no writer state of its own. Another thread of the parent may have
-    # held an instance's state lock at the fork, and in the child that thread does not
-    # exist, so the lock is replaced. The writer lock is the parent's: the child closes its
-    # copy of the descriptor at once, which releases nothing while the parent's stays open
-    # and keeps the lock from outliving the parent in a surviving child. An explicit unlock
-    # would release it on the shared open file under a parent that still writes. Writer
-    # blocks the child inherited hold a token that no longer matches, so leaving them does
-    # nothing; the child takes a lock of its own, which contends like any process.
-    global _HELD_GUARD
-    _HELD_GUARD = threading.Lock()
-    _HELD.clear()
-    _FORK_HELD.clear()
-    for log in list(_LIVE):
-        log._state = threading.RLock()
-        fd = log._lock_fd
-        log._lock_fd, log._owner, log._lock_depth, log._token = None, None, 0, None
-        if fd is not None:
-            with suppress(OSError):
-                os.close(fd)
-
-
-if hasattr(os, "register_at_fork"):
-    os.register_at_fork(before=_before_fork, after_in_parent=_after_fork_in_parent,
-                        after_in_child=_after_fork_in_child)
+def _file_id(st: os.stat_result) -> tuple[int, int]:
+    return st.st_dev, st.st_ino
 
 
 class CaseLog:
@@ -376,15 +332,14 @@ class CaseLog:
         self.path = Path(path)
         self.lock_path = self.path.with_name(self.path.name + ".lock")
         self.head_path = self.path.with_name(self.path.name + ".head")
-        # Guards the four fields below, never held long. Reentrant, so a writer block's
+        # Guards the fields below, never held long. Reentrant, so a writer block's
         # cleanup run by the garbage collector or a signal handler inside one of these
         # short regions, on the same thread, cannot deadlock it.
         self._state = threading.RLock()
         self._lock_fd: int | None = None
         self._owner: tuple[int, int] | None = None  # (process id, thread ident) of the holder
         self._lock_depth = 0
-        self._token: object | None = None  # one per acquisition; nested entries share it
-        _LIVE.add(self)
+        self._lock_id: tuple[int, int] | None = None  # the lock file's identity while held
 
     # --- reading -----------------------------------------------------------------------
 
@@ -395,8 +350,13 @@ class CaseLog:
         with self._state:
             holder = self._owner == me
         if not holder:
-            with _HELD_GUARD:
-                holder = _HELD.get(_held_key(self.lock_path)) == me
+            try:
+                lock_id = _file_id(os.stat(self.lock_path))
+            except OSError:  # no lock file: nobody in this process holds it
+                lock_id = None
+            if lock_id is not None:
+                with _HELD_GUARD:
+                    holder = _HELD.get(lock_id) == me
         if holder:  # nothing else can write: one read is the truth
             return _check(self._read_log(), _read_head(self.head_path))
         for attempt in range(READ_RETRIES):
@@ -457,33 +417,33 @@ class CaseLog:
         The thread that holds it may nest (a sign-off holds the lock across its checks and
         its append). Any other writer is refused, whether it is another process, another
         CaseLog on the same file, or another thread using this same instance: the lock
-        belongs to a thread, not to the object. A forked child is another process even
-        though it inherits its parent's thread ident, so it never enters on its parent's
-        lock."""
+        belongs to a thread, not to the object. Forking a process while it holds the lock is
+        not supported: a child writing through an inherited CaseLog is refused, and leaving
+        a block it inherited releases nothing."""
         me = _holder_id()
         with self._state:
             if self._owner == me:
                 self._lock_depth += 1
-                token = self._token
             elif self._owner is not None:
                 raise CaseLocked(f"{self.path}: another window or command is writing to this case")
             else:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
-                locked = recorded = False
+                locked = False
                 try:
                     _lock(fd)
                     locked = True
-                    token = object()
-                    self._lock_fd, self._owner, self._lock_depth, self._token = fd, me, 1, token
-                    recorded = True
+                    lock_id = _file_id(os.fstat(fd))
+                    self._lock_fd, self._owner, self._lock_depth, self._lock_id = fd, me, 1, lock_id
                     with _HELD_GUARD:
-                        _HELD[_held_key(self.lock_path)] = me
+                        _HELD[lock_id] = me
                 except BaseException as e:
                     # Whatever interrupts this (a lock error, or KeyboardInterrupt between
-                    # two steps) leaves no lock behind: a recorded one is released, an
-                    # unrecorded descriptor closed.
-                    if recorded:
+                    # two steps) leaves no lock behind: once the descriptor is recorded
+                    # the lock is released, before that the descriptor is closed.
+                    if self._lock_fd == fd:
+                        self._lock_depth = 1
+                        self._owner = me
                         self._release_one_level()
                     else:
                         os.close(fd)
@@ -498,19 +458,21 @@ class CaseLog:
             yield self
         finally:
             with self._state:
-                # Only the acquisition this block made or joined is released. A block a
-                # forked child inherited holds a token the fork hook cleared, so leaving
-                # it never touches the parent's lock or one the child took since.
-                if token is self._token and self._owner == me:
+                # Only the holder releases, asked now rather than at entry: a forked
+                # child leaving a block it inherited carries its parent's identity from
+                # entry, but it is another process and never unlocks its parent's lock.
+                if self._owner == _holder_id():
                     self._release_one_level()
 
     def _release_one_level(self) -> None:
         """Leave one level of this process's writer lock (call under _state)."""
         self._lock_depth -= 1
         if self._lock_depth == 0:
-            fd, self._lock_fd, self._owner, self._token = self._lock_fd, None, None, None
-            with _HELD_GUARD:
-                _HELD.pop(_held_key(self.lock_path), None)
+            fd, self._lock_fd, self._owner = self._lock_fd, None, None
+            lock_id, self._lock_id = self._lock_id, None
+            if lock_id is not None:
+                with _HELD_GUARD:
+                    _HELD.pop(lock_id, None)
             if fd is not None:
                 # Closing the descriptor releases the lock on every platform, so it runs
                 # even when the explicit unlock fails; skipping it would leave the lock
