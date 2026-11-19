@@ -1,0 +1,60 @@
+{
+  "task": "T03",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "The shipped lists cover own pots and savings, HMRC, refunds and rails at src/cma/rules/v2.yaml:73–150, lenders and MCA providers at :154–207, cash deposits and explained credits at :242–270, and trading providers and withdrawal wording at :293–395. The longer-phrase filter is at src/cma/categorise.py:462, the bank-code exception and cue precedence at :511, and override, profile, ambiguity and firm-rule precedence at :529–588. The graph runs categorisation at src/cma/graph.py:250 and exports provenance at :221. The runner logged 702 passing tests, including per-list provenance cases, CLI regressions and both offline evals. Source inspection found that a cheque reference can suppress explicit cash wording and let an ambiguous credit into M2. Reviewed duplicate submission, concurrent updates, sign and Unicode boundaries, currency and timezone, partial failure, authorisation, case isolation, rollback, and CLI, MCP and checkpoint consumers. Reproductions are from source inspection. No tests were executed and no files were changed during review.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/rules/v2.yaml",
+      "line": 261,
+      "criterion": "R4",
+      "claim": "A cheque token anywhere in the description suppresses even explicit CASH DEPOSIT wording. This can bypass the required rail-plus-cash ambiguity check, omit the cash candidate and count the credit as trading receipts without an override.",
+      "repro": "Run CMA_RULESET=v2 cma run on a valid statement containing a £500 credit described as `BACS CREDIT CASH DEPOSIT REF CHEQUE BOOK INV 42`, with no matching outgoing payment. The global `unless` suppresses cash_paid_in, leaving payment_rail and invoice_transfer. The line gets `v2:invoice_transfer` and contributes £500 to M2. R4 requires an ambiguous credit in unexplained money in with the rail, cash and invoice rules recorded as candidates."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 455,
+      "criterion": "R4",
+      "claim": "The table validator accepts a regex that the credit matcher cannot compile. The malformed-table claim covers load-time refusal, but the matcher wraps each accepted regex in a capturing lookahead only after a description matches it.",
+      "repro": "In a test fixture, replace the v2 invoice rule's pattern with `(?i)inv[0-9]+` and leave its other fields unchanged. `ruleset_from_data` accepts it. Classifying a positive `INV42` then raises `re.error` because `_at_every_position` moves the global flag inside the lookahead. The shipped patterns do not use this flag form."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 554,
+      "criterion": "R4",
+      "claim": "The producer's unqualified statement that shuffling rules within each stage preserves every line's category on whole statements is broader than the tested cases and false for debits. R4's credit precedence is independent of this claim.",
+      "repro": "Categorise a £10 debit described as `PAYROLL RENT`, then swap the shipped payroll and rent rules within the unprotected names stage and categorise it again. The category changes from payroll to rent because debits take the first match. The passing shuffle test at tests/test_rules_v2.py:1377 lacks a debit matching both rules."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 843,
+      "criterion": "R4",
+      "claim": "The runner proves the timing assertion for one 10,000-line categoriser fixture. It provides no timing for the full two-second override recompute budget cited by the producer.",
+      "repro": "Compare the passing test in specified-3.log with its timed body. It calls only categorise on the fixture. To substantiate the full budget, a runner command must time an override save through refreshed figures, indicators and policy on a representative laptop."
+    },
+    {
+      "severity": "minor",
+      "file": "pyproject.toml",
+      "line": 42,
+      "criterion": "R4",
+      "claim": "The producer's compileall claim for src, tests and evals is only partially proven by the runner. The test and eval directory compileall result is not_proven.",
+      "repro": "Compare mechanical result 2 (`python -m compileall -q src`) with the producer's command. A passing runner row for `python -m compileall -q src evals tests` would prove the full claim."
+    }
+  ],
+  "verdict": "fail"
+}
