@@ -1,0 +1,24 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.18, pytest-9.2.0, pluggy-1.7.0 -- /usr/local/bin/python
+cachedir: .pytest_cache
+rootdir: /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T12
+configfile: pyproject.toml
+testpaths: tests
+plugins: langsmith-0.14.17, anyio-4.15.1
+collecting ... collected 507 items / 494 deselected / 13 selected
+
+tests/test_case_log.py::test_retrying_an_append_that_already_succeeded_writes_nothing_twice PASSED [  7%]
+tests/test_case_log.py::test_case_check_exit_codes_are_0_intact_2_not_a_case_3_broken PASSED [ 15%]
+tests/test_case_log.py::test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break PASSED [ 23%]
+tests/test_models.py::test_a_pending_review_saved_before_the_new_fields_resumes PASSED [ 30%]
+tests/test_models.py::test_a_checkpoint_written_before_the_new_fields_resumes PASSED [ 38%]
+tests/test_models.py::test_todays_evidence_keys_are_a_subset_of_the_new_record PASSED [ 46%]
+tests/test_models.py::test_the_committed_example_evidence_carries_todays_keys_and_a_schema_version PASSED [ 53%]
+tests/test_models.py::test_the_previous_release_loads_a_transaction_written_by_this_one PASSED [ 61%]
+tests/test_previous_release.py::test_the_previous_release_is_really_the_old_code PASSED [ 69%]
+tests/test_previous_release.py::test_a_checkpoint_written_by_the_previous_release_resumes PASSED [ 76%]
+tests/test_previous_release.py::test_the_previous_release_loads_a_transaction_this_one_writes PASSED [ 84%]
+tests/test_previous_release.py::test_all_extras_are_installed PASSED     [ 92%]
+tests/test_previous_release.py::test_a_second_run_with_the_same_out_is_refused_and_leaves_the_record PASSED [100%]
+
+====================== 13 passed, 494 deselected in 3.91s ======================

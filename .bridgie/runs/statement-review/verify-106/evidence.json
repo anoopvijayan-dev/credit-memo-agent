@@ -1,0 +1,109 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed 4dc43f8 against supplied revision 22. Canonical-byte validation, head comparison, and first-bad-entry detection are in src/cma/case.py:177–352 and reach the CLI at src/cma/cli.py:309–338. Holder recognition, post-read lock identity and link checks, and reader retries are in src/cma/case.py:447–699. The sign-off guard is at src/cma/case.py:706 and has no production sign-off caller in this checkout. Writer exclusion, fork refusal, reentrancy, expected-position checks, and repair and publication paths are in src/cma/case.py:734–1250. The runner logged 507 full-suite, 190 invariant, and 13 contract passes, including the named tamper, rebuilt-chain, torn-tail, and duplicate-submit tests. Reviewed concurrent updates, partial failure, empty and malformed data, Unicode, UTC timestamps, OS permissions, case-directory isolation, and CLI consumers. The change introduces no currency computation or migration. A refused nested operation can expose a false write-status message in the outer save's exception chain, and a signal can leave a live thread permanently unable to save through its handle.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-106/invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-106/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-106/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-106/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-106/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-106/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-106/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-106/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1160,
+      "criterion": "P15",
+      "claim": "After a partial append, the save chains any CaseLocked from the write loop. A signal handler's unrelated save refusal can therefore tell the outer caller that nothing was written, and the outer report incorrectly attributes the refusal to a removed or replaced lock.",
+      "repro": "Start an append on case A. After the first short write has put bytes in A's log, run a signal handler that calls append on case B and lets its refusal propagate. Make B exhaust its read checks so its append raises the CaseLocked at line 360 containing 'nothing was written'. A catches that exception at line 1152 and raises SaveNotRecorded from it at line 1160. A's log now has a torn tail, both of A's locks are unchanged, and the exception chain says nothing was written."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 904,
+      "criterion": "P15",
+      "claim": "The save guard registers its token before entering the region that removes it. An interruption in that gap makes later sequential saves on the same thread and CaseLog handle fail as though a save were still active.",
+      "repro": "On the main thread, deliver SIGINT after `_saving.setdefault(me, token)` inserts the token and before execution enters the `try` at line 907. Catch KeyboardInterrupt and retry append on that same CaseLog handle and thread. The retry is refused with 'another save on this case log is under way' even though the interrupted save never reached the writer lock and no save remains active."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 333,
+      "criterion": "P15",
+      "claim": "The producer's exit-0 and 'appending' claim for a held case contradicts the current CLI and the passing contract test. The CLI exits 4 and reports that the case is being saved.",
+      "repro": "Read the held-case assertion at tests/test_case_log.py:1361 and its PASSED row in contracts-4.log. With a writer holding the case over a torn tail, the test requires exit 4 and 'saved'."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 338,
+      "criterion": "P15",
+      "claim": "The operability claim says the CLI prints the head hash. It prints the first 12 characters.",
+      "repro": "Compare the intact `cma case check` output with the `hash` field in that case's head file. The printed value is a prefix of the stored hash."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 318,
+      "criterion": "P15",
+      "claim": "The security proof covers file creation modes. The broader claim that the CLI enforces case-root ownership is unsupported by the proof and by the entry point, which accepts any directory the invoking user can access.",
+      "repro": "Use a fixture owned by another local user with a traversable folder and readable case-log files, then invoke `cma case check` against it. The CLI checks `is_dir` and opens the log under the invoking user's OS permissions. The passing test at tests/test_case_log.py:736 only inspects modes on newly created files."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
