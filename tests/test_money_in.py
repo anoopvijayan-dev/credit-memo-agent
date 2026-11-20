@@ -1285,3 +1285,26 @@ def test_a_readable_balance_at_the_limit_is_named_in_a_record_with_a_long_field(
     with pytest.raises(ingest.StatementError) as e:
         ingest.load_csv(csv, today=date(2026, 6, 1))
     assert "line 2: balance '10000000000000.00' is £10,000,000,000,000 or more" in str(e.value)
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("ending", ["\n", "\r", "\r\n"])
+def test_a_bad_byte_in_the_first_data_record_is_on_its_line_with_its_amount_read(tmp_path, ending):
+    """T04 review 44: a bad byte in the first data record, with no whole data record before
+    it, is that record's line (2), never the header's (1), and its readable amount is still
+    checked (here past the line limit), in the loader and the Monzo importer."""
+    from cma.importers import monzo
+
+    csv = tmp_path / "s.csv"
+    csv.write_bytes(f"id,date,amount,balance,description{ending}T1,2026-01-01,10000000000000.00,1.00,".encode()
+                    + b"CAF\xe9" + ending.encode())
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    assert "line 2: not UTF-8" in str(e.value) and "line 1" not in str(e.value)
+    assert "line 2: amount '10000000000000.00' is £10,000,000,000,000 or more" in str(e.value)
+
+    src = tmp_path / "m.csv"
+    src.write_bytes(f"Transaction ID,Amount,Currency,Date,Time,Type,Name,Balance{ending}".encode()
+                    + b"tx_1,10000000000000.00,GBP,01/01/2026,09:00:00,Faster payment,CAF\xe9,1.00" + ending.encode())
+    with pytest.raises(monzo.MonzoImportError, match=r"line 2: Amount '10000000000000\.00' is £10,000,000,000,000"):
+        monzo.convert(src, tmp_path / "o.csv")
