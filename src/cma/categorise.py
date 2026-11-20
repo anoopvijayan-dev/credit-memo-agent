@@ -783,17 +783,31 @@ def credit_matches(ruleset: Ruleset, description: str, amount: float) -> list[Ru
         return hits
     matched = [(r, _spans(r, desc)) for r in hits]
 
-    def inside_longer(rule: Rule, spans: list[tuple[int, int]]) -> bool:
+    def inside_longer(rule: Rule, spans: list[tuple[int, int]], alive: set[int]) -> bool:
         # Cash wording and payment-method wording never hide each other inside a longer
         # phrase, whichever list holds it: a rail with cash wording is ambiguous by R4
-        # (reviews 19 and 21).
-        others = [o for other, ss in matched if other is not rule
+        # (reviews 19 and 21). Only a match that itself counts can hide another: a phrase
+        # set aside inside a longer one hides nothing (review 22).
+        others = [o for k, (other, ss) in enumerate(matched) if k in alive and other is not rule
                   and not _rail_and_cash(rule, other) for o in ss]
         return bool(spans) and all(any(a <= s and e <= b and b - a > e - s for a, b in others) for s, e in spans)
 
-    # The bank's own code settles the line type before the longer-phrase rule (D101): it is
-    # never counted as inside another rule's longer phrase.
-    return [r for r, spans in matched if r.bank_code or not inside_longer(r, spans)]
+    def survivors(alive: set[int]) -> set[int]:
+        # The bank's own code settles the line type before the longer-phrase rule (D101):
+        # it is never counted as inside another rule's longer phrase.
+        return {k for k, (r, spans) in enumerate(matched) if r.bank_code or not inside_longer(r, spans, alive)}
+
+    # Which matches count depends on which others count. Starting from all of them, every
+    # second step keeps a subset of the step before, so the steps settle; the settled set
+    # is the larger of the two that alternate, which sets aside the fewest matches and so
+    # never hides wording that makes a credit ambiguous.
+    alive = set(range(len(matched)))
+    while True:
+        nxt = survivors(survivors(alive))
+        if nxt == alive:
+            break
+        alive = nxt
+    return [r for k, (r, _) in enumerate(matched) if k in alive]
 
 
 def _is_payment_method(rule: Rule) -> bool:

@@ -1868,3 +1868,18 @@ def test_a_v2_pattern_may_not_hide_an_exception_in_a_lookaround(pattern):
     cash = {"id": "cash", "pattern": pattern, "direction": "in", "category": "cash_deposit", "stage": "names"}
     with pytest.raises(RulesetError, match="lookahead or lookbehind"):
         categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, cash]}, "v2", "t", "0")
+
+
+@pytest.mark.contracts
+def test_a_phrase_set_aside_inside_a_longer_one_hides_nothing():
+    """T03 review 22 / R4: a gateway name holding the rail, itself inside a longer cash
+    phrase, is set aside, so it cannot hide the rail: the credit stays ambiguous."""
+    rail = {"id": "rail", "names": ["FPS"], "direction": "in", "protected": True, "stage": "line_type"}
+    gateway = {"id": "gateway", "names": ["XYZ FPS"], "direction": "in", "category": "revenue_card_settlement",
+               "stage": "names"}
+    cash = {"id": "cash", "names": ["XYZ FPS CASH DEPOSIT"], "direction": "in", "category": "cash_deposit",
+            "stage": "names"}
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rail, gateway, cash],
+                                       "category_order": ["revenue_card_settlement", "cash_deposit"]},
+                                      "v2", "t", "0")
+    assert classify(_t("XYZ FPS CASH DEPOSIT", 200.0), rs) == (C.OTHER, "v2:conflict:rail+cash")
