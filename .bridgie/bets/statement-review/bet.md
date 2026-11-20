@@ -381,6 +381,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-20 D222 (unblock): take over manually — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended option. T04 fixed by hand at 0c63ca4 (review 3). → task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04 [Anoop Vijayan]
 - 2026-11-20 D227 (unblock): take over manually — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward). T04 fixed by hand at the latest commit (review 4). → task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04 [Anoop Vijayan]
 - 2026-11-20 D224 (question): Refuse the import that would bring a case's combined money in or money out to the limit, naming the account; say it in R41 in the next revision (design default; no build change now) — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended option. → recorded [Anoop Vijayan]
+- 2026-11-20 D225 (question): Every close in the month, as revision 25 writes P2 and R11 (design default) — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended option. → recorded [Anoop Vijayan]
 
 ## Idea
 
