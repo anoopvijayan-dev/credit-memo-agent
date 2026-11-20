@@ -167,7 +167,8 @@ def appendix(s: MemoState) -> str:
         "| id | metric | value | method | lines |",
         "|---|---|---|---|---|",
     ]
-    lines += [f"| {m.id} | {m.name} | {m.display()} | {m.method} | {len(m.evidence)} |" for m in s["metrics"]]
+    lines += [f"| {m.id} | {m.name} | {m.display_exact() if m.id in met.EXACT_IDS else m.display()} | {m.method} "
+              f"| {len(m.evidence)} |" for m in s["metrics"]]
     lines += ["", rules_table(p)]
     return "\n".join(lines)
 

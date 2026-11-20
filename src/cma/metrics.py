@@ -54,6 +54,11 @@ NON_TRADING_IN = {Category.OTHER, Category.OWN_ACCOUNT_TRANSFER, Category.DIRECT
 
 # The figure each money-in bucket is reported as. Trading receipts are M2 (its id and name
 # are kept so signed memos still read); the other seven are new (R1).
+# The figures that are sums reconciled to the penny (R1, R3): shown to the penny wherever
+# they are shown together, so a displayed breakdown always adds up to the displayed M17
+# (T04 review 2).
+EXACT_IDS = frozenset({"M2", "M17", "M18", "M19", "M20", "M21", "M22", "M23", "M24", "M25"})
+
 BUCKET_METRICS: dict[Bucket, tuple[str, str, str]] = {
     Bucket.OWN_ACCOUNT_IN: ("M19", "Own-account transfers in", "Credits moved in from the applicant's own pots, savings or accounts."),
     Bucket.DIRECTOR_FUNDING: ("M20", "Director and shareholder funding",
@@ -73,7 +78,7 @@ NOT_IN_SHARE = {Category.LOAN_DRAWDOWN, Category.RETURNED_DD, Category.OWN_ACCOU
 
 # 10**15 pence (£10 trillion): every whole number of pence below it has at most 15
 # significant digits, which a binary float holds and prints back exactly.
-MAX_PENCE = 10**15
+MAX_PENCE = 10**15  # bound the tests draw amounts from; figures are checked for exactness (T04 review 2)
 
 
 class AmountError(ValueError):
@@ -102,8 +107,6 @@ def _whole_pence(v: float, what: str) -> int:
         p = None
     if p is None or not p.is_finite() or p != p.to_integral_value():
         raise AmountError(f"{what} is not a whole number of pence")
-    if abs(p) >= MAX_PENCE:
-        raise AmountError(f"{what} is too large to count to the penny (the limit is {MAX_PENCE} pence)")
     return int(p)
 
 
@@ -125,12 +128,19 @@ def _ratio(num: int | float, den: int | float, places: int, scale: int = 1) -> f
 
 
 def _gbp(p: int) -> float:
-    """Pence back to pounds, for reporting only. Below MAX_PENCE the quotient of two ints
-    is the float nearest the exact pounds, and it prints as those pounds exactly."""
-    if abs(p) >= MAX_PENCE:
-        raise AmountError(f"a figure of {p} pence is too large to report to the penny "
-                          f"(the limit is {MAX_PENCE} pence)")
-    return p / 100
+    """Pence back to pounds, for reporting only. The float is the one nearest the exact
+    pounds; it is refused only when that float does not read back as the same pence, so no
+    figure is ever reported a penny out, and no amount the DTO carries exactly is refused
+    by a fixed ceiling (T04 review 2)."""
+    v = p / 100
+    if _whole_pence_exact(v) != p:
+        raise AmountError(f"a figure of {p} pence cannot be reported to the penny")
+    return v
+
+
+def _whole_pence_exact(v: float) -> int | None:
+    q = Decimal(repr(v)) * 100
+    return int(q) if q.is_finite() and q == q.to_integral_value() else None
 
 
 def _month(d: date) -> str:
@@ -207,8 +217,15 @@ def end_of_day_balances(txns: list[Transaction]) -> dict[date, tuple[int, str]]:
 
 def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric]:
     txns = statement.transactions
-    if any(t.category is None for t in txns):
-        raise ValueError("categorise() must run before compute()")
+    uncategorised = [t for t in txns if t.category is None]
+    if uncategorised:
+        # A credit with no category is in no bucket: refused as the buckets not adding up,
+        # naming the difference and the lines (R3, T04 review 2); any other line, as a
+        # refusal naming it. Neither is ever reported as a model failure.
+        loose = [t for t in uncategorised if _whole_pence_exact(t.amount) and _whole_pence_exact(t.amount) > 0]
+        if loose:
+            raise ReconciliationError(sum(_whole_pence_exact(t.amount) or 0 for t in loose), [t.id for t in loose])
+        raise AmountError(f"line {uncategorised[0].id} has no category: categorise() must run before compute()")
     if vat_stagger is not None and vat_stagger not in VAT_STAGGERS:
         raise ValueError("vat_stagger must be 1, 2 or 3")
 
@@ -279,7 +296,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
     def operating_line(t: Transaction) -> bool:
         if eff(t) in FINANCING:
             return False
-        if t.amount <= 0:
+        if pence(t) <= 0:
             return True
         if t.category == Category.RETURNED_DD:
             return t.reverses is not None
@@ -291,15 +308,16 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
     # them, but never by more than was sent, so the round trip can't add cash.
     sent: dict[str, int] = defaultdict(int)
     for t in txns:
-        if t.amount < 0 and eff(t) not in FINANCING and OUTGOING_TRANSFER.search(t.description.upper()):
+        if pence(t) < 0 and eff(t) not in FINANCING and OUTGOING_TRANSFER.search(t.description.upper()):
             sent[counterparty(t.description)] += -pence(t)
     back: dict[str, list[Transaction]] = defaultdict(list)
     for t in txns:
-        if t.amount > 0 and t.category in NON_TRADING_IN and counterparty(t.description) in sent:
+        if pence(t) > 0 and t.category in NON_TRADING_IN and counterparty(t.description) in sent:
             back[counterparty(t.description)].append(t)
     offset = sum(min(total(ts), sent[cp]) for cp, ts in back.items())
+    capped = sorted(t.id for cp, ts in back.items() if total(ts) > sent[cp] for t in ts)
     operating += [t for ts in back.values() for t in ts]
-    net_operating = total(t for t in operating if not (t.amount > 0 and t.category in NON_TRADING_IN)) + offset
+    net_operating = total(t for t in operating if not (pence(t) > 0 and t.category in NON_TRADING_IN)) + offset
     dscr: float | None = None
     dscr_note = (
         "Historical cover of existing debt only: net operating cash flow after owner drawings, "
@@ -340,7 +358,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
             for q_end, d in due:
                 window_end = _add_working_days(d, VAT_DD_WORKING_DAYS)
                 paid = next(
-                    (t for t in vat if t.id not in used and t.id not in reversed_ids and t.amount < 0
+                    (t for t in vat if t.id not in used and t.id not in reversed_ids and pence(t) < 0
                      and q_end < t.date <= window_end),
                     None,
                 )
@@ -351,7 +369,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
 
     # Money in, by bucket (R1). Every credit goes to the bucket its category maps to; M2's
     # lines (REVENUE_CATEGORIES) are the trading receipts bucket.
-    credits = [t for t in txns if t.amount > 0]
+    credits = [t for t in txns if pence(t) > 0]
     buckets: dict[Bucket, list[Transaction]] = {b: [] for b in BUCKET_METRICS}
     for t in credits:
         b = CREDIT_BUCKET.get(t.category)
@@ -381,7 +399,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
                method="Card and gateway settlements, transfers in that carry an invoice reference, and cash paid in.",
                evidence=[t.id for t in rev]),
         Metric(id="M3", name="Average monthly revenue",
-               value=_ratio(total_revenue * 1461, period_days * 48 * 100, 2), unit="GBP",
+               value=_gbp(int(_ratio(total_revenue * 1461, period_days * 48, 0))), unit="GBP",
                method="Total revenue divided by the exact length of the period in months (quiet months still count).",
                evidence=[t.id for t in rev]),
         Metric(id="M4", name="Revenue trend", value=trend, unit="pct", method=trend_note,
@@ -400,7 +418,9 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
         Metric(id="M9", name="Net operating cash flow", value=g(net_operating), unit="GBP",
                method=("Revenue in, minus all money out, excluding loans and drawings. Money in that is not "
                        "explained as trading is left out, except that money sent back by someone the "
-                       "business paid by transfer nets off what it sent them."),
+                       "business paid by transfer nets off what it sent them."
+                       + (f" A derived figure: credits {', '.join(capped)} count only up to what was sent "
+                          "to the same counterparty." if capped else "")),
                evidence=[t.id for t in operating]),
         Metric(id="M10", name="Debt service cover", value=dscr, unit="ratio", method=dscr_note,
                evidence=[t.id for t in operating + drawings + loan] if dscr is not None else []),
@@ -441,7 +461,7 @@ def _reconcile(credits, rev, buckets, money_in, trading, total, pos) -> None:
     counts = Counter(t.id for t in placed)
     credit_ids = Counter(t.id for t in credits)
     involved = {t.id for t in credits if counts[t.id] != 1 or credit_ids[t.id] != 1}
-    involved |= {t.id for t in placed if t.amount <= 0}
+    involved |= {t.id for t in placed if pence(t) <= 0}
     difference = money_in - (trading + sum(total(ts) for ts in buckets.values()))
     if difference or involved:
         raise ReconciliationError(difference, sorted(involved, key=lambda i: pos.get(i, len(pos))))

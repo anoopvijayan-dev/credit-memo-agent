@@ -230,17 +230,20 @@ def test_p1_reported_gbp_figures_reconcile_as_printed_for_large_amounts():
         assert _pence(m["M17"].value) == sum(_pence(t.amount) for t in lines)
 
 
-def test_an_amount_too_large_to_report_to_the_penny_is_refused():
+def test_a_large_whole_penny_amount_is_counted_not_refused_by_a_ceiling():
+    """T04 review 2: the old fixed ceiling (10**15 pence) refused £10,000,000,000,000.01,
+    which the DTO carries exactly; it is now counted and reported to the penny."""
+    line = _line("L1", "a", 10000000000000.01, Category.REVENUE_CARD)
+    assert metrics.pence(line) == 1000000000000001
+    assert metrics._gbp(1000000000000001) == 10000000000000.01
+
+
+def test_a_figure_that_cannot_be_reported_to_the_penny_is_refused():
+    """T04 review 2: a total whose pounds no float carries to the penny is refused, never
+    reported a penny out."""
     s = Statement(account_name="x", transactions=[
         _line("L1", "a", 100000000000000.0, Category.REVENUE_CARD), _line("L2", "b", 0.01, Category.OTHER)])
-    with pytest.raises(metrics.AmountError, match="L1"):
-        metrics.compute(s)
-
-
-def test_figures_whose_sum_is_too_large_to_report_to_the_penny_are_refused():
-    s = Statement(account_name="x", transactions=[
-        _line("L1", "a", 9999999999999.99, Category.REVENUE_CARD), _line("L2", "b", 0.01, Category.REVENUE_CARD)])
-    with pytest.raises(metrics.AmountError, match="too large"):
+    with pytest.raises(metrics.AmountError, match="cannot be reported to the penny"):
         metrics.compute(s)
 
 
@@ -302,3 +305,27 @@ def test_mcp_compute_metrics_refuses_buckets_that_do_not_reconcile(tmp_path, mon
     line_id, pence = broken.line
     assert isinstance(e.value, metrics.ReconciliationError)
     assert f"{pence} pence" in str(e.value) and line_id in str(e.value)
+
+
+@pytest.mark.contracts
+def test_an_uncategorised_credit_is_a_reconciliation_failure_naming_it():
+    """T04 review 2 / R3: a credit with no category is in no bucket: refused with the
+    difference and the line, never as a generic error the CLI reports as a model failure."""
+    s = Statement(account_name="x", transactions=[
+        _line("L1", "a", 12.34, Category.REVENUE_CARD), _line("L2", "b", 5.00, Category.OTHER)])
+    s.transactions[1].category = None
+    with pytest.raises(metrics.ReconciliationError) as e:
+        metrics.compute(s)
+    assert e.value.lines == ["L2"] and "500 pence" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_the_money_in_figures_are_shown_to_the_penny_so_the_parts_add_up_to_the_whole():
+    """T04 review 2: shown together, M2 and M19-M25 add up to the shown M17."""
+    s = Statement(account_name="x", transactions=[
+        _line("L1", "a", 0.6, Category.REVENUE_CARD), _line("L2", "b", 0.6, Category.REFUND_IN),
+        _line("L3", "c", 0.6, Category.OTHER)])
+    shown = {m.id: m.display_exact() for m in metrics.compute(s) if m.id in metrics.EXACT_IDS}
+    assert shown["M17"] == "£1.80" and shown["M2"] == "£0.60"
+    parts = sum(_pence(float(v.lstrip("£").replace(",", ""))) for k, v in shown.items() if k not in ("M17", "M18"))
+    assert parts == 180

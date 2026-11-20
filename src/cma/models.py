@@ -130,6 +130,13 @@ class Metric(BaseModel):
         """The figure as the memo should quote it. Negative figures keep their minus sign."""
         return format_value(self.value, self.unit)
 
+    def display_exact(self) -> str:
+        """The figure to the penny when it is money, for tables that show the money-in
+        buckets beside total money in, so the shown parts add up to the shown whole."""
+        if self.unit == "GBP" and self.value is not None:
+            return f"{'-' if self.value < 0 else ''}£{abs(self.value):,.2f}"
+        return self.display()
+
 
 # How many decimals each unit is shown with. The memo copies figures as shown, and the
 # guard treats a figure written at this precision as exact (see guard._value_fits).
