@@ -61,13 +61,17 @@ def _statement(path: str):
         problems = e.problems
         whole = [x for x in problems if not x.startswith("line ")]
 
-        def labels(at: bool) -> list[str]:
-            got = {x.split(":", 1)[0] for x in problems if x.startswith("line ") and (metrics.AT_LIMIT in x) == at}
+        def labels(marker: str | None) -> list[str]:
+            got = {x.split(":", 1)[0] for x in problems if x.startswith("line ")
+                   and (marker in x if marker else not (metrics.AT_LIMIT in x or ingest.TOO_LONG in x))}
             return sorted(got, key=lambda label: int(label.split()[1]))
 
-        limit = labels(True)
-        other = [x for x in labels(False) if x not in limit]
+        # A field too long to read is named as that, never as an amount at the limit: what it
+        # holds is not known (T04 review 21). Both are named in full.
+        limit, long_ = labels(metrics.AT_LIMIT), labels(ingest.TOO_LONG)
+        other = [x for x in labels(None) if x not in limit and x not in long_]
         parts = whole + ([f"amount or balance {metrics.AT_LIMIT} on {', '.join(limit)}"] if limit else [])
+        parts += [f"{ingest.TOO_LONG} on {', '.join(long_)}"] if long_ else []
         if other:
             parts.append(f"other problems on {', '.join(other[:10])}{' and more' if len(other) > 10 else ''}")
         raise ValueError(f"{path}: statement refused, {len(problems)} problem(s): {'; '.join(parts)}; "

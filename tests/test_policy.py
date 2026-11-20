@@ -79,3 +79,22 @@ def test_a_different_or_missing_policy_file_is_not_used(tmp_path, change):
         f.unlink()
     with pytest.raises(pol.OutcomeUnknown, match="M10"):
         pol.reevaluate(stored, [m], [m.model_copy(update={"value": 1.0})], f)
+
+
+
+@pytest.mark.parametrize("make", ["directory", "not_utf8"])
+def test_an_unreadable_policy_is_a_policy_error_and_resume_refuses_naming_the_figure(tmp_path, make):
+    # T04 review 21: a policy path that is a directory, or a file that is not UTF-8, escaped
+    # as a raw exception instead of the refusal naming the figure (revision 28).
+    from cma import policy as pol
+
+    f, stored, m = _filed(tmp_path)
+    f.unlink()
+    if make == "directory":
+        f.mkdir()
+    else:
+        f.write_bytes(b"\xff\xfe name: x")
+    with pytest.raises(pol.PolicyError):
+        pol.load_policy(f)
+    with pytest.raises(pol.OutcomeUnknown, match=r"M10.*cannot be read"):
+        pol.reevaluate(stored, [m], [m.model_copy(update={"value": 1.0})], f)

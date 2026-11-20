@@ -37,6 +37,8 @@ def load_policy(path: Path | None = None) -> dict:
         policy = yaml.safe_load(text)
     except FileNotFoundError as e:
         raise PolicyError(f"{source}: no such file") from e
+    except (OSError, UnicodeDecodeError) as e:  # a directory, no permission, not UTF-8 (T04 review 21)
+        raise PolicyError(f"{source}: cannot be read ({e.__class__.__name__})") from e
     except yaml.YAMLError as e:
         raise PolicyError(f"{source}: not valid YAML ({e.__class__.__name__})") from e
     validate(policy, source=source)

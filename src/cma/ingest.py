@@ -85,6 +85,10 @@ def _number(raw: str | None) -> float | None:
     return v if math.isfinite(v) and float_pence(v) == p else None
 
 
+# How a field the CSV reader cannot read is reported: whether it is an amount is not known.
+TOO_LONG = "a field is too long to read"
+
+
 class CsvRecordError(ValueError):
     """The CSV reader could not read a record; the message names its line in the file."""
 
@@ -95,18 +99,34 @@ def read_records(text: str) -> tuple[list[str], list[tuple[int, dict]]]:
     (T04 review 20). The CSV reader stops on a field longer than it reads, or a malformed
     record, before any check: CsvRecordError, naming the line, never another failure. A
     field that long that is an amount or balance is past the limit (R2, T04 review 19)."""
+    # The physical lines as the CSV reader sees them, to find where each record starts: a
+    # record is named by its first line, never by a continuation of a multi-line field
+    # (T04 review 21). Blank lines between records are skipped by the reader and counted here.
+    physical = list(io.StringIO(text, newline=""))
     reader = csv.DictReader(io.StringIO(text, newline=""))
     rows: list[tuple[int, dict]] = []
+
+    def start(after: int) -> int:
+        line = after + 1
+        while line <= len(physical) and physical[line - 1].strip("\r\n") == "":
+            line += 1
+        return line
+
     try:
         header = [h.strip() for h in (reader.fieldnames or [])]
         reader.fieldnames = header
-        for row in reader:
-            rows.append((reader.line_num, row))
+        while True:
+            before = reader.reader.line_num  # DictReader.line_num lags on an error
+            try:
+                row = next(reader)
+            except StopIteration:
+                break
+            rows.append((start(before), row))
     except csv.Error as e:
-        line = max(reader.reader.line_num, 1)  # DictReader.line_num lags on an error
+        line = start(before) if "before" in locals() else 1
         if "field larger than field limit" in str(e):
-            raise CsvRecordError(f"line {line}: a field is longer than {csv.field_size_limit():,} characters and "
-                                 f"is not read; an amount or balance that long is {AT_LIMIT}") from None
+            raise CsvRecordError(f"line {line}: {TOO_LONG} (longer than {csv.field_size_limit():,} characters); "
+                                 "an amount or balance that long would be past the £10,000,000,000,000 limit") from None
         raise CsvRecordError(f"line {line}: not a readable CSV record ({e})") from None
     return header, rows
 

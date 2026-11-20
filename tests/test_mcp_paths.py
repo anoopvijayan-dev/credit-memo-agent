@@ -86,3 +86,15 @@ def test_a_refusal_names_every_line_at_the_limit_however_many_lines_are_wrong(da
     msg = str(e.value)
     assert "£10,000,000,000,000 or more on line 14" in msg and "10000000000000.00" not in msg
     assert "SECRET-DATE" not in msg and "and more" in msg
+
+
+
+def test_a_field_too_long_to_read_is_not_called_an_amount_at_the_limit(data):
+    """T04 review 21: MCP asserted that a field too long to read was an amount or balance at
+    the limit; what it holds is not known. It is named as too long, in full, with no value."""
+    rows = ["id,date,description,amount,balance", "T1,2026-01-01," + "D" * 200_000 + ",1.00,1.00"]
+    (data / "data" / "long.csv").write_text("\n".join(rows) + "\n")
+    with pytest.raises(ValueError) as e:
+        mcp_server.statement_summary("long.csv")
+    msg = str(e.value)
+    assert "a field is too long to read on line 2" in msg and "or more on" not in msg and "DDDD" not in msg

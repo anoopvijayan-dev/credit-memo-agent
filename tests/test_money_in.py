@@ -736,7 +736,7 @@ def test_an_amount_longer_than_the_csv_reader_reads_is_refused_naming_its_line(t
                    f"T2,2026-01-02,B,{huge},5.00\n")
     with pytest.raises(ingest.StatementError) as e:
         ingest.load_csv(csv, today=date(2026, 6, 1))
-    assert "line 3:" in str(e.value) and "£10,000,000,000,000 or more" in str(e.value)
+    assert "line 3: a field is too long to read" in str(e.value) and "£10,000,000,000,000 limit" in str(e.value)
     r = CliRunner().invoke(app, ["run", str(csv), "--yes", "--reviewer", "A"])
     assert r.exit_code != 0 and "line 3:" in r.output and "model call failed" not in r.output
 
@@ -752,7 +752,7 @@ def test_problems_name_the_line_a_person_sees_blank_lines_counted(tmp_path):
     with pytest.raises(ingest.StatementError, match="line 5: amount 'x'"):
         ingest.load_csv(csv, today=date(2026, 6, 1))
     csv.write_text(f"id,date,description,amount,balance\n\nT1,2026-01-01,A,5.00,5.00\n\nT2,2026-01-02,B,{huge},5.00\n")
-    with pytest.raises(ingest.StatementError, match="line 5: a field is longer"):
+    with pytest.raises(ingest.StatementError, match="line 5: a field is too long to read"):
         ingest.load_csv(csv, today=date(2026, 6, 1))
 
 
@@ -767,7 +767,23 @@ def test_the_monzo_importer_refuses_an_oversized_field_naming_its_line(tmp_path)
     src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance\n"
                    "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n\n"
                    f"tx_2,02/01/2026,09:00:00,Faster payment,ACME,{huge},GBP,90.00\n")
-    with pytest.raises(monzo.MonzoImportError, match=r"line 4: a field is longer.*£10,000,000,000,000 or more"):
+    with pytest.raises(monzo.MonzoImportError, match=r"line 4: a field is too long to read.*£10,000,000,000,000 limit"):
         monzo.convert(src, tmp_path / "o.csv")
     r = CliRunner().invoke(app, ["import", "monzo", str(src), "--out", str(tmp_path / "o.csv")])
-    assert r.exit_code != 0 and "line 4: a field is longer" in " ".join(r.output.split())
+    assert r.exit_code != 0 and "line 4: a field is too long to read" in " ".join(r.output.split())
+
+
+
+@pytest.mark.contracts
+def test_a_multiline_record_is_named_by_its_first_line(tmp_path):
+    """T04 review 21: a record whose description runs over several lines was named by its
+    last line, a continuation of the description, not the line the record starts on."""
+    huge = "1" + "0" * 200_000 + ".00"
+    csv = tmp_path / "s.csv"
+    csv.write_text('id,date,description,amount,balance\nT1,2026-01-01,"A\nB\nC",x,5.00\n')
+    with pytest.raises(ingest.StatementError, match="line 2: amount 'x'"):
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    csv.write_text(f'id,date,description,amount,balance\nT1,2026-01-01,A,5.00,5.00\n\n'
+                   f'T2,2026-01-02,"two\nlines",{huge},5.00\n')
+    with pytest.raises(ingest.StatementError, match="line 4: a field is too long to read"):
+        ingest.load_csv(csv, today=date(2026, 6, 1))
