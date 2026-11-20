@@ -581,3 +581,14 @@ def test_the_monzo_opening_balance_is_read_exactly_from_the_command_line(tmp_pat
     r = CliRunner().invoke(app, ["import", "monzo", str(src), "-o", str(tmp_path / "o.csv"),
                                  "--opening-balance", "100.05"])
     assert r.exit_code == 0 and "110.05" in (tmp_path / "o.csv").read_text()
+
+
+@pytest.mark.contracts
+def test_a_statement_ending_at_the_last_date_python_has_still_gets_its_reconciliation():
+    """T04 review 9: no day-by-day loop steps past the statement's last day."""
+    lines = [Transaction(id="L1", date=date(9999, 12, 30), description="a", amount=10.0, balance=10.0,
+                         category=Category.REVENUE_CARD),
+             Transaction(id="L2", date=date(9999, 12, 31), description="b", amount=5.0, balance=15.0, category=None)]
+    with pytest.raises(metrics.ReconciliationError) as e:
+        metrics.compute(Statement(account_name="x", transactions=lines), vat_stagger=1)
+    assert e.value.lines == ["L2"]

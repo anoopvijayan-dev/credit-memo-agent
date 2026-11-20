@@ -226,9 +226,11 @@ def end_of_day_balances(txns: list[Transaction]) -> dict[date, tuple[int, str]]:
     out: dict[date, tuple[int, str]] = {}
     d, end = min(last), max(last)
     current = last[d]
-    while d <= end:
+    while True:
         current = last.get(d, current)
         out[d] = (balance_pence(current), current.id)
+        if d == end:  # never step past the last day: it may be the calendar's last (T04 review 9)
+            break
         d += timedelta(days=1)
     return out
 
