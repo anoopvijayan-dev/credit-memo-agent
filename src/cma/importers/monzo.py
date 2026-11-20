@@ -33,7 +33,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from ..categorise import INVOICE_REF
-from ..ingest import CsvRecordError, read_data
+from ..ingest import CsvRecordError, read_data, shown
 from ..metrics import (
     AT_LIMIT,
     at_limit,
@@ -76,7 +76,7 @@ def _parse_date(raw: str | None) -> date:
     try:
         return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
     except ValueError as e:
-        raise MonzoImportError(f"unrecognised date {raw!r}") from e
+        raise MonzoImportError(f"unrecognised date {shown(raw)}") from e
 
 
 def _money(raw: str | None, field: str, line: int, *, limit: bool = True) -> int:
@@ -85,12 +85,12 @@ def _money(raw: str | None, field: str, line: int, *, limit: bool = True) -> int
     text = (raw or "").strip()
     at = f"line {line}: " if line else ""  # line 0: the command line, not the export
     if not PLAIN_MONEY.match(text):
-        raise MonzoImportError(f"{at}{field} {raw!r} is not a plain amount like -12.40")
+        raise MonzoImportError(f"{at}{field} {shown(raw)} is not a plain amount like -12.40")
     p = text_pence(text)  # exact, in the figures layer (R2, T04 review 13)
     if p is None:
-        raise MonzoImportError(f"{at}{field} {raw!r} has more than two decimal places")
+        raise MonzoImportError(f"{at}{field} {shown(raw)} has more than two decimal places")
     if limit and at_limit(p):
-        raise MonzoImportError(f"{at}{field} {raw!r} is {AT_LIMIT}; no figure could be reported to the penny")
+        raise MonzoImportError(f"{at}{field} {shown(raw)} is {AT_LIMIT}; no figure could be reported to the penny")
     return p
 
 
@@ -185,7 +185,10 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
     line_of: dict[str, int] = {}  # each transaction's line, for refusals after sorting
 
     try:
-        for i, r in raw_rows:
+        # A record with a field too long to read is still read, after the others, for its
+        # currency and amount first (T04 review 36).
+        long_row = (unreadable.line, unreadable.row) if unreadable is not None and unreadable.row else None
+        for i, r in [*raw_rows, *([long_row] if long_row else [])]:
             # Currency, then the amount, before anything else about the row (T04 reviews 27-28):
             # a row in another currency is skipped whatever else it holds, and a GBP amount is
             # counted toward money in or out, even one past the line limit, before any other
@@ -199,12 +202,14 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
                 # "1,000.00" shifts them), so it is refused, never skipped (T04 review 34).
                 shifted = "; the row has more fields than the header has columns, so an amount with a comma " \
                           "in it must be quoted" if None in r else ""
-                raise MonzoImportError(f"line {i}: Currency {r.get('Currency')!r} is not a currency code{shifted}")
+                raise MonzoImportError(f"line {i}: Currency {shown(r.get('Currency'))} is not a currency code{shifted}")
             amount = _money(r["Amount"], "Amount", i, limit=False)
             reading = amount
             if at_limit(amount):
-                raise MonzoImportError(f"line {i}: Amount {r['Amount']!r} is {AT_LIMIT}; no figure could be "
+                raise MonzoImportError(f"line {i}: Amount {shown(r['Amount'])} is {AT_LIMIT}; no figure could be "
                                        "reported to the penny")
+            if long_row is not None and r is long_row[1]:
+                raise MonzoImportError(f"{src}: {unreadable}")  # its amount is counted above
             # More cells than the header has columns: an unquoted thousands separator ("1,000.00")
             # splits an amount, so the row cannot be trusted. Checked after the currency, the
             # amount and its limit, as revision 29 orders them (T04 reviews 33-35).

@@ -18,6 +18,7 @@ import csv
 import io
 import math
 import re
+import threading
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -104,6 +105,32 @@ class CsvRecordError(ValueError):
     def __init__(self, message: str, too_long: bool = False):
         super().__init__(message)
         self.too_long = too_long
+        # For a field too long to read: the record's line, and its cells read with no size
+        # limit, so its currency and amount are still checked first (T04 review 36).
+        self.line: int | None = None
+        self.row: dict | None = None
+
+
+def shown(raw: str | None, limit: int = 40) -> str:
+    """A cell quoted in a problem, cut to `limit` characters so a huge one is not echoed."""
+    text = raw or ""
+    return repr(text) if len(text) <= limit else f"{text[:limit]!r}… ({len(text):,} characters)"
+
+
+_FIELD_LIMIT = threading.Lock()  # csv.field_size_limit is process-wide
+
+
+def _read_long_record(text: str, header: list[str]) -> dict | None:
+    """The record at the start of `text`, read with no field-size limit, or None."""
+    with _FIELD_LIMIT:
+        old = csv.field_size_limit()
+        csv.field_size_limit(max(old, len(text) + 1))
+        try:
+            return next(csv.DictReader(io.StringIO(text, newline=""), fieldnames=header, restval=""), None)
+        except csv.Error:
+            return None
+        finally:
+            csv.field_size_limit(old)
 
 
 NOT_UTF8 = "not UTF-8 (byte {}); re-save it as 'CSV UTF-8' (Excel) and try again"
@@ -203,6 +230,8 @@ def read_records(text: str, cut: bool = False) -> tuple[list[str], list[tuple[in
             err = CsvRecordError(f"line {line}: {TOO_LONG} (longer than {csv.field_size_limit():,} characters); "
                                  "an amount or balance that long would be past the £10,000,000,000,000 limit",
                                  too_long=True)
+            if header is not None:
+                err.line, err.row = line, _read_long_record("".join(physical[line - 1:]), header)
         else:
             err = CsvRecordError(f"line {line}: not a readable CSV record ({e})")
         if header is None:
@@ -259,6 +288,8 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
 
     if unreadable is not None:  # the records before it are still checked (T04 review 22)
         add("too_long" if unreadable.too_long else "line", str(unreadable))
+        if unreadable.row is not None:  # its own cells, amount included, are checked too (T04 review 36)
+            rows = [*rows, (unreadable.line, unreadable.row)]
     parsed: list[tuple[int, str, date | None, str, float | None, float | None]] = []
     seen: dict[str, int] = {}
     for i, r in rows:  # i: the record's line in the file, blank lines counted
@@ -284,12 +315,12 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         amount, balance = _number(r["amount"]), _number(r["balance"])
         for field, value, raw in (("amount", amount, r["amount"]), ("balance", balance, r["balance"])):
             if value is None and _over_limit(raw):
-                add("limit", f"line {i}: {field} {raw!r} is {AT_LIMIT}; no figure could be reported to the penny")
+                add("limit", f"line {i}: {field} {shown(raw)} is {AT_LIMIT}; no figure could be reported to the penny")
         if amount is None and not _over_limit(r["amount"]):
-            add("line", f"line {i}: amount {r['amount']!r} is not a plain number like -1150.00 "
+            add("line", f"line {i}: amount {shown(r['amount'])} is not a plain number like -1150.00 "
                             "(under £10,000,000,000,000)")
         if balance is None and not _over_limit(r["balance"]):
-            add("line", f"line {i}: balance {r['balance']!r} is not a plain number like 2304.17 "
+            add("line", f"line {i}: balance {shown(r['balance'])} is not a plain number like 2304.17 "
                             "(under £10,000,000,000,000)")
         parsed.append((i, tid, d, (r["description"] or "").strip(), amount, balance))
 
