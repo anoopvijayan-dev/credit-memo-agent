@@ -18,7 +18,6 @@ import csv
 import io
 import math
 import re
-import threading
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -120,20 +119,52 @@ def shown(raw: str | None, limit: int = 40) -> str:
     return repr(text) if len(text) <= limit else f"{text[:limit]!r}… ({len(text):,} characters)"
 
 
-_FIELD_LIMIT = threading.Lock()  # csv.field_size_limit is process-wide
+def _split_record(text: str) -> list[str]:
+    """The cells of the record at the start of `text`, by the CSV reader's own rules (the
+    default dialect, not strict), with no field-size limit. Used only for a record with a
+    field too long for the reader, so the process-wide limit is never changed (T04 review 39)."""
+    cells: list[str] = []
+    cell: list[str] = []
+    state = "start"
+    for ch in text:
+        if state == "quoted":
+            if ch == '"':
+                state = "quote"
+            else:
+                cell.append(ch)
+        elif state == "quote":  # just after a quote inside a quoted field
+            if ch == '"':
+                cell.append('"')
+                state = "quoted"
+            elif ch == ",":
+                cells.append("".join(cell))
+                cell, state = [], "start"
+            elif ch in "\r\n":
+                break
+            else:
+                cell.append(ch)
+                state = "field"
+        elif ch == ",":
+            cells.append("".join(cell))
+            cell, state = [], "start"
+        elif ch in "\r\n":
+            break
+        elif state == "start" and ch == '"':
+            state = "quoted"
+        else:
+            cell.append(ch)
+            state = "field"
+    cells.append("".join(cell))
+    return cells
 
 
-def _read_long_record(text: str, header: list[str]) -> dict | None:
-    """The record at the start of `text`, read with no field-size limit, or None."""
-    with _FIELD_LIMIT:
-        old = csv.field_size_limit()
-        csv.field_size_limit(max(old, len(text) + 1))
-        try:
-            return next(csv.DictReader(io.StringIO(text, newline=""), fieldnames=header, restval=""), None)
-        except csv.Error:
-            return None
-        finally:
-            csv.field_size_limit(old)
+def _read_long_record(text: str, header: list[str]) -> dict:
+    """The record at the start of `text` as the reader's dict, with no field-size limit."""
+    cells = _split_record(text)
+    row: dict = dict(zip(header, cells + [""] * (len(header) - len(cells)), strict=False))
+    if len(cells) > len(header):
+        row[None] = cells[len(header):]
+    return row
 
 
 NOT_UTF8 = "not UTF-8 (byte {}); re-save it as 'CSV UTF-8' (Excel) and try again"

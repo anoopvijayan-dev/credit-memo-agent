@@ -193,8 +193,9 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
         for i, r in [*raw_rows, *([long_row] if long_row else [])]:
             partial = long_row is not None and r is long_row[1]
             # Its currency is needed only if the export has a Currency column; without one,
-            # every row is GBP (T04 review 38).
-            if partial and not {"Amount", *({"Currency"} & set(header))} <= unreadable.readable:
+            # every row is GBP (T04 review 38). Currency is read before the amount is needed
+            # (revision 29; T04 review 39).
+            if partial and "Currency" in header and "Currency" not in unreadable.readable:
                 raise MonzoImportError(f"{src}: {unreadable}")
             # Currency, then the amount, before anything else about the row (T04 reviews 27-28):
             # a row in another currency is skipped whatever else it holds, and a GBP amount is
@@ -210,6 +211,8 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
                 shifted = "; the row has more fields than the header has columns, so an amount with a comma " \
                           "in it must be quoted" if None in r else ""
                 raise MonzoImportError(f"line {i}: Currency {shown(r.get('Currency'))} is not a currency code{shifted}")
+            if partial and "Amount" not in unreadable.readable:
+                raise MonzoImportError(f"{src}: {unreadable}")
             amount = _money(r["Amount"], "Amount", i, limit=False)
             reading = amount
             if at_limit(amount):

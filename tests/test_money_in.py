@@ -1204,3 +1204,39 @@ def test_monzo_counts_a_readable_amount_in_a_row_that_cannot_be_read_whole(tmp_p
     with pytest.raises(monzo.MonzoImportError) as e:
         monzo.convert(src, tmp_path / "o.csv")
     assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "line 3:" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_monzo_checks_a_partial_rows_currency_before_needing_its_amount(tmp_path):
+    """T04 review 39: a row whose Amount was too long to read reported that before its
+    readable Currency, hiding an invalid currency (revision 29: currency first)."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME," + "1" * 200_000 + ",X1,1.00\n")
+    with pytest.raises(monzo.MonzoImportError, match="line 2: Currency 'X1' is not a currency code"):
+        monzo.convert(src, tmp_path / "o.csv")
+
+
+@pytest.mark.contracts
+def test_reading_a_long_record_never_changes_the_process_wide_csv_limit(tmp_path, monkeypatch):
+    """T04 review 39: the recovery raised csv.field_size_limit for the whole process, so a
+    load running at the same moment could accept a field it must refuse."""
+    import csv as csv_module
+
+    from cma.importers import monzo
+
+    real = csv_module.field_size_limit
+    changes = []
+
+    def spy(*args):
+        if args:
+            changes.append(args[0])
+        return real(*args)
+
+    monkeypatch.setattr(csv_module, "field_size_limit", spy)
+    src = tmp_path / "m.csv"
+    src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment," + "N" * 200_000 + ",-1.00,GBP,1.00\n")
+    with pytest.raises(monzo.MonzoImportError, match="line 2: a field is too long to read"):
+        monzo.convert(src, tmp_path / "o.csv")
+    assert changes == []
