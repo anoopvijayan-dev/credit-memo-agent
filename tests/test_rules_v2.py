@@ -1904,3 +1904,20 @@ def test_a_v2_pattern_may_not_carry_an_anchor_except_the_bank_code(pattern):
 @pytest.mark.contracts
 def test_the_shipped_v2_table_loads_with_its_bank_code_anchor():
     assert any(r.bank_code for r in load_ruleset("v2").rules)
+
+
+@pytest.mark.contracts
+def test_an_occurrence_set_aside_hides_nothing_even_when_its_rule_counts_elsewhere():
+    """T03 review 23 / R4: the gateway's first occurrence lies inside the cash phrase and is
+    set aside; its second counts. Only the second may hide wording, so the rail inside the
+    cash phrase still meets the cash wording and the credit is ambiguous."""
+    rail = {"id": "rail", "names": ["FPS"], "direction": "in", "protected": True, "stage": "line_type"}
+    gateway = {"id": "gateway", "names": ["XYZ FPS"], "direction": "in", "category": "revenue_card_settlement",
+               "stage": "names"}
+    cash = {"id": "cash", "names": ["XYZ FPS CASH DEPOSIT"], "direction": "in", "category": "cash_deposit",
+            "stage": "names"}
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rail, gateway, cash],
+                                       "category_order": ["revenue_card_settlement", "cash_deposit"]},
+                                      "v2", "t", "0")
+    got = classify(_t("XYZ FPS CASH DEPOSIT REF XYZ FPS", 200.0), rs)
+    assert got[0] is C.OTHER and got[1].startswith("v2:conflict:") and "rail" in got[1] and "cash" in got[1]

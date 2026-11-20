@@ -812,31 +812,36 @@ def credit_matches(ruleset: Ruleset, description: str, amount: float) -> list[Ru
         return hits
     matched = [(r, _spans(r, desc)) for r in hits]
 
-    def inside_longer(rule: Rule, spans: list[tuple[int, int]], alive: set[int]) -> bool:
-        # Cash wording and payment-method wording never hide each other inside a longer
-        # phrase, whichever list holds it: a rail with cash wording is ambiguous by R4
-        # (reviews 19 and 21). Only a match that itself counts can hide another: a phrase
-        # set aside inside a longer one hides nothing (review 22).
-        others = [o for k, (other, ss) in enumerate(matched) if k in alive and other is not rule
-                  and not _rail_and_cash(rule, other) for o in ss]
-        return bool(spans) and all(any(a <= s and e <= b and b - a > e - s for a, b in others) for s, e in spans)
+    # Each occurrence counts on its own (review 23): an occurrence is set aside when it lies
+    # inside a strictly longer occurrence of another rule that itself counts. Cash wording
+    # and payment-method wording never set each other aside, whichever list holds the
+    # longer phrase (R4; reviews 19 and 21). A rule counts while any occurrence of it does,
+    # and the bank's own code always counts (D101).
+    occ = [(k, s, e) for k, (_, spans) in enumerate(matched) for s, e in spans]
 
-    def survivors(alive: set[int]) -> set[int]:
-        # The bank's own code settles the line type before the longer-phrase rule (D101):
-        # it is never counted as inside another rule's longer phrase.
-        return {k for k, (r, spans) in enumerate(matched) if r.bank_code or not inside_longer(r, spans, alive)}
+    def kept(alive: set[int]) -> set[int]:
+        out = set()
+        for i, (k, s, e) in enumerate(occ):
+            rule = matched[k][0]
+            hidden = any(j in alive and k2 != k and not _rail_and_cash(rule, matched[k2][0])
+                         and a <= s and e <= b and b - a > e - s
+                         for j, (k2, a, b) in enumerate(occ))
+            if rule.bank_code or not hidden:
+                out.add(i)
+        return out
 
-    # Which matches count depends on which others count. Starting from all of them, every
-    # second step keeps a subset of the step before, so the steps settle; the settled set
-    # is the larger of the two that alternate, which sets aside the fewest matches and so
-    # never hides wording that makes a credit ambiguous.
-    alive = set(range(len(matched)))
+    # Which occurrences count depends on which others count. Starting from all of them,
+    # every second step keeps a subset of the step before, so the steps settle; the
+    # settled set is the larger of the two that alternate, which sets aside the fewest
+    # occurrences and so never hides wording that makes a credit ambiguous.
+    alive = set(range(len(occ)))
     while True:
-        nxt = survivors(survivors(alive))
+        nxt = kept(kept(alive))
         if nxt == alive:
             break
         alive = nxt
-    return [r for k, (r, _) in enumerate(matched) if k in alive]
+    counted = {occ[i][0] for i in alive}
+    return [r for k, (r, spans) in enumerate(matched) if k in counted or not spans]
 
 
 def _is_payment_method(rule: Rule) -> bool:
