@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 244,
+  "next_id": 245,
   "decisions": [
     {
       "id": "D1",
@@ -4901,6 +4901,26 @@
       "decided_at": "2026-11-20T15:33:46.578Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T15:30:21.892Z"
+    },
+    {
+      "id": "D244",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R1 fail (src/cma/models.py:55 and src/cma/metrics.py:483–490,523–525,562–570 map and report all eight GBP buckets for fresh computations. The CLI and MCP use this computation through src/cma/graph.py:257–258 and src/cma/mcp_server.py:90–96. A previous-release checkpoint resumed through src/cma/cli.py:134–135,205,240–241 can still produce a new report with no M17 or M19–M25.); R2 fail (src/cma/ingest.py:73–84,143–180 and src/cma/importers/monzo.py:189–230 validate fresh imports. src/cma/metrics.py:512–517 handles unreportable M3. src/cma/cli.py:294–299 and src/cma/graph.py:172,226 show and record pence, while src/cma/metrics.py:591–595 and src/cma/policy.py:107 retain whole-pound prose. The runner confirmed the new resume refusal for statements the loader rejects, but src/cma/cli.py:149–152 discards the validated statement and trusts stale figures for statements the loader accepts.); P2 fail (src/cma/metrics.py:419–429,523–574 implements the T04 evidence rules, including the M9 partial-credit note. The runner passed the named sum, outflow and M9 tests and the scoped compatibility comparisons. A resumed legacy M2 can still differ from the exact sum of its cited lines because src/cma/cli.py:152 validates the memo against the stored figure and src/cma/graph.py:226 serializes it unchanged.); major: Resume can display and export legacy float-derived figures for an unchanged statement that passes today's loader. The hash, loader, and grounding checks all pass when the old memo and old metrics agree with each other. at src/cma/cli.py:152; major: Resuming a previous-release checkpoint can write a fresh evidence record and memo appendix without the total money in or the seven non-trading buckets. at src/cma/cli.py:135; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T15:38:13.571Z"
     }
   ]
 }

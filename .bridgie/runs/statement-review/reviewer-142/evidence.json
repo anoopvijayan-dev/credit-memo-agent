@@ -1,0 +1,102 @@
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 and src/cma/metrics.py:483–490,523–525,562–570 map and report all eight GBP buckets for fresh computations. The CLI and MCP use this computation through src/cma/graph.py:257–258 and src/cma/mcp_server.py:90–96. A previous-release checkpoint resumed through src/cma/cli.py:134–135,205,240–241 can still produce a new report with no M17 or M19–M25.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:73–84,143–180 and src/cma/importers/monzo.py:189–230 validate fresh imports. src/cma/metrics.py:512–517 handles unreportable M3. src/cma/cli.py:294–299 and src/cma/graph.py:172,226 show and record pence, while src/cma/metrics.py:591–595 and src/cma/policy.py:107 retain whole-pound prose. The runner confirmed the new resume refusal for statements the loader rejects, but src/cma/cli.py:149–152 discards the validated statement and trusts stale figures for statements the loader accepts.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578–588 checks both the signed pence difference and line membership, including a zero difference with invalid membership. src/cma/cli.py:99–102 exits 6 before the review and export. contracts-4.log:19–23 confirms CLI and MCP refusals, including markup-like IDs and uncategorised credits.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311,1360 defaults unmatched credits to OTHER. src/cma/models.py:66,69 maps OTHER to unexplained and excludes it from trading receipts. The runner passed the named v1 and v2 unmatched-credit cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483–495,562–588 reconciles the eight bucket sums and credit IDs, keeping M18 outside the partition. The runner passed the synthetic and random partition test and the large-amount reconciliation test at invariants-5.log:10,17.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:419–429,523–574 implements the T04 evidence rules, including the M9 partial-credit note. The runner passed the named sum, outflow and M9 tests and the scoped compatibility comparisons. A resumed legacy M2 can still differ from the exact sum of its cited lines because src/cma/cli.py:152 validates the memo against the stored figure and src/cma/graph.py:226 serializes it unchanged.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55–69 and src/cma/metrics.py:347–348,483–490,568–570 route a defaulted credit to M25 and exclude it from M2. invariants-5.log:14–16 confirms the named defaulted-credit property and both ruleset cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 152,
+      "criterion": "R2",
+      "claim": "Resume can display and export legacy float-derived figures for an unchanged statement that passes today's loader. The hash, loader, and grounding checks all pass when the old memo and old metrics agree with each other.",
+      "repro": "On Python 3.11, use previous release cba9dbad to leave a pending v1 review for a CSV with a £9,000,000,000,000.00 CARD ACQUIRER SETTLEMENT followed by forty £0.01 CARD ACQUIRER SETTLEMENT credits and exact running balances. Resume the unchanged CSV on this branch and approve with an output path. The old sequential float sum rounds to £9,000,000,000,000.39 and is reused for M2, while the exact total and the sum of its cited lines are £9,000,000,000,000.40. The current runner's resume threshold test only exercises a statement the new loader rejects."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 135,
+      "criterion": "R1",
+      "claim": "Resuming a previous-release checkpoint can write a fresh evidence record and memo appendix without the total money in or the seven non-trading buckets.",
+      "repro": "Repeat the runner-passed previous-release resume scenario at tests/test_previous_release.py:61 with any ordinary statement containing credits and approve with --out. Inspect the metrics array and appendix. The resume path forwards the original M1–M16 list, and the writer at src/cma/graph.py:226 exports that list without M17 or M19–M25."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 490,
+      "criterion": "P1",
+      "claim": "The producer's scratchpad idempotency result is unverified. The configured runner logged the partition properties, but it produced no row for the claimed repeated-computation probe.",
+      "repro": "Compare the claim's proof command with the configured runner commands. A runner result for PYTHONPATH=src python scratchpad/probe.py would prove the cited result if the script is supplied. A named test comparing two metric dumps for the same categorised statement would make the check reproducible from the repository."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 81,
+      "criterion": "R2",
+      "claim": "The producer's no-ceiling probe demonstrates a helper-level conversion and does not establish acceptance through the statement loader. The current requirement calls for a fixed import limit, which the loader enforces.",
+      "repro": "Compare tests/test_money_in.py:262, which exercises pence conversion directly, with loading a one-credit CSV containing 10000000000000.01 as both amount and balance. The current loader refuses the CSV at src/cma/ingest.py:81. The runner produced no result for the cited scratchpad command."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 115,
+      "criterion": "P2",
+      "claim": "The compatibility claim is broader than its proof. The dual run proves the named fixtures at this revision, but its passing results do not establish that values and evidence remain unchanged on statements whose previous-release sums drifted. Revision 27 requires exact pence in those cases. The runner also did not verify the claimed historical 878-test result at ca0092c.",
+      "repro": "Compare the fixture parameters and assertions with dual_run-7.log:16–25 and the current 907-test result in specified-3.log. To verify the historical count, the runner would need to execute python -m pytest -v -rs against ca0092c. To verify the revision 27 drift behavior, add a named invariant that checks the exact figures and their evidence for a large cancelling-repayment statement."
+    }
+  ],
+  "verdict": "fail"
+}
