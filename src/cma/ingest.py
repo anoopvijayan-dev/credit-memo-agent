@@ -218,7 +218,13 @@ def read_data(data: bytes) -> tuple[list[str], list[tuple[int, dict]], CsvRecord
     # end, even one whose quoted name runs over several lines (T04 reviews 33 and 44). A
     # first data record cut part-way is a data record, named by its own line, and its
     # readable cells are still used below.
-    if not _split_record_ended(text)[1]:
+    head_cells, head_ended = _split_record_ended(text)
+    if not head_ended:
+        # A header cell before the bad byte already too long for the reader is the first
+        # problem, named as the reader would name it (T04 review 45).
+        limit = csv.field_size_limit()
+        if any(len(c) > limit for c in head_cells):
+            raise CsvRecordError(f"line 1: {TOO_LONG} (header): longer than {limit:,} characters", too_long=True)
         raise CsvRecordError("line 1: " + NOT_UTF8.format(bad))
     header, rows, err = read_records(text, cut=True)
     if err is not None:

@@ -1308,3 +1308,17 @@ def test_a_bad_byte_in_the_first_data_record_is_on_its_line_with_its_amount_read
                     + b"tx_1,10000000000000.00,GBP,01/01/2026,09:00:00,Faster payment,CAF\xe9,1.00" + ending.encode())
     with pytest.raises(monzo.MonzoImportError, match=r"line 2: Amount '10000000000000\.00' is £10,000,000,000,000"):
         monzo.convert(src, tmp_path / "o.csv")
+
+
+@pytest.mark.contracts
+def test_a_header_field_too_long_is_named_before_a_later_bad_byte_in_it(tmp_path):
+    """T04 review 45: a bad byte later in the header hid a header field before it already too
+    long for the CSV reader, which the reader names first."""
+    from cma.importers import monzo
+
+    csv = tmp_path / "s.csv"
+    csv.write_bytes(b"id," + b"H" * 200_000 + b",amount,CAF\xe9\nT1,1,2,3\n")
+    with pytest.raises(ingest.StatementError, match="line 1: a field is too long to read"):
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    with pytest.raises(monzo.MonzoImportError, match="line 1: a field is too long to read"):
+        monzo.convert(csv, tmp_path / "o.csv")
