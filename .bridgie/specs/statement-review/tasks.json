@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "failed",
       "attempts": 1,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": null,
-      "escalation": null
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-127/evidence.json",
+      "escalation": "attempt 1 of 3 fail: R1 fail (src/cma/models.py:54 and src/cma/metrics.py:325–333 assign and reconcile credit IDs. src/cma/metrics.py:392–400 exposes the GBP figures and evidence through src/cma/graph.py:256 and src/cma/mcp_server.py:80. The GBP conversion at src/cma/metrics.py:105 can change the reported total by a penny.); R2 fail (src/cma/metrics.py:88–105 and :189–192 convert amounts and sum in pence. The balance minimum and overdraft comparison still use floating-point GBP at src/cma/metrics.py:228–230, and M5 rounds the GBP balance directly at :360.); R3 fail (src/cma/metrics.py:408–417 checks both the pence difference and per-credit placement. contracts-4.log confirms that the CLI test exercised exit 6 with no memo. The CLI formats raw IDs as Rich markup at src/cma/cli.py:99, so valid statement IDs can disappear from the refusal.); P1 fail (src/cma/metrics.py:408–417 checks internal pence totals and unique evidence placement. M18 is a subset of M2 at :334 and :395–397. The invariant passed on the runner's samples, but independently converting each reported sum through binary float at :105 can break the reported reconciliation.); P2 fail (The runner passed tests/test_money_in.py:90, which omits M9 and negates the signed sum for M8, M11, M12 and M14. The capped offset at src/cma/metrics.py:272–273 can make M9 differ from its cited signed amounts, and the positive outflow figures also differ from their signed evidence sums.); major: Reconciliation can succeed internally while the reported GBP buckets and total disagree by a penny. This also makes M17 disagree with its evidence under R1 and P2. at src/cma/metrics.py:105; major: The lowest-balance figure and overdrawn-day comparison still operate on binary floating-point GBP balances. at src/cma/metrics.py:228; major: Reconciliation diagnostics interpret statement line IDs as Rich markup and can omit the offending ID. at src/cma/cli.py:99; major: M9 cites full credit amounts even when only a capped part contributes to the sum. at src/cma/metrics.py:272; major: The positive outflow sums do not match the signed amounts of their evidence, and the P2 test explicitly reverses the sign in its assertion. at src/cma/metrics.py:240; reviewer verdict fail"
     },
     {
       "id": "T06",

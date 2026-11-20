@@ -1,0 +1,183 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:54 and src/cma/metrics.py:325–333 assign and reconcile credit IDs. src/cma/metrics.py:392–400 exposes the GBP figures and evidence through src/cma/graph.py:256 and src/cma/mcp_server.py:80. The GBP conversion at src/cma/metrics.py:105 can change the reported total by a penny.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:88–105 and :189–192 convert amounts and sum in pence. The balance minimum and overdraft comparison still use floating-point GBP at src/cma/metrics.py:228–230, and M5 rounds the GBP balance directly at :360.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:408–417 checks both the pence difference and per-credit placement. contracts-4.log confirms that the CLI test exercised exit 6 with no memo. The CLI formats raw IDs as Rich markup at src/cma/cli.py:99, so valid statement IDs can disappear from the refusal.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The unmatched-credit defaults at src/cma/categorise.py:1311 and :1360 yield OTHER. src/cma/models.py:54–68 maps OTHER to unexplained and excludes it from trading, and src/cma/metrics.py:325–331 and :398–400 report those IDs in M25. Both rulesets were exercised in invariants-5.log.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:408–417 checks internal pence totals and unique evidence placement. M18 is a subset of M2 at :334 and :395–397. The invariant passed on the runner's samples, but independently converting each reported sum through binary float at :105 can break the reported reconciliation.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "The runner passed tests/test_money_in.py:90, which omits M9 and negates the signed sum for M8, M11, M12 and M14. The capped offset at src/cma/metrics.py:272–273 can make M9 differ from its cited signed amounts, and the positive outflow figures also differ from their signed evidence sums.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 and src/cma/metrics.py:325–331 route unmatched credits to M25 and exclude them from M2. invariants-5.log confirms that the corpus test and both explicit unknown-payer cases ran and passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-127/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-127/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-127/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-127/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-127/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-127/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-127/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 105,
+      "criterion": "P1",
+      "claim": "Reconciliation can succeed internally while the reported GBP buckets and total disagree by a penny. This also makes M17 disagree with its evidence under R1 and P2.",
+      "repro": "Compute a statement with a £100000000000000.00 trading credit and a £0.01 unexplained credit. The exact M17 is £100000000000000.01. The float conversion reports M17 as 100000000000000.02 while M2 and M25, read as decimal GBP, add to 100000000000000.01. The CSV number parser imposes no upper amount limit that excludes these credits."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 228,
+      "criterion": "R2",
+      "claim": "The lowest-balance figure and overdrawn-day comparison still operate on binary floating-point GBP balances.",
+      "repro": "Trace a transaction with a -£0.01 closing balance through compute. The amount conversion at line 189 does not convert the balance. Lines 228–230 compare Transaction.balance directly and line 360 rounds it directly to report M5."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 99,
+      "criterion": "R3",
+      "claim": "Reconciliation diagnostics interpret statement line IDs as Rich markup and can omit the offending ID.",
+      "repro": "Use the fault injection in tests/test_money_in.py:177 with an affected credit whose CSV id is `[red]`. Ingest accepts that ID. ReconciliationError contains it, but Console.print interprets it as a style tag and the user cannot see the ID in the refusal."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 272,
+      "criterion": "P2",
+      "claim": "M9 cites full credit amounts even when only a capped part contributes to the sum.",
+      "repro": "Use a £100 FPS debit to ACME followed by a £150 unexplained FPS credit from ACME, with no other transactions. M9 is £0 because the credit offsets only £100. Its two evidence lines sum to £50."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 240,
+      "criterion": "P2",
+      "claim": "The positive outflow sums do not match the signed amounts of their evidence, and the P2 test explicitly reverses the sign in its assertion.",
+      "repro": "Compute a statement with one £100 IWOCA repayment and no reversal. M8 is £100 with the debit as its sole evidence, whose signed sum is -£100. tests/test_money_in.py:97 compares the figure with the negated sum. M11, M12 and M14 use the same convention."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 199,
+      "criterion": "R3",
+      "claim": "The producer's claim that contracts tests exercise the MCP refusal is unproven. The passing MCP test only exercises successful metric serialization.",
+      "repro": "The runner passed test_mcp_compute_metrics_carries_m17_to_m26 with a valid generated case. To prove the claimed error contract, add an MCP invocation with the missing-bucket injection from the CLI test, assert the ValueError subclass, pence difference and line ID, and run `python -m pytest -v -m contracts tests/test_money_in.py`."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 337,
+      "criterion": "R10",
+      "claim": "The passing dual-run fixtures do not establish the producer's unrestricted claim that legacy M1–M16 values and evidence are unchanged. M16 deliberately changes for own-account credits.",
+      "repro": "Compare pre-T04 and T04 metrics on the same categorized statement with £100 trading, £100 unexplained and £100 own-account transfers in. M16 moves from 66.67% to 50%, and its evidence drops the own-account ID. tests/test_previous_release.py:132 explicitly says its comparison cases lack such a line."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 181,
+      "criterion": "R52",
+      "claim": "The reported 10,000-line benchmark has no runner result, and timing metrics.compute alone does not measure the override-to-display requirement.",
+      "repro": "The claim supplies a placeholder benchmark script and no configured runner row executed it. Proving the stated R52 comparison requires a runner benchmark that times saving an override through display of recomputed figures, indicators and policy on a 10,000-line case."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.md",
+      "line": 44,
+      "criterion": "R1",
+      "claim": "The committed example still advertises the old M16 denominator and omits the new money-in figures. No backfill is needed for computation, but the shipped example has not been refreshed.",
+      "repro": "Compare the committed memo and its evidence appendix, which end at M16, with the current output from `cma run examples/cafe_stretched.csv --vat-stagger 3 --yes --reviewer Example` directed to a fresh output path. The current appendix includes M17–M26."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
