@@ -525,3 +525,16 @@ def test_a_failed_evidence_record_writes_no_memo(tmp_path, monkeypatch):
     assert r.exit_code != 0
     assert not out.exists() and not (tmp_path / "memo.evidence.json").exists()
     assert not list(tmp_path.glob("*.part"))
+
+
+def test_exporting_never_touches_a_sibling_file(tmp_path):
+    # T04 review 28: the staging files had predictable names (memo.md.part), so an export
+    # could overwrite and remove a file of that name beside the memo.
+    out = tmp_path / "memo.md"
+    siblings = [tmp_path / "memo.md.part", tmp_path / "memo.evidence.json.part"]
+    for s in siblings:
+        s.write_text("keep me")
+    r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A", "--out", str(out)])
+    assert r.exit_code == 0, r.output
+    assert all(s.read_text() == "keep me" for s in siblings) and out.exists()
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith(".") and p.name.endswith(".part")]

@@ -180,9 +180,23 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
                 "read so far: no figure could be reported to the penny; ") if reached else ""
 
     reading: int | None = None
+    line_of: dict[str, int] = {}  # each transaction's line, for refusals after sorting
 
     try:
         for i, r in raw_rows:
+            # Currency, then the amount, before anything else about the row (T04 reviews 27-28):
+            # a row in another currency is skipped whatever else it holds, and a GBP amount is
+            # counted toward money in or out, even one past the line limit, before any other
+            # problem with its row can stop the import without saying so.
+            currency = (r.get("Currency") or "GBP").strip().upper()
+            if currency and currency != "GBP":
+                skipped += 1
+                continue
+            amount = _money(r["Amount"], "Amount", i, limit=False)
+            reading = amount
+            if at_limit(amount):
+                raise MonzoImportError(f"line {i}: Amount {r['Amount']!r} is {AT_LIMIT}; no figure could be "
+                                       "reported to the penny")
             tid = (r.get("Transaction ID") or "").strip()
             if not tid:
                 raise MonzoImportError(f"line {i}: empty Transaction ID")
@@ -191,15 +205,11 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             if tid in seen:
                 raise MonzoImportError(f"line {i}: duplicate Transaction ID {tid}")
             seen.add(tid)
-            currency = (r.get("Currency") or "GBP").strip().upper()
-            if currency and currency != "GBP":
-                skipped += 1
-                continue
-            # The amount first: a bad date on the row that takes money in or out to the limit
-            # is reported with the limit, not instead of it (T04 review 27).
-            amount = _money(r["Amount"], "Amount", i)
-            reading = amount
-            d = _parse_date(r["Date"])
+            line_of[tid] = i
+            try:
+                d = _parse_date(r["Date"])
+            except MonzoImportError as e:
+                raise MonzoImportError(f"line {i}: {e}") from None
             t = (r.get("Time") or "00:00:00").strip()
             bal = _money(r["Balance"], "Balance", i) if has_balance and (r.get("Balance") or "").strip() else None
             refs = references(r.get("Notes and #tags"), r.get("Description"))
@@ -253,11 +263,11 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
     for (d, _t, tid, desc, amount, monzo_bal), bal in zip(parsed, running_balances(opening_pence, [x[4] for x in parsed]),
                                                           strict=True):
         if at_limit(bal):
-            raise MonzoImportError(f"{tid}: the running balance reaches £10,000,000,000,000; no figure could "
-                                   "be reported to the penny")
+            raise MonzoImportError(f"line {line_of[tid]}: {tid}: the running balance reaches £10,000,000,000,000; "
+                                   "no figure could be reported to the penny")
         if monzo_bal is not None and monzo_bal != bal:
             raise MonzoImportError(
-                f"{tid}: walked balance {_gbp(bal)} disagrees with Monzo's {_gbp(monzo_bal)}; "
+                f"line {line_of[tid]}: {tid}: walked balance {_gbp(bal)} disagrees with Monzo's {_gbp(monzo_bal)}; "
                 "the export may be missing transactions"
             )
         out_rows.append({"id": tid, "date": d.isoformat(), "description": desc,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
 
 try:
     import fcntl
@@ -333,9 +334,15 @@ def _review(graph, cfg, state, reviewer, yes, out, lock: Path | None = None):
         # and no memo is left without its evidence (T04 review 27).
         record = json.dumps(evidence_record({**final, "ruleset": ruleset}), indent=2, default=str)
         for path, text in ((evidence, record), (target, final["final_memo"])):
-            part = path.with_name(path.name + ".part")
-            part.write_text(text)
-            os.replace(part, path)
+            # A staging file with a name of its own, never an existing sibling (T04 review 28).
+            fd, part = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".part")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(text)
+                os.replace(part, path)
+            except BaseException:
+                Path(part).unlink(missing_ok=True)
+                raise
         console.print(f"wrote {target} and {evidence}")
     if not approved:
         console.rule("Not approved")
