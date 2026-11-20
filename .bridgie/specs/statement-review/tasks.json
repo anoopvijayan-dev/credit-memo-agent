@@ -40,12 +40,12 @@
         "T01",
         "T02"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 6,
       "max_attempts": 6,
       "branch": "bridgie-task/statement-review/T03",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-65/evidence.json",
-      "escalation": "blocked after 6 attempts. Last verdict fail: R4 fail (Reviewed the supplied revision 12 requirement. Mapped own pots, HMRC, returned payments, refunds, rails and cheques to src/cma/rules/v2.yaml:63,74,117,128,137,146,155, lenders and MCA providers to :163,211, cash and explained non-trading to :254,277, and trading lists and withdrawal wording to :304,339,356,373,394. Traced longest spans and bank-code priority through src/cma/categorise.py:717,739,793, ambiguity and profile candidates through :802,860, and per-line evidence through src/cma/graph.py:221,250 and src/cma/cli.py:229. Runner logs confirm the per-list provenance, precedence, CLI evidence, replay, rollback and both offline eval cases passed. Reviewed repeat submission, concurrency and per-case inputs, sign and Unicode boundaries, currency and date handling at ingest, partial failure, authority to settle ambiguity, and evidence consumers. A valid table edit can hide cash wording from ambiguity detection, and the statement pass can replace an explicit override based on its provenance string. Own-account pairing and the judgement queue are separately assigned to R8 and R15.); major: A validated table edit can hide independently listed cash wording whenever the line contains a payment rail. This defeats R4's ambiguity rule and can put the credit into trading receipts. at src/cma/categorise.py:625; major: The round-trip pass infers decision authority from a free-form provenance string. It can discard an explicit per-line override and replace its recorded provenance. at src/cma/categorise.py:958; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-67/evidence.json",
+      "escalation": "blocked after 6 attempts. Last verdict fail: R4 fail (Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest spans and returned-payment priority through src/cma/categorise.py:717,739,797, ambiguity and decision authority through :807,827,864,989, and CLI provenance through src/cma/graph.py:221,250 and src/cma/cli.py:229. Runner logs show the named per-list, precedence, override, CLI evidence, replay, rollback and both offline eval tests passed. Reviewed repeat categorisation, concurrent and case-local inputs, sign and Unicode boundaries, amount and date handling, partial output, authority to settle ambiguity, evidence consumers and rollback. A validated cash-list exception still defeats R4 by dropping cash wording before the ambiguity check.); major: A valid maintained-table edit can suppress independently listed cash wording before the ambiguity check, causing an electronic credit with cash paid-in wording to enter trading receipts. at src/cma/categorise.py:625; reviewer verdict fail"
     },
     {
       "id": "T04",
