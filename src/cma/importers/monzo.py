@@ -187,8 +187,13 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
     try:
         # A record with a field too long to read is still read, after the others, for its
         # currency and amount first (T04 review 36).
+        # A record that cannot be read whole (a field too long to read, a bad byte) is still
+        # read, after the others, for its currency and amount if they can be (T04 reviews 36-37).
         long_row = (unreadable.line, unreadable.row) if unreadable is not None and unreadable.row else None
         for i, r in [*raw_rows, *([long_row] if long_row else [])]:
+            partial = long_row is not None and r is long_row[1]
+            if partial and not {"Currency", "Amount"} <= unreadable.readable:
+                raise MonzoImportError(f"{src}: {unreadable}")
             # Currency, then the amount, before anything else about the row (T04 reviews 27-28):
             # a row in another currency is skipped whatever else it holds, and a GBP amount is
             # counted toward money in or out, even one past the line limit, before any other
@@ -208,7 +213,7 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             if at_limit(amount):
                 raise MonzoImportError(f"line {i}: Amount {shown(r['Amount'])} is {AT_LIMIT}; no figure could be "
                                        "reported to the penny")
-            if long_row is not None and r is long_row[1]:
+            if partial:
                 raise MonzoImportError(f"{src}: {unreadable}")  # its amount is counted above
             # More cells than the header has columns: an unquoted thousands separator ("1,000.00")
             # splits an amount, so the row cannot be trusted. Checked after the currency, the

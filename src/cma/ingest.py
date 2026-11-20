@@ -109,6 +109,9 @@ class CsvRecordError(ValueError):
         # limit, so its currency and amount are still checked first (T04 review 36).
         self.line: int | None = None
         self.row: dict | None = None
+        # The record's fields that can be trusted: for a field too long to read, every other
+        # field; for a bad byte, the fields wholly before it (T04 review 37).
+        self.readable: set[str] = set()
 
 
 def shown(raw: str | None, limit: int = 40) -> str:
@@ -188,8 +191,18 @@ def read_data(data: bytes) -> tuple[list[str], list[tuple[int, dict]], CsvRecord
         # Is the last record closed, or still open in a quoted field at the bad byte? Read as
         # the reader reads it, so a record it accepted is never dropped (T04 review 32).
         if _ends_in_quotes("".join(physical[start - 1:])) or not at_line_end:
-            rows.pop()  # the record the bad byte falls in
+            _, row = rows.pop()  # the record the bad byte falls in
             line = start
+            # Its fields wholly before the bad byte can still be read: a readable amount there
+            # still counts toward money in or out (T04 review 37). The last field read is the
+            # one the bad byte cut.
+            try:
+                cells = next(csv.reader(io.StringIO("".join(physical[start - 1:]), newline="")), [])
+            except csv.Error:
+                cells = []
+            err = CsvRecordError(f"line {line}: " + NOT_UTF8.format(bad))
+            err.line, err.row, err.readable = line, row, set(header[:max(len(cells) - 1, 0)])
+            return header, rows, err
     return header, rows, CsvRecordError(f"line {line}: " + NOT_UTF8.format(bad))
 
 
@@ -231,7 +244,12 @@ def read_records(text: str, cut: bool = False) -> tuple[list[str], list[tuple[in
                                  "an amount or balance that long would be past the £10,000,000,000,000 limit",
                                  too_long=True)
             if header is not None:
-                err.line, err.row = line, _read_long_record("".join(physical[line - 1:]), header)
+                limit = csv.field_size_limit()
+                row = _read_long_record("".join(physical[line - 1:]), header)
+                err.line, err.row = line, row
+                # The field too long to read is never read as a value: named as too long to
+                # read, as revision 29 says, never as an amount at the limit (T04 review 37).
+                err.readable = {h for h in header if len((row or {}).get(h) or "") <= limit} if row else set()
         else:
             err = CsvRecordError(f"line {line}: not a readable CSV record ({e})")
         if header is None:
@@ -286,10 +304,20 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         problems.append(text)
         kinds.append(kind)
 
+    extra_amounts: list[int] = []  # a readable amount in a record that cannot be read whole
     if unreadable is not None:  # the records before it are still checked (T04 review 22)
         add("too_long" if unreadable.too_long else "line", str(unreadable))
-        if unreadable.row is not None:  # its own cells, amount included, are checked too (T04 review 36)
+        # Its own cells that can be read are checked too (T04 reviews 36-37): every one, if all
+        # the columns are readable; otherwise its amount, toward money in or out.
+        if unreadable.row is not None and set(REQUIRED) <= unreadable.readable:
             rows = [*rows, (unreadable.line, unreadable.row)]
+        elif unreadable.row is not None and "amount" in unreadable.readable:
+            raw = unreadable.row.get("amount")
+            if _over_limit(raw):
+                add("limit", f"line {unreadable.line}: amount {shown(raw)} is {AT_LIMIT}; no figure could be "
+                    "reported to the penny")
+            elif (value := _number(raw)) is not None:
+                extra_amounts.append(float_pence(value))
     parsed: list[tuple[int, str, date | None, str, float | None, float | None]] = []
     seen: dict[str, int] = {}
     for i, r in rows:  # i: the record's line in the file, blank lines counted
@@ -346,7 +374,7 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         if balance is not None:
             prev_balance = balance
 
-    for name in flows_at_limit([float_pence(a) for _, _, _, _, a, _ in parsed if a is not None]):
+    for name in flows_at_limit([float_pence(a) for _, _, _, _, a, _ in parsed if a is not None] + extra_amounts):
         add("flow", f"{name} totals {AT_LIMIT}: no figure could be reported to the penny")  # each named
     if problems:
         raise StatementError(path, problems, kinds)

@@ -768,12 +768,12 @@ def test_the_monzo_importer_refuses_an_oversized_field_naming_its_line(tmp_path)
     src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance\n"
                    "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n\n"
                    f"tx_2,02/01/2026,09:00:00,Faster payment,ACME,{huge},GBP,90.00\n")
-    # The field too long to read is the amount itself: since T04 review 36 the record is still
-    # read, and its amount is refused as past the limit, cut short in the message.
-    with pytest.raises(monzo.MonzoImportError, match=r"line 4: Amount '10+'… \(200,004 characters\) is £10,000,000"):
+    # The field too long to read is the amount itself: it is named as too long to read, never
+    # read as an amount (revision 29; T04 review 37).
+    with pytest.raises(monzo.MonzoImportError, match=r"line 4: a field is too long to read.*£10,000,000,000,000 limit"):
         monzo.convert(src, tmp_path / "o.csv")
     r = CliRunner().invoke(app, ["import", "monzo", str(src), "--out", str(tmp_path / "o.csv")])
-    assert r.exit_code != 0 and "line 4: Amount" in " ".join(r.output.split()) and "0" * 1000 not in r.output
+    assert r.exit_code != 0 and "line 4: a field is too long to read" in " ".join(r.output.split())
 
 
 
@@ -1162,3 +1162,26 @@ def test_monzo_checks_the_amount_of_a_row_with_a_later_field_too_long_to_read(tm
         ingest.load_csv(csv, today=date(2026, 6, 1))
     assert "line 2: amount '10000000000000.00' is £10,000,000,000,000 or more" in str(e.value)
     assert "line 2: a field is too long to read" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_readable_amount_before_a_bad_byte_in_its_row_still_counts(tmp_path):
+    """T04 review 37: the UTF-8 recovery dropped the whole record a bad byte fell in, so a
+    readable amount before the bad byte never counted toward money in at the limit."""
+    from cma.importers import monzo
+
+    big = "9999999999999.99"
+    src = tmp_path / "m.csv"
+    src.write_bytes(("Transaction ID,Date,Time,Type,Amount,Currency,Balance,Name\n"
+                     f"tx_1,01/01/2026,09:00:00,Faster payment,{big},GBP,{big},ACME\n"
+                     f"tx_2,02/01/2026,09:00:00,Faster payment,{big},GBP,{big},").encode() + b"CAF\xe9\n")
+    with pytest.raises(monzo.MonzoImportError) as e:
+        monzo.convert(src, tmp_path / "o.csv")
+    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "line 3: not UTF-8" in str(e.value)
+
+    csv = tmp_path / "s.csv"
+    csv.write_bytes(f"id,date,amount,balance,description\nT1,2026-01-01,{big},{big},A\nT2,2026-01-02,{big},1.00,"
+                    .encode() + b"CAF\xe9\n")
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "line 3: not UTF-8" in str(e.value)
