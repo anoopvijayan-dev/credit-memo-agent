@@ -2,7 +2,10 @@
 
 P1: trading receipts and the other seven buckets sum to total money in to the penny, and
 every credit's id is in exactly one bucket's evidence; M18 is not a bucket and is not added.
-P2: a sum figure's evidence lines total the figure to the penny.
+P2 (revision 24): a sum figure's evidence lines total the figure to the penny; an outflow
+figure is reported as a positive amount and its lines total it negated; a derived figure
+(M9 among them) is not asked to total its lines, and M9 names in its evidence note, by id,
+each credit it counts only in part.
 P6: a credit that no rule matches is in unexplained money in and not in M2.
 """
 
@@ -21,11 +24,9 @@ from cma.models import Category, Statement, Transaction
 CASES = [(a, p) for a in synth.ARCHETYPES for p in synth.PROFILES]
 BUCKETS = ["M2", "M19", "M20", "M21", "M22", "M23", "M24", "M25"]
 SUMS = ["M2", "M17", "M18", "M19", "M20", "M21", "M22", "M23", "M24", "M25"]
-# Debt service, drawings, VAT and PAYE keep the sign they had before T04 (R10, and the
-# frozen P7 baseline): positive figures for money out, so their lines' signed total is the
-# figure negated. M9 (a net whose round-trip offset is capped) is not checked here: making
-# either meet P2 literally changes M1-M16 values or evidence that P7's baseline pins.
-OUTFLOW_SUMS = ["M8", "M11", "M12", "M14"]
+# Outflow figures (P2, revision 24): money paid out reported as a positive amount, as since
+# before T04 (R10); their lines' signed total is the figure negated.
+OUTFLOWS = ["M8", "M11", "M12", "M14"]
 
 DESCRIPTIONS = [
     "STRIPE PAYOUT", "SUMUP PAYOUT", "CASH PAID IN", "COUNTER DEPOSIT", "FPS CREDIT ACME LTD INV 12",
@@ -93,14 +94,42 @@ def test_p1_buckets_sum_to_total_money_in_and_every_credit_is_in_exactly_one(tmp
 
 
 @pytest.mark.invariants
-def test_p2_evidence_lines_total_each_sum_figure_to_the_penny(tmp_path):
+def test_p2_sum_figures_total_their_lines_and_outflow_figures_total_them_negated(tmp_path):
     for label, s in _statements(tmp_path):
         m = _by_id(s)
         amounts = {t.id: _pence(t.amount) for t in s.transactions}
         for fid in SUMS:
             assert sum(amounts[i] for i in m[fid].evidence) == _pence(m[fid].value), f"{label} {fid}"
-        for fid in OUTFLOW_SUMS:
+        for fid in OUTFLOWS:
+            assert m[fid].value >= 0, f"{label} {fid}"
             assert -sum(amounts[i] for i in m[fid].evidence) == _pence(m[fid].value), f"{label} {fid}"
+        # M9 is derived: its note names only lines that are in its evidence.
+        assert set(m["M9"].evidence_note or []) <= set(m["M9"].evidence), label
+
+
+def _round_trip(back: float) -> Statement:
+    return categorise.categorise(Statement(account_name="x", transactions=[
+        Transaction(id="L1", date=date(2026, 1, 1), description="FPS DEBIT J BLOGGS", amount=-100.0, balance=-100.0),
+        Transaction(id="L2", date=date(2026, 1, 2), description="FPS CREDIT J BLOGGS", amount=back,
+                    balance=back - 100.0),
+    ]), load_ruleset("v2"))
+
+
+@pytest.mark.invariants
+def test_p2_m9_notes_the_credit_it_counts_only_in_part():
+    """verify-128: £100 sent and £250 sent back. M9 is £0 and cites both lines, which total
+    £150; its evidence note names L2, the credit that offsets only what was sent."""
+    m = _by_id(_round_trip(250.0))
+    assert m["M9"].value == 0 and m["M9"].evidence == ["L1", "L2"]
+    assert m["M9"].evidence_note == ["L2"]
+    assert "L2" not in m["M9"].method  # the method sentence reaches the prompt (R30); the note does not
+    assert "L2" not in metrics.as_table(list(m.values()))
+
+
+@pytest.mark.invariants
+def test_p2_m9_has_no_note_when_a_round_trip_counts_in_full():
+    m = _by_id(_round_trip(60.0))
+    assert m["M9"].value == -40.0 and m["M9"].evidence_note is None
 
 
 @pytest.mark.invariants
@@ -305,6 +334,46 @@ def test_mcp_compute_metrics_refuses_buckets_that_do_not_reconcile(tmp_path, mon
     line_id, pence = broken.line
     assert isinstance(e.value, metrics.ReconciliationError)
     assert f"{pence} pence" in str(e.value) and line_id in str(e.value)
+
+
+def test_m3_is_exact_or_not_reported_never_a_penny_out():
+    """verify-128: £9,999,999,999,999.98 in one day gives an average monthly revenue of
+    £304,374,999,999,999.39, which no float carries; M3 is n/a with the reason, and the
+    sum figures are still reported."""
+    s = Statement(account_name="x", transactions=[
+        Transaction(id="L1", date=date(2026, 1, 1), description="a", amount=9999999999999.98,
+                    balance=9999999999999.98, category=Category.REVENUE_CARD)])
+    m = _by_id(s)
+    assert m["M3"].value is None and "penny" in m["M3"].method
+    assert m["M17"].value == 9999999999999.98 and m["M2"].evidence == ["L1"]
+    small = Statement(account_name="x", transactions=[
+        Transaction(id="L1", date=date(2026, 1, 1), description="a", amount=1000.0, balance=1000.0,
+                    category=Category.REVENUE_CARD),
+        Transaction(id="L2", date=date(2026, 1, 31), description="b", amount=0.01, balance=1000.01,
+                    category=Category.REVENUE_CARD)])
+    exact = Decimal(100001) * 1461 / (31 * 48)  # pence
+    assert _pence(_by_id(small)["M3"].value) == int(exact.quantize(Decimal(1)))
+
+
+@pytest.mark.contracts
+def test_cma_run_refuses_an_uncategorised_credit_naming_pence_and_line(tmp_path, monkeypatch):
+    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
+    csv_path, _ = synth.write(rows, truth, tmp_path)
+    real = categorise.categorise
+
+    def broken(statement, *a, **k):
+        out = real(statement, *a, **k)
+        credit = next(t for t in out.transactions if t.amount > 0)
+        credit.category = None  # verify-128: in no bucket at all
+        broken.line = credit.id, _pence(credit.amount)
+        return out
+
+    monkeypatch.setattr(categorise, "categorise", broken)
+    r = CliRunner().invoke(app, ["run", str(csv_path), "--yes", "--reviewer", "A",
+                                 "--out", str(tmp_path / "memo.md")])
+    line_id, pence = broken.line
+    assert r.exit_code == 6, r.output
+    assert f"{pence} pence" in r.output and line_id in r.output and "model call failed" not in r.output
 
 
 @pytest.mark.contracts

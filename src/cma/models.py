@@ -125,6 +125,12 @@ class Metric(BaseModel):
     evidence: list[str] = Field(
         default_factory=list, description="Transaction ids this figure was computed from."
     )
+    evidence_note: list[str] | None = Field(
+        default=None,
+        description=("Ids of evidence lines the figure counts only in part (M9: a credit from someone the "
+                     "business paid by transfer, offsetting no more than was sent to them). Ids only; never "
+                     "shown in the method sentence or a prompt (R30)."),
+    )
 
     def display(self) -> str:
         """The figure as the memo should quote it. Negative figures keep their minus sign."""

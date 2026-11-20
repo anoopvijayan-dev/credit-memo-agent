@@ -127,6 +127,14 @@ def _ratio(num: int | float, den: int | float, places: int, scale: int = 1) -> f
     return float(q.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_EVEN))
 
 
+def _div_half_even(num: int, den: int) -> int:
+    """num / den rounded half to even, in integers only."""
+    q, r = divmod(num, den)
+    if 2 * r > den or (2 * r == den and q % 2):
+        q += 1
+    return q
+
+
 def _gbp(p: int) -> float:
     """Pence back to pounds, for reporting only. The float is the one nearest the exact
     pounds; it is refused only when that float does not read back as the same pence, so no
@@ -315,7 +323,8 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
         if pence(t) > 0 and t.category in NON_TRADING_IN and counterparty(t.description) in sent:
             back[counterparty(t.description)].append(t)
     offset = sum(min(total(ts), sent[cp]) for cp, ts in back.items())
-    capped = sorted(t.id for cp, ts in back.items() if total(ts) > sent[cp] for t in ts)
+    # A derived figure (P2): the credits it counts only in part are named in its evidence note.
+    capped = sorted((t.id for cp, ts in back.items() if total(ts) > sent[cp] for t in ts), key=pos.__getitem__)
     operating += [t for ts in back.values() for t in ts]
     net_operating = total(t for t in operating if not (pence(t) > 0 and t.category in NON_TRADING_IN)) + offset
     dscr: float | None = None
@@ -391,6 +400,16 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
     def g(p: int | None) -> float | None:
         return None if p is None else _gbp(p)
 
+    # M3 in whole pence from the exact quotient (never through a float), and n/a with the
+    # reason when no float carries those pence exactly: it is derived, so it never withholds
+    # the sum figures (verify-128).
+    avg_pence = _div_half_even(total_revenue * 1461, period_days * 48)
+    avg_revenue: float | None = avg_pence / 100
+    avg_note = "Total revenue divided by the exact length of the period in months (quiet months still count)."
+    if _whole_pence_exact(avg_revenue) != avg_pence:
+        avg_revenue = None
+        avg_note = "Average monthly revenue is too large to report to the penny."
+
     return [
         Metric(id="M1", name="Months covered", value=n_months, unit="months",
                method="Days from the first transaction to the last, in months, to the nearest month.",
@@ -398,9 +417,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
         Metric(id="M2", name="Total revenue", value=g(total_revenue), unit="GBP",
                method="Card and gateway settlements, transfers in that carry an invoice reference, and cash paid in.",
                evidence=[t.id for t in rev]),
-        Metric(id="M3", name="Average monthly revenue",
-               value=_gbp(int(_ratio(total_revenue * 1461, period_days * 48, 0))), unit="GBP",
-               method="Total revenue divided by the exact length of the period in months (quiet months still count).",
+        Metric(id="M3", name="Average monthly revenue", value=avg_revenue, unit="GBP", method=avg_note,
                evidence=[t.id for t in rev]),
         Metric(id="M4", name="Revenue trend", value=trend, unit="pct", method=trend_note,
                evidence=[t.id for t in rev if _month(t.date) in whole[:3] + whole[-3:]] if trend is not None else []),
@@ -418,10 +435,8 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
         Metric(id="M9", name="Net operating cash flow", value=g(net_operating), unit="GBP",
                method=("Revenue in, minus all money out, excluding loans and drawings. Money in that is not "
                        "explained as trading is left out, except that money sent back by someone the "
-                       "business paid by transfer nets off what it sent them."
-                       + (f" A derived figure: credits {', '.join(capped)} count only up to what was sent "
-                          "to the same counterparty." if capped else "")),
-               evidence=[t.id for t in operating]),
+                       "business paid by transfer nets off what it sent them."),
+               evidence=[t.id for t in operating], evidence_note=capped or None),
         Metric(id="M10", name="Debt service cover", value=dscr, unit="ratio", method=dscr_note,
                evidence=[t.id for t in operating + drawings + loan] if dscr is not None else []),
         Metric(id="M11", name="Owner drawings", value=g(owner_drawings), unit="GBP",
