@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 203,
+  "next_id": 204,
   "decisions": [
     {
       "id": "D1",
@@ -4094,6 +4094,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T10:05:50.453Z"
+    },
+    {
+      "id": "D203",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Applied the supplied revision 22 because the worktree copy is revision 2 (.bridgie/specs/statement-review/requirements.md:5,19). Mapped the maintained lists and directions to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest-match and surviving-occurrence handling at src/cma/categorise.py:1105–1170, bank-code priority and ambiguity at :1213–1230, and override, profile and firm-rule precedence and candidate provenance at :1242–1310. Category.OTHER maps to unexplained money in at src/cma/models.py:65. Production uses the selected table and exports line provenance at src/cma/graph.py:188–223,250–253 and src/cma/cli.py:228–229. Checked digest gating, exceptions, field checks and matcher builds at src/cma/categorise.py:397–660, and the changed-v1 refusal at :939–968. The new stage, protection and single-rule category regressions pass. Checks that depend on multiple repeated values still produce incorrect diagnostics. Reviewed double submit and concurrent output paths at src/cma/cli.py:146–159,228–229, amount and date boundaries at src/cma/ingest.py:42–59, partial table-load failure at src/cma/categorise.py:939–968, the ruleset allow-list and MCP path scope at src/cma/categorise.py:939–942 and src/cma/mcp_server.py:37–47, case-local classification inputs at src/cma/categorise.py:1391–1406, and additive evidence and checkpoint replay at src/cma/graph.py:188–223. The runner logged 839 suite, 217 contract, 138 invariant and 83 dual-run passes. Its logs name the list, CLI provenance, idempotency, checkpoint, timing and both offline eval tests. The remaining R4 failures follow from source inspection. No tests, builds or writes were performed during review.); major: Category-order validation drops all other rules with repeated category or direction fields while checking a rule's alternatives. This suppresses a category-order fault that occurs when supplied values on different rules coexist. at src/cma/categorise.py:710; major: The mandatory bank-code check reads a repeated pattern through its placeholder and reports the bank-code rule missing even when every supplied pattern has the required text. at src/cma/categorise.py:606; major: Bank-code shape checks can report an invalid flag and forbidden anchor solely because the other repeated fields remain placeholders. at src/cma/categorise.py:502; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T10:09:31.267Z"
     }
   ]
 }
