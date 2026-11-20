@@ -19,7 +19,7 @@ from . import guard as grd
 from . import synth
 from .categorise import RulesetError, active_ruleset
 from .graph import build, evidence_record, ruleset_used, sqlite_checkpointer
-from .ingest import StatementError
+from .ingest import StatementError, load_csv
 from .llm import get_llm
 from .metrics import AmountError, ReconciliationError
 from .policy import PolicyError
@@ -129,7 +129,7 @@ def resume(
             raise typer.Exit(code=1)
         problem = _stored_state_problem(snap.values)
         if problem:
-            console.print(f"[red]Not resuming {thread}:[/red] {problem}")
+            console.print(f"[red]Not resuming {thread}:[/red] {escape(problem)}")
             raise typer.Exit(code=2)
         state = {**snap.values, "__interrupt__": snap.interrupts}
         _review(graph, cfg, state, reviewer, False, out)
@@ -143,6 +143,12 @@ def _stored_state_problem(values: dict) -> str | None:
         return f"the statement {path} is no longer there"
     if hashlib.sha256(path.read_bytes()).hexdigest() != values.get("statement_sha256"):
         return f"the statement {path} has changed since the memo was drafted"
+    try:
+        # A review drafted by an earlier release is shown only if today's loader would still
+        # take the statement; otherwise its stored figures are not shown (R2, T04 review 15).
+        load_csv(path)
+    except StatementError as e:
+        return f"the statement would now be refused, so the stored figures are not shown: {e}"
     again = grd.check(values["memo"], values["metrics"], values["policy"], required_headings=grd.REQUIRED_HEADINGS)
     if again.grounded != values["guard"].grounded:
         return "the stored grounding result does not match the stored memo"

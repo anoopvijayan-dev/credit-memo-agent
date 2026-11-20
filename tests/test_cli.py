@@ -210,3 +210,15 @@ def test_bad_policy_yaml_is_refused_cleanly(tmp_path):
     bad.write_text("rules: [")
     r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--policy", str(bad), "--yes", "--reviewer", "A"])
     assert r.exit_code == 2 and "not valid YAML" in r.output
+
+
+def test_resume_refuses_a_statement_the_loader_would_now_refuse(tmp_path, monkeypatch):
+    # T04 review 15: a review drafted before the import limit (or any check) existed reused
+    # its stored figures for a statement today's loader refuses.
+    from cma import metrics
+
+    db, _ = _pending(tmp_path)
+    monkeypatch.setattr(metrics, "MAX_STATEMENT_PENCE", 1)  # today's loader refuses every amount
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C"], input="y\n\n")
+    assert r.exit_code == 2 and "would now be refused" in r.output and "£10,000,000,000,000 or more" in r.output
+    assert "Approved" not in r.output
