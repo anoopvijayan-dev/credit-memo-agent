@@ -209,23 +209,35 @@ def line_rule_ids(s: MemoState) -> list[str | None]:
     return [t.rule_id or (r.rule_id if r.category == t.category else None) for t, r in zip(txns, replay, strict=True)]
 
 
+class StaleReviewError(ValueError):
+    """A pending review whose policy outcome could differ under this release's figures."""
+
+
 def refreshed(s: MemoState) -> dict:
-    """A pending review's figures as this release computes them, with the policy and the
-    grounding check that follow from them, when they differ from the stored ones; else {}.
+    """A pending review's figures as this release computes them, with the grounding check
+    that follows from them, when they differ from the stored ones; else {}.
 
     A review drafted by an earlier release can hold figures computed by its arithmetic and
     no total money in or money-in buckets. Resumed here, it is decided, finalised and
     recorded on today's figures (R1, R2, P2), and keeps resuming as before (R53); if its
     memo no longer holds against them, approving it needs the grounding override, as for
-    any memo that fails the check (T04 review 16). Raises AmountError or
-    ReconciliationError when today's figures cannot be computed."""
+    any memo that fails the check (T04 review 16).
+
+    The stored policy result is kept, and no policy file is reopened: a rule's outcome reads
+    only its figure's value, so it is the same while every figure a rule reads is unchanged.
+    If one changed, StaleReviewError: the review is drafted again by `cma run` (T04 review
+    17). Raises AmountError or ReconciliationError when today's figures cannot be computed."""
     fresh = met.compute(s["statement"].model_copy(deep=True), vat_stagger=s.get("vat_stagger"))
     if [m.model_dump() for m in fresh] == [m.model_dump() for m in s["metrics"]]:
         return {}
-    p = pol.load_policy(Path(s["policy_path"])) if s.get("policy_path") else None
-    policy = pol.evaluate(fresh, p)
-    g = grd.check(s["memo"], fresh, policy, required_headings=grd.REQUIRED_HEADINGS)
-    return {"metrics": fresh, "policy": policy, "guard": g}
+    before, now = {m.id: m.value for m in s["metrics"]}, {m.id: m.value for m in fresh}
+    moved = sorted({r.metric_id for r in s["policy"].rules
+                    if r.metric_id not in before or r.metric_id not in now or before[r.metric_id] != now[r.metric_id]})
+    if moved:
+        raise StaleReviewError(f"this review was drafted by an earlier release, and {', '.join(moved)}, which "
+                               "the policy reads, is different today; run `cma run` on the statement again")
+    g = grd.check(s["memo"], fresh, s["policy"], required_headings=grd.REQUIRED_HEADINGS)
+    return {"metrics": fresh, "guard": g}
 
 
 def guard_fields(g) -> dict:
@@ -263,10 +275,15 @@ def build(llm: LLM | None = None, checkpointer=None):
 
     def load(s: MemoState) -> MemoState:
         path = Path(s["statement_path"])
-        statement = ingest.load_csv(path)
+        try:
+            data = path.read_bytes()  # read once: these bytes are both parsed and hashed (T04 review 17)
+        except OSError:
+            ingest.load_csv(path)  # refuses, saying why (no such file)
+            raise
+        statement = ingest.load_csv(path, data=data)
         return {
             "statement": statement,
-            "statement_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "statement_sha256": hashlib.sha256(data).hexdigest(),
             "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
             # A run starts clean, even on a thread that has run before.
             "redrafts": 0,

@@ -14,6 +14,7 @@ file order, because the balance chain is defined by it.
 from __future__ import annotations
 
 import csv
+import io
 import math
 import re
 from datetime import date
@@ -84,17 +85,22 @@ def _number(raw: str | None) -> float | None:
     return v if math.isfinite(v) and float_pence(v) == p else None
 
 
-def load_csv(path: Path, account_name: str | None = None, today: date | None = None) -> Statement:
+def load_csv(path: Path, account_name: str | None = None, today: date | None = None,
+             data: bytes | None = None) -> Statement:
+    """`data`, when given, is the file's bytes as the caller read them: the statement is
+    parsed from exactly the bytes the caller hashes, never from a second read of a file that
+    may have been replaced in between (R1, R2, P2; T04 review 17)."""
     path = Path(path)
     today = today or date.today()
-    if not path.is_file():
-        raise StatementError(path, ["no such file"])
+    if data is None:
+        if not path.is_file():
+            raise StatementError(path, ["no such file"])
+        data = path.read_bytes()
     try:
-        with path.open(newline="", encoding="utf-8-sig") as f:  # tolerate a byte-order mark
-            reader = csv.DictReader(f)
-            header = [h.strip() for h in (reader.fieldnames or [])]
-            reader.fieldnames = header
-            rows = list(reader)
+        reader = csv.DictReader(io.StringIO(data.decode("utf-8-sig"), newline=""))  # tolerate a byte-order mark
+        header = [h.strip() for h in (reader.fieldnames or [])]
+        reader.fieldnames = header
+        rows = list(reader)
     except UnicodeDecodeError as e:
         raise StatementError(path, [
             f"not UTF-8 (byte {e.start}); re-save it as 'CSV UTF-8' (Excel) and try again"

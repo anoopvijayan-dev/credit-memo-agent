@@ -227,19 +227,26 @@ def test_resume_refuses_a_statement_the_loader_would_now_refuse(tmp_path, monkey
 NEW_MONEY_IN = {"M17", "M18", "M19", "M20", "M21", "M22", "M23", "M24", "M25"}
 
 
-def _as_earlier_release(db, thread="case-1"):
+def _as_earlier_release(db, thread="case-1", nudge="M2", lines=None):
     """Rewrite a pending review's stored figures as the previous release left them: no total
-    money in or money-in buckets, and M2 a float sum a hair off the exact pence."""
+    money in or money-in buckets, and one figure (M2 by default) a float sum a hair off the
+    exact pence. `lines`, if given, replaces the stored statement's lines."""
     from cma.graph import build, sqlite_checkpointer
     from cma.llm import FakeLLM
 
     cfg = {"configurable": {"thread_id": thread}}
     with sqlite_checkpointer(db) as saver:
         graph = build(FakeLLM(), checkpointer=saver)
-        old = [m if m.id != "M2" else m.model_copy(update={"value": m.value + 1e-7})
-               for m in graph.get_state(cfg).values["metrics"] if m.id not in NEW_MONEY_IN]
-        graph.update_state(cfg, {"metrics": old})
-        graph.invoke(None, cfg)  # back to the review, as the earlier release left it
+        values = graph.get_state(cfg).values
+        old = [m if m.id != nudge else m.model_copy(update={"value": m.value + 1e-7})
+               for m in values["metrics"] if m.id not in NEW_MONEY_IN]
+        update = {"metrics": old}
+        if lines is not None:
+            update["statement"] = values["statement"].model_copy(update={"transactions": lines(values["statement"])})
+        graph.update_state(cfg, update)
+        with pytest.MonkeyPatch.context() as mp:  # the earlier release had no refresh
+            mp.setattr("cma.graph.refreshed", lambda s: {})
+            graph.invoke(None, cfg)  # back to the review, as the earlier release left it
         assert graph.get_state(cfg).interrupts
         assert not NEW_MONEY_IN & {m.id for m in graph.get_state(cfg).values["metrics"]}
     return cfg
@@ -266,3 +273,76 @@ def test_resume_decides_a_review_from_an_earlier_release_on_todays_figures(tmp_p
     assert metrics.float_pence(got["M2"]["value"]) == sum(metrics.float_pence(lines[i].amount)
                                                           for i in got["M2"]["evidence"])
     assert "M17" in out.read_text()  # the appendix lists today's figures
+
+
+def test_a_run_hashes_the_bytes_it_parsed(tmp_path, monkeypatch):
+    # T04 review 17: the file was parsed by one read and hashed by another, so a statement
+    # replaced in between was recorded under the other version's hash.
+    import hashlib
+
+    from cma import ingest
+    from cma.graph import build
+    from cma.llm import FakeLLM
+
+    csv = _statement(tmp_path)
+    original = csv.read_bytes()
+    real = ingest.load_csv
+
+    def load_then_replace(path, *a, **k):
+        st = real(path, *a, **k)
+        csv.write_text(csv.read_text().replace("CARD ACQUIRER SETTLEMENT", "CARD ACQUIRER SETTLEMENT X", 1))
+        return st
+
+    monkeypatch.setattr(ingest, "load_csv", load_then_replace)
+    from langgraph.checkpoint.memory import InMemorySaver
+    state = build(FakeLLM(), checkpointer=InMemorySaver()).invoke(
+        {"statement_path": str(csv)}, {"configurable": {"thread_id": "race"}})
+    assert state["statement_sha256"] == hashlib.sha256(original).hexdigest()
+
+
+def test_an_earlier_release_review_resumes_without_reopening_its_policy_file(tmp_path):
+    # T04 review 17: refreshing figures reopened the policy file, so an old review depended
+    # on a file it did not need before, and a concurrent edit could change what was recorded.
+    import json
+    import shutil
+
+    from cma import policy
+
+    pol = tmp_path / "firm.yaml"
+    pol.write_text(policy.default_policy_text())
+    pytest.importorskip("langgraph.checkpoint.sqlite")
+    db, csv = tmp_path / "reviews.sqlite", _statement(tmp_path)
+    runner.invoke(app, ["run", str(csv), "--policy", str(pol), "--checkpoint-db", str(db), "--thread", "case-1"],
+                  input="\x04")
+    _as_earlier_release(db)
+    shutil.move(pol, tmp_path / "gone.yaml")
+    out = tmp_path / "memo.md"
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C", "--out", str(out)],
+                      input="y\n\n")
+    assert r.exit_code == 0, r.output
+    ev = json.loads((tmp_path / "memo.evidence.json").read_text())
+    assert ev["policy"]["policy_sha256"] == policy.load_policy(tmp_path / "gone.yaml")["_sha256"]
+
+
+def test_an_earlier_release_review_whose_policy_figure_moved_is_drafted_again(tmp_path):
+    # T04 review 17: the stored policy result stands only while every figure a rule reads is
+    # unchanged; otherwise the review is refused, naming the figure, with nothing recorded.
+    db, _ = _pending(tmp_path)
+    _as_earlier_release(db, nudge="M9")
+    out = tmp_path / "memo.md"
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C", "--out", str(out)],
+                      input="y\n\n")
+    assert r.exit_code == 2 and "M9" in r.output and "cma run" in r.output and not out.exists()
+
+
+def test_resume_refuses_stored_lines_that_are_not_the_statements(tmp_path):
+    # T04 review 17: figures recomputed from stored lines must describe the statement the
+    # stored hash names.
+    db, _ = _pending(tmp_path)
+    def shifted(st):
+        first, *rest = st.transactions
+        return [first.model_copy(update={"amount": first.amount + 1}), *rest]
+
+    _as_earlier_release(db, lines=shifted)
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C"], input="y\n\n")
+    assert r.exit_code == 2 and "not the lines" in r.output

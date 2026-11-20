@@ -19,6 +19,7 @@ from . import guard as grd
 from . import synth
 from .categorise import RulesetError, active_ruleset
 from .graph import (
+    StaleReviewError,
     build,
     evidence_record,
     guard_fields,
@@ -144,6 +145,9 @@ def resume(
         except (AmountError, ReconciliationError) as e:
             console.print(f"[red]Not resuming {thread}: refused, no figures shown.[/red] {escape(str(e))}")
             raise typer.Exit(code=6) from e
+        except StaleReviewError as e:
+            console.print(f"[red]Not resuming {thread}:[/red] {escape(str(e))}")
+            raise typer.Exit(code=2) from e
         state = {**snap.values, **update, "__interrupt__": snap.interrupts}
         _review(graph, cfg, state, reviewer, False, out)
 
@@ -152,16 +156,26 @@ def _stored_state_problem(values: dict) -> str | None:
     """A stored review is only resumed if it still says what it said: the statement file
     is unchanged and the stored memo still passes (or fails) the guard the same way."""
     path = Path(values["statement_path"])
-    if not path.is_file():
+    try:
+        data = path.read_bytes()  # read once: the bytes hashed are the bytes checked (T04 review 17)
+    except OSError:
         return f"the statement {path} is no longer there"
-    if hashlib.sha256(path.read_bytes()).hexdigest() != values.get("statement_sha256"):
+    if hashlib.sha256(data).hexdigest() != values.get("statement_sha256"):
         return f"the statement {path} has changed since the memo was drafted"
     try:
         # A review drafted by an earlier release is shown only if today's loader would still
         # take the statement; otherwise its stored figures are not shown (R2, T04 review 15).
-        load_csv(path)
+        loaded = load_csv(path, data=data)
     except StatementError as e:
         return f"the statement would now be refused, so the stored figures are not shown: {e}"
+
+    # The stored lines must be the lines of the statement the hash names, as today's loader
+    # reads them, or figures recomputed from them would describe another statement (T04 review 17).
+    def raw(ts):
+        return [(t.id, t.date, t.description, t.amount, t.balance) for t in ts]
+
+    if raw(loaded.transactions) != raw(values["statement"].transactions):
+        return f"the stored lines are not the lines of {path} as it reads today"
     again = grd.check(values["memo"], values["metrics"], values["policy"], required_headings=grd.REQUIRED_HEADINGS)
     if again.grounded != values["guard"].grounded:
         return "the stored grounding result does not match the stored memo"
