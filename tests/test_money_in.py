@@ -398,3 +398,37 @@ def test_the_money_in_figures_are_shown_to_the_penny_so_the_parts_add_up_to_the_
     assert shown["M17"] == "£1.80" and shown["M2"] == "£0.60"
     parts = sum(_pence(float(v.lstrip("£").replace(",", ""))) for k, v in shown.items() if k not in ("M17", "M18"))
     assert parts == 180
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("amount", ["10000000000000.00", "12345678901234.56", "0.123"])
+def test_an_amount_no_float_carries_to_the_penny_is_refused_at_import(tmp_path, amount):
+    """T04 review 3: the amount is read exactly; one that no float carries to the penny (or
+    with more than two places) is refused at import, never rounded before it is counted."""
+    from cma import ingest
+
+    f = tmp_path / "s.csv"
+    f.write_text(f"id,date,description,amount,balance\nL1,2026-01-05,ACME,{amount},{amount}\n")
+    with pytest.raises(ingest.StatementError, match="amount"):
+        ingest.load_csv(f)
+
+
+@pytest.mark.contracts
+def test_a_statement_whose_money_in_could_not_be_reported_is_refused_at_import(tmp_path):
+    from cma import ingest
+
+    f = tmp_path / "s.csv"
+    f.write_text("id,date,description,amount,balance\nL1,2026-01-05,A,6000000000000.00,6000000000000.00\n"
+                 "L2,2026-01-06,B,6000000000000.00,12000000000000.00\n")
+    with pytest.raises(ingest.StatementError, match="money in or money out totals"):
+        ingest.load_csv(f)
+
+
+@pytest.mark.contracts
+def test_a_figure_shown_to_the_penny_is_the_counted_pence():
+    """T04 review 3: the shown pence come from the decimal the float reads back as, never
+    from rounding its binary value, up to the largest figure a statement can produce."""
+    from cma import models
+
+    for value, shown in [(9999999999999.99, "£9,999,999,999,999.99"), (0.29, "£0.29"), (-1234.57, "-£1,234.57")]:
+        assert models.Metric(id="M17", name="x", value=value, unit="GBP", method="m").display_exact() == shown

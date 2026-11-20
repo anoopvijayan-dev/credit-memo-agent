@@ -17,6 +17,7 @@ import csv
 import math
 import re
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 from .models import Statement, Transaction
@@ -44,14 +45,26 @@ def _pence(v: float) -> int:
     return round(v * 100)
 
 
+# A statement's amounts and balances are counted to the penny, and every figure is reported
+# as the float the DTO carries. Fifteen significant digits always round-trip through a
+# float, so amounts are taken up to 13 digits of pounds and two of pence, and a statement
+# whose money in or money out could total more is refused at import, named, rather than
+# reported a penny out (R2, revision 24; T04 review 3).
+MAX_STATEMENT_PENCE = 10**15
+
+
 def _number(raw: str | None) -> float | None:
     """A plain signed decimal with at most two places: "-1150.00", "812.4". Thousands
-    separators, currency signs, exponents and words are refused rather than guessed."""
+    separators, currency signs, exponents and words are refused rather than guessed. The
+    text is read exactly, so no penny is lost before it is counted (T04 review 3)."""
     text = (raw or "").strip()
     if not AMOUNT.match(text):
         return None
-    v = float(text)
-    return v if math.isfinite(v) else None
+    exact = Decimal(text)
+    if abs(exact) * 100 >= MAX_STATEMENT_PENCE:
+        return None
+    v = float(exact)
+    return v if math.isfinite(v) and Decimal(repr(v)) == exact else None
 
 
 def load_csv(path: Path, account_name: str | None = None, today: date | None = None) -> Statement:
@@ -107,9 +120,11 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
             problems.append(f"line {i}: date {d} is in the future")
         amount, balance = _number(r["amount"]), _number(r["balance"])
         if amount is None:
-            problems.append(f"line {i}: amount {r['amount']!r} is not a plain number like -1150.00")
+            problems.append(f"line {i}: amount {r['amount']!r} is not a plain number like -1150.00 "
+                            "(under £10,000,000,000,000)")
         if balance is None:
-            problems.append(f"line {i}: balance {r['balance']!r} is not a plain number like 2304.17")
+            problems.append(f"line {i}: balance {r['balance']!r} is not a plain number like 2304.17 "
+                            "(under £10,000,000,000,000)")
         parsed.append((i, tid, d, (r["description"] or "").strip(), amount, balance))
 
     # Banks export newest first or oldest first. Decide from the dates, then insist
@@ -133,6 +148,11 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         if balance is not None:
             prev_balance = balance
 
+    money_in = sum(_pence(a) for _, _, _, _, a, _ in parsed if a is not None and a > 0)
+    money_out = sum(-_pence(a) for _, _, _, _, a, _ in parsed if a is not None and a < 0)
+    if max(money_in, money_out) >= MAX_STATEMENT_PENCE:
+        problems.append("money in or money out totals £10,000,000,000,000 or more: no figure could be "
+                        "reported to the penny")
     if problems:
         raise StatementError(path, problems)
     txns = [Transaction(id=tid, date=d, description=desc, amount=amount, balance=balance)

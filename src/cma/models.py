@@ -8,6 +8,7 @@ to the statement lines behind it.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Literal
 
@@ -140,7 +141,10 @@ class Metric(BaseModel):
         """The figure to the penny when it is money, for tables that show the money-in
         buckets beside total money in, so the shown parts add up to the shown whole."""
         if self.unit == "GBP" and self.value is not None:
-            return f"{'-' if self.value < 0 else ''}£{abs(self.value):,.2f}"
+            # From the decimal the float reads back as, never by rounding the binary value,
+            # so the shown pence are the counted ones (T04 review 3).
+            exact = Decimal(repr(self.value)).quantize(Decimal("0.01"))
+            return f"{'-' if exact < 0 else ''}£{abs(exact):,.2f}"
         return self.display()
 
 

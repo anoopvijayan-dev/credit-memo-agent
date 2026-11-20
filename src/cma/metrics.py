@@ -284,6 +284,8 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
     eod = end_of_day_balances(txns)
     overdrawn = sorted(d for d, (bal, _) in eod.items() if bal < 0)
     pos = {t.id: i for i, t in enumerate(txns)}
+    # M1-M16 keep the evidence the previous release gave (dual run, R54): M6 cites the line
+    # that closed each overdrawn day (P2 revision 25).
     overdrawn_evidence = sorted({eod[d][1] for d in overdrawn}, key=pos.__getitem__)
 
     # Obligations
