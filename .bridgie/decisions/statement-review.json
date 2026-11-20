@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 156,
+  "next_id": 157,
   "decisions": [
     {
       "id": "D1",
@@ -3168,6 +3168,26 @@
       "decided_at": "2026-11-20T05:13:59.648Z",
       "effect": "design approved",
       "created_at": "2026-11-20T05:13:57.113Z"
+    },
+    {
+      "id": "D156",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed 7c8fba2 against P15 in the supplied revision 18 because the checkout contains revision 2. src/cma/case.py:170–366 and :926 check canonical bytes, chain links and the recorded head, naming the first bad or incomplete entry. Reader handling is at :451–674, including holder and path aliases, steady reads, busy-gate reads, lock replacement and the intact-log guard. Writer exclusion, fork refusal, nested-save refusal, stale position and repair checks are at :677–924. Head publication and take-back are at :967–1063. The runner logs confirm the named change, removal, reorder, rebuilt-chain and torn-tail invariants and the duplicate-submit, process and thread contention, repair and CLI tests. Checked empty and malformed inputs, Unicode, UTC timestamps, partial writes, OS permissions and case-folder isolation. This code does no currency arithmetic and requires no backfill. src/cma/cli.py:321 is the production verification caller. The sign-off guard exists at src/cma/case.py:651, with sign-off integration assigned to T27. P15 fails because losing the case lock after a short write leaves a torn entry while telling the caller that nothing was written.); major: If the case lock disappears after part of a line is written, append propagates a generic CaseLocked error saying 'nothing was written'. The partial line remains on disk and the save never reaches the code that reports it as not recorded. at src/cma/case.py:1010; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T05:15:24.488Z"
     }
   ]
 }
