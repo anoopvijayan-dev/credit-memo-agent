@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 228,
+  "next_id": 229,
   "decisions": [
     {
       "id": "D1",
@@ -4588,6 +4588,26 @@
       "decided_at": "2026-11-20T13:27:18.980Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T13:21:19.097Z"
+    },
+    {
+      "id": "D228",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:56 and :151 validate statement amounts and totals, src/cma/importers/monzo.py:72 reads Monzo amounts in pence, and src/cma/metrics.py:409 handles an unreportable M3. The appendix and interactive table use exact money formatting, but the draft still receives and reports rounded money. Both loaders also give a combined message when only one directional total reaches the limit.); R3 fail (src/cma/metrics.py:475 checks membership and difference, and src/cma/cli.py:99 maps the refusal to exit 6. The named CLI and MCP contracts passed. An uncategorised debit still stops computation at src/cma/metrics.py:236 before an accompanying unbucketed credit can be diagnosed.); P2 fail (The named sum, outflow and M9 invariants passed. src/cma/metrics.py:427 and :429 retain the M5 and M6 evidence rules, and :470 cites the M26 inputs. The fixture dual run passed, but src/cma/metrics.py:396 and :460 drop an own-account credit from legacy M16 evidence even when the frozen v1 rules are selected with profile names.); major: The memo draft still reports GBP figures rounded to whole pounds. The exact appendix and interactive table cover only their own outputs. at src/cma/metrics.py:491; major: An uncategorised debit masks the required pence difference and line IDs for an unbucketed credit in the same statement. at src/cma/metrics.py:236; major: The M16 compatibility claim exceeds the dual-run cases. The shared denominator changes the evidence for a credit identified as an own-account transfer by profile matching under v1. at src/cma/metrics.py:396; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T13:31:17.834Z"
     }
   ]
 }
