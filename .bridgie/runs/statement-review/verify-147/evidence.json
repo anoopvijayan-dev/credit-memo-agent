@@ -1,0 +1,159 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:53 maps credit categories to eight buckets. src/cma/metrics.py:483 assembles the buckets and src/cma/metrics.py:563 returns the GBP figures and line IDs. src/cma/graph.py:305 and src/cma/mcp_server.py:95 call compute.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:81 checks pence round-tripping and src/cma/ingest.py:210 checks flow totals. src/cma/metrics.py:511 handles an unrepresentable M3. src/cma/graph.py:172 and src/cma/cli.py:326 print pence and src/cma/metrics.py:591 keeps the drafting table at whole pounds. The CSV reader still misidentifies the location of an over-limit amount in a multiline record.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks both the signed difference and evidence multiplicity. src/cma/cli.py:107 exits 6 before review or export. The runner exercised unbucketed credits, escaped line IDs and MCP refusal.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and src/cma/categorise.py:1360 default unmatched credits to OTHER. src/cma/models.py:64 maps OTHER to unexplained, and src/cma/metrics.py:349 selects only revenue categories for M2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483 builds the independent credit total, src/cma/metrics.py:578 checks the eight-way partition in pence, and src/cma/metrics.py:495 selects M18 from inside M2. The runner exercised both the partition and large-amount invariants.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For T04 figures, src/cma/metrics.py:523–574 emits sum, outflow and derived evidence. src/cma/metrics.py:373–379 selects M5 and M6 evidence, src/cma/metrics.py:421–430 identifies partially counted M9 credits, and src/cma/metrics.py:440 and :546 leave M10 without evidence when exact debt service is zero. The runner passed the figure-kind and M9 invariants, and dual_run-7.log contains the named previous-release evidence comparisons. Monthly cells and M27–M28 belong to later work.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "Traced both default classification paths at src/cma/categorise.py:1311 and :1360 through the bucket mapping at src/cma/models.py:64 and evidence assembly at src/cma/metrics.py:483–490 and :569–571. The runner passed the named unknown-payer cases under v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-147/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-147/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-147/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-147/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-147/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-147/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-147/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 104,
+      "criterion": "R2",
+      "claim": "The shared reader uses the last physical line of a CSV record as the location of every field, so the over-limit amount diagnostic can point at an unrelated description continuation.",
+      "repro": "Use header id,date,amount,balance,description. On physical line 2 put L1,2026-01-05,10000000000000.00,0.00,\"first and on physical line 3 put second\". The amount is on line 2. The loader reports line 3 because DictReader.line_num has already advanced through the quoted description. The existing blank-line test uses single-line records."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/mcp_server.py",
+      "line": 70,
+      "criterion": "R2",
+      "claim": "MCP turns a generic CSV field-size error into a definite assertion that an amount or balance reached the money limit.",
+      "repro": "Call compute_metrics on a five-column CSV with a 200,000-character description and amount and balance both 1.00. src/cma/ingest.py:108 includes the limit phrase in a generic reader error, and MCP reports an amount or balance of £10,000,000,000,000 or more on line 2 even though both monetary fields are £1.00."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/policy.py",
+      "line": 113,
+      "criterion": "R53",
+      "claim": "The additive migration claim misses a resumed-review error path. An unreadable original policy can escape as a raw exception instead of producing the revision 28 refusal that names the affected figure.",
+      "repro": "Leave a historical review pending whose M3 changes from a value to n/a, with a custom policy rule on M3. Replace the policy file at its stored path with a directory and run cma resume. src/cma/policy.py:36 raises IsADirectoryError, which the loader and fallback leave uncaught. The CLI loses the affected figure ID and the instruction to run cma run again."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 86,
+      "criterion": "R53",
+      "claim": "The existing --opening-balance option rejects exact values supplied in exponent notation, which the previous float option accepted.",
+      "repro": "Import a one-row GBP Monzo export with no Balance column using --opening-balance 1e2. The old option passed 100.0 to the converter. The new option passes the text to the plain-decimal regex and refuses it."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 318,
+      "criterion": null,
+      "claim": "The exact scratchpad probe results and the historical full-suite count at ca0092c are unproven by the supplied runner. The current worktree is 3f4987c with 925 full-suite passes and 84 dual-run passes. The named invariant and contract tests did run on that worktree.",
+      "repro": "Compare the claim's revision and commands with specified-3.log, contracts-4.log, invariants-5.log and dual_run-7.log. Proving the historical count requires a runner result for python -m pytest -q at ca0092c. Proving the exact scratchpad outputs requires supplying scratchpad/probe.py and a runner result for PYTHONPATH=src python scratchpad/probe.py."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": null,
+      "claim": "The producer note says the committed example lacks evidence_note. It already carries that field.",
+      "repro": "Read the M1 object in examples/cafe_stretched.memo.evidence.json. It contains evidence_note with a null value."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

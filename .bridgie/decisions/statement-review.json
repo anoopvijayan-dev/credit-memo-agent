@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 251,
+  "next_id": 252,
   "decisions": [
     {
       "id": "D1",
@@ -5037,6 +5037,26 @@
       "decided_at": "2026-11-20T16:31:03.183Z",
       "effect": "design approved",
       "created_at": "2026-11-20T16:31:00.331Z"
+    },
+    {
+      "id": "D251",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:81 checks pence round-tripping and src/cma/ingest.py:210 checks flow totals. src/cma/metrics.py:511 handles an unrepresentable M3. src/cma/graph.py:172 and src/cma/cli.py:326 print pence and src/cma/metrics.py:591 keeps the drafting table at whole pounds. The CSV reader still misidentifies the location of an over-limit amount in a multiline record.); major: The shared reader uses the last physical line of a CSV record as the location of every field, so the over-limit amount diagnostic can point at an unrelated description continuation. at src/cma/ingest.py:104; major: MCP turns a generic CSV field-size error into a definite assertion that an amount or balance reached the money limit. at src/cma/mcp_server.py:70; major: The additive migration claim misses a resumed-review error path. An unreadable original policy can escape as a raw exception instead of producing the revision 28 refusal that names the affected figure. at src/cma/policy.py:113; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T16:35:41.449Z"
     }
   ]
 }
