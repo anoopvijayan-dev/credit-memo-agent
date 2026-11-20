@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 151,
+  "next_id": 152,
   "decisions": [
     {
       "id": "D1",
@@ -3071,6 +3071,26 @@
       "decided_at": "2026-11-20T04:41:07.763Z",
       "effect": "design approved",
       "created_at": "2026-11-20T04:41:05.552Z"
+    },
+    {
+      "id": "D151",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed commit 3076547 against supplied revision 17 because the checkout contains revision 2. Canonical hashing, head comparison and first-bad-entry diagnostics are at src/cma/case.py:170–366, with encoding at line 922. Holder, free-case, busy-gate, steady and untestable reads are at lines 450–637, and the sign-off guard is at line 647. Writer exclusion, fork refusal, nested-save refusal, expected-position conflict and repair guards are at lines 675–920. Append and head publication are at lines 944–1049. The runner logs confirm the named change, removal, reorder, rebuilt-chain, torn-tail, concurrent-writer, duplicate-submit and CLI tests. Also checked empty and malformed inputs, UTC timestamps, the absence of currency arithmetic, partial writes, OS permissions, separate case folders, migration scope and CLI consumers. A take-back bypasses both lock checks and can cause a recorded repair to disappear. A busy-gate read that loses its shared case lock can also bypass the required retry.); major: A failed save bypasses both lock checks when taking back its head. It can overwrite a repair's head after that repair was reported recorded, allowing a subsequent repair to erase the recorded entry and leave an intact log. at src/cma/case.py:1041; major: If the shared case lock disappears during a busy-gate read, the post-read stat raises FileNotFoundError and verify switches to an unprotected read. That fallback can report a live append as a torn entry. at src/cma/case.py:563; major: A directory sync failure after the head rename escapes as a raw OSError. The head can list the save even though the caller gets neither a confirmed outcome nor the instruction to check the log. at src/cma/case.py:986; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T04:42:35.842Z"
     }
   ]
 }

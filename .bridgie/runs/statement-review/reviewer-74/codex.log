@@ -1,0 +1,62 @@
+```json
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed commit 3076547 against supplied revision 17 because the checkout contains revision 2. Canonical hashing, head comparison and first-bad-entry diagnostics are at src/cma/case.py:170–366, with encoding at line 922. Holder, free-case, busy-gate, steady and untestable reads are at lines 450–637, and the sign-off guard is at line 647. Writer exclusion, fork refusal, nested-save refusal, expected-position conflict and repair guards are at lines 675–920. Append and head publication are at lines 944–1049. The runner logs confirm the named change, removal, reorder, rebuilt-chain, torn-tail, concurrent-writer, duplicate-submit and CLI tests. Also checked empty and malformed inputs, UTC timestamps, the absence of currency arithmetic, partial writes, OS permissions, separate case folders, migration scope and CLI consumers. A take-back bypasses both lock checks and can cause a recorded repair to disappear. A busy-gate read that loses its shared case lock can also bypass the required retry.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1041,
+      "criterion": "P15",
+      "claim": "A failed save bypasses both lock checks when taking back its head. It can overwrite a repair's head after that repair was reported recorded, allowing a subsequent repair to erase the recorded entry and leave an intact log.",
+      "repro": "Pause save A after its pre-rename checks and replace the case lock. On the new lock, have repair B replace A's unrecorded line with its repair entry and pause after B's head pre-rename checks. Let A publish its head, fail read-back, and pass its take-back head comparison. Let B publish its head and return success. Resume A's take-back rename. Verify now treats B's recorded entry as torn. Confirm dropping it and the resulting log reads intact without B's entry. The passing test at tests/test_case_log.py:2401 explicitly expects the unchecked take-back that revision 17 disallows."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 563,
+      "criterion": "P15",
+      "claim": "If the shared case lock disappears during a busy-gate read, the post-read stat raises FileNotFoundError and verify switches to an unprotected read. That fallback can report a live append as a torn entry.",
+      "repro": "Hold the gate exclusively with the case lock free. Let verify take the case lock shared and read the log, then unlink the case lock before the post-read stat at line 556. Delay the fallback read while a writer creates and takes the new case lock, releases the gate and pauses after writing the next line but before publishing its head. The fallback returns a torn entry. Retrying through the locks would report the recorded prefix as being saved. The test at tests/test_case_log.py:2355 replaces the lock atomically and does not exercise a missing pathname at stat time."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 986,
+      "criterion": "P15",
+      "claim": "A directory sync failure after the head rename escapes as a raw OSError. The head can list the save even though the caller gets neither a confirmed outcome nor the instruction to check the log.",
+      "repro": "Start with an existing intact log. Inject EIO from _fsync_dir immediately after the next append's head rename. The rename has already installed the new head, but _publish catches only CaseLocked subclasses and never performs read-back. Restore normal I/O and verify that the failed call's entry is already listed by the head."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's CLI contract claim says a held torn tail exits 0 with 'appending'. The implementation and passing contracts test show exit 4 with 'being saved', which agrees with P15.",
+      "repro": "Use the scenario in tests/test_case_log.py:1339. While a separate thread holds the case over a torn tail, invoke cma case check. The command reports the recorded prefix and exits 4."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1213,
+      "criterion": "P15",
+      "claim": "The cited stress test passed, but the producer's claim that it forces two commits on every retry with the lock held at fallback is not proven.",
+      "repro": "Inspect the cited test. It starts a free-running writer and checks that forty reads report no bad entry. It does not synchronize commits with retry attempts or assert that fallback was reached. A deterministic regression test would need to enforce that schedule and pass in the runner's python -m pytest -v -m invariants tier."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "gpt-6"
+  }
+}
+```
