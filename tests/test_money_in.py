@@ -943,3 +943,57 @@ def test_monzo_counts_an_amount_past_the_line_limit_toward_money_in(tmp_path):
     with pytest.raises(monzo.MonzoImportError) as e:
         monzo.convert(src, tmp_path / "o.csv")
     assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "line 3: Amount" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_monzo_refuses_a_row_missing_its_date_cell_naming_it(tmp_path):
+    """T04 review 29: a row ending before its Date cell read the date as None and raised an
+    AttributeError, hiding the first problem and money in at the limit."""
+    from cma.importers import monzo
+
+    big = "9999999999999.99"
+    src = tmp_path / "m.csv"
+    src.write_text("Transaction ID,Type,Name,Amount,Currency,Balance,Date\n"
+                   f"tx_1,Faster payment,ACME,{big},GBP,{big},01/01/2026\n"
+                   f"tx_2,Faster payment,ACME,{big},GBP,{big}\n")
+    with pytest.raises(monzo.MonzoImportError) as e:
+        monzo.convert(src, tmp_path / "o.csv")
+    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "line 3: unrecognised date" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_later_byte_that_is_not_utf8_does_not_hide_earlier_problems(tmp_path):
+    """T04 review 29: the whole file was decoded first, so a bad byte late in it hid a
+    problem, and money in at the limit, among the lines before it."""
+    from cma.importers import monzo
+
+    big = "9999999999999.99"
+    src = tmp_path / "m.csv"
+    src.write_bytes((_MONZO_HEAD + f"tx_1,01/01/2026,09:00:00,Faster payment,ACME,{big},GBP,{big}\n"
+                     f"tx_2,02/01/2026,09:00:00,Faster payment,ACME,{big},GBP,{big}\n").encode()
+                    + b"tx_3,03/01/2026,09:00:00,Faster payment,CAF\xe9,-1.00,GBP,1.00\n")
+    with pytest.raises(monzo.MonzoImportError) as e:
+        monzo.convert(src, tmp_path / "o.csv")
+    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "line 4: not UTF-8" in str(e.value)
+
+    csv = tmp_path / "s.csv"
+    csv.write_bytes(b"id,date,description,amount,balance\nT1,2026-01-01,A,10000000000000.00,1.00\n"
+                    b"T2,2026-01-02,CAF\xe9,1.00,2.00\n")
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    assert "line 2: amount '10000000000000.00' is £10,000,000,000,000 or more" in str(e.value)
+    assert "line 3: not UTF-8" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_monzo_opening_balance_refusals_name_the_line(tmp_path):
+    """T04 review 29: the opening-balance refusals named no line."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_text(_MONZO_HEAD + "\ntx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,\n")
+    with pytest.raises(monzo.MonzoImportError, match="line 3: the first transaction, tx_1, has no Balance"):
+        monzo.convert(src, tmp_path / "o.csv")
+    src.write_text(_MONZO_HEAD + "\ntx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n")
+    with pytest.raises(monzo.MonzoImportError, match=r"implies 100.00 at line 3 \(tx_1"):
+        monzo.convert(src, tmp_path / "o.csv", "50.00")

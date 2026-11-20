@@ -105,6 +105,20 @@ class CsvRecordError(ValueError):
         self.too_long = too_long
 
 
+def decode_lines(data: bytes) -> tuple[str, CsvRecordError | None]:
+    """The text of every whole line before the first byte that is not UTF-8, and, if there
+    is one, a CsvRecordError naming its line and byte. The lines before it are still read
+    and checked, so a later bad byte never hides a problem among them (T04 review 29)."""
+    try:
+        return data.decode("utf-8-sig"), None  # tolerate a byte-order mark
+    except UnicodeDecodeError as e:
+        good = data[:e.start]
+        text = good[:good.rfind(b"\n") + 1].decode("utf-8-sig")
+        line = len(list(io.StringIO(text, newline=""))) + 1
+        return text, CsvRecordError(f"line {line}: not UTF-8 (byte {e.start}); re-save it as 'CSV UTF-8' "
+                                    "(Excel) and try again")
+
+
 def read_records(text: str) -> tuple[list[str], list[tuple[int, dict]], CsvRecordError | None]:
     """The stripped header and each record with its line in the file. Lines are counted as
     the file has them, blank lines included, so every problem names the line a person sees
@@ -115,7 +129,8 @@ def read_records(text: str) -> tuple[list[str], list[tuple[int, dict]], CsvRecor
     # record is named by its first line, never by a continuation of a multi-line field
     # (T04 review 21). Blank lines between records are skipped by the reader and counted here.
     physical = list(io.StringIO(text, newline=""))
-    reader = csv.DictReader(io.StringIO(text, newline=""))
+    # A missing trailing cell reads as "" rather than None, so no check meets a None (T04 review 29).
+    reader = csv.DictReader(io.StringIO(text, newline=""), restval="")
     rows: list[tuple[int, dict]] = []
 
     def start(after: int) -> int:
@@ -160,16 +175,14 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         if not path.is_file():
             raise StatementError(path, ["no such file"])
         data = path.read_bytes()
-    try:
-        text = data.decode("utf-8-sig")  # tolerate a byte-order mark
-    except UnicodeDecodeError as e:
-        raise StatementError(path, [
-            f"not UTF-8 (byte {e.start}); re-save it as 'CSV UTF-8' (Excel) and try again"
-        ]) from e
+    text, undecodable = decode_lines(data)
+    if undecodable is not None and "\n" not in text:  # not even the header line can be read
+        raise StatementError(path, [str(undecodable).split(": ", 1)[1]])
     try:
         header, rows, unreadable = read_records(text)
     except CsvRecordError as e:
         raise StatementError(path, [str(e)], ["too_long" if e.too_long else "file"]) from None
+    unreadable = unreadable or undecodable
     # A column named twice would let the second silently replace the first's value on every
     # line, before any check (R2, T04 review 14): refused, naming the column.
     twice = sorted({h for h in header if h and header.count(h) > 1})

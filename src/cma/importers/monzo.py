@@ -33,7 +33,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from ..categorise import INVOICE_REF
-from ..ingest import CsvRecordError, read_records
+from ..ingest import CsvRecordError, decode_lines, read_records
 from ..metrics import (
     AT_LIMIT,
     at_limit,
@@ -65,8 +65,8 @@ class ImportResult:
     skipped_non_gbp: int
 
 
-def _parse_date(raw: str) -> date:
-    raw = raw.strip()
+def _parse_date(raw: str | None) -> date:
+    raw = (raw or "").strip()
     for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
         try:
             return datetime.strptime(raw, fmt).date()
@@ -146,21 +146,26 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
     opening_pence = None if opening_balance is None else _money(
         opening_balance if isinstance(opening_balance, str) else repr(opening_balance), "--opening-balance", 0,
         limit=False)
-    with Path(src).open(newline="", encoding="utf-8-sig") as f:
-        try:
-            # Lines as the file has them (T04 review 20); the records before one the reader
-            # cannot read are checked first, so a problem among them is the one reported.
-            header, raw_rows, unreadable = read_records(f.read())
-        except CsvRecordError as e:
-            raise MonzoImportError(f"{src}: {e}") from None
-        twice = sorted({h for h in header if h and header.count(h) > 1})  # T04 review 14
-        if twice:
-            raise MonzoImportError(f"{src}: column(s) named more than once: {', '.join(twice)}; keep one of each")
-        missing = [c for c in REQUIRED if c not in header]
-        if missing:
-            raise MonzoImportError(
-                f"{src}: not a Monzo export; missing column(s): {', '.join(missing)}"
-            )
+    # The file is read once, as bytes (T04 review 29).
+    # Lines as the file has them (T04 review 20); the records before one the reader
+    # cannot read, or before a byte that is not UTF-8, are checked first, so a problem
+    # among them is the one reported (T04 review 29).
+    text, undecodable = decode_lines(Path(src).read_bytes())
+    if undecodable is not None and "\n" not in text:
+        raise MonzoImportError(f"{src}: {undecodable}")
+    try:
+        header, raw_rows, unreadable = read_records(text)
+    except CsvRecordError as e:
+        raise MonzoImportError(f"{src}: {e}") from None
+    unreadable = unreadable or undecodable
+    twice = sorted({h for h in header if h and header.count(h) > 1})  # T04 review 14
+    if twice:
+        raise MonzoImportError(f"{src}: column(s) named more than once: {', '.join(twice)}; keep one of each")
+    missing = [c for c in REQUIRED if c not in header]
+    if missing:
+        raise MonzoImportError(
+            f"{src}: not a Monzo export; missing column(s): {', '.join(missing)}"
+        )
     if not raw_rows and unreadable is None:
         raise MonzoImportError(f"{src}: no transactions")
 
@@ -242,14 +247,16 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
     implied = opening_before(first[5], first[4]) if first[5] is not None else None
     if opening_pence is None:
         if implied is None:
-            raise MonzoImportError("first row has no Balance; pass --opening-balance")
+            raise MonzoImportError(f"line {line_of[first[2]]}: the first transaction, {first[2]}, has no Balance; "
+                                   "pass --opening-balance")
         opening_pence = implied
         source = "Monzo Balance column"
     else:
         if implied is not None and implied != opening_pence:
             raise MonzoImportError(
-                f"--opening-balance {_gbp(opening_pence)} disagrees with Monzo's Balance column, "
-                f"which implies {_gbp(implied)}; leave --opening-balance out to use Monzo's"
+                f"--opening-balance {_gbp(opening_pence)} disagrees with Monzo's Balance column, which "
+                f"implies {_gbp(implied)} at line {line_of[first[2]]} ({first[2]}, the first transaction); "
+                "leave --opening-balance out to use Monzo's"
             )
         source = "opening balance supplied"
 
