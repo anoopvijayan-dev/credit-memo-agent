@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 276,
+  "next_id": 277,
   "decisions": [
     {
       "id": "D1",
@@ -5534,6 +5534,26 @@
       "decided_at": "2026-11-20T20:49:47.858Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T20:46:31.817Z"
+    },
+    {
+      "id": "D276",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:83 checks the decimal-to-float round trip, src/cma/metrics.py:509 computes M3 in pence and handles an unreportable result, and src/cma/graph.py:175 and src/cma/cli.py:415 table GBP to the penny. The runner passed the prior oversized-record regression. src/cma/ingest.py:362 still drops a readable balance at the limit when another required field in the record is unreadable.); major: An oversized description suppresses the limit diagnosis for a readable balance on the same record. Recovery identifies the balance as readable, but the partial-record validation only examines the amount. at src/cma/ingest.py:362; major: T04 explicitly calls for renaming M16. The result still uses the previous release's exact name, Non-trading money in (share). The shared denominator is implemented. at src/cma/metrics.py:558; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T20:54:42.116Z"
     }
   ]
 }
