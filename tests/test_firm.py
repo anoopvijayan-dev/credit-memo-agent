@@ -260,7 +260,7 @@ def test_p18_exported_mcp_server_refuses_to_start_under_lock(home, no_network, m
     assert mcp_parent == [] and no_network == []
 
 
-@pytest.mark.parametrize("start", START_PATHS)
+@pytest.mark.parametrize("start", START_PATHS[:6])  # the run methods; no ASGI app is handed out
 def test_exported_mcp_server_starts_when_lock_is_off(home, mcp_parent, monkeypatch, tmp_path, start):
     from cma import mcp_server
 
@@ -569,111 +569,35 @@ def test_p18_hosted_sdk_sends_one_attempt_per_lock_check(home, monkeypatch, prov
     assert len(sent) == 1
 
 
-def _lifespan_startup(app):
-    """Drive an ASGI app's start-up as an ASGI server does; return what it sent back."""
-    sent = []
+@pytest.mark.invariants
+@pytest.mark.parametrize("factory", ["streamable_http_app", "sse_app"])
+@pytest.mark.parametrize("lock", ["offline_lock: false\n", "offline_lock: true\n"])
+def test_p18_no_asgi_app_is_handed_out_whatever_the_lock(home, no_network, monkeypatch, tmp_path, factory, lock):
+    """T17 review 1 / R29: an ASGI server could open its socket for a saved app before any
+    check inside it runs (lifespan off), so the server hands out no ASGI app at all."""
+    pytest.importorskip("mcp")
+    from cma import mcp_server
 
-    async def go():
-        queue = [{"type": "lifespan.startup"}]
-        done = asyncio.Event()
+    monkeypatch.setenv("CMA_DATA_DIR", str(tmp_path))
+    (home / "firm.yaml").write_text(lock)
+    with pytest.raises(mcp_server.NoASGIApp, match="ASGI"):
+        getattr(mcp_server.server, factory)()
+    assert issubclass(mcp_server.NoASGIApp, firm.OfflineLockError) and no_network == []
 
-        async def receive():
-            if queue:
-                return queue.pop(0)
-            await done.wait()
-            return {"type": "lifespan.shutdown"}
-
-        async def send(message):
-            sent.append(message)
-            if message["type"].startswith("lifespan.startup"):
-                done.set()
-
-        await asyncio.wait_for(app({"type": "lifespan", "asgi": {"version": "3.0"}, "state": {}}, receive, send), 10)
-
-    asyncio.run(go())
-    return sent
-
-
-def _http_get(app):
-    sent = []
-
-    async def go():
-        async def receive():
-            return {"type": "http.request", "body": b"", "more_body": False}
-
-        async def send(message):
-            sent.append(message)
-
-        scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET",
-                 "scheme": "http", "path": "/mcp", "raw_path": b"/mcp", "query_string": b"",
-                 "headers": [(b"host", b"127.0.0.1")], "client": ("127.0.0.1", 1), "server": ("127.0.0.1", 80)}
-        await app(scope, receive, send)
-
-    asyncio.run(go())
-    return sent
 
 
 @pytest.mark.invariants
-@pytest.mark.parametrize("factory", ["streamable_http_app", "sse_app"])
-def test_p18_asgi_app_made_with_lock_off_refuses_to_start_once_the_lock_is_on(home, no_network, monkeypatch,
-                                                                              tmp_path, factory):
-    pytest.importorskip("mcp")
-    from cma import mcp_server
+def test_p5_a_custom_policys_free_text_never_reaches_the_prompt(home, tmp_path):
+    """T17 review 1 / P5: a custom policy's rule description could carry case or customer
+    text; the prompt names such a rule only by its id, metric and requirement."""
+    from cma import categorise, ingest, metrics, policy
 
-    monkeypatch.setenv("CMA_DATA_DIR", str(tmp_path))
-    (home / "firm.yaml").write_text("offline_lock: false\n")
-    app = getattr(mcp_server.server, factory)()  # made while the lock is off
-    inner = []
-    real_inner = app.app
-
-    async def spy(scope, receive, send):
-        inner.append(scope["type"])
-        return await real_inner(scope, receive, send)
-
-    app.app = spy
-    (home / "firm.yaml").write_text("offline_lock: true\n")
-    sent = _lifespan_startup(app)
-    assert sent[0]["type"] == "lifespan.startup.failed" and "offline lock" in sent[0]["message"]
-    response = _http_get(app)
-    assert response[0]["status"] == 503 and b"offline lock" in response[1]["body"]
-    assert inner == [] and no_network == []
-
-
-@pytest.mark.parametrize("factory", ["streamable_http_app", "sse_app"])
-def test_asgi_app_starts_and_serves_when_lock_is_off(home, monkeypatch, tmp_path, factory):
-    pytest.importorskip("mcp")
-    from cma import mcp_server
-
-    monkeypatch.setenv("CMA_DATA_DIR", str(tmp_path))
-    (home / "firm.yaml").write_text("offline_lock: false\n")
-    app = getattr(mcp_server.server, factory)()
-    assert app.routes  # still the SDK's app underneath
-    assert _lifespan_startup(app)[0]["type"] == "lifespan.startup.complete"
-
-
-@pytest.mark.invariants
-def test_p18_uvicorn_never_opens_a_socket_for_a_saved_app_under_the_lock(home, monkeypatch, tmp_path):
-    # uvicorn runs the app's start-up before it binds its listening socket; the start-up
-    # fails under the lock, so the server exits without ever listening.
-    pytest.importorskip("mcp")
-    uvicorn = pytest.importorskip("uvicorn")
-    from cma import mcp_server
-
-    monkeypatch.setenv("CMA_DATA_DIR", str(tmp_path))
-    (home / "firm.yaml").write_text("offline_lock: false\n")
-    app = mcp_server.server.streamable_http_app()
-    (home / "firm.yaml").write_text("offline_lock: true\n")
-    binds = []
-    real_bind = socket.socket.bind
-    monkeypatch.setattr(socket.socket, "bind", lambda self, addr: binds.append(addr) or real_bind(self, addr))
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, lifespan="on", log_level="critical"))
-    import threading
-
-    stop = threading.Timer(10, lambda: setattr(server, "should_exit", True))  # a regression fails, not hangs
-    stop.start()
-    try:
-        with pytest.raises(SystemExit):
-            server.run()
-    finally:
-        stop.cancel()
-    assert [a for a in binds if isinstance(a, tuple) and a[0] == "127.0.0.1"] == []
+    st = categorise.categorise(ingest.load_csv(_statement(tmp_path), account_name="ACME LTD"))
+    ms = metrics.compute(st)
+    custom = policy.load_policy()
+    custom["rules"][0] = {**custom["rules"][0], "description": "SNTLCASE paid by SNTLPERSON"}
+    p = policy.evaluate(ms, custom)
+    user = draft_prompt(st, ms, p)
+    assert "SNTLCASE" not in user and "SNTLPERSON" not in user and "(custom rule)" in user
+    shipped = policy.evaluate(ms)
+    assert "(custom rule)" not in draft_prompt(st, ms, shipped)

@@ -161,7 +161,21 @@ def _threshold(value: float | None, unit: str) -> str:
     return "" if value is None else format_value(value, unit)
 
 
-def rules_table(p: PolicyResult, overall_row: bool = False) -> str:
+def _shipped_descriptions() -> dict[str, str]:
+    """The rule descriptions of the shipped default policy, by rule id."""
+    try:
+        return {r["id"]: r["description"] for r in pol.load_policy().get("rules", [])
+                if isinstance(r, dict) and isinstance(r.get("id"), str) and isinstance(r.get("description"), str)}
+    except Exception:  # no shipped text known means none is sent
+        return {}
+
+
+def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = False) -> str:
+    """The policy table. `for_prompt`: what goes to a hosted model, where a rule's free-text
+    description is sent only when it is the shipped policy's own text for that rule; a custom
+    policy's description could carry case or customer text, so it is replaced by the rule's
+    metric and requirement alone (P5, T17 review 1)."""
+    shipped = _shipped_descriptions() if for_prompt else {}
     lines = ["| id | rule | metric | requirement | outcome | detail |", "|---|---|---|---|---|---|"]
     if overall_row:
         lines.append(f"| overall | overall outcome | - | - | {p.overall.value} | - |")
@@ -171,7 +185,10 @@ def rules_table(p: PolicyResult, overall_row: bool = False) -> str:
             req += f"; referred below {_threshold(r.refer_below, r.unit)}"
         if r.refer_above is not None:
             req += f"; referred above {_threshold(r.refer_above, r.unit)}"
-        lines.append(f"| {r.rule_id} | {r.description} | {r.metric_id} | {req} | {r.outcome.value} | {r.detail} |")
+        description = r.description
+        if for_prompt and shipped.get(r.rule_id) != r.description:
+            description = "(custom rule)"
+        lines.append(f"| {r.rule_id} | {description} | {r.metric_id} | {req} | {r.outcome.value} | {r.detail} |")
     return "\n".join(lines)
 
 
@@ -193,7 +210,7 @@ def draft_prompt(statement: Statement, metrics: list[Metric], policy: PolicyResu
         f"Account: {PROMPT_ACCOUNT_NAME}\n"
         f"Period: {statement.start} to {statement.end}\n\n"
         f"Metrics table:\n{met.as_table(metrics)}\n\n"
-        f"Policy table:\n{rules_table(policy, overall_row=True)}\n"
+        f"Policy table:\n{rules_table(policy, overall_row=True, for_prompt=True)}\n"
     )
     if redraft is not None:
         user += f"\n{REDRAFT_LABEL} {', '.join(redraft) or 'none'}\n"

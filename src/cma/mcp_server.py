@@ -52,13 +52,27 @@ class LockedMCPServer(MCPServer):
         firm.require_unlocked("Starting the MCP server")
         return await super().run_streamable_http_async(*args, **kwargs)
 
+    # No ASGI app is handed out: a saved app can be served later by an ASGI server that
+    # opens its socket before the app is ever called (with lifespan off, nothing of the
+    # app's runs first), so no check inside it can keep the server from listening under the
+    # lock (R29, T17 review 1). The server starts only through the run methods above, each
+    # of which reads the lock before anything listens.
     def sse_app(self, *args, **kwargs):
-        firm.require_unlocked("Starting the MCP server")
-        return LockedASGIApp(super().sse_app(*args, **kwargs))
+        raise NoASGIApp()
 
     def streamable_http_app(self, *args, **kwargs):
-        firm.require_unlocked("Starting the MCP server")
-        return LockedASGIApp(super().streamable_http_app(*args, **kwargs))
+        raise NoASGIApp()
+
+
+class NoASGIApp(firm.OfflineLockError):
+    """An ASGI app of the MCP server was asked for: refused whatever the offline lock, since
+    serving it could open a socket before any lock check (R29). A kind of OfflineLockError,
+    so a caller that handles the lock's refusal handles this one too."""
+
+    def __init__(self) -> None:
+        super().__init__("The MCP server does not hand out an ASGI app: an ASGI server could open its "
+                         "socket before the offline lock is read. Start it with `cma mcp` (or "
+                         "server.run()), which reads the lock first.")
 
 
 def _lock_problem(what: str) -> str | None:
@@ -67,52 +81,6 @@ def _lock_problem(what: str) -> str | None:
     except (firm.OfflineLockError, firm.FirmConfigError) as e:
         return str(e)
     return None
-
-
-class LockedASGIApp:
-    """The MCP server's ASGI app, checking the offline lock each time it is used.
-
-    An app made while the lock was off can be handed to an ASGI server later. So the app
-    reads firm.yaml again when the ASGI server starts it: under the lock its start-up fails
-    (lifespan.startup.failed), and an ASGI server such as uvicorn runs that start-up before it
-    opens its listening socket, so it never listens. It also reads firm.yaml on every
-    connection, and refuses one under the lock before the MCP app sees it (HTTP 503, or a
-    WebSocket closed), for an ASGI server that skips the start-up event."""
-
-    def __init__(self, app):
-        self.app = app
-
-    def __getattr__(self, name):  # routes, state, ... of the wrapped Starlette app
-        return getattr(self.app, name)
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] == "lifespan":
-            return await self._lifespan(scope, receive, send)
-        problem = _lock_problem("A connection to the MCP server")
-        if problem is None:
-            return await self.app(scope, receive, send)
-        if scope["type"] == "http":
-            body = problem.encode()
-            await send({"type": "http.response.start", "status": 503,
-                        "headers": [(b"content-type", b"text/plain; charset=utf-8"),
-                                    (b"content-length", str(len(body)).encode())]})
-            await send({"type": "http.response.body", "body": body})
-        elif scope["type"] == "websocket":
-            await send({"type": "websocket.close", "code": 1013, "reason": problem[:120]})
-
-    async def _lifespan(self, scope, receive, send):
-        message = await receive()
-        if message["type"] == "lifespan.startup":
-            problem = _lock_problem("Starting the MCP server")
-            if problem is not None:
-                await send({"type": "lifespan.startup.failed", "message": problem})
-                return
-        first = [message]
-
-        async def replay():
-            return first.pop() if first else await receive()
-
-        return await self.app(scope, replay, send)
 
 
 server = LockedMCPServer("credit-memo-agent")
