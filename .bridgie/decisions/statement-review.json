@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 148,
+  "next_id": 149,
   "decisions": [
     {
       "id": "D1",
@@ -3014,6 +3014,24 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T04:16:20.627Z"
+    },
+    {
+      "id": "D148",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Write D142-D144 into the requirements: R4 by match (D142); R42 and P15 the third answer, not confirmed, for a save whose take-back cannot be made (D143); R43 and P15 that lock-file interference beyond a read across a lock file the reader holds is outside what a reader can know, and a check after it stops gives the true answer (D144). Also state in R43 that a holder's read and a busy-gate read count only while the lock files are still the case's, and in R42 that the take-back checks only that the head record is still the save's own (T12 0d339cc). Keep everything else in revision 16.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-20T04:22:37.614Z",
+      "effect": "changes requested: Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Write D142-D144 into the requirements: R4 by match (D142); R42 and P15 the third answer, not confirmed, for a save whose take-back cannot be made (D143); R43 and P15 that lock-file interference beyond a read across a lock file the reader holds is outside what a reader can know, and a check after it stops gives the true answer (D144). Also state in R43 that a holder's read and a busy-gate read count only while the lock files are still the case's, and in R42 that the take-back checks only that the head record is still the save's own (T12 0d339cc). Keep everything else in revision 16.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-20T04:22:37.601Z"
     }
   ]
 }
