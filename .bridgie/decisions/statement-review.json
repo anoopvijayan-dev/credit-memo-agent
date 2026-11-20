@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 180,
+  "next_id": 181,
   "decisions": [
     {
       "id": "D1",
@@ -3638,6 +3638,26 @@
       "decided_at": "2026-11-20T07:43:37.263Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T07:38:20.049Z"
+    },
+    {
+      "id": "D180",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed HEAD 13d5244 against .bridgie/specs/statement-review/requirements.md:309. Canonical UTF-8 hashing, UTC timestamps, head comparison and first-bad-entry reporting are in src/cma/case.py:176–348. Holder and path-alias recognition, steady reads, busy-gate behavior and the sign-off guard are in src/cma/case.py:456–667. Writer exclusion, fork refusal, nested-save refusal, stale-position conflicts and repair checks are in src/cma/case.py:682–1099. Publication, read-back and take-back are in src/cma/case.py:1101–1178. Traced the CLI consumer at src/cma/cli.py:309–338 and checked duplicate submission, concurrent updates, malformed and empty inputs, Unicode, UTC, partial failures, filesystem permissions and case-folder isolation. The change introduces no currency arithmetic or database migration. The passed runner logs name the tamper, rebuilt-chain, torn-tail, duplicate-submit, CLI contract and interruption tests. The two failure schedules below still violate P15. No tests were run during this review.); major: A publisher can rename the head after the case lock file has been replaced. The pre-rename callback validates the lock before reading the head and never validates it again after that read. at src/cma/case.py:1043; major: An interruption after read-back fails can still bypass take-back. Moving the call into finally handles exceptions raised during the read-back body, but the call itself remains interruptible before take-back starts. at src/cma/case.py:1146; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T07:45:12.605Z"
     }
   ]
 }

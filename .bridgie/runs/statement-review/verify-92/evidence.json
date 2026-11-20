@@ -1,0 +1,101 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed HEAD 13d5244 against .bridgie/specs/statement-review/requirements.md:309. Canonical UTF-8 hashing, UTC timestamps, head comparison and first-bad-entry reporting are in src/cma/case.py:176–348. Holder and path-alias recognition, steady reads, busy-gate behavior and the sign-off guard are in src/cma/case.py:456–667. Writer exclusion, fork refusal, nested-save refusal, stale-position conflicts and repair checks are in src/cma/case.py:682–1099. Publication, read-back and take-back are in src/cma/case.py:1101–1178. Traced the CLI consumer at src/cma/cli.py:309–338 and checked duplicate submission, concurrent updates, malformed and empty inputs, Unicode, UTC, partial failures, filesystem permissions and case-folder isolation. The change introduces no currency arithmetic or database migration. The passed runner logs name the tamper, rebuilt-chain, torn-tail, duplicate-submit, CLI contract and interruption tests. The two failure schedules below still violate P15. No tests were run during this review.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-92/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-92/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-92/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-92/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-92/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-92/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-92/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1043,
+      "criterion": "P15",
+      "claim": "A publisher can rename the head after the case lock file has been replaced. The pre-rename callback validates the lock before reading the head and never validates it again after that read.",
+      "repro": "Start with two entries. During the third append, intercept the pre-rename _read_head call with raise_os=True. Read and retain the old head, replace the case lock file, then return the retained head. The comparison succeeds, the head rename proceeds and the append returns entry 3 as recorded. P15 requires the rename to be refused, the save to report not recorded, and entry 3 to remain past the recorded head. The same helper performs take-back renames."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1146,
+      "criterion": "P15",
+      "claim": "An interruption after read-back fails can still bypass take-back. Moving the call into finally handles exceptions raised during the read-back body, but the call itself remains interruptible before take-back starts.",
+      "repro": "Append entry 3 to a two-entry log. Make LogCheck.ok raise KeyboardInterrupt when checking the published three-entry head, as the existing test does. Also inject KeyboardInterrupt at the line event for the call to _take_back in the finally block. The caller receives SaveNotConfirmed and a fresh check shows entry 3 recorded. The writer still held the case, its head was unchanged and no take-back was attempted. The runner test injects only the first interruption."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's CLI contract claim gives the wrong exit code and wording for a torn tail while another writer holds the case.",
+      "repro": "Read the passed contracts-4.log result for test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break and compare its assertions with the claim. The test requires exit 4 and 'being saved'. The claim says exit 0 and 'appending'. The implementation follows P15 on this path."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1213,
+      "criterion": "P15",
+      "claim": "The rapid-append test passed, but it does not prove the producer's claim that it reproduced two commits on every retry followed by a contended fallback.",
+      "repro": "Inspect the test's background loop and assertions. It runs 40 checks against an unsynchronized writer and asserts that none names a bad entry. It neither counts commits per attempt nor ensures the fallback lock is contended. To prove that exact schedule, add a synchronized test that forces both conditions, then run python -m pytest -v tests/test_case_log.py -k 'healthy_log_broken'."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
