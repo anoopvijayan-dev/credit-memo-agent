@@ -2054,3 +2054,47 @@ def test_p15_an_interrupt_just_after_entering_leaves_no_lock(tmp_path, monkeypat
     monkeypatch.undo()
     assert log._owner is None
     case.CaseLog(log.path).append("override", {}, expected=1)  # the lock was let go
+
+
+@pytest.mark.invariants
+def test_a_save_started_inside_another_on_the_same_thread_is_refused(tmp_path, monkeypatch):
+    """T12 review 20 / P15: the writer lock admits the same thread twice, so a save begun
+    from inside another (a signal handler, a finaliser) must not commit at the position the
+    outer save checked."""
+    log = _log(tmp_path, 2)
+    real, inner = case._utc_now, []
+
+    def nested():
+        if not inner:
+            inner.append(None)
+            with pytest.raises(case.CaseLogError, match="under way"):
+                log.append("override", {"inner": True}, expected=2)
+        return real()
+
+    monkeypatch.setattr(case, "_utc_now", nested)
+    log.append("override", {"outer": True}, expected=2)
+    check = log.verify()
+    assert check.ok and check.head.position == 3 and inner
+    assert [e.data for e in check.entries][-1] == {"outer": True}
+
+
+@pytest.mark.invariants
+def test_a_line_added_after_the_check_stops_the_save(tmp_path, monkeypatch):
+    """T12 review 20: whatever adds a line between a save's check and its write, the save
+    refuses rather than claim the same position again."""
+    log = _log(tmp_path, 2)
+    other = case.CaseLog(tmp_path / "log.jsonl")
+    real, done = case._utc_now, []
+
+    def sneak():
+        if not done:
+            done.append(None)
+            with open(log.path, "ab") as f:
+                f.write(b'{"stray": 1}\n')
+        return real()
+
+    monkeypatch.setattr(case, "_utc_now", sneak)
+    with pytest.raises(case.LogConflict):
+        log.append("override", {"x": 1}, expected=2)
+    assert len(_lines(other)) == 3  # the stray line only; nothing of the save
+    assert other.verify().first_bad == 3

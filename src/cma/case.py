@@ -422,6 +422,7 @@ class CaseLog:
         self._lock_depth = 0
         self._lock_id: tuple[int, int] | None = None  # the lock file's identity while held
         self._pid = os.getpid()  # a CaseLog belongs to the process that opened it (R42)
+        self._saving: set[tuple[int, int]] = set()  # holders with a save under way here
 
     # --- reading -----------------------------------------------------------------------
 
@@ -741,6 +742,23 @@ class CaseLog:
                 finally:
                     os.close(fd)
 
+    @contextmanager
+    def _one_save(self) -> Iterator[None]:
+        """One save at a time per holder: a save started inside another on the same thread
+        (from a signal handler, a finaliser or a callback) is refused, since the writer lock
+        admits it and the outer save's check would then be stale (T12 review 20)."""
+        me = _holder_id()
+        with self._state:
+            if me in self._saving:
+                raise CaseLogError(f"{self.path}: another save on this case log is under way in "
+                                   "this thread; nothing was written")
+            self._saving.add(me)
+        try:
+            yield
+        finally:
+            with self._state:
+                self._saving.discard(me)
+
     def append(self, event: str, data: dict[str, Any], *, expected: int) -> Entry:
         """Append one entry if the log is intact and still at `expected` entries."""
         if not isinstance(event, str) or not event.strip():
@@ -761,7 +779,7 @@ class CaseLog:
         # From here on only the copy read back from those bytes is used: the caller's dict
         # may be shared, and a change to it between hashing and writing must not reach the log.
         snapshot = json.loads(blob)
-        with self.writer():
+        with self._one_save(), self.writer():
             check = self.verify()
             if not check.ok:
                 raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
@@ -775,7 +793,7 @@ class CaseLog:
         if the chain is broken before it (that is tampering, not a torn write)."""
         if not isinstance(by, str) or not by.strip():
             raise ValueError("a name is required to drop a torn entry")
-        with self.writer():
+        with self._one_save(), self.writer():
             check = self.verify()
             if not check.torn:
                 if check.ok:
@@ -853,6 +871,10 @@ class CaseLog:
         created = not self.path.exists()
         fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:
+            if os.fstat(fd).st_size != check.intact_bytes:
+                # Something was added to the log since this save checked it: writing now would
+                # put a second entry at the same position (T12 review 20).
+                raise LogConflict(check.head.position, check.head.position + 1)
             # After the open and immediately before the line is written (D108): a lock
             # removed while the log was being opened stops the write.
             _write_all(fd, line, before=self._require_lock_in_place)
