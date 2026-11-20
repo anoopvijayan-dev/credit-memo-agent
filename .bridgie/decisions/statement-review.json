@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 229,
+  "next_id": 230,
   "decisions": [
     {
       "id": "D1",
@@ -4608,6 +4608,24 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T13:31:17.834Z"
+    },
+    {
+      "id": "D229",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended option. Write D224 and D225, and two clarifications from T04's review 5. R2: every money figure is computed in integer pence and recorded to the penny in the evidence record, the memo appendix's figure table and the interactive table; the memo's prose keeps the previous release's convention of quoting money to the whole pound, which the guard checks against the figures (the committed example and the dual run compare it unchanged), so 'reported to the penny' means the recorded and tabled figures, not the prose. R54: M1 to M16 keep the previous release's evidence for a statement categorised by v1 with no case profile, as the previous release ran; a case profile (directors, own accounts) is new behaviour under any ruleset, and with one M16 and M26 exclude own-account transfers from the share they are a share of. Keep everything else in revision 25.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-20T13:35:12.406Z",
+      "effect": "changes requested: Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended option. Write D224 and D225, and two clarifications from T04's review 5. R2: every money figure is computed in integer pence and recorded to the penny in the evidence record, the memo appendix's figure table and the interactive table; the memo's prose keeps the previous release's convention of quoting money to the whole pound, which the guard checks against the figures (the committed example and the dual run compare it unchanged), so 'reported to the penny' means the recorded and tabled figures, not the prose. R54: M1 to M16 keep the previous release's evidence for a statement categorised by v1 with no case profile, as the previous release ran; a case profile (directors, own accounts) is new behaviour under any ruleset, and with one M16 and M26 exclude own-account transfers from the share they are a share of. Keep everything else in revision 25.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-20T13:35:12.393Z"
     }
   ]
 }
