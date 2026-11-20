@@ -2018,3 +2018,39 @@ def test_p15_a_thread_is_never_taken_for_one_that_ended(tmp_path):
         t.start()
         t.join()
     assert len(set(seen_tokens)) == 50  # even where idents repeat
+
+
+@pytest.mark.invariants
+def test_p15_a_busy_gate_with_no_case_lock_is_not_called_a_save(tmp_path, monkeypatch):
+    # T12 review 19 / R43: being saved needs the case lock seen held; a writer at the gate
+    # with no case lock file yet holds nothing.
+    log = _log(tmp_path, 2)
+    log.lock_path.unlink()
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    gate = os.open(log.gate_path, os.O_RDWR)
+    try:
+        assert case._try_exclusive(gate)
+        check = case.CaseLog(log.path).verify()
+    finally:
+        case._unlock(gate)
+        os.close(gate)
+    assert not check.checked and not check.in_progress and check.first_bad is None
+
+
+@pytest.mark.invariants
+def test_p15_an_interrupt_just_after_entering_leaves_no_lock(tmp_path, monkeypatch):
+    # T12 review 19: an interrupt after the lock is taken, before writer() notes it, used to
+    # leave the case locked with no live writer.
+    log = _log(tmp_path, 1)
+    real = case.CaseLog._enter
+
+    def enter_then_interrupt(self, me, create=True):
+        real(self, me, create)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(case.CaseLog, "_enter", enter_then_interrupt)
+    with pytest.raises(KeyboardInterrupt), log.writer():
+        pass
+    monkeypatch.undo()
+    assert log._owner is None
+    case.CaseLog(log.path).append("override", {}, expected=1)  # the lock was let go

@@ -447,6 +447,7 @@ class CaseLog:
         # lock tells whether that one writer held the case throughout (still held) or let
         # it go (now free, and taken here for a true read). Fresh descriptors throughout,
         # so an object a forked child inherited tests the locks as they are now.
+        seen_held = False  # the case lock was seen held by another (not only a busy gate)
         for attempt in range(READ_RETRIES):
             if attempt:
                 time.sleep(READ_PAUSE)
@@ -495,6 +496,7 @@ class CaseLog:
                     return self._untested()
                 finally:
                     os.close(case_fd)
+                seen_held = True
                 # Gate and case both held: the recorded entries are final whoever holds the
                 # case, so a fault at or before them in a steady read is named now (P15).
                 check = self._steady()
@@ -515,8 +517,13 @@ class CaseLog:
                 continue
             except OSError:
                 return self._untested()
-        return _unchecked("being saved: writers kept taking the case during every read",
-                          in_progress=True)
+        if seen_held:
+            return _unchecked("being saved: writers kept taking the case during every read",
+                              in_progress=True)
+        # No attempt saw the case held, only a writer at the gate (or one starting where
+        # there was no gate): nothing is being saved that the reader knows of (R43).
+        return _unchecked("could not be checked: a writer was taking the case at every attempt",
+                          in_progress=False)
 
     @contextmanager
     def _shared(self, path: Path) -> Iterator[None]:
@@ -611,14 +618,17 @@ class CaseLog:
             raise CaseLocked(f"{self.path}: this case log was opened by another process; open "
                              "the case again in this one")
         me = _holder_id()
-        entered = False
+        with self._state:
+            # The depth this thread already holds: whatever interrupts entry (even between
+            # _enter returning and this frame noting it), the exit releases what was added.
+            depth_before = self._lock_depth if self._owner == me else 0
         start = time.monotonic()
         deadline = start + (WRITER_WAIT if wait is None else wait)
         try:
             while True:
                 try:
                     with self._state:
-                        entered = self._enter(me, create)
+                        self._enter(me, create)
                     break
                 except CaseLocked as e:
                     # Another writer: wait briefly, then refuse (R42). Only readers: they
@@ -629,14 +639,13 @@ class CaseLog:
                     time.sleep(READ_PAUSE)
             yield self
         finally:
-            if entered:
-                with self._state:
-                    # Released by the process that holds it, whichever thread runs this:
-                    # an abandoned block may be finalised by the garbage collector on
-                    # another thread. A forked child leaving a block it inherited is
-                    # another process and never unlocks its parent's lock.
-                    if self._owner is not None and self._owner[0] == os.getpid():
-                        self._release_one_level()
+            with self._state:
+                # Released by the process that holds it, whichever thread runs this: an
+                # abandoned block may be finalised by the garbage collector on another
+                # thread. A forked child leaving a block it inherited is another process
+                # and never unlocks its parent's lock. Only a level this entry added.
+                if self._owner == me and me[0] == os.getpid() and self._lock_depth > depth_before:
+                    self._release_one_level()
 
     def _enter(self, me: tuple[int, int], create: bool = True) -> bool:
         """Take or join the lock for `me` (call under _state); True once it is held. With
