@@ -197,12 +197,12 @@
         "P18"
       ],
       "depends_on": [],
-      "status": "verify",
+      "status": "failed",
       "attempts": 1,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T17",
-      "evidence": null,
-      "escalation": null
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-122/evidence.json",
+      "escalation": "attempt 1 of 3 fail: R29 fail (The default is locked at src/cma/firm.py:66. The CLI reads once at src/cma/cli.py:79-94, and src/cma/graph.py:238-254,279,305-306 uses the same value for dispatch and evidence. Both SDK constructors check the lock with retries disabled at src/cma/llm.py:110-135. The ASGI startup check at src/cma/mcp_server.py:88-108 depends on lifespan delivery, so a previously created app can listen under the lock if lifespan is disabled.); R30 fail (src/cma/graph.py:178-200,301-308 uses the placeholder, date period, metric table, overall outcome row and allowlisted redraft IDs. src/cma/metrics.py:295-299 omits evidence IDs. The supported custom policy path at src/cma/cli.py:49,93 and src/cma/graph.py:297-299 renders free-text descriptions verbatim at src/cma/graph.py:174, so the prompt can contain transaction or case text supplied through that field.); P5 fail (The runner passed all 20 named P5 cases, including redrafts. tests/test_firm.py:447-450 invokes the graph without a custom policy. The custom policy accepted by src/cma/policy.py:62-79,109-111 can carry a case sentinel into the prompt at src/cma/graph.py:174,196.); P18 fail (The runner passed all 55 named P18 cases, including both SDK retry checks and the saved ASGI app check with lifespan enabled. tests/test_firm.py:669 explicitly enables lifespan. With lifespan disabled, src/cma/mcp_server.py:88-108 has no startup event on which to refuse before bind.); major: The saved ASGI app can bind a socket while the lock is on if the ASGI runner skips lifespan. The request-time 503 comes after the listener opens. This also violates R29. at src/cma/mcp_server.py:89; major: Custom policy descriptions are copied verbatim into hosted prompts. Putting the text in a rule-table cell does not enforce the prompt's prohibited-data boundary. at src/cma/graph.py:174; reviewer verdict fail"
     },
     {
       "id": "T18",
