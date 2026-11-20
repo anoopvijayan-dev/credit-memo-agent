@@ -356,3 +356,28 @@ def test_resume_refuses_stored_lines_that_are_not_the_statements(tmp_path):
     _as_earlier_release(db, lines=shifted)
     r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C"], input="y\n\n")
     assert r.exit_code == 2 and "not the lines" in r.output
+
+
+def test_a_decision_that_can_no_longer_be_applied_is_not_recorded(tmp_path, monkeypatch):
+    # T04 review 23: applying the decision works the figures out again; if that now fails
+    # (the policy file changed while the review was open), the CLI raised a raw error. It
+    # refuses, records nothing, and the review stays pending.
+    from cma import graph as g
+    from cma.graph import StaleReviewError, build, sqlite_checkpointer
+    from cma.llm import FakeLLM
+
+    db, _ = _pending(tmp_path)
+
+    def changed(s):
+        raise StaleReviewError("M9, which rule R8 reads, now fails it, and the policy file is not the one "
+                               "the review was drafted with")
+
+    monkeypatch.setattr(g, "refreshed", changed)  # the second read, inside the graph
+    out = tmp_path / "memo.md"
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C", "--out", str(out)],
+                      input="y\n\n")
+    assert r.exit_code == 2 and "Not recorded" in r.output and "M9" in r.output, r.output
+    assert not out.exists()
+    monkeypatch.undo()
+    with sqlite_checkpointer(db) as saver:
+        assert build(FakeLLM(), checkpointer=saver).get_state({"configurable": {"thread_id": "case-1"}}).interrupts

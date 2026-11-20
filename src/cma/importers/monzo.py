@@ -196,7 +196,11 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
         parsed.append((d, t, tid, desc, amount, bal))
 
     if unreadable is not None:  # after the records before it are checked (T04 review 22)
-        raise MonzoImportError(f"{src}: {unreadable}")
+        # Money in or out among them already at the limit is said too (T04 review 23).
+        reached = flows_at_limit([a for *_, a, _b in parsed])
+        flows = (f"{' and '.join(reached)} {'total' if len(reached) > 1 else 'totals'} {AT_LIMIT} in the lines "
+                 "before it: no figure could be reported to the penny; ") if reached else ""
+        raise MonzoImportError(f"{src}: {flows}{unreadable}")
     parsed.sort(key=lambda x: (x[0], x[1], x[2]))
     first = parsed[0]
     # Everything below is whole pence (T04 review 4).

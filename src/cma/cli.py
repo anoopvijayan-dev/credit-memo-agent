@@ -286,7 +286,14 @@ def _decide(graph, cfg, decision: dict) -> dict:
     """
     if not graph.get_state(cfg).interrupts:
         _decided_elsewhere(graph.get_state(cfg).values)
-    final = graph.invoke(Command(resume=decision), cfg)
+    try:
+        final = graph.invoke(Command(resume=decision), cfg)
+    except (StaleReviewError, AmountError, ReconciliationError) as e:
+        # Applying the decision works the figures out again; if that now fails (the policy
+        # file changed while the review was open, say), the decision is not recorded and the
+        # review stays pending, as revision 28 says (T04 review 23).
+        console.print(f"[red]Not recorded:[/red] {escape(str(e))}")
+        raise typer.Exit(code=2) from e
     review = final.get("review")
     if "__interrupt__" not in final and (
         review is None or review.reviewer != (decision.get("reviewer") or "").strip()
