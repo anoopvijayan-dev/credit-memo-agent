@@ -309,6 +309,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-20 D160 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-20 D156 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Short write then lock lost: not recorded (9c265a3); OS errors in every save step: not recorded (D154, 51c8b68). → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 - 2026-11-20 D157 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). A changed v1 is refused as changed first; malformed patterns named by rule (7cb2e71). → task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03 [Anoop Vijayan]
+- 2026-11-20 D159 (question): Count the reads: every answer names the error, and a re-check that cannot read the log answers not recorded, never a conflict (design default; R42 as revision 19 writes it; T12 changes six answers before its review) — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Built in T12 (the six reads name their error). → recorded [Anoop Vijayan]
 
 ## Idea
 
