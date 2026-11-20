@@ -1,0 +1,106 @@
+```json
+{
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to the eight buckets. src/cma/metrics.py:481 assigns credits and src/cma/metrics.py:562 returns GBP totals with line IDs. The CLI graph and MCP use the same computation at src/cma/graph.py:307 and src/cma/mcp_server.py:97.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:86 checks penny round-tripping, src/cma/metrics.py:512 handles unreportable M3, and src/cma/graph.py:175 and src/cma/cli.py:415 display pennies. The previous missing-Currency and open-quote regressions passed in specified-3.log. Partial-row currency precedence, oversized-field diagnostics and concurrent CSV reads still fail.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks both evidence multiplicity and the pence difference before returning figures. src/cma/cli.py:116 exits 6 on reconciliation failure. The runner confirmed the CLI and MCP refusal tests, including the injected unbucketed credit.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The categoriser defaults unmatched credits to OTHER at src/cma/categorise.py:1311 and src/cma/categorise.py:1360. src/cma/models.py:66 maps OTHER to unexplained and excludes it from the revenue categories used for M2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:481 and src/cma/metrics.py:578 enforce the credit partition and integer-pence reconciliation. M18 is a subset of M2 at src/cma/metrics.py:495 and is absent from the reconciliation sum. The runner passed both named P1 tests.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the figures delivered by T04, src/cma/metrics.py:374 preserves the M5 and M6 evidence rules, src/cma/metrics.py:419 allocates the M9 cap and records the split credit, and src/cma/metrics.py:538 through src/cma/metrics.py:574 return signed outflow evidence, sum evidence and the share inputs. The named P2 tests and the M1–M16 fixture evidence comparisons passed in invariants-5.log and dual_run-7.log.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:66 and src/cma/metrics.py:486 route unmatched credits to M25. The runner passed the named P6 tests for both v1 and v2, including an explicit unknown payer.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 197,
+      "criterion": "R2",
+      "claim": "When a partial row has readable Currency and unreadable Amount, the importer reports the amount-side reader error before interpreting Currency. This hides an invalid currency even though revision 29 requires currency to be checked first.",
+      "repro": "Use the header Transaction ID,Date,Type,Name,Currency,Amount. Set the row to tx_1,01/01/2026,Faster payment,ACME,NOPE followed by a comma and an Amount field of 200,000 digits. Run cma import monzo. The refusal is for the oversized field. The first problem under R2 is the readable invalid Currency NOPE."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 128,
+      "criterion": "R2",
+      "claim": "Oversized-record recovery raises Python's process-wide CSV field limit while ordinary CSV reads proceed without the same lock. A concurrent load can accept a field that the configured reader is required to refuse.",
+      "repro": "Use two threads and a barrier at the second DictReader construction inside _read_long_record, after it raises the limit. Have the first thread trigger recovery with a 300,000-character description. While it is paused, load a separate valid five-column statement with a 200,000-character description and an ordinary amount and balance. The second load accepts the statement. Loading the same bytes after recovery restores the limit produces the required oversized-field refusal."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 244,
+      "criterion": "R2",
+      "claim": "The oversized-field message makes an unsupported assertion about the money limit. Field length alone does not determine the amount, and revision 29 requires reporting the reader limit without inferring the amount.",
+      "repro": "Load a statement whose Amount field is 200,000 leading zeroes followed by 1.00. The refusal correctly names the oversized field but also says an amount that long would be past £10 trillion. The supplied value is £1.00."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 263,
+      "criterion": "R2",
+      "claim": "The producer's no-fixed-ceiling proof calls pence conversion helpers directly. The statement import contract has a fixed £10 trillion ceiling, so the proof does not establish that a credit above it is accepted through either public figures entry point.",
+      "repro": "Supply a five-column CSV with a single credit of 10000000000000.01 to cma run or MCP compute_metrics. src/cma/ingest.py:83 and src/cma/ingest.py:350 reject it before computing figures. That refusal is required by revision 29."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 120,
+      "criterion": "P2",
+      "claim": "The claimed scratchpad transcript is not_proven. The runner passed repository tests for similar examples, including the £250 M9 return, but produced no result for the claimed £150 return or the scratchpad idempotency probe.",
+      "repro": "Compare specified-3.log and invariants-5.log with the producer's proof command. To verify that transcript, supply the referenced scratchpad/probe.py and a passing runner result for PYTHONPATH=src python scratchpad/probe.py."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": null,
+      "claim": "The producer notes say the committed example was left unregenerated and lacks evidence_note. The checked-in example already contains that field.",
+      "repro": "Inspect the first metric in the committed example or search the file for evidence_note."
+    }
+  ],
+  "verdict": "fail"
+}
+```
