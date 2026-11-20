@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 201,
+  "next_id": 202,
   "decisions": [
     {
       "id": "D1",
@@ -4054,6 +4054,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T09:54:38.164Z"
+    },
+    {
+      "id": "D201",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Applied the supplied revision 22. The worktree requirements at .bridgie/specs/statement-review/requirements.md:5 and :19 are from revision 2. Mapped the maintained lists and directions to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Checked longest matches and suppression by surviving occurrences at src/cma/categorise.py:1083–1144, bank-code priority and credit ambiguity at :1192–1209, override and candidate precedence at :1212–1289, and the unexplained bucket at src/cma/models.py:65. Traced production categorisation and line provenance through src/cma/graph.py:188–223 and :250–253 and src/cma/cli.py:228–229. Reviewed digest gating, exception detection, matcher builds and changed-v1 refusal at src/cma/categorise.py:397–659 and :918–947. The new repeat regressions pass, but repeated stage and protected values still escape dependent checks, and category-order validation can combine mutually exclusive categories into a spurious fault. Reviewed double submission and concurrent output paths at src/cma/cli.py:146–159 and :228–229, amount and calendar-date boundaries at src/cma/ingest.py:42–54 and :100–130, partial table-load failure at src/cma/categorise.py:918–947, allow-list and MCP path scope at src/cma/categorise.py:920 and src/cma/mcp_server.py:37–47, case-local inputs at src/cma/categorise.py:1370–1385, and changed evidence consumers and legacy replay at src/cma/graph.py:188–223 and src/cma/cli.py:229. The runner logged 836 suite, 214 contract, 138 invariant and 83 dual-run passes, including the list, CLI provenance, idempotency, checkpoint, timing and both offline eval tests. The remaining R4 failures follow from source inspection. No tests or builds were run during review.); major: Stage ordering reads the earlier rule's duplicate-key placeholder and omits the ordering fault associated with its supplied names value. at src/cma/categorise.py:575; major: The protection checks treat a repeated protected field as truthy. The supplied false value is type-checked but its effects on line-type and protected-rule ordering checks are skipped. at src/cma/categorise.py:573; major: Category-order validation counts alternative values on one rule as simultaneous categories. It can report an ordering fault that no supplied value produces when checked as the sole value. at src/cma/categorise.py:713; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T09:58:03.418Z"
     }
   ]
 }

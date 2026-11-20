@@ -1,0 +1,72 @@
+```json
+{
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Applied the supplied revision 22. The worktree requirements at .bridgie/specs/statement-review/requirements.md:5 and :19 are from revision 2. Mapped the maintained lists and directions to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Checked longest matches and suppression by surviving occurrences at src/cma/categorise.py:1083–1144, bank-code priority and credit ambiguity at :1192–1209, override and candidate precedence at :1212–1289, and the unexplained bucket at src/cma/models.py:65. Traced production categorisation and line provenance through src/cma/graph.py:188–223 and :250–253 and src/cma/cli.py:228–229. Reviewed digest gating, exception detection, matcher builds and changed-v1 refusal at src/cma/categorise.py:397–659 and :918–947. The new repeat regressions pass, but repeated stage and protected values still escape dependent checks, and category-order validation can combine mutually exclusive categories into a spurious fault. Reviewed double submission and concurrent output paths at src/cma/cli.py:146–159 and :228–229, amount and calendar-date boundaries at src/cma/ingest.py:42–54 and :100–130, partial table-load failure at src/cma/categorise.py:918–947, allow-list and MCP path scope at src/cma/categorise.py:920 and src/cma/mcp_server.py:37–47, case-local inputs at src/cma/categorise.py:1370–1385, and changed evidence consumers and legacy replay at src/cma/graph.py:188–223 and src/cma/cli.py:229. The runner logged 836 suite, 214 contract, 138 invariant and 83 dual-run passes, including the list, CLI provenance, idempotency, checkpoint, timing and both offline eval tests. The remaining R4 failures follow from source inspection. No tests or builds were run during review.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 575,
+      "criterion": "R4",
+      "claim": "Stage ordering reads the earlier rule's duplicate-key placeholder and omits the ordering fault associated with its supplied names value.",
+      "repro": "In a copy of v2.yaml, give own_pots_savings both stage: line_type and stage: names before hmrc_vat. With the names value given alone, hmrc_vat and subsequent line-type rules report that they must come before every names rule. With both values present, validation reports the repeat but misses those ordering faults, in either value order."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 573,
+      "criterion": "R4",
+      "claim": "The protection checks treat a repeated protected field as truthy. The supplied false value is type-checked but its effects on line-type and protected-rule ordering checks are skipped.",
+      "repro": "In a copy of v2.yaml, give own_pots_savings both protected: true and protected: false. With false alone, the rule is reported as an unprotected line-type rule and later protected rules report their ordering faults. With both values, the refusal names the repeated field but omits those faults, in either value order."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 713,
+      "criterion": "R4",
+      "claim": "Category-order validation counts alternative values on one rule as simultaneous categories. It can report an ordering fault that no supplied value produces when checked as the sole value.",
+      "repro": "Use a maintained table with the standard bank-code rule and one other credit rule whose category is written twice, as cash_deposit and revenue_transfer. Omit category_order. With either category alone, only one trading-receipts category is reachable and no order is required. With both values, the validator reports a trading-receipts category-order fault alongside the repeated key."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The documented precedence puts profile names ahead of ambiguity and says that naming the payer settles an ambiguous credit. The implementation keeps the credit unexplained and adds the profile match as a candidate. The row also omits cheque wording and the own-account pairing exception.",
+      "repro": "Classify a credit described as FPS CASH DEPOSIT JANE DOE with Jane Doe in the director profile. At src/cma/categorise.py:1275 it remains OTHER with payment_rail, cash_paid_in and profile:director in its provenance."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1387,
+      "criterion": "R4",
+      "claim": "The producer's rule-reordering proof covers the selected statements, but its general claim that within-stage reordering preserves every category is false for debits.",
+      "repro": "Sort hmrc_vat ahead of own_pots_savings within the protected line-type stage and classify a GBP 100 debit described as TFR TO POT HMRC VAT. The debit takes the first protected match at src/cma/categorise.py:1229, so it changes from own_account_transfer to hmrc_vat. R4's credit ambiguity policy does not require debit order independence."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "The producer's compileall claim for all modules under src, evals and tests is not_proven. The runner's passing compile result covers src.",
+      "repro": "Compare mechanical:2 with the claimed command. A passing runner result for python -m compileall -q src evals tests would prove the broader claim."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 850,
+      "criterion": "R4",
+      "claim": "The runner proves that categorising the test's 10,000-line fixture took less than two seconds on the runner. The reported 0.69 seconds and performance beyond that fixture are not_proven by this result.",
+      "repro": "Read specified-3.log:614 and the test body. The runner logs PASSED and the assertion checks a threshold without emitting elapsed categorisation time. A runner invocation of python -m pytest -v --durations=0 tests/test_rules_v2.py -k 10000_lines would show test duration. Proving an exact categorisation time requires logging the timed interval itself."
+    }
+  ],
+  "verdict": "fail"
+}
+```
