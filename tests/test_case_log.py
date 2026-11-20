@@ -2731,3 +2731,40 @@ def test_a_read_back_interrupted_still_takes_the_head_back(tmp_path, monkeypatch
     monkeypatch.undo()
     got = case.CaseLog(log.path).verify()
     assert got.torn and got.first_bad == 3
+
+
+@pytest.mark.invariants
+def test_a_repair_interrupted_right_after_its_rename_is_still_the_repairs_report(tmp_path, monkeypatch):
+    """T12 review 31: the interruption lands just after the repaired log's rename returns;
+    the report is still the repair's: not recorded, in its own words."""
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    real = case._replace
+
+    def rename_then_nested(src, dst, before=None):
+        real(src, dst, before)
+        if dst == log.path:
+            log.append("override", {"nested": True}, expected=2)  # refused, and not caught
+
+    monkeypatch.setattr(case, "_replace", rename_then_nested)
+    with pytest.raises(case.SaveNotRecorded, match="repair was not recorded") as e:
+        log.drop_torn_entry(expected=2, by="A. Person")
+    assert "nothing was written" not in _chain(e.value)
+
+
+@pytest.mark.invariants
+def test_a_take_back_stopped_by_any_exception_is_not_confirmed(tmp_path, monkeypatch):
+    """T12 review 31: the head this save published is still its own when the take-back is
+    stopped by something unexpected, so the answer is not confirmed, never not recorded."""
+    log = _log(tmp_path, 2)
+    real = case._read_head
+
+    def head(path, *, raise_os=False):
+        got = real(path)
+        if raise_os and isinstance(got, list) and len(got) == 3:
+            raise RuntimeError("stopped")  # in the read-back, and again in the take-back
+        return real(path, raise_os=raise_os)
+
+    monkeypatch.setattr(case, "_read_head", head)
+    with pytest.raises(case.SaveNotConfirmed):
+        log.append("override", {"n": 3}, expected=2)

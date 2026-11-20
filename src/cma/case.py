@@ -970,8 +970,11 @@ class CaseLog:
         finally:
             os.close(fd)
         try:
-            _replace(tmp, self.path, before=unchanged)  # each attempt (D108)
+            # Marked before the rename, so an interruption right after it is still the
+            # repair's (review 31); refused before it, the log is unchanged and still reads
+            # torn at the same entry, which the report says.
             self._repair_landed = True
+            _replace(tmp, self.path, before=unchanged)  # each attempt (D108)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
@@ -1020,7 +1023,6 @@ class CaseLog:
         _fsync_dir(self.head_path.parent)
 
     def _write_head(self, hashes: list[str], *, was: list[str] | None = None) -> None:
-        self._head_renamed = False  # set once the rename is done: what an error after means
         """Replace the head file in one rename, after the last entry it names is on disk.
         With `was`, the head file must still record exactly those entries just before the
         rename, or nothing is published."""
@@ -1034,14 +1036,23 @@ class CaseLog:
             # Before each step that changes a file a reader reads (R42, D108): the rename
             # that publishes the head record, the empty first one included. The temporary
             # file is read by nobody.
+            stage = ["checks"]
+
             def before() -> None:
+                stage[0] = "checks"
                 self._require_lock_in_place()
                 if was is not None and _read_head(self.head_path, raise_os=True) != was:
                     raise SaveNotRecorded(f"{self.path}: the head file changed while this save was "
                                           "being recorded; the save was not recorded")
+                stage[0] = "rename"
             _replace(tmp, self.head_path, before=before)
             self._head_renamed = True
-        except BaseException:
+        except BaseException as e:
+            # Past its checks, only the rename's own OSError proves it did not happen; any
+            # other interruption there may have come after it, so the head may be published
+            # (review 31): never reported as not recorded.
+            if stage[0] == "rename" and not isinstance(e, OSError):
+                self._head_renamed = True
             tmp.unlink(missing_ok=True)
             raise
         _fsync_dir(self.head_path.parent)
@@ -1138,7 +1149,7 @@ class CaseLog:
                 # otherwise replace a head another writer has since published and been told
                 # is recorded (T12 review 25). Refused, the save is not confirmed (D143).
                 self._write_head(recorded, was=[*recorded, entry.hash])
-            except (CaseLogError, OSError) as e:
+            except Exception as e:  # whatever stops it, the answer is not confirmed (review 31)
                 refused = e
             if refused is not None:
                 # One answer per report (D164): what stopped the take-back is named in the
