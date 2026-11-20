@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 281,
+  "next_id": 282,
   "decisions": [
     {
       "id": "D1",
@@ -5634,6 +5634,26 @@
       "decided_at": "2026-11-20T21:37:05.069Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T21:32:49.994Z"
+    },
+    {
+      "id": "D281",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:83 checks the float boundary against the parsed pence. src/cma/metrics.py:512 computes M3 in integer pence and handles an unrepresentable result. src/cma/graph.py:175 and src/cma/cli.py:415 table GBP to the penny. The runner confirmed that Monzo skips a foreign row with an oversized field under LF, CR and CRLF. Combining that recovery with invalid UTF-8 still lets an unreadable amount be interpreted as money at src/cma/importers/monzo.py:230–232.); major: A skipped foreign row with invalid UTF-8 bypasses the readability check for a subsequent oversized record. Monzo then parses a GBP amount containing an invalid byte and reports its quoted text instead of identifying the unreadable record. The standalone foreign-row regressions do not cover this combination. at src/cma/ingest.py:254; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T21:41:12.099Z"
     }
   ]
 }
