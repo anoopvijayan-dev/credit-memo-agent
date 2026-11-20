@@ -61,7 +61,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 GENESIS = "0" * 64
 HASHED_FIELDS = ("seq", "prev", "at", "event", "data")
@@ -1125,7 +1125,8 @@ class CaseLog:
             raise SaveNotConfirmed(f"{self.path}: the head record could not be made durable ({e}), so "
                                    "whether the save is in the log is not confirmed: check the case log "
                                    "before anything else is saved") from e
-        failure: str = "the log changed while this save was being recorded"
+        failure = ["the log changed while this save was being recorded"]
+        confirmed = False
         try:
             try:
                 raw = self.path.read_bytes()
@@ -1133,45 +1134,48 @@ class CaseLog:
                 raw = b""
             now = _check(raw, _read_head(self.head_path, raise_os=True))
             held = now.entries[entry.seq - 1].hash if now.ok and len(now.entries) >= entry.seq else None
+            confirmed = held == entry.hash
         except OSError as e:  # the read-back itself failed: named, never read as a change (D159)
-            held, failure = None, f"the log could not be read back ({e.__class__.__name__}: {e})"
-        except BaseException as e:  # interrupted, Ctrl-C included: still take back (reviews 30, 32)
-            if isinstance(e, GeneratorExit):
-                raise
-            held, failure = None, f"the read-back was interrupted ({e.__class__.__name__})"
-        if held != entry.hash:
-            # Not told recorded, so not left recorded either (P15): the head record goes
-            # back to the entries before this one, if it is still the one this save
-            # published, and the entry is again past the recorded entries, as a crash leaves
-            # it (T12 review 23). If the head record changed meanwhile, it is left alone.
-            refused: BaseException | None = None
-            try:
-                # Its own record only (`was`), and like every head rename only while both
-                # lock files are still the ones taken: under interference a take-back could
-                # otherwise replace a head another writer has since published and been told
-                # is recorded (T12 review 25). Refused, the save is not confirmed (D143).
-                self._write_head(recorded, was=[*recorded, entry.hash])
-            except BaseException as e:  # whatever stops it, Ctrl-C included: not confirmed (31, 32)
-                if isinstance(e, GeneratorExit):
-                    raise
-                refused = e
-            if refused is not None:
-                # One answer per report (D164): what stopped the take-back is named in the
-                # save's own words, never quoted, since a quoted refusal can say the save was
-                # or was not recorded; nor is it chained, for the same reason.
-                if isinstance(refused, OSError):
-                    why = f"{refused.__class__.__name__}: {refused.strerror or refused}"
-                elif isinstance(refused, SaveNotRecorded):
-                    why = "its head record is no longer this save's own"
-                elif isinstance(refused, CaseLocked):
-                    why = "a case lock file was removed or replaced"
-                else:
-                    why = refused.__class__.__name__
-                raise SaveNotConfirmed(
-                    f"{self.path}: {failure}, and its head record could not be taken back ({why}), so "
-                    "whether the save is in the log is not confirmed: check the case log before "
-                    "anything else is saved") from None
-            raise SaveNotRecorded(f"{self.path}: {failure}; the save was not recorded")
+            failure[0] = f"the log could not be read back ({e.__class__.__name__}: {e})"
+        except BaseException as e:  # interrupted, Ctrl-C included (reviews 30, 32)
+            failure[0] = f"the read-back was interrupted ({e.__class__.__name__})"
+        finally:
+            # Anything short of a confirmed read-back, an interruption anywhere before the
+            # answer included, goes on to the take-back (review 33).
+            if not confirmed:
+                self._take_back(recorded, entry, failure[0])
+
+    def _take_back(self, recorded: list[str], entry: Entry, failure: str) -> NoReturn:
+        """Not told recorded, so not left recorded either (P15): the head record goes back to
+        the entries before this one, if it is still the one this save published, and the entry
+        is again past the recorded entries, as a crash leaves it (T12 review 23). If the head
+        record changed meanwhile, it is left alone."""
+        refused: BaseException | None = None
+        try:
+            # Its own record only (`was`), and like every head rename only while both lock
+            # files are still the ones taken: under interference a take-back could otherwise
+            # replace a head another writer has since published and been told is recorded
+            # (T12 review 25). Refused, the save is not confirmed (D143).
+            self._write_head(recorded, was=[*recorded, entry.hash])
+        except BaseException as e:  # whatever stops it, Ctrl-C and GeneratorExit included (31-33)
+            refused = e
+        if refused is not None:
+            # One answer per report (D164): what stopped the take-back is named in the save's
+            # own words, never quoted, since a quoted refusal can say the save was or was not
+            # recorded; nor is it chained, for the same reason.
+            if isinstance(refused, OSError):
+                why = f"{refused.__class__.__name__}: {refused.strerror or refused}"
+            elif isinstance(refused, SaveNotRecorded):
+                why = "its head record is no longer this save's own"
+            elif isinstance(refused, CaseLocked):
+                why = "a case lock file was removed or replaced"
+            else:
+                why = refused.__class__.__name__
+            raise SaveNotConfirmed(
+                f"{self.path}: {failure}, and its head record could not be taken back ({why}), so "
+                "whether the save is in the log is not confirmed: check the case log before "
+                "anything else is saved") from None
+        raise SaveNotRecorded(f"{self.path}: {failure}; the save was not recorded")
 
 
 # On Windows a reader's open file blocks a rename over it for the moment the read takes

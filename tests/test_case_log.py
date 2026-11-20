@@ -2797,3 +2797,44 @@ def test_ctrl_c_during_read_back_or_take_back_still_gets_the_saves_answer(tmp_pa
     else:
         check = case.CaseLog(log.path).verify()
         assert check.torn and check.first_bad == 3
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("exc", [GeneratorExit, KeyboardInterrupt, SystemExit])
+def test_any_interruption_of_the_take_back_answers_not_confirmed(tmp_path, monkeypatch, exc):
+    """T12 review 33: GeneratorExit (and every other interruption) stopping the take-back is
+    not confirmed, with the instruction to check the case log."""
+    log = _log(tmp_path, 2)
+    prefix = log.path.read_bytes()
+    real = case.CaseLog._write_head
+
+    def head(self, hashes, **kw):
+        if len(hashes) == 2 and kw.get("was") is not None:
+            raise exc()
+        real(self, hashes, **kw)
+        if len(hashes) == 3:
+            self.path.write_bytes(prefix)
+
+    monkeypatch.setattr(case.CaseLog, "_write_head", head)
+    with pytest.raises(case.SaveNotConfirmed, match="check the case log"):
+        log.append("override", {"n": 3}, expected=2)
+
+
+@pytest.mark.invariants
+def test_the_take_back_runs_for_any_read_back_that_does_not_confirm(tmp_path, monkeypatch):
+    """T12 review 33: the take-back sits where nothing short of a confirmed read-back can
+    skip it; an interruption while the answer is worked out still takes the head back."""
+    log = _log(tmp_path, 2)
+    real_ok = case.LogCheck.ok
+
+    def ok(self):
+        if self.recorded == 3:
+            raise KeyboardInterrupt
+        return real_ok.fget(self)
+
+    monkeypatch.setattr(case.LogCheck, "ok", property(ok))
+    with pytest.raises(case.SaveNotRecorded):
+        log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    check = case.CaseLog(log.path).verify()
+    assert check.torn and check.first_bad == 3
