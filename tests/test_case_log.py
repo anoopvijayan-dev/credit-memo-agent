@@ -49,7 +49,7 @@ def _crash_mid_append(log, monkeypatch, cut):
         raise OSError("power lost")
 
     monkeypatch.setattr(case, "_write_all", torn)
-    with pytest.raises(OSError):
+    with pytest.raises(case.SaveNotRecorded):
         log.append("override", {"n": 99}, expected=log.require_intact().position)
     monkeypatch.undo()
 
@@ -714,7 +714,7 @@ def test_a_crash_before_the_rename_while_dropping_leaves_the_torn_log_unchanged(
         raise OSError("power lost")
 
     monkeypatch.setattr(case.os, "replace", crash)
-    with pytest.raises(OSError):
+    with pytest.raises(case.SaveNotRecorded):
         log.drop_torn_entry(expected=2, by="A. Underwriter")
     assert log.path.read_bytes() == before  # still torn, still names entry 3
     assert log.verify().torn and log.verify().first_bad == 3
@@ -1712,7 +1712,7 @@ def test_p15_a_crash_during_the_first_append_is_still_a_torn_entry_to_drop(tmp_p
         raise OSError("power lost")
 
     monkeypatch.setattr(case, "_write_all", torn_line)
-    with pytest.raises(OSError):
+    with pytest.raises(case.SaveNotRecorded):
         log.append("override", {"n": 0}, expected=0)
     monkeypatch.undo()
     assert log.head_path.exists()
@@ -2506,3 +2506,23 @@ def test_a_lock_lost_after_part_of_the_line_is_written_says_not_recorded(tmp_pat
     monkeypatch.undo()
     check = case.CaseLog(log.path).verify()
     assert check.torn and check.first_bad == 3
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("step", ["line", "first_head", "repair_rename"])
+def test_an_os_error_in_any_step_of_a_save_is_reported_not_recorded(tmp_path, monkeypatch, step):
+    """D154 / R42: a full disk or refused rename at any step after the check reaches the
+    caller as the save not recorded, naming the error, never as a raw OSError."""
+    log = _log(tmp_path, 0 if step == "first_head" else 2)
+    if step == "repair_rename":
+        _crash_mid_append(log, monkeypatch, 10)
+        monkeypatch.setattr(case, "_replace", lambda *a, **k: (_ for _ in ()).throw(OSError(28, "No space left")))
+        with pytest.raises(case.SaveNotRecorded, match="No space left"):
+            log.drop_torn_entry(expected=2, by="A. Person")
+        return
+    if step == "first_head":
+        monkeypatch.setattr(case.os, "link", lambda *a, **k: (_ for _ in ()).throw(OSError(28, "No space left")))
+    else:
+        monkeypatch.setattr(case, "_write_all", lambda *a, **k: (_ for _ in ()).throw(OSError(28, "No space left")))
+    with pytest.raises(case.SaveNotRecorded, match="No space left"):
+        log.append("override", {"n": 1}, expected=0 if step == "first_head" else 2)

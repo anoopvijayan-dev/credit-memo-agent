@@ -839,6 +839,18 @@ class CaseLog:
             with self._state:
                 self._saving.discard(me)
 
+    @contextmanager
+    def _os_errors_as_not_recorded(self) -> Iterator[None]:
+        """Every step of a save after its check (D154): an operating-system error (a full
+        disk, a failed sync, a rename refused) reaches the caller as the save not recorded,
+        naming the error, never raw. Where the head record was already published, _publish
+        has answered not confirmed instead."""
+        try:
+            yield
+        except OSError as e:
+            raise SaveNotRecorded(f"{self.path}: the save could not be completed ({e.__class__.__name__}: "
+                                  f"{e}); the save was not recorded") from e
+
     def append(self, event: str, data: dict[str, Any], *, expected: int) -> Entry:
         """Append one entry if the log is intact and still at `expected` entries."""
         if not isinstance(event, str) or not event.strip():
@@ -865,7 +877,8 @@ class CaseLog:
                 raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
             if check.head.position != expected:
                 raise LogConflict(expected, check.head.position)
-            return self._write(event, snapshot, check)
+            with self._os_errors_as_not_recorded():
+                return self._write(event, snapshot, check)
 
     def drop_torn_entry(self, *, expected: int, by: str) -> Entry:
         """Cut an incomplete last entry off and record who confirmed it. `expected` is the
@@ -881,7 +894,8 @@ class CaseLog:
                 raise CaseLogBroken(self.path, check.first_bad, check.reason, False)
             if check.head.position != expected:
                 raise LogConflict(expected, check.head.position)
-            return self._replace_torn(check, by.strip())
+            with self._os_errors_as_not_recorded():
+                return self._replace_torn(check, by.strip())
 
     def _replace_torn(self, check: LogCheck, by: str) -> Entry:
         self._require_lock_in_place()
