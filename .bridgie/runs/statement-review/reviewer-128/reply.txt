@@ -1,0 +1,144 @@
+```json
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:54 and src/cma/metrics.py:354–361,421–429 map credits and return GBP totals with line IDs. The amount ceiling at src/cma/metrics.py:105 suppresses the breakdown for valid whole-penny CSV input.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:192–204,257–259 now compares balances in pence. Credit and debit selection still compares floating-point GBP at lines 282,294,298,343,354,444. M3 bypasses the checked GBP conversion at line 384 and can lose a penny.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:437–447 checks reconciliation and src/cma/cli.py:99–102 prints escaped diagnostics. The four CLI and MCP contracts ran and passed. A credit with no category takes the earlier generic error at src/cma/metrics.py:210–211 and the CLI omits the difference and line ID.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311,1360 defaults unmatched credits to OTHER. src/cma/models.py:65,68 maps OTHER to unexplained and excludes it from trading receipts. The runner passed the unmatched-credit tests for both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:354–362,437–447 checks the pence sum and one evidence placement per credit before returning figures. M18 is derived from M2 evidence and excluded from the bucket sum. Both P1 tests passed on returned values, including the large-amount test. The case rejected at the amount ceiling returns no bucket evidence.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "The named test ran and passed, but tests/test_money_in.py:23–28,90–97 omit M9 and negate the signed evidence for M8, M11, M12 and M14. src/cma/metrics.py:300–302,397–414 produces both mismatches.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:65,68 and src/cma/metrics.py:234–236,354–361,427–429 put unmatched credits in M25 and exclude them from M2. The runner passed all three P6 cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 105,
+      "criterion": "R1",
+      "claim": "The new ceiling rejects valid GBP credits and withholds M17 and all bucket evidence. The exact cutoff value is representable in the existing DTO.",
+      "repro": "Use a one-row CSV with `L1,2026-01-01,UNKNOWN PAYER,10000000000000.00,10000000000000.00`. The CSV loader accepts the whole-penny amount. `cma run` exits 2 instead of reporting M17 and M25 with L1."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 384,
+      "criterion": "R2",
+      "claim": "M3 converts directly from rounded decimal GBP to float and bypasses the reporting ceiling enforced for other GBP figures.",
+      "repro": "Compute figures for a one-day statement with one trading credit of £9,999,999,999,999.98 and the same closing balance. Exact average monthly revenue rounds to £304,374,999,999,999.39. The nearest binary float is £304,374,999,999,999.375 and serializes as 304374999999999.4."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 210,
+      "criterion": "R3",
+      "claim": "A credit with no category bypasses reconciliation diagnostics and is reported by the CLI as a model failure.",
+      "repro": "Use the categoriser fault injection in tests/test_money_in.py's CLI refusal test, setting the first credit's category to None instead of RENT. The CLI exits 4 with `categorise() must run before compute()` and omits the pence difference and the credit ID."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 300,
+      "criterion": "P2",
+      "claim": "M9 cites full credits even when the calculation counts only a capped portion.",
+      "repro": "Categorise `FPS DEBIT J BLOGGS` for −£100 and `FPS CREDIT J BLOGGS` for +£250. M9 reports £0 and cites both lines, whose signed amounts total £150."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 397,
+      "criterion": "P2",
+      "claim": "M8, M11, M12 and M14 report positive outflows while their cited signed amounts are negative.",
+      "repro": "Compute a statement with one £50 loan repayment debit. M8 reports +£50 and its sole evidence line is −£50. The test at tests/test_money_in.py:97 negates the signed total."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 170,
+      "criterion": "P1",
+      "claim": "The memo appendix and interactive CLI round the new buckets independently to whole pounds, so the displayed breakdown can disagree with displayed M17 even when the evidence JSON reconciles.",
+      "repro": "Run a v2 statement with a Stripe credit of £0.60 and an unmatched credit of £0.60. The appendix displays M2 £1 and M25 £1 against M17 £1. The JSON carries £0.60, £0.60 and £1.20."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 84,
+      "criterion": "R3",
+      "claim": "The claim that a refused case writes nothing is broader than the no-memo contract. A durable run can leave SQLite state and consume its thread ID.",
+      "repro": "Repeat the runner's injected missing-bucket case with `--checkpoint-db` and a fixed `--thread`. The graph checkpoints load and categorise before metrics refuses. Retry with the same thread and the corrected case. The existing-state check at line 87 refuses the retry."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 366,
+      "criterion": "R1",
+      "claim": "The previous-release samples support compatibility for the inputs they exercise. The broader additive-only claim does not cover M16's changed denominator.",
+      "repro": "Compare the old and current figures for the same categorised statement with £100 trading receipts and £100 own-account transfers in. The old M16 reports 50% and cites both credits. The current M16 reports 0% and cites the trading credit alone."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 138,
+      "criterion": "R1",
+      "claim": "Rollback by reinstalling the previous wheel is not proven. The dual-run tier compares source versions and fixture behavior.",
+      "repro": "Inspect dual_run-7.log for a wheel reinstall. To prove the claim, run an isolated package-level check with `python -m pip install --force-reinstall /path/to/previous.whl`, then rerun the CLI and resume a representative pending checkpoint."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 208,
+      "criterion": "R2",
+      "claim": "The 0.164-second timing and the scripted repeatability result are not proven by a configured runner tier. The timed categoriser test at tests/test_rules_v2.py:850 does not call metrics.compute.",
+      "repro": "The cited command is `PYTHONPATH=src python /tmp/claude-0/sp/det.py`. The runner would need the script and a passing result log showing both the repeated computation and the timed 10,000-line figures calculation."
+    }
+  ],
+  "verdict": "fail"
+}
+```
