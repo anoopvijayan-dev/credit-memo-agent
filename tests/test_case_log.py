@@ -2482,3 +2482,27 @@ def test_a_save_whose_take_back_fails_is_not_confirmed(tmp_path, monkeypatch):
     with pytest.raises(case.SaveNotConfirmed, match="not confirmed") as e:
         log.append("override", {"n": 3}, expected=2)
     assert not isinstance(e.value, case.SaveNotRecorded)
+
+
+@pytest.mark.invariants
+def test_a_lock_lost_after_part_of_the_line_is_written_says_not_recorded(tmp_path, monkeypatch):
+    """T12 review 26 / P15: a short write, then the lock goes before the rest: part of the
+    entry is on disk, so the save says it was not recorded, never that nothing was written,
+    and the log reads with that part as a torn entry past the recorded ones."""
+    log = _log(tmp_path, 2)
+    real_write, calls = os.write, []
+
+    def short_then_lock_goes(fd, data):
+        calls.append(None)
+        if len(calls) == 1 and len(data) > 10:
+            n = real_write(fd, bytes(data[:10]))
+            log.lock_path.unlink()
+            return n
+        return real_write(fd, data)
+
+    monkeypatch.setattr(case.os, "write", short_then_lock_goes)
+    with pytest.raises(case.SaveNotRecorded, match="part of its entry was written"):
+        log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    check = case.CaseLog(log.path).verify()
+    assert check.torn and check.first_bad == 3

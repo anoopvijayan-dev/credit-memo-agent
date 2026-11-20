@@ -1007,7 +1007,18 @@ class CaseLog:
                 raise LogConflict(check.head.position, check.head.position + 1)
             # After the open and immediately before the line is written (D108): a lock
             # removed while the log was being opened stops the write.
-            _write_all(fd, line, before=self._require_lock_in_place)
+            try:
+                _write_all(fd, line, before=self._require_lock_in_place)
+            except CaseLocked as e:
+                # Refused partway through a short write: part of the line is on disk, past
+                # the recorded entries, as a crash leaves it. The save is not recorded, and
+                # never reported as nothing written (T12 review 26).
+                if os.fstat(fd).st_size > check.intact_bytes:
+                    raise SaveNotRecorded(f"{self.path}: a case lock file was removed or replaced while "
+                                          "this save was being written; part of its entry was written "
+                                          "and the save was not recorded: the next holder confirms "
+                                          "dropping it") from e
+                raise
             os.fsync(fd)
         finally:
             os.close(fd)
