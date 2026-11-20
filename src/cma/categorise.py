@@ -742,14 +742,17 @@ class _Unbuilt:
         return f"{self.tag.rsplit(':', 1)[-1]} value {self.text!r} that YAML cannot build"
 
 
-def _unbuilt_in(value: object) -> list[_Unbuilt]:
+def _unbuilt_in(value: object, _seen: set[int] | None = None) -> list[_Unbuilt]:
+    """Every unbuilt value inside `value`, each container visited once: a YAML alias can make
+    a list contain itself, which must never recurse without end (T03 review 32)."""
+    seen = set() if _seen is None else _seen
     if isinstance(value, _Unbuilt):
         return [value]
-    if isinstance(value, list):
-        return [b for v in value for b in _unbuilt_in(v)]
-    if isinstance(value, dict):
-        return [b for v in value.values() for b in _unbuilt_in(v)]
-    return []
+    if not isinstance(value, (list, dict)) or id(value) in seen:
+        return []
+    seen.add(id(value))
+    items = value if isinstance(value, list) else list(value.values())
+    return [b for v in items for b in _unbuilt_in(v, seen)]
 
 
 def _scalar_or_unbuilt(base):
@@ -760,6 +763,15 @@ def _scalar_or_unbuilt(base):
             return _Unbuilt(loader.construct_scalar(node), node.tag)
     return construct
 
+
+def _unknown_tag(loader, node):
+    """A tag the safe loader does not know (!foo x) is an unbuilt value, named by rule and
+    field, never a stop to the whole load (T03 review 32)."""
+    text = node.value if isinstance(node, yaml.ScalarNode) else f"<{node.id}>"
+    return _Unbuilt(str(text), node.tag)
+
+
+_UniqueKeyLoader.add_constructor(None, _unknown_tag)
 
 for _tag, _base in (("tag:yaml.org,2002:timestamp", yaml.SafeLoader.construct_yaml_timestamp),
                     ("tag:yaml.org,2002:int", yaml.SafeLoader.construct_yaml_int),

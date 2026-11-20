@@ -2125,3 +2125,23 @@ def test_a_debit_only_copy_of_the_bank_code_has_its_anchor_named():
             "stage": "line_type", "protected": True}
     with pytest.raises(RulesetError, match=r"\(debit\): pattern uses an anchor"):
         validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("value", ["!foo x", "!foo [1]", "&x [*x]"])
+def test_an_unknown_tag_or_a_self_referencing_value_is_named_with_the_other_faults(monkeypatch, value):
+    """T03 review 32: neither an unknown YAML tag nor an alias that makes a list contain itself
+    stops the load or the scan; the field is named, and other rules' faults too."""
+    raw = categorise._table_bytes("v2")
+    edit = raw.replace(b"rules:", ("rules:\n  - {id: odd, names: " + value + ", direction: in, category: "
+                                   "cash_deposit, stage: names}\n  - {id: other, names: [X], direction: "
+                                   "sideways, category: cash_deposit, stage: names}").encode(), 1)
+    monkeypatch.setattr(categorise, "_table_bytes", lambda ruleset_id: edit)
+    categorise.load_ruleset.cache_clear()
+    try:
+        with pytest.raises(RulesetError) as e:
+            categorise.load_ruleset("v2")
+    finally:
+        monkeypatch.undo()
+        categorise.load_ruleset.cache_clear()
+    assert "(odd): names" in str(e.value) and "(other): direction" in str(e.value)
