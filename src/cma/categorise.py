@@ -365,6 +365,12 @@ def _repeat_crosses_words(pattern: str) -> bool:
     return walk(parsed)
 
 
+def _is_bank_code_text(value: object) -> bool:
+    # A malformed value (a list, a mapping) is reported by the rule's own checks, never
+    # raised as a TypeError from this membership test (T03 review 25).
+    return isinstance(value, str) and value in BANK_RETURN_CODES
+
+
 def _compile_problem(pattern: str) -> str | None:
     # re.error is not the only way a pattern fails to compile: a repeat count past
     # the engine's limit raises OverflowError, deep nesting RecursionError.
@@ -431,7 +437,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
             if not isinstance(r["bank_code"], bool):
                 problems.append(f"{where}: bank_code must be true or false")
             elif r["bank_code"] and not (r.get("stage") == "line_type" and r.get("category") == Category.RETURNED_DD.value
-                                         and r.get("pattern") in BANK_RETURN_CODES and "names" not in r
+                                         and _is_bank_code_text(r.get("pattern")) and "names" not in r
                                          and "unless" not in r and "requires" not in r
                                          and r.get("direction") in ("in", "any")):
                 problems.append(f"{where}: bank_code is only for the bank's own returned-payment code "
@@ -442,7 +448,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                 # Candidates are recorded joined by + after a colon: an id holding either
                 # would make two different candidate sets read the same (T03 review 17).
                 problems.append(f"{where}: id may use only letters, digits, _, . and -")
-            if r.get("id") in RESERVED_RULE_IDS:
+            if isinstance(r.get("id"), str) and r["id"] in RESERVED_RULE_IDS:
                 # These name the categoriser's own decisions in a line's provenance.
                 problems.append(f"{where}: id {r['id']!r} is reserved for the categoriser's own "
                                 "provenance")
@@ -470,7 +476,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                 # the bank's own code keeps its ^ (D137).
                 problems.append(f"{where}: pattern uses an anchor (^, $, \\A or \\Z), which a v2 table "
                                 "allows only on the bank's returned-payment code")
-            if r.get("pattern") in BANK_RETURN_CODES and r.get("bank_code") is not True:
+            if _is_bank_code_text(r.get("pattern")) and r.get("bank_code") is not True:
                 problems.append(f"{where}: the bank's own returned-payment code must carry bank_code: true")
             for key in ("pattern", "unless", "requires"):
                 if isinstance(r.get(key), str) and r[key] and not _compile_problem(r[key]) and _has_group_reference(r[key]):
@@ -641,16 +647,7 @@ def _table_bytes(ruleset_id: str) -> bytes:
     return resources.files("cma.rules").joinpath(f"{ruleset_id}.yaml").read_bytes()
 
 
-@lru_cache
-def load_ruleset(ruleset_id: str) -> Ruleset:
-    """A packaged table by id. Only ids in RULESETS load, so an id never names a path."""
-    if ruleset_id not in RULESETS:
-        raise RulesetError(f"unknown ruleset {ruleset_id!r}; known: {', '.join(RULESETS)}")
-    source = f"cma/rules/{ruleset_id}.yaml"
-    try:
-        raw = _table_bytes(ruleset_id)
-    except (OSError, ImportError) as e:  # ImportError: the cma.rules package itself is gone
-        raise RulesetError(f"{source}: cannot be read from the installed package ({e.__class__.__name__})") from e
+def _parse_table(raw: bytes, ruleset_id: str, source: str, digest: str) -> tuple[dict, Ruleset]:
     try:
         data = yaml.load(raw.decode("utf-8"), Loader=_UniqueKeyLoader)
     except UnicodeDecodeError as e:
@@ -663,10 +660,33 @@ def load_ruleset(ruleset_id: str) -> Ruleset:
     except (ValueError, TypeError, OverflowError) as e:  # a scalar the loader cannot build, e.g. 2026-02-30
         raise RulesetError(f"{source}: not valid YAML ({e.__class__.__name__} building a value)") from e
     # The hash is of the file's bytes as installed, so it matches sha256sum on that file.
+    return data, ruleset_from_data(data, ruleset_id, source, digest)
+
+
+@lru_cache
+def load_ruleset(ruleset_id: str) -> Ruleset:
+    """A packaged table by id. Only ids in RULESETS load, so an id never names a path."""
+    if ruleset_id not in RULESETS:
+        raise RulesetError(f"unknown ruleset {ruleset_id!r}; known: {', '.join(RULESETS)}")
+    source = f"cma/rules/{ruleset_id}.yaml"
+    try:
+        raw = _table_bytes(ruleset_id)
+    except (OSError, ImportError) as e:  # ImportError: the cma.rules package itself is gone
+        raise RulesetError(f"{source}: cannot be read from the installed package ({e.__class__.__name__})") from e
+    # A pinned frozen table (v1) is judged by its bytes first: any change is refused as a
+    # changed frozen table whatever else it breaks, and what else it breaks is named after
+    # it (T03 review 25).
     digest = hashlib.sha256(raw).hexdigest()
-    ruleset = ruleset_from_data(data, ruleset_id, source, digest)
     pinned = FROZEN_SHA256.get(ruleset_id)
-    if pinned is not None and digest != pinned:
+    changed = pinned is not None and digest != pinned
+    try:
+        data, ruleset = _parse_table(raw, ruleset_id, source, digest)
+    except RulesetError as e:
+        if changed:
+            raise RulesetError(f"{source}: frozen table {ruleset_id} has been changed (sha256 {digest}, "
+                               f"pinned {pinned}); reinstall the package. It also fails to load: {e}") from e
+        raise
+    if changed:
         raise RulesetError(f"{source}: frozen table {ruleset_id} has been changed "
                            f"(sha256 {digest}, pinned {pinned}); reinstall the package")
     if data["frozen"] and pinned is None:

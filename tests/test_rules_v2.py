@@ -1931,3 +1931,35 @@ def test_a_table_cannot_skip_the_v2_checks_by_calling_itself_frozen():
             "stage": "names", "unless": "FPS"}
     with pytest.raises(RulesetError, match=r"rule 2 \(cash\): unless is not allowed"):
         validate_ruleset({"id": "v3", "frozen": True, "rules": [BANK, cash]}, expected_id="v3")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("edit", [
+    lambda raw: raw.replace(b"frozen: true", b"frozen: true\nextra_key: 1", 1),   # a schema error too
+    lambda raw: raw + b"\n  - id: x\n    pattern: [1, 2]\n",                      # a malformed rule too
+    lambda raw: raw.replace(b"\n", b"\n# a comment\n", 1),                         # bytes only
+])
+def test_a_changed_v1_is_refused_as_a_changed_frozen_table_whatever_else_it_breaks(monkeypatch, edit):
+    """T03 review 25: v1 is judged by its bytes before anything else is checked."""
+    raw = categorise._table_bytes("v1")
+    monkeypatch.setattr(categorise, "_table_bytes", lambda ruleset_id: edit(raw))
+    categorise.load_ruleset.cache_clear()
+    try:
+        with pytest.raises(RulesetError, match="frozen table v1 has been changed"):
+            categorise.load_ruleset("v1")
+    finally:
+        monkeypatch.undo()
+        categorise.load_ruleset.cache_clear()
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("value", [["^UNPAID DD\\b"], {"a": 1}, 3])
+def test_a_malformed_pattern_is_named_never_raised_as_a_type_error(value):
+    """T03 review 25: a pattern that is not text is refused by rule, with every other
+    problem of that table still reported, never as a raw TypeError."""
+    cash = {"id": "cash", "names": ["CASH DEPOSIT"], "direction": "in", "category": "cash_deposit",
+            "stage": "names", "unless": "FPS"}
+    bad = {"id": "bad", "pattern": value, "direction": "in", "category": "cash_deposit", "stage": "names"}
+    with pytest.raises(RulesetError) as e:
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, bad, cash]}, expected_id="v2")
+    assert "rule 2 (bad)" in str(e.value) and "rule 3 (cash): unless is not allowed" in str(e.value)
