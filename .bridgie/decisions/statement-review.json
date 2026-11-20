@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 121,
+  "next_id": 122,
   "decisions": [
     {
       "id": "D1",
@@ -2478,6 +2478,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T00:28:31.334Z"
+    },
+    {
+      "id": "D121",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Mapped maintained lists to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest-match filtering to src/cma/categorise.py:704–743, bank-code and ambiguity decisions to :780–795, overrides to :808, and profile candidates and firm-rule exclusion to :854–875. Own-account pairing is separately assigned to R8. Traced CMA_RULESET selection and per-line evidence through src/cma/graph.py:219–223,250–253 and src/cma/cli.py:229. The runner passed the per-list provenance tests and v2 CLI contracts. Reviewed repeat categorisation, concurrent use, sign and malformed-input boundaries, currency and date handling at ingest, failure paths, override and profile scope, rollback, and evidence consumers. Valid table edits can still bypass rail-plus-cash ambiguity, defeat longest-phrase filtering, or produce indistinguishable rule provenance.); major: The rail-plus-cash check looks only at cash matches from the names stage. The validator accepts cash wording as a bucketed line-type rule, allowing a rail and cash match to be counted as trading receipts. at src/cma/categorise.py:790; major: An accepted lookahead-only pattern counts as a hit but has no recorded span, so the longer-phrase filter cannot suppress it. at src/cma/categorise.py:721; major: Rule IDs can collide with the reserved fallback and round-trip provenance IDs, so the evidence cannot always identify which decision set the category. at src/cma/categorise.py:392; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T00:31:54.941Z"
     }
   ]
 }
