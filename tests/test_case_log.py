@@ -2905,3 +2905,59 @@ def test_ctrl_c_during_a_save_that_confirms_is_delivered_once_the_log_is_settled
     monkeypatch.undo()
     got = case.CaseLog(log.path).verify()
     assert got.ok and got.head.position == 3  # recorded, and the log consistent
+
+
+@pytest.mark.invariants
+def test_p15_the_case_lock_is_checked_after_the_gate_so_no_read_follows_it(tmp_path, monkeypatch):
+    """T12 review 35: a case lock replaced while the gate is being examined is still caught,
+    since the case lock is checked last."""
+    log = _log(tmp_path, 2)
+    real_stat, armed = case.os.stat, []
+    monkeypatch.setattr(case, "_utc_now", lambda real=case._utc_now: (armed.append(1), real())[1])
+
+    def stat(p, *a, **k):
+        got = real_stat(p, *a, **k)
+        if armed and str(p).endswith(".gate") and not (tmp_path / "fresh-log.jsonl.lock").exists():
+            _replace_file(log.lock_path)
+        return got
+
+    monkeypatch.setattr(case.os, "stat", stat)
+    with pytest.raises(case.CaseLocked, match="removed or replaced"):
+        log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    assert len(_lines(log)) == 2
+
+
+@pytest.mark.invariants
+@pytest.mark.skipif(os.name == "nt", reason="sends signals to itself")
+@pytest.mark.parametrize("signame", ["SIGINT", "SIGTERM"])
+def test_a_custom_handler_is_held_off_until_the_take_back_is_done(tmp_path, monkeypatch, signame):
+    """T12 review 35: a Python handler (any, not only the default Ctrl-C one) that would run
+    at the door of the take-back waits until the take-back is done."""
+    signum = getattr(signal, signame)
+    log = _log(tmp_path, 2)
+    prefix = log.path.read_bytes()
+    real_head, real_take_back = case.CaseLog._write_head, case.CaseLog._take_back
+
+    def raising(n, frame):
+        raise RuntimeError("handler ran")
+
+    def head(self, hashes, **kw):
+        real_head(self, hashes, **kw)
+        if len(hashes) == 3:
+            self.path.write_bytes(prefix)
+
+    def take_back(self, recorded, entry, failure):
+        os.kill(os.getpid(), signum)
+        return real_take_back(self, recorded, entry, failure)
+
+    old = signal.signal(signum, raising)
+    try:
+        monkeypatch.setattr(case.CaseLog, "_write_head", head)
+        monkeypatch.setattr(case.CaseLog, "_take_back", take_back)
+        with pytest.raises(case.SaveNotRecorded):
+            log.append("override", {"n": 3}, expected=2)
+    finally:
+        signal.signal(signum, old)
+    monkeypatch.undo()
+    assert case._read_head(log.head_path) == [json.loads(x)["hash"] for x in _lines(log)[:2]]

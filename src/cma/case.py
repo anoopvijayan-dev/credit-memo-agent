@@ -798,9 +798,11 @@ class CaseLog:
         written (P15: at most one writer holds the case)."""
         # Both lock files (R42): the case lock this writer holds, and the gate it passed,
         # since a reader that finds a new gate cannot know this writer holds the case.
+        # The gate first and the case lock last, immediately before the step: the case lock is
+        # what a second writer would hold, so no read follows its check (T12 review 35).
         try:
-            in_place = (self._lock_id == _file_id(os.stat(self.lock_path))
-                        and self._gate_id == _file_id(os.stat(self.gate_path)))
+            in_place = (self._gate_id == _file_id(os.stat(self.gate_path))
+                        and self._lock_id == _file_id(os.stat(self.lock_path)))
         except FileNotFoundError:
             in_place = False
         # Any other error (the folder cannot be read) is raised as it is, and the save names
@@ -855,6 +857,7 @@ class CaseLog:
         disk, a failed sync, a rename refused) reaches the caller as the save not recorded,
         naming the error, never raw. Where the head record was already published, _publish
         has answered not confirmed instead."""
+        self._save_confirmed = False
         self._line_at: int | None = None  # where this save's line starts, once it is being written
         self._repair_landed = False  # a repair's replacement log is in place
         self._head_renamed = False
@@ -863,9 +866,11 @@ class CaseLog:
         except OSError as e:
             raise SaveNotRecorded(f"{self.path}: the save could not be completed ({e.__class__.__name__}: "
                                   f"{e}); the save was not recorded") from e
-        except (SaveNotRecorded, SaveNotConfirmed, LogConflict, CaseLogBroken, GeneratorExit, _SettledInterrupt):
+        except (SaveNotRecorded, SaveNotConfirmed, LogConflict, CaseLogBroken, GeneratorExit):
             raise
         except BaseException as e:  # Ctrl-C after the line is still this save's report (review 32)
+            if self._save_confirmed:
+                raise  # confirmed and settled: a held signal's handler is delivered as it is
             # Anything else that stops a save once its line has started to reach the log (a
             # nested save refused from a signal handler, say) is still this save's report:
             # never another operation's words, which may say nothing was written (review 29).
@@ -1142,6 +1147,7 @@ class CaseLog:
             now = _check(raw, _read_head(self.head_path, raise_os=True))
             held = now.entries[entry.seq - 1].hash if now.ok and len(now.entries) >= entry.seq else None
             confirmed = held == entry.hash
+            self._save_confirmed = confirmed
         except OSError as e:  # the read-back itself failed: named, never read as a change (D159)
             failure[0] = f"the log could not be read back ({e.__class__.__name__}: {e})"
         except BaseException as e:  # interrupted, Ctrl-C included (reviews 30, 32)
@@ -1191,33 +1197,49 @@ REPLACE_RETRIES = 40
 REPLACE_PAUSE = 0.025
 
 
-class _SettledInterrupt(KeyboardInterrupt):
-    """A Ctrl-C held off during a save that then confirmed: delivered as it is, since the
-    save's entry is recorded and the log settled."""
+_DEFERRED_SIGNALS = tuple(getattr(signal, n) for n in ("SIGINT", "SIGTERM", "SIGHUP", "SIGALRM", "SIGUSR1",
+                                                        "SIGUSR2", "SIGBREAK") if hasattr(signal, n))
 
 
 @contextmanager
 def _interrupts_deferred() -> Iterator[None]:
-    """Hold Ctrl-C off while a save publishes its head record, reads it back and, if need
-    be, takes it back: an interrupt between finding the read-back failed and starting the
-    take-back would otherwise leave a save recorded that was never confirmed (T12 review 34).
-    A Ctrl-C that arrives meanwhile is delivered once the log is settled, unless the save
-    is already reporting its own answer. Only the main thread receives signals, and only a
-    default handler is replaced."""
-    if (threading.current_thread() is not threading.main_thread()
-            or signal.getsignal(signal.SIGINT) is not signal.default_int_handler):
+    """Hold signals off while a save publishes its head record, reads it back and, if need
+    be, takes it back: a handler run between finding the read-back failed and starting the
+    take-back would otherwise leave a save recorded that was never confirmed (T12 reviews
+    34, 35). Ctrl-C is held whatever its handler, and every other signal whose handler is
+    Python code. A signal that arrives meanwhile is handed to its own handler once the log is
+    settled, unless the save is already reporting its own answer. Only the main thread runs
+    signal handlers, so only there is anything held."""
+    if threading.current_thread() is not threading.main_thread():
         yield
         return
-    pending: list[object] = []
-    previous = signal.signal(signal.SIGINT, lambda signum, frame: pending.append(signum))
+    pending: list[int] = []
+    previous: dict[int, Any] = {}
+    try:
+        for signum in _DEFERRED_SIGNALS:
+            handler = signal.getsignal(signum)
+            if signum == signal.SIGINT or callable(handler):
+                previous[signum] = signal.signal(signum, lambda n, frame: pending.append(n))
+    except (ValueError, OSError):  # pragma: no cover - a signal this platform will not let us set
+        pass
     try:
         yield
     except BaseException:
-        signal.signal(signal.SIGINT, previous)
+        _restore(previous)
         raise  # the save's own answer stands
-    signal.signal(signal.SIGINT, previous)
-    if pending:
-        raise _SettledInterrupt  # the save is confirmed and the log settled; the stop stands
+    _restore(previous)
+    for signum in pending:  # the save is confirmed and the log settled: deliver as they came
+        handler = previous.get(signum)
+        if callable(handler):
+            handler(signum, None)
+        elif handler == signal.SIG_DFL:
+            signal.raise_signal(signum)
+
+
+def _restore(previous: dict[int, Any]) -> None:
+    for signum, handler in previous.items():
+        with suppress(ValueError, OSError, TypeError):
+            signal.signal(signum, handler)
 
 
 def _staging_file(target: Path) -> tuple[int, Path]:
