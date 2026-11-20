@@ -2363,3 +2363,35 @@ def test_each_value_of_a_repeated_rules_key_is_named_when_it_is_no_list_of_rules
     text = str(e.value)
     assert "rules value 1 of 3 is not a list of rules" in text and "rules value 2 of 3 is empty" in text
     assert "direction 'sideways'" in text
+
+
+
+@pytest.mark.contracts
+def test_each_value_of_a_repeated_category_order_is_checked():
+    """T03 review 41: every list given for category_order is checked as an order."""
+    data = {"id": "v2", "frozen": False, "rules": [BANK],
+            "category_order": _repeated(["returned_dd"], ["not_a_category"])}
+    with pytest.raises(RulesetError, match=r"category_order value 2 of 2: category_order: 'not_a_category'"):
+        validate_ruleset(data, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_each_repeated_rules_list_is_checked_as_its_own_table():
+    """T03 review 41: one list cannot lend another the bank code, and a rule in one list
+    makes no duplicate-id fault in the other."""
+    other = {"id": "x", "names": ["X"], "direction": "in", "category": "cash_deposit", "stage": "names"}
+    data = {"id": "v2", "frozen": False, "rules": _repeated([BANK, other], [other])}
+    with pytest.raises(RulesetError) as e:
+        validate_ruleset(data, expected_id="v2")
+    text = str(e.value)
+    assert "rules value 2 of 2: the bank's own returned-payment code" in text
+    assert "duplicate id" not in text
+
+
+@pytest.mark.contracts
+def test_each_value_of_a_repeated_rule_id_is_checked_for_uniqueness():
+    """T03 review 41: a repeated id clashing with another rule's id is named."""
+    a = {"id": "a", "names": ["A"], "direction": "in", "category": "cash_deposit", "stage": "names"}
+    b = {"id": _repeated("b", "a"), "names": ["B"], "direction": "in", "category": "cash_deposit", "stage": "names"}
+    with pytest.raises(RulesetError, match=r"duplicate id 'a'"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, a, b]}, expected_id="v2")

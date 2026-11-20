@@ -426,7 +426,17 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                 problems.append(f"rules value {k} of {len(rules.values)} is not a list of rules")
             elif not v:
                 problems.append(f"rules value {k} of {len(rules.values)} is empty")
-        rules = [r for v in rules.values if isinstance(v, list) for r in v]
+        # Each list given is checked as the table it would be, table-wide checks included,
+        # never merged with another: one list cannot lend another its bank code, nor its
+        # rules make false ordering or duplicate-id faults in another (review 41).
+        for k, v in enumerate(rules.values, start=1):
+            if isinstance(v, list) and v:
+                try:
+                    validate_ruleset({**data, "rules": v}, expected_id, source, sha256)
+                except RulesetError as e:
+                    problems.append(f"rules value {k} of {len(rules.values)}: "
+                                    + str(e).removeprefix(f"{source}: "))
+        raise RulesetError(f"{source}: " + "; ".join(dict.fromkeys(problems)))
     if not isinstance(rules, list) or not rules:
         raise RulesetError(f"{source}: " + "; ".join([*problems, "no rules"]))
     categories = {c.value for c in Category}
@@ -551,10 +561,14 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                         problems.append(f"{where}: a line_type rule must be protected")
                     if any(isinstance(p, dict) and p.get("stage") == "names" for p in rules[:i - 1]):
                         problems.append(f"{where}: a line_type rule must come before every names rule")
-            if vi == 0 and isinstance(r.get("id"), str):  # once per rule, as given
-                if r["id"] in seen:
-                    problems.append(f"{where}: duplicate id")
-                seen.add(r["id"])
+            if vi == 0:  # once per rule, as given; each value of a repeated id counts (review 41)
+                given = r.get("id")
+                ids = [x for x in (given.values if isinstance(given, _Repeated) else [given]) if isinstance(x, str)]
+                for rule_id in dict.fromkeys(ids):
+                    if rule_id in seen:
+                        problems.append(f"{where}: duplicate id {rule_id!r}" if isinstance(given, _Repeated)
+                                        else f"{where}: duplicate id")
+                seen.update(ids)
             if isinstance(r.get("direction"), str) and r["direction"] not in DIRECTIONS:
                 problems.append(f"{where}: direction {r['direction']!r} is not one of {list(DIRECTIONS)}")
             if isinstance(r.get("category"), str) and r["category"] not in categories:
@@ -662,6 +676,14 @@ def _category_order_problems(data: dict, rules: list, strict: bool = True) -> li
     review 35) declares the category order inside every money-in bucket its credit rules
     reach with more than one category, so rule order never picks one."""
     order = data.get("category_order")
+    if isinstance(order, _Repeated):
+        # Each list given is checked as the order it would be (review 41); the repeat is
+        # named with the table's other faults.
+        out: list[str] = []
+        for k, v in enumerate(order.values, start=1):
+            out += [f"category_order value {k} of {len(order.values)}: {p}"
+                    for p in _category_order_problems({**data, "category_order": v}, rules, strict)]
+        return out
     if not strict:
         return ["a frozen table has no category_order"] if "category_order" in data else []
     if order is None:
