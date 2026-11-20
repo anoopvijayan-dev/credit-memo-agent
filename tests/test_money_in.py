@@ -1081,3 +1081,24 @@ def test_a_record_the_reader_accepts_is_kept_before_a_bad_byte(tmp_path):
         ingest.load_csv(csv, today=date(2026, 6, 1))
     assert "line 2: amount '10000000000000.00' is £10,000,000,000,000 or more" in str(e.value)
     assert "line 3: not UTF-8" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_bad_byte_in_a_multiline_header_is_on_line_one(tmp_path):
+    """T04 review 33: a bad byte on the second line of a header whose quoted name runs over
+    two lines was reported as a new record on line 2."""
+    csv = tmp_path / "s.csv"
+    csv.write_bytes(b'id,date,"desc\nription\xe9",amount,balance\nT1,2026-01-01,A,1.00,1.00\n')
+    with pytest.raises(ingest.StatementError, match="line 1: not UTF-8"):
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+
+
+@pytest.mark.contracts
+def test_monzo_refuses_a_row_with_more_cells_than_columns(tmp_path):
+    """T04 review 33: surplus cells were ignored, so an unquoted 1,000.00 was imported as 1.00."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,1,000.00,GBP,1000.00\n")
+    with pytest.raises(monzo.MonzoImportError, match="line 2: more fields than the header has columns"):
+        monzo.convert(src, tmp_path / "o.csv")

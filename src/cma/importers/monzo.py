@@ -185,6 +185,11 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
 
     try:
         for i, r in raw_rows:
+            # More cells than the header has columns: an unquoted thousands separator ("1,000.00")
+            # splits an amount, so nothing in the row can be trusted (T04 review 33).
+            if None in r:
+                raise MonzoImportError(f"line {i}: more fields than the header has columns; an amount with a "
+                                       "comma in it must be quoted")
             # Currency, then the amount, before anything else about the row (T04 reviews 27-28):
             # a row in another currency is skipped whatever else it holds, and a GBP amount is
             # counted toward money in or out, even one past the line limit, before any other

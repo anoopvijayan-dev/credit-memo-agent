@@ -148,6 +148,10 @@ def read_data(data: bytes) -> tuple[list[str], list[tuple[int, dict]], CsvRecord
     if not physical or not physical[0].endswith(("\n", "\r")):
         raise CsvRecordError("line 1: " + NOT_UTF8.format(bad))
     header, rows, err = read_records(text, cut=True)
+    if not rows and err is None and (_ends_in_quotes(text) or not text.endswith(("\n", "\r"))):
+        # The bad byte is in the header, even one whose quoted name runs over several lines:
+        # its record starts on line 1 (T04 review 33).
+        raise CsvRecordError("line 1: " + NOT_UTF8.format(bad))
     if err is not None:
         return header, rows, err  # an earlier record the reader stopped on comes first
     at_line_end = text.endswith(("\n", "\r"))
