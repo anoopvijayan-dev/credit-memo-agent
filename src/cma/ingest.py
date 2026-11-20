@@ -271,15 +271,16 @@ def read_records(text: str, cut: bool = False) -> tuple[list[str], list[tuple[in
     except csv.Error as e:
         line = start(before) if "before" in locals() else 1
         if "field larger than field limit" in str(e):
-            err = CsvRecordError(f"line {line}: {TOO_LONG} (longer than {csv.field_size_limit():,} characters); "
-                                 "an amount or balance that long would be past the £10,000,000,000,000 limit",
-                                 too_long=True)
+            # Named as too long to read, and by its column where known; its length says nothing
+            # about its value, so no monetary conclusion is drawn (revision 29; T04 review 40).
+            limit = csv.field_size_limit()
+            row = _read_long_record("".join(physical[line - 1:]), header) if header is not None else None
+            long_ = [h for h in (header or []) if len((row or {}).get(h) or "") > limit]
+            which = f" ({', '.join(long_)})" if long_ else ""
+            err = CsvRecordError(f"line {line}: {TOO_LONG}{which}: longer than {limit:,} characters", too_long=True)
             if header is not None:
-                limit = csv.field_size_limit()
-                row = _read_long_record("".join(physical[line - 1:]), header)
+                # The field too long to read is never read as a value (T04 review 37).
                 err.line, err.row = line, row
-                # The field too long to read is never read as a value: named as too long to
-                # read, as revision 29 says, never as an amount at the limit (T04 review 37).
                 err.readable = {h for h in header if len((row or {}).get(h) or "") <= limit} if row else set()
         else:
             err = CsvRecordError(f"line {line}: not a readable CSV record ({e})")

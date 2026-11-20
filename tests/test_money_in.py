@@ -737,7 +737,8 @@ def test_an_amount_longer_than_the_csv_reader_reads_is_refused_naming_its_line(t
                    f"T2,2026-01-02,B,{huge},5.00\n")
     with pytest.raises(ingest.StatementError) as e:
         ingest.load_csv(csv, today=date(2026, 6, 1))
-    assert "line 3: a field is too long to read" in str(e.value) and "£10,000,000,000,000 limit" in str(e.value)
+    assert "line 3: a field is too long to read (amount): longer than 131,072 characters" in str(e.value)
+    assert "£10,000,000,000,000" not in str(e.value)  # its length says nothing of its value (T04 review 40)
     r = CliRunner().invoke(app, ["run", str(csv), "--yes", "--reviewer", "A"])
     assert r.exit_code != 0 and "line 3:" in r.output and "model call failed" not in r.output
 
@@ -770,7 +771,7 @@ def test_the_monzo_importer_refuses_an_oversized_field_naming_its_line(tmp_path)
                    f"tx_2,02/01/2026,09:00:00,Faster payment,ACME,{huge},GBP,90.00\n")
     # The field too long to read is the amount itself: it is named as too long to read, never
     # read as an amount (revision 29; T04 review 37).
-    with pytest.raises(monzo.MonzoImportError, match=r"line 4: a field is too long to read.*£10,000,000,000,000 limit"):
+    with pytest.raises(monzo.MonzoImportError, match=r"line 4: a field is too long to read \(Amount\): longer than 131,072 characters$"):
         monzo.convert(src, tmp_path / "o.csv")
     r = CliRunner().invoke(app, ["import", "monzo", str(src), "--out", str(tmp_path / "o.csv")])
     assert r.exit_code != 0 and "line 4: a field is too long to read" in " ".join(r.output.split())
