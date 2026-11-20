@@ -1,0 +1,54 @@
+```json
+{
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:195–322 checks canonical bytes, chain links and recorded hashes and names the first discrepant or incomplete entry. Lines 413–457 identify the owning thread across handles and distinguish a free-case read from a steady read under the gate. Lines 554–566 provide the integrity guard for sign-off, whose production integration is tracked in T27. Lines 580–695 enforce writer ownership and refuse inherited writes. Lines 716–758 enforce expected-position conflicts and gate torn-entry recovery. Lines 777–856 now re-check after opening the log and before every publication rename attempt. The runner logs confirm the named tamper, rebuilt-chain, torn-entry, contention, retry and CLI tests passed. The review also checked double submit, input boundaries, UTC, partial failure, OS permissions, case-folder isolation and CLI exit-code handling. The code performs no currency arithmetic or migration. P15 still fails because an append can continue after lock removal during a short write, and a reader under dual contention can name an entry without evidence that it was recorded or changed.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-58/invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 867,
+      "criterion": "P15",
+      "claim": "A short append write can continue changing the reader-visible log after the case lock is removed. The caller checks at line 832, and the loop performs every subsequent write without rechecking.",
+      "repro": "Start with one recorded entry. Instrument the first os.write to the append descriptor to write a prefix, unlink log.jsonl.lock, and return the prefix length. The loop writes the rest of entry 2, including its newline. The later head publication check raises CaseLocked, but the full entry line is already on disk."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 486,
+      "criterion": "P15",
+      "claim": "With both locks busy, verify treats an unknown recorded count as proof that a fault is within the recorded entries. An unreadable head therefore causes it to name entry 1 even when the read establishes no change, removal or reordering of a recorded entry.",
+      "repro": "Create a valid case log, hold its case lock in another thread, and hold its gate exclusively with a separate descriptor. Make only the head unreadable and leave the entry bytes untouched. Both head reads return the unreadable sentinel. The check from lines 288–293 has first_bad=1 and recorded=None, so the CLI exits 3 naming entry 1. P15 calls for a being-saved result with no entry claim if all retries see only this condition."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's consumer-facing claim says a held case with a torn tail exits 0 and says 'appending'. The implementation and the passing contracts test specify exit 4 and 'being saved'.",
+      "repro": "Read tests/test_case_log.py:1328 and its PASSED row in contracts-4.log. With another writer holding the case over a torn tail, the test expects exit 4 and a recorded-entry count. The same tail exits 3 after release."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1202,
+      "criterion": "P15",
+      "claim": "The producer cites the passing rapid-append test as exact proof of two commits during every retry and contention at fallback. The test starts a background loop and asserts that no check reports a bad entry. It does not force or assert either interleaving, so that specific test claim is not_proven.",
+      "repro": "Inspect the test and its PASSED row in specified-3.log. Scheduling can let the reader finish checks without observing two commits in any retry. A synchronized test forcing and asserting both conditions, run with `python -m pytest -v -m invariants tests/test_case_log.py -k p15_rapid_append_retry_interleaving`, would prove the cited scenario."
+    }
+  ],
+  "verdict": "fail"
+}
+```
