@@ -13,6 +13,7 @@ file order, because the balance chain is defined by it.
 
 from __future__ import annotations
 
+import codecs
 import csv
 import io
 import math
@@ -113,11 +114,16 @@ def read_data(data: bytes) -> tuple[list[str], list[tuple[int, dict]], CsvRecord
     falls in is still returned and checked, and the CsvRecordError names that record's first
     line, whatever the file's line endings (CR, LF or CRLF) and even when the record runs
     over several lines (T04 reviews 29-30). A bad byte in the header line is raised."""
+    # A byte-order mark is set aside first, so the bad byte's offset and the slice before it
+    # are both taken in the same bytes (T04 review 31); the offset reported counts the mark.
+    bom = len(codecs.BOM_UTF8) if data.startswith(codecs.BOM_UTF8) else 0
+    body = data[bom:]
     try:
-        return read_records(data.decode("utf-8-sig"))  # tolerate a byte-order mark
+        return read_records(body.decode("utf-8"))
     except UnicodeDecodeError as e:
         bad = e.start
-    text = data[:bad].decode("utf-8-sig")
+    text = body[:bad].decode("utf-8")
+    bad += bom
     physical = list(io.StringIO(text, newline=""))
     if not physical or not physical[0].endswith(("\n", "\r")):
         raise CsvRecordError("line 1: " + NOT_UTF8.format(bad))

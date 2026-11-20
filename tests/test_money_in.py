@@ -1025,3 +1025,29 @@ def test_a_bad_byte_in_a_multiline_record_names_the_record_start(tmp_path):
     with pytest.raises(ingest.StatementError) as e:
         ingest.load_csv(csv, today=date(2026, 6, 1))
     assert "line 3: not UTF-8" in str(e.value) and "line 4" not in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_bad_byte_after_a_byte_order_mark_still_reads_the_lines_before_it(tmp_path):
+    """T04 review 31: the bad byte's offset was taken after the byte-order mark was dropped
+    and used to slice bytes that still had it, cutting off the record before the bad one."""
+    csv = tmp_path / "s.csv"
+    csv.write_bytes(b"\xef\xbb\xbfid,date,description,amount,balance\n"
+                    b"T1,2026-01-01,A,10000000000000.00,1.00\n"
+                    b"T2,2026-01-02,CAF\xe9,1.00,2.00\n")
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    shown = str(e.value)
+    assert "line 2: amount '10000000000000.00' is £10,000,000,000,000 or more" in shown
+    assert "line 3: not UTF-8 (byte 94)" in shown
+
+
+@pytest.mark.contracts
+def test_cma_import_monzo_prints_a_refusal_quoting_markup_as_text(tmp_path):
+    """T04 review 31: the refusal was printed as Rich markup, so a cell holding a closing tag
+    raised a markup error and the refusal (its line, the flow limit) was lost."""
+    src = tmp_path / "m.csv"
+    src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,[/red],GBP,1.00\n")
+    r = CliRunner().invoke(app, ["import", "monzo", str(src), "--out", str(tmp_path / "o.csv")])
+    flat = " ".join(r.output.split())
+    assert r.exit_code == 2 and "line 2: Amount '[/red]'" in flat, r.output

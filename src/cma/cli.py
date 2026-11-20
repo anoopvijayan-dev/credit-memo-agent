@@ -94,7 +94,7 @@ def run(
         # checkpoint would leave the review id taken, so a corrected retry could not reuse it.
         active_ruleset()
     except RulesetError as e:
-        console.print(f"[red]Refused.[/red] {e}")
+        console.print(f"[red]Refused.[/red] {escape(str(e))}")
         raise typer.Exit(code=2) from e
     thread_id = thread or str(uuid.uuid4())
     with _checkpointer(checkpoint_db) as saver:
@@ -120,7 +120,7 @@ def run(
                 console.print(f"[red]Refused, no figures shown.[/red] {escape(str(e))}")
                 raise typer.Exit(code=6) from e
             except Exception as e:  # the model provider: network, auth, cut-off reply
-                console.print(f"[red]The model call failed[/red] ({type(e).__name__}): {e}")
+                console.print(f"[red]The model call failed[/red] ({type(e).__name__}): {escape(str(e))}")
                 raise typer.Exit(code=4) from e
         if checkpoint_db:
             console.print(f"review id: {thread_id} (kept in {checkpoint_db}; `cma resume {thread_id}` picks it up)")
@@ -275,7 +275,7 @@ def _checkpointer(path: Path | None):
     except typer.Exit:
         raise  # a RuntimeError too: its own exit code stands (T04 review 25)
     except RuntimeError as e:
-        console.print(f"[red]{e}[/red]")
+        console.print(f"[red]{escape(str(e))}[/red]")
         raise typer.Exit(code=2) from e
 
 
@@ -292,7 +292,7 @@ def _review(graph, cfg, state, reviewer, yes, out, lock: Path | None = None):
     try:
         ruleset = ruleset_used(state)
     except RulesetError as e:
-        console.print(f"[red]Refused, nothing recorded.[/red] {e}")
+        console.print(f"[red]Refused, nothing recorded.[/red] {escape(str(e))}")
         raise typer.Exit(code=2) from e
 
     _print_metrics(state["metrics"])
@@ -439,7 +439,7 @@ def import_monzo(
     try:
         r = monzo.convert(export, out, opening_balance)
     except monzo.MonzoImportError as e:
-        console.print(f"[red]Import refused.[/red] {e}")
+        console.print(f"[red]Import refused.[/red] {escape(str(e))}")  # cells are text, never markup (T04 review 31)
         raise typer.Exit(code=2) from e
     console.print(
         f"wrote {out}: {r.rows} transactions, {r.start} to {r.end}; "
