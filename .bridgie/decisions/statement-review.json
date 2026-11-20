@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 152,
+  "next_id": 153,
   "decisions": [
     {
       "id": "D1",
@@ -3091,6 +3091,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T04:42:35.842Z"
+    },
+    {
+      "id": "D152",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Reviewed R4 as supplied in the review packet. The worktree copy at .bridgie/specs/statement-review/requirements.md:19 has the original recognition clause only. The shipped lists are in src/cma/rules/v2.yaml:74,117,137,146,155,163,211,254,277,299,304,339,356,373,394. Reviewed longest alternatives and per-occurrence containment at src/cma/categorise.py:783,805,822,839, the returned-payment code and cue precedence at :892, and override, profile, firm-rule and candidate handling at :917 and :959. Strictly increasing match lengths make containment acyclic, and the per-occurrence filter now preserves the rail, cash and trailing gateway candidates in the packet's revised example. Traced ruleset selection and line provenance through src/cma/graph.py:188,221,251 and src/cma/cli.py:229. Checked repeat classification, concurrent output and partial failure, signed amounts and Unicode boundaries, the CSV date and amount boundary, override authority, case-local inputs and evidence consumers. Runner logs confirm the per-list provenance tests, CLI, containment regression, checkpoint replay, rollback, both offline evals and the mixed-input categoriser benchmark. R4 fails because a non-v1 table carrying a prohibited exception can be refused without naming its rule.); major: The exception checks trust the table's frozen flag. A non-v1 table can skip them and receive a table-level refusal that omits the offending rule, contrary to R4's requirement to name it. at src/cma/categorise.py:436; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T04:47:05.075Z"
     }
   ]
 }
