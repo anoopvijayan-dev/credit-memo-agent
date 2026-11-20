@@ -202,15 +202,15 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
                 raise MonzoImportError(f"line {i}: Currency {r.get('Currency')!r} is not a currency code{shifted}")
             amount = _money(r["Amount"], "Amount", i, limit=False)
             reading = amount
-            # More cells than the header has columns: an unquoted thousands separator ("1,000.00")
-            # splits an amount, so the row cannot be trusted. Checked after the currency and the
-            # amount, as revision 29 orders them (T04 reviews 33-34).
-            if None in r:
-                raise MonzoImportError(f"line {i}: more fields than the header has columns; an amount with a "
-                                       "comma in it must be quoted")
             if at_limit(amount):
                 raise MonzoImportError(f"line {i}: Amount {r['Amount']!r} is {AT_LIMIT}; no figure could be "
                                        "reported to the penny")
+            # More cells than the header has columns: an unquoted thousands separator ("1,000.00")
+            # splits an amount, so the row cannot be trusted. Checked after the currency, the
+            # amount and its limit, as revision 29 orders them (T04 reviews 33-35).
+            if None in r:
+                raise MonzoImportError(f"line {i}: more fields than the header has columns; an amount with a "
+                                       "comma in it must be quoted")
             tid = (r.get("Transaction ID") or "").strip()
             if not tid:
                 raise MonzoImportError(f"line {i}: empty Transaction ID")

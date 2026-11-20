@@ -1122,3 +1122,15 @@ def test_monzo_reads_currency_and_amount_before_the_surplus_cell_check(tmp_path)
         monzo.convert(src, tmp_path / "o.csv")
     assert "money in totals £10,000,000,000,000 or more" in str(e.value)
     assert "line 3: more fields than the header has columns" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_monzo_refuses_an_amount_past_the_line_limit_before_a_surplus_cell(tmp_path):
+    """T04 review 35: the surplus-cell check came before the amount's own line limit, so an
+    amount that must itself be refused was reported as a surplus field instead."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,10000000000000.00,GBP,1.00,extra\n")
+    with pytest.raises(monzo.MonzoImportError, match=r"line 2: Amount '10000000000000\.00' is £10,000,000,000,000"):
+        monzo.convert(src, tmp_path / "o.csv")
