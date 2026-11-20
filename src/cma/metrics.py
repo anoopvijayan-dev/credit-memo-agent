@@ -5,6 +5,15 @@ behind it, and the memo may only quote numbers that appear here. A metric that c
 be computed from the statement has value None and says why; the policy decides what a
 missing figure means (see `when_missing` in the policy file), not this module.
 
+Money is added up in integer pence (R2): each amount is turned into whole pence once,
+every sum and comparison is of pence, and a figure is turned back into pounds only when
+it is reported. An amount with a fraction of a penny is refused, never rounded.
+
+Money in (R1, R3): every credit is in exactly one bucket (models.CREDIT_BUCKET), M2 is
+trading receipts and M19-M25 the other seven buckets, and together they make M17 to the
+penny. A case where they do not is refused with ReconciliationError, naming the
+difference in pence and the lines involved; no figure is returned for it.
+
 Returned direct debits: the categoriser links each one to the debit it undoes. Sums
 here use the *effective* category, so a reversal of a loan repayment reduces debt
 service, and a bounced-then-re-presented payment counts once.
@@ -13,11 +22,20 @@ service, and a bounced-then-re-presented payment counts once.
 from __future__ import annotations
 
 import calendar
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, timedelta
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 
 from .categorise import OUTGOING_TRANSFER, counterparty
-from .models import REVENUE_CATEGORIES, Category, Metric, Statement, Transaction
+from .models import (
+    CREDIT_BUCKET,
+    REVENUE_CATEGORIES,
+    Bucket,
+    Category,
+    Metric,
+    Statement,
+    Transaction,
+)
 
 # HMRC VAT stagger groups: the months in which a VAT quarter ends.
 VAT_STAGGERS: dict[int, tuple[int, ...]] = {1: (3, 6, 9, 12), 2: (1, 4, 7, 10), 3: (2, 5, 8, 11)}
@@ -29,6 +47,62 @@ FINANCING = {Category.LOAN_REPAYMENT, Category.LOAN_DRAWDOWN, Category.OWNER_DRA
 # never moves either figure (R10).
 NON_TRADING_IN = {Category.OTHER, Category.OWN_ACCOUNT_TRANSFER, Category.DIRECTOR_FUNDING, Category.REFUND_IN,
                   Category.HMRC_REPAYMENT, Category.OTHER_EXPLAINED_IN}
+
+
+# The figure each money-in bucket is reported as. Trading receipts are M2 (its id and name
+# are kept so signed memos still read); the other seven are new (R1).
+BUCKET_METRICS: dict[Bucket, tuple[str, str, str]] = {
+    Bucket.OWN_ACCOUNT_IN: ("M19", "Own-account transfers in", "Credits moved in from the applicant's own pots, savings or accounts."),
+    Bucket.DIRECTOR_FUNDING: ("M20", "Director and shareholder funding",
+                              "Credits from directors or shareholders, and capital introduced."),
+    Bucket.LENDING_DRAWDOWNS: ("M21", "Lending drawdowns", "Loans and merchant cash advances paid in."),
+    Bucket.REFUNDS_RETURNED: ("M22", "Refunds and returned payments in",
+                              "Refunds, reversals and direct debits returned unpaid."),
+    Bucket.HMRC_REPAYMENTS: ("M23", "HMRC repayments", "Credits from HMRC."),
+    Bucket.OTHER_EXPLAINED_IN: ("M24", "Other explained money in", "Grants, insurance claims, interest and cashback."),
+    Bucket.UNEXPLAINED: ("M25", "Unexplained money in",
+                         "Credits no rule, firm rule or override explains, and credits whose wording is ambiguous."),
+}
+# Left out of the denominator M16 and M26 share: borrowing, money that only undoes a
+# payment, and the applicant's own money moving between its accounts.
+NOT_IN_SHARE = {Category.LOAN_DRAWDOWN, Category.RETURNED_DD, Category.OWN_ACCOUNT_TRANSFER}
+
+
+class ReconciliationError(ValueError):
+    """The money-in buckets do not sum to total money in, or a credit is in no bucket or
+    in more than one (R3). Carries the difference in pence and the ids of the lines."""
+
+    def __init__(self, difference_pence: int, lines: list[str]):
+        self.difference_pence = difference_pence
+        self.lines = lines
+        super().__init__(
+            f"the money-in buckets do not reconcile with total money in: they differ by {difference_pence} "
+            f"pence, and {len(lines)} line(s) are in no bucket, in more than one, or counted as trading "
+            f"receipts without being money in: {', '.join(lines) or 'none'}. No figures are shown for this case."
+        )
+
+
+def pence(t: Transaction) -> int:
+    """The line's amount in whole pence. A fraction of a penny is refused, never rounded."""
+    try:
+        p = Decimal(repr(t.amount)) * 100
+    except InvalidOperation:
+        p = None
+    if p is None or not p.is_finite() or p != p.to_integral_value():
+        raise ValueError(f"line {t.id}: amount is not a whole number of pence")
+    return int(p)
+
+
+def _ratio(num: int | float, den: int | float, places: int, scale: int = 1) -> float:
+    """num / den * scale, rounded half to even from the exact quotient of the pence, so a
+    ratio of whole pence never rounds the wrong way through a binary float."""
+    q = Decimal(num) * scale / Decimal(den)
+    return float(q.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_EVEN))
+
+
+def _gbp(p: int | float) -> float:
+    """Pence back to pounds, for reporting only."""
+    return round(p / 100, 2)
 
 
 def _month(d: date) -> str:
@@ -111,6 +185,11 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
         raise ValueError("vat_stagger must be 1, 2 or 3")
 
     by_id = statement.by_id()
+    for t in txns:
+        pence(t)  # refuse a fraction of a penny before any figure is computed
+
+    def total(lines) -> int:
+        return sum(pence(t) for t in lines)
 
     def eff(t: Transaction) -> Category:
         """A returned DD counts in the category of the debit it reverses."""
@@ -121,14 +200,14 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
 
     start, end = statement.start, statement.end
     n_months = months_covered(start, end)
-    period_months = ((end - start).days + 1) / DAYS_PER_MONTH
+    period_days = (end - start).days + 1  # in months: period_days / DAYS_PER_MONTH = period_days * 48 / 1461
 
     # Revenue
     rev = [t for t in txns if t.category in REVENUE_CATEGORIES]
-    total_revenue = sum(t.amount for t in rev)
-    rev_by_month: dict[str, float] = defaultdict(float)
+    total_revenue = total(rev)
+    rev_by_month: dict[str, int] = defaultdict(int)
     for t in rev:
-        rev_by_month[_month(t.date)] += t.amount
+        rev_by_month[_month(t.date)] += pence(t)
     whole = full_months(start, end)
     trend: float | None = None
     trend_note = (
@@ -138,10 +217,10 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
     if len(whole) < 6:
         trend_note = "Needs more whole calendar months than this statement has."
     else:
-        first3 = sum(rev_by_month.get(m, 0.0) for m in whole[:3]) / 3
-        last3 = sum(rev_by_month.get(m, 0.0) for m in whole[-3:]) / 3
+        first3 = sum(rev_by_month.get(m, 0) for m in whole[:3])  # quarters of equal length: the
+        last3 = sum(rev_by_month.get(m, 0) for m in whole[-3:])  # averages' 1/3 cancels
         if first3 > 0:
-            trend = round((last3 - first3) / first3 * 100, 2)
+            trend = _ratio(last3 - first3, first3, 2, 100)
         else:
             trend_note = "No revenue in the earliest quarter of whole months, so there is no base to compare with."
 
@@ -158,8 +237,8 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
     drawings = of(Category.OWNER_DRAWINGS)
     vat = of(Category.HMRC_VAT)
     paye = of(Category.HMRC_PAYE)
-    debt_service = round(-sum(t.amount for t in loan), 2)
-    owner_drawings = round(-sum(t.amount for t in drawings), 2)
+    debt_service = -total(loan)
+    owner_drawings = -total(drawings)
 
     # Operating cash flow is trading cash: money out that is not financing, and money in
     # that is revenue or that reverses an operating payment. Money in that nobody has
@@ -181,37 +260,36 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
     # Money sent to someone by transfer and sent back by them (a savings account, a
     # friend, a round trip) nets off: their unexplained credits offset the transfers to
     # them, but never by more than was sent, so the round trip can't add cash.
-    sent: dict[str, float] = defaultdict(float)
+    sent: dict[str, int] = defaultdict(int)
     for t in txns:
         if t.amount < 0 and eff(t) not in FINANCING and OUTGOING_TRANSFER.search(t.description.upper()):
-            sent[counterparty(t.description)] += -t.amount
+            sent[counterparty(t.description)] += -pence(t)
     back: dict[str, list[Transaction]] = defaultdict(list)
     for t in txns:
         if t.amount > 0 and t.category in NON_TRADING_IN and counterparty(t.description) in sent:
             back[counterparty(t.description)].append(t)
-    offset = sum(min(sum(t.amount for t in ts), sent[cp]) for cp, ts in back.items())
+    offset = sum(min(total(ts), sent[cp]) for cp, ts in back.items())
     operating += [t for ts in back.values() for t in ts]
-    net_operating = round(sum(t.amount for t in operating if not (t.amount > 0 and t.category in NON_TRADING_IN))
-                          + offset, 2)
+    net_operating = total(t for t in operating if not (t.amount > 0 and t.category in NON_TRADING_IN)) + offset
     dscr: float | None = None
     dscr_note = (
         "Historical cover of existing debt only: net operating cash flow after owner drawings, "
         "divided by debt service. It does not include the facility being applied for."
     )
     if debt_service > 0:
-        dscr = round((net_operating - owner_drawings) / debt_service, 4)
+        dscr = _ratio(net_operating - owner_drawings, debt_service, 4)
     else:
         dscr_note = "No loan or finance repayments in the statement, so there is no existing debt to cover."
 
     # Concentration: only knowable for customers who pay by named transfer.
     transfers = [t for t in txns if t.category == Category.REVENUE_TRANSFER]
-    by_payer: dict[str, float] = defaultdict(float)
+    by_payer: dict[str, int] = defaultdict(int)
     for t in transfers:
-        by_payer[counterparty(t.description)] += t.amount
+        by_payer[counterparty(t.description)] += pence(t)
     top_share: float | None = None
     top_note = "Largest payer's share of customer transfer revenue, payers named after removing invoice references."
     if by_payer and sum(by_payer.values()) > 0:
-        top_share = round(max(by_payer.values()) / sum(by_payer.values()) * 100, 2)
+        top_share = _ratio(max(by_payer.values()), sum(by_payer.values()), 2, 100)
     else:
         top_note = "No customer transfers: revenue is card or gateway settled, which hides who the customers are."
 
@@ -242,15 +320,29 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
                 else:
                     late_vat += 1
 
-    # Inflows nobody has explained.
-    inflows = [t for t in txns if t.amount > 0 and eff(t) not in (Category.LOAN_DRAWDOWN,)
-               and t.category != Category.RETURNED_DD]
-    unclassified = [t for t in inflows if t.category in NON_TRADING_IN]
-    total_in = sum(t.amount for t in inflows)
-    unclassified_share = round(sum(t.amount for t in unclassified) / total_in * 100, 2) if total_in else None
+    # Money in, by bucket (R1). Every credit goes to the bucket its category maps to; M2's
+    # lines (REVENUE_CATEGORIES) are the trading receipts bucket.
+    credits = [t for t in txns if t.amount > 0]
+    buckets: dict[Bucket, list[Transaction]] = {b: [] for b in BUCKET_METRICS}
+    for t in credits:
+        b = CREDIT_BUCKET.get(t.category)
+        if b in buckets:
+            buckets[b].append(t)
+    money_in = total(credits)
+    _reconcile(credits, rev, buckets, money_in, total_revenue, total, pos)
+    cash = [t for t in rev if t.category == Category.CASH_DEPOSIT]
 
-    def g(x: float | None) -> float | None:
-        return None if x is None else round(x, 2)
+    # M16 and M26 share one denominator: money in less lending drawdowns, returned DDs and
+    # own-account transfers. A credit an ambiguous verdict left unexplained is in both numerators.
+    inflows = [t for t in credits if eff(t) not in NOT_IN_SHARE and t.category not in NOT_IN_SHARE]
+    unclassified = [t for t in inflows if t.category in NON_TRADING_IN]
+    unexplained = [t for t in inflows if t.category == Category.OTHER]
+    total_in = total(inflows)
+    unclassified_share = _ratio(total(unclassified), total_in, 2, 100) if total_in else None
+    unexplained_share = _ratio(total(unexplained), total_in, 2, 100) if total_in else None
+
+    def g(p: int | float | None) -> float | None:
+        return None if p is None else _gbp(p)
 
     return [
         Metric(id="M1", name="Months covered", value=n_months, unit="months",
@@ -260,12 +352,12 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
                method="Card and gateway settlements, transfers in that carry an invoice reference, and cash paid in.",
                evidence=[t.id for t in rev]),
         Metric(id="M3", name="Average monthly revenue",
-               value=g(total_revenue / period_months), unit="GBP",
+               value=_ratio(total_revenue * 1461, period_days * 48 * 100, 2), unit="GBP",
                method="Total revenue divided by the exact length of the period in months (quiet months still count).",
                evidence=[t.id for t in rev]),
         Metric(id="M4", name="Revenue trend", value=trend, unit="pct", method=trend_note,
                evidence=[t.id for t in rev if _month(t.date) in whole[:3] + whole[-3:]] if trend is not None else []),
-        Metric(id="M5", name="Lowest balance", value=g(lowest.balance), unit="GBP",
+        Metric(id="M5", name="Lowest balance", value=round(lowest.balance, 2), unit="GBP",
                method="Lowest running balance after any transaction in the period.", evidence=[lowest.id]),
         Metric(id="M6", name="Days overdrawn", value=len(overdrawn), unit="days",
                method="Calendar days that closed overdrawn, carrying the balance over days with no transactions.",
@@ -273,30 +365,57 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
         Metric(id="M7", name="Returned direct debits", value=len(returned), unit="count",
                method="Lines marked as unpaid direct debits.",
                evidence=[t.id for t in returned]),
-        Metric(id="M8", name="Debt service", value=debt_service, unit="GBP",
+        Metric(id="M8", name="Debt service", value=g(debt_service), unit="GBP",
                method="Loan and finance repayments, net of any that were returned unpaid.",
                evidence=[t.id for t in loan]),
-        Metric(id="M9", name="Net operating cash flow", value=net_operating, unit="GBP",
+        Metric(id="M9", name="Net operating cash flow", value=g(net_operating), unit="GBP",
                method=("Revenue in, minus all money out, excluding loans and drawings. Money in that is not "
                        "explained as trading is left out, except that money sent back by someone the "
                        "business paid by transfer nets off what it sent them."),
                evidence=[t.id for t in operating]),
         Metric(id="M10", name="Debt service cover", value=dscr, unit="ratio", method=dscr_note,
                evidence=[t.id for t in operating + drawings + loan] if dscr is not None else []),
-        Metric(id="M11", name="Owner drawings", value=owner_drawings, unit="GBP",
+        Metric(id="M11", name="Owner drawings", value=g(owner_drawings), unit="GBP",
                method="Transfers to the owner or directors and dividends.", evidence=[t.id for t in drawings]),
-        Metric(id="M12", name="VAT paid", value=round(-sum(t.amount for t in vat), 2), unit="GBP",
+        Metric(id="M12", name="VAT paid", value=g(-total(vat)), unit="GBP",
                method="Payments to HMRC VAT, net of any returned unpaid.", evidence=[t.id for t in vat]),
         Metric(id="M13", name="Late or missed VAT payments", value=late_vat, unit="count",
                method=vat_note, evidence=[t.id for t in vat] if late_vat is not None else []),
-        Metric(id="M14", name="PAYE paid", value=round(-sum(t.amount for t in paye), 2), unit="GBP",
+        Metric(id="M14", name="PAYE paid", value=g(-total(paye)), unit="GBP",
                method="Payments to HMRC PAYE/NI, net of any returned unpaid.", evidence=[t.id for t in paye]),
         Metric(id="M15", name="Top customer share of transfer revenue", value=top_share, unit="pct",
                method=top_note, evidence=[t.id for t in transfers]),
         Metric(id="M16", name="Non-trading money in (share)", value=unclassified_share, unit="pct",
-               method="Share of money in (excluding loan drawdowns and returned DDs) that is not revenue; it is left out of operating cash flow.",
+               method=("Share of money in, less lending drawdowns, returned direct debits and own-account "
+                       "transfers, that is not trading receipts; it is left out of operating cash flow."),
+               evidence=[t.id for t in inflows]),
+        Metric(id="M17", name="Total money in", value=g(money_in), unit="GBP",
+               method="Every credit in the period; the money-in buckets (M2, M19-M25) add up to it.",
+               evidence=[t.id for t in credits]),
+        Metric(id="M18", name="Cash deposits within trading receipts", value=g(total(cash)), unit="GBP",
+               method="Cash paid in at a counter or machine. Part of M2, not added to it again.",
+               evidence=[t.id for t in cash]),
+        *[Metric(id=fid, name=name, value=g(total(buckets[b])), unit="GBP", method=method,
+                 evidence=[t.id for t in buckets[b]])
+          for b, (fid, name, method) in BUCKET_METRICS.items()],
+        Metric(id="M26", name="Unexplained share of money in", value=unexplained_share, unit="pct",
+               method=("Unexplained money in (M25) as a share of money in less lending drawdowns, returned "
+                       "direct debits and own-account transfers, the denominator M16 uses."),
                evidence=[t.id for t in inflows]),
     ]
+
+
+def _reconcile(credits, rev, buckets, money_in, trading, total, pos) -> None:
+    """R3: the buckets sum to total money in to the penny, and every credit is in exactly
+    one bucket's evidence. Otherwise refuse, naming the difference and the lines."""
+    placed = [*rev, *(t for ts in buckets.values() for t in ts)]
+    counts = Counter(t.id for t in placed)
+    credit_ids = Counter(t.id for t in credits)
+    involved = {t.id for t in credits if counts[t.id] != 1 or credit_ids[t.id] != 1}
+    involved |= {t.id for t in placed if t.amount <= 0}
+    difference = money_in - (trading + sum(total(ts) for ts in buckets.values()))
+    if difference or involved:
+        raise ReconciliationError(difference, sorted(involved, key=lambda i: pos.get(i, len(pos))))
 
 
 def as_table(metrics: list[Metric]) -> str:

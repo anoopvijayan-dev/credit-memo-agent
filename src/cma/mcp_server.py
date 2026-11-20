@@ -72,7 +72,9 @@ def statement_summary(path: str) -> dict:
 
 @server.tool()
 def compute_metrics(path: str, vat_stagger: int | None = None) -> list[dict]:
-    """Categorise a statement and compute the cited metrics table (M1..M16).
+    """Categorise a statement and compute the cited metrics table (M1..M26), money-in buckets
+    included. A statement whose buckets do not reconcile is refused (ValueError), naming the
+    difference in pence and the line ids.
     vat_stagger is the HMRC stagger group (1, 2 or 3); without it M13 is n/a."""
     s = categorise.categorise(_statement(path))
     return [m.model_dump() for m in metrics.compute(s, vat_stagger=vat_stagger)]

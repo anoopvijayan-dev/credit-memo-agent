@@ -20,6 +20,7 @@ from .categorise import RulesetError, active_ruleset
 from .graph import build, evidence_record, ruleset_used, sqlite_checkpointer
 from .ingest import StatementError
 from .llm import get_llm
+from .metrics import ReconciliationError
 from .policy import PolicyError
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -94,6 +95,9 @@ def run(
         except (StatementError, PolicyError, RulesetError) as e:
             console.print(f"[red]Refused.[/red] {e}")
             raise typer.Exit(code=2) from e
+        except ReconciliationError as e:  # R3: no figures for a case whose buckets do not add up
+            console.print(f"[red]Refused, no figures shown.[/red] {e}")
+            raise typer.Exit(code=6) from e
         except Exception as e:  # the model provider: network, auth, cut-off reply
             console.print(f"[red]The model call failed[/red] ({type(e).__name__}): {e}")
             raise typer.Exit(code=4) from e
