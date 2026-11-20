@@ -694,3 +694,33 @@ def test_the_cli_says_which_flow_and_which_lines_reached_the_limit_however_many_
     assert f"line {3 + 25 + 1}: amount '10000000000000.00' is £10,000,000,000,000 or more" in shown
     r = CliRunner().invoke(app, ["run", str(csv), "--yes", "--reviewer", "A"])
     assert r.exit_code != 0 and "money in totals" in r.output and "line 29: amount" in r.output
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("column", ["amount", "balance"])
+def test_a_money_column_named_twice_is_refused_not_overwritten(tmp_path, column):
+    """T04 review 14: a second column of the same name would replace the first's value on
+    every line before any check, hiding an amount at the limit; both readers refuse it."""
+    from cma.importers import monzo
+
+    header = ["id", "date", "description", "amount", "balance", column]
+    values = {"amount": "10000000000000.00", "balance": "10000000000000.00"}
+    row = ["T1", "2026-01-01", "A", "5.00", "5.00", "5.00"]
+    row[3 if column == "amount" else 4] = values[column]
+    csv = tmp_path / "s.csv"
+    csv.write_text(",".join(header) + "\n" + ",".join(row) + "\n")
+    with pytest.raises(ingest.StatementError, match=f"named more than once: {column}"):
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+
+    src = tmp_path / "m.csv"
+    src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance,Amount\n"
+                   "tx_1,01/01/2026,09:00:00,Faster payment,ACME,10000000000000.00,GBP,90.00,-10.00\n")
+    with pytest.raises(monzo.MonzoImportError, match="named more than once: Amount"):
+        monzo.convert(src, tmp_path / "o.csv")
+
+
+def test_blank_trailing_columns_are_still_accepted(tmp_path):
+    """Exports with several empty trailing header cells are not refused as duplicates."""
+    csv = tmp_path / "s.csv"
+    csv.write_text("id,date,description,amount,balance,,\nT1,2026-01-01,A,5.00,5.00,,\n")
+    assert len(ingest.load_csv(csv, today=date(2026, 6, 1)).transactions) == 1

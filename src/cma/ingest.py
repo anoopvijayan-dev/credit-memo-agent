@@ -99,6 +99,11 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         raise StatementError(path, [
             f"not UTF-8 (byte {e.start}); re-save it as 'CSV UTF-8' (Excel) and try again"
         ]) from e
+    # A column named twice would let the second silently replace the first's value on every
+    # line, before any check (R2, T04 review 14): refused, naming the column.
+    twice = sorted({h for h in header if h and header.count(h) > 1})
+    if twice:
+        raise StatementError(path, [f"column(s) named more than once: {', '.join(twice)}; keep one of each"])
     missing = [c for c in REQUIRED if c not in header]
     if missing:
         hint = ""

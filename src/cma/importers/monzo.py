@@ -149,6 +149,9 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
         reader = csv.DictReader(f)
         header = [h.strip() for h in (reader.fieldnames or [])]
         reader.fieldnames = header
+        twice = sorted({h for h in header if h and header.count(h) > 1})  # T04 review 14
+        if twice:
+            raise MonzoImportError(f"{src}: column(s) named more than once: {', '.join(twice)}; keep one of each")
         missing = [c for c in REQUIRED if c not in header]
         if missing:
             raise MonzoImportError(
