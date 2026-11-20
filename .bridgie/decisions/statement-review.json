@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 179,
+  "next_id": 180,
   "decisions": [
     {
       "id": "D1",
@@ -3618,6 +3618,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T07:34:18.627Z"
+    },
+    {
+      "id": "D179",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest-match containment, bank-code precedence, cash and payment-method conflicts, both-stage candidates, profile names and override precedence through src/cma/categorise.py:929,957,1044,1064,1111,1222. Traced CLI, MCP and legacy evidence consumers through src/cma/cli.py:77,228, src/cma/mcp_server.py:77,84 and src/cma/graph.py:188,210,250. Reviewed repeat submission, concurrent invocations, signed GBP inputs and date-only ingestion, Unicode boundaries, validation before checkpoint creation, ruleset allowlisting, case-local inputs and rollback. The runner logs confirm that the per-list, CLI, idempotency, legacy replay and dual-ruleset eval tests passed. R4 fails because a malformed YAML field can prevent the loader from naming that field and reporting independent rule faults.); major: A scalar with an unsupported YAML tag aborts table construction before validation can name its rule and field or report independent rule faults. at src/cma/categorise.py:761; major: A recursive YAML alias in a rule field makes the malformed-value scan recurse until it fails, discarding diagnostics for other rules even when the changed-v1 refusal is reported first. at src/cma/categorise.py:745; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T07:38:20.049Z"
     }
   ]
 }
