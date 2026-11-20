@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 220,
+  "next_id": 222,
   "decisions": [
     {
       "id": "D1",
@@ -4430,6 +4430,45 @@
       "decided_at": "2026-11-20T12:25:54.098Z",
       "effect": "changes requested: Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); this clarification is the recommended reading. Clarify P2 (and R1, R11, R16 where they cite it): a sum figure is one whose value is the total of its evidence lines' amounts. An outflow figure (debt service M8, owner drawings M11, VAT paid M12, PAYE paid M14 and every other figure the memo shows as money paid out) is reported as a positive amount, and the signed amounts of its evidence lines total the figure negated, to the penny. A derived figure (net operating cash flow M9, ratios, averages, counts) is not a sum figure: its evidence is every line its calculation reads, and P2 does not ask those lines to total it; M9 says in its evidence note which lines count only in part (a returned-transfer offset capped at what was sent). Every money-in bucket, M17, M18 and every monthly cell is a sum figure with signed evidence totalling it. Keep everything else in revision 23.; re-run bridgie shape statement-review",
       "created_at": "2026-11-20T12:25:54.083Z"
+    },
+    {
+      "id": "D220",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-24"
+      },
+      "context": "Revision 24 (D219) says which figures are sums. D219 says that every monthly cell is a sum figure with signed evidence totalling it, and also that every figure the memo shows as money paid out is an outflow figure: a positive amount whose lines' signed amounts total it negated, as M8, M11, M12 and M14 are. R11's monthly cells include money out, and three cells that add no lines up (average and lowest end-of-day balance, days overdrawn), which revision 24 makes derived figures whatever you answer. The design makes the money-out cell an outflow figure: a monthly table then shows money out beside money in as a positive amount, as a bank statement's paid-out column does, with the same sign rule as M8 to M14. The alternative shows it as a negative amount that its lines total, so every flow cell totals its lines with no sign rule, but the money-out column is negative while M8 to M14 are positive. T06, which builds the monthly summary, has not started, so neither costs anything yet.",
+      "options": [
+        "Money out as an outflow figure: a positive amount whose lines total it negated, like M8 (design default)",
+        "Money out as a signed sum: a negative amount that its lines total"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T12:37:16.789Z"
+    },
+    {
+      "id": "D221",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Approve the design and requirements (R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R18 R19 R20 R21 R22 R23 R24 R25 R26 R27 R28 R29 R30 R31 R32 R33 R34 R35 R36 R37 R38 R39 R40 R41 R42 R43 R44 R45 R46 R47 R48 R50 R51 R52 R53 R54 R55 R56 P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20) for 'statement-review'? Branch bridgie/statement-review from claude/busy-ride-h88y5r.",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T12:37:16.805Z"
     }
   ]
 }
