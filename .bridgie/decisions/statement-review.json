@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 134,
+  "next_id": 135,
   "decisions": [
     {
       "id": "D1",
@@ -2735,6 +2735,26 @@
       "decided_at": "2026-11-20T02:22:05.336Z",
       "effect": "design approved",
       "created_at": "2026-11-20T02:22:03.213Z"
+    },
+    {
+      "id": "D134",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed revision 14 against the checked-out code. Canonical entry bytes, chain order, head comparison and torn-entry diagnostics are implemented in src/cma/case.py:169–332. Holder, free-case, steady and untestable-lock reads are handled at lines 437–580. The sign-off guard is at line 589, with production sign-off assigned to T27. The runner logs confirm the named tamper, rebuilt-chain, torn-entry, repeat-submit, lock replacement and reentrancy tests passed. Reviewed boundary inputs, UTC timestamps, the absence of currency arithmetic, partial failures, local permissions, folder isolation, CLI consumers and migration scope. The empty-head publication race can erase an acknowledged save, and the write guard does not check gate replacement.); major: A stale first append can reset the head and make an acknowledged entry eligible for removal. The repaired log then verifies as intact without that acknowledged entry. at src/cma/case.py:902; major: The per-write guard checks only the case lock inode. Removing or replacing the gate during a save does not cause any write step to be refused. at src/cma/case.py:726; major: The repair's log recheck compares only file length, so it can overwrite changed log bytes even though revision 14 requires the log to match what the repair checked. at src/cma/case.py:837; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T02:23:39.969Z"
     }
   ]
 }
