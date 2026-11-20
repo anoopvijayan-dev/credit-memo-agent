@@ -253,6 +253,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-19 D113 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-19 D107 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19. The lock is re-checked immediately before each step a reader can see (empty head, line, each rename), per D108 and revision 12; with gate and case both held, a steady read names recorded faults and otherwise nothing is claimed (D109). → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 - 2026-11-20 D114 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). The lock is re-checked after opening the log, immediately before the line, and before every rename attempt (D108). → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
+- 2026-11-20 D115 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Any variable repeat sends the span scan looking for the longest end (bounded by the pattern's widest match); the bank-code rule takes no unless or requires. → task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03 [Anoop Vijayan]
 
 ## Idea
 
