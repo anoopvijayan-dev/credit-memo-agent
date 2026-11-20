@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 239,
+  "next_id": 240,
   "decisions": [
     {
       "id": "D1",
@@ -4801,6 +4801,26 @@
       "decided_at": "2026-11-20T14:47:00.201Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T14:42:03.889Z"
+    },
+    {
+      "id": "D239",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (Checked the statement limit and flow checks at src/cma/ingest.py:64 and src/cma/ingest.py:151, the Monzo opening-balance fix at src/cma/importers/monzo.py:137, exact M3 and its n/a path at src/cma/metrics.py:436, and table, evidence and prose precision at src/cma/cli.py:292, src/cma/graph.py:172, src/cma/graph.py:226 and src/cma/metrics.py:518. The normal figures pipeline still uses GBP float arithmetic outside the figures layer to decide whether a credit reverses a debit, which determines the exact figures and evidence that follow.); major: Returned-payment matching still performs money arithmetic in binary GBP floats outside the figures layer. The categoriser multiplies floats to build candidate keys and then sums the original GBP floats against a half-penny tolerance. That decision sets the effective category used for M8, M9, M12 and M14. at src/cma/categorise.py:1404; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T14:51:40.693Z"
     }
   ]
 }

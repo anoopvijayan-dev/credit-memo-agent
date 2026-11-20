@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-136/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (Checked the five-column import limit at src/cma/ingest.py:64 and src/cma/ingest.py:151, the integer-pence calculations at src/cma/metrics.py:256 and src/cma/metrics.py:436, and the output precision at src/cma/cli.py:292, src/cma/graph.py:172, src/cma/graph.py:226, src/cma/metrics.py:518 and src/cma/policy.py:107. Monzo applies the statement-line limit to a separately supplied opening balance, which rejects a statement whose transaction amounts, running balances and flow totals are all below the limit.); major: The Monzo importer applies the £10 trillion statement-line ceiling to a supplied opening balance. The same opening balance is accepted when inferred from the export, and every transaction can satisfy the R2 limits in either case. at src/cma/importers/monzo.py:137; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-137/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (Checked the statement limit and flow checks at src/cma/ingest.py:64 and src/cma/ingest.py:151, the Monzo opening-balance fix at src/cma/importers/monzo.py:137, exact M3 and its n/a path at src/cma/metrics.py:436, and table, evidence and prose precision at src/cma/cli.py:292, src/cma/graph.py:172, src/cma/graph.py:226 and src/cma/metrics.py:518. The normal figures pipeline still uses GBP float arithmetic outside the figures layer to decide whether a credit reverses a debit, which determines the exact figures and evidence that follow.); major: Returned-payment matching still performs money arithmetic in binary GBP floats outside the figures layer. The categoriser multiplies floats to build candidate keys and then sums the original GBP floats against a half-penny tolerance. That decision sets the effective category used for M8, M9, M12 and M14. at src/cma/categorise.py:1404; reviewer verdict fail"
     },
     {
       "id": "T06",
