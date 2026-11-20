@@ -98,3 +98,15 @@ def test_a_field_too_long_to_read_is_not_called_an_amount_at_the_limit(data):
         mcp_server.statement_summary("long.csv")
     msg = str(e.value)
     assert "a field is too long to read on line 2" in msg and "or more on" not in msg and "DDDD" not in msg
+
+
+def test_a_cell_quoting_the_limit_is_not_taken_for_an_amount_at_it(data):
+    """T04 review 22: MCP grouped problems by their text, so a cell quoting the limit's
+    wording made a line read as an amount at the limit. Kinds are recorded by the loader."""
+    rows = ["id,date,description,amount,balance",
+            'T1,"£10,000,000,000,000 or more",A,1.00,1.00']
+    (data / "data" / "quote.csv").write_text("\n".join(rows) + "\n")
+    with pytest.raises(ValueError) as e:
+        mcp_server.statement_summary("quote.csv")
+    msg = str(e.value)
+    assert "or more on" not in msg and "other problems on line 2" in msg

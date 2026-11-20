@@ -10,6 +10,7 @@ P6: a credit that no rule matches is in unexplained money in and not in M2.
 """
 
 import random
+import re
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -787,3 +788,30 @@ def test_a_multiline_record_is_named_by_its_first_line(tmp_path):
                    f'T2,2026-01-02,"two\nlines",{huge},5.00\n')
     with pytest.raises(ingest.StatementError, match="line 4: a field is too long to read"):
         ingest.load_csv(csv, today=date(2026, 6, 1))
+
+
+@pytest.mark.contracts
+def test_records_before_an_unreadable_one_are_still_checked(tmp_path):
+    """T04 review 22: a field too long to read stopped the reader and discarded the records
+    before it unchecked, so an amount at the limit among them, and money in at the limit,
+    went unreported."""
+    from cma.importers import monzo
+
+    big = "9999999999999.99"
+    csv = tmp_path / "s.csv"
+    csv.write_text("id,date,description,amount,balance\n"
+                   "T1,2026-01-01,A,10000000000000.00,1.00\n"
+                   f"T2,2026-01-02,B,{big},{big}\nT3,2026-01-03,C,{big},{big}\n"
+                   "T4,2026-01-04," + "D" * 200_000 + ",1.00,1.00\n")
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    shown = str(e.value)
+    assert "line 2: amount '10000000000000.00' is £10,000,000,000,000 or more" in shown
+    assert "money in totals £10,000,000,000,000 or more" in shown and "line 5: a field is too long to read" in shown
+
+    src = tmp_path / "m.csv"
+    src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance\n"
+                   "tx_1,01/01/2026,09:00:00,Faster payment,ACME,10000000000000.00,GBP,90.00\n"
+                   "tx_2,02/01/2026,09:00:00,Faster payment," + "N" * 200_000 + ",-1.00,GBP,89.00\n")
+    with pytest.raises(monzo.MonzoImportError, match=re.escape("line 2: Amount '10000000000000.00' is £10,000,000,000,000")):
+        monzo.convert(src, tmp_path / "o.csv")

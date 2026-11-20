@@ -53,24 +53,22 @@ def _statement(path: str):
     try:
         return ingest.load_csv(p)
     except ingest.StatementError as e:
-        # A problem with the whole statement (money in or out reaching the limit) is said in
-        # full, ahead of the line labels, never cut off by them (R2, T04 review 12); a line's
-        # text stays local, only its label is given.
-        # Every line whose amount or balance is at the limit is named too, never cut off by
-        # the ten other labels (T04 review 13).
-        problems = e.problems
-        whole = [x for x in problems if not x.startswith("line ")]
+        # Problems are grouped by the kind the loader recorded, never by their text, which can
+        # quote a cell (T04 review 22). Money in or out at the limit is said in full; another
+        # problem with the whole file is named by its label; lines at the limit, and lines
+        # with a field too long to read (whose content is not known), are each named in full,
+        # ahead of up to ten other line labels. No cell value is given (R2, T04 reviews 12-22).
+        problems, kinds = e.problems, e.kinds
 
-        def labels(marker: str | None) -> list[str]:
-            got = {x.split(":", 1)[0] for x in problems if x.startswith("line ")
-                   and (marker in x if marker else not (metrics.AT_LIMIT in x or ingest.TOO_LONG in x))}
+        def labels(kind: str) -> list[str]:
+            got = {x.split(":", 1)[0] for x, k in zip(problems, kinds, strict=True) if k == kind}
             return sorted(got, key=lambda label: int(label.split()[1]))
 
-        # A field too long to read is named as that, never as an amount at the limit: what it
-        # holds is not known (T04 review 21). Both are named in full.
-        limit, long_ = labels(metrics.AT_LIMIT), labels(ingest.TOO_LONG)
-        other = [x for x in labels(None) if x not in limit and x not in long_]
-        parts = whole + ([f"amount or balance {metrics.AT_LIMIT} on {', '.join(limit)}"] if limit else [])
+        flows = [x for x, k in zip(problems, kinds, strict=True) if k == "flow"]
+        files = [x.split(":", 1)[0].split(" (", 1)[0] for x, k in zip(problems, kinds, strict=True) if k == "file"]
+        limit, long_ = labels("limit"), labels("too_long")
+        other = [x for x in labels("line") if x not in limit and x not in long_]
+        parts = flows + files + ([f"amount or balance {metrics.AT_LIMIT} on {', '.join(limit)}"] if limit else [])
         parts += [f"{ingest.TOO_LONG} on {', '.join(long_)}"] if long_ else []
         if other:
             parts.append(f"other problems on {', '.join(other[:10])}{' and more' if len(other) > 10 else ''}")

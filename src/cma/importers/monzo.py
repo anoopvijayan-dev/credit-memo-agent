@@ -148,7 +148,9 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
         limit=False)
     with Path(src).open(newline="", encoding="utf-8-sig") as f:
         try:
-            header, raw_rows = read_records(f.read())  # lines as the file has them (T04 review 20)
+            # Lines as the file has them (T04 review 20); the records before one the reader
+            # cannot read are checked first, so a problem among them is the one reported.
+            header, raw_rows, unreadable = read_records(f.read())
         except CsvRecordError as e:
             raise MonzoImportError(f"{src}: {e}") from None
         twice = sorted({h for h in header if h and header.count(h) > 1})  # T04 review 14
@@ -159,7 +161,7 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             raise MonzoImportError(
                 f"{src}: not a Monzo export; missing column(s): {', '.join(missing)}"
             )
-    if not raw_rows:
+    if not raw_rows and unreadable is None:
         raise MonzoImportError(f"{src}: no transactions")
 
     has_balance = "Balance" in header
@@ -193,6 +195,8 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
         desc = describe(r.get("Type", ""), r.get("Name", ""), amount, refs)
         parsed.append((d, t, tid, desc, amount, bal))
 
+    if unreadable is not None:  # after the records before it are checked (T04 review 22)
+        raise MonzoImportError(f"{src}: {unreadable}")
     parsed.sort(key=lambda x: (x[0], x[1], x[2]))
     first = parsed[0]
     # Everything below is whole pence (T04 review 4).

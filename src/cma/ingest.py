@@ -41,13 +41,21 @@ MAX_REPORTED = 20
 class StatementError(ValueError):
     """The statement file cannot be trusted; nothing should be computed from it."""
 
-    def __init__(self, path: Path, problems: list[str]):
-        # Problems with the whole statement, then every line at the limit, are always said in
-        # full; other line problems fill the rest of the space (R2, T04 review 13).
-        whole = [p for p in problems if not p.startswith("line ")]
-        limit = [p for p in problems if p.startswith("line ") and AT_LIMIT in p]
-        rest = [p for p in problems if p.startswith("line ") and AT_LIMIT not in p]
-        self.problems = whole + limit + rest
+    def __init__(self, path: Path, problems: list[str], kinds: list[str] | None = None):
+        # Each problem's kind is recorded where it is found, never read back from its text,
+        # which can quote a cell (T04 review 22): "flow" (money in or out at the limit),
+        # "file" (the file as a whole), "limit" (a line's amount or balance at the limit),
+        # "too_long" (a field too long to read) or "line". Problems with the whole
+        # statement, then lines at the limit or too long to read, are always said in full;
+        # other line problems fill the rest of the space (R2, T04 review 13).
+        kinds = kinds or ["line" if p.startswith("line ") else "file" for p in problems]
+        order = {"flow": 0, "file": 0, "limit": 1, "too_long": 1, "line": 2}
+        pairs = sorted(zip(problems, kinds, strict=True), key=lambda pk: order[pk[1]])
+        self.problems = [p for p, _ in pairs]
+        self.kinds = [k for _, k in pairs]
+        whole = [p for p, k in pairs if order[k] == 0]
+        limit = [p for p, k in pairs if order[k] == 1]
+        rest = [p for p, k in pairs if order[k] == 2]
         shown = whole + limit + rest[:max(0, MAX_REPORTED - len(whole) - len(limit))]
         more = f"\n  … and {len(problems) - len(shown)} more" if len(problems) > len(shown) else ""
         super().__init__(f"{path}: {len(problems)} problem(s)\n  " + "\n  ".join(shown) + more)
@@ -92,13 +100,17 @@ TOO_LONG = "a field is too long to read"
 class CsvRecordError(ValueError):
     """The CSV reader could not read a record; the message names its line in the file."""
 
+    def __init__(self, message: str, too_long: bool = False):
+        super().__init__(message)
+        self.too_long = too_long
 
-def read_records(text: str) -> tuple[list[str], list[tuple[int, dict]]]:
+
+def read_records(text: str) -> tuple[list[str], list[tuple[int, dict]], CsvRecordError | None]:
     """The stripped header and each record with its line in the file. Lines are counted as
     the file has them, blank lines included, so every problem names the line a person sees
     (T04 review 20). The CSV reader stops on a field longer than it reads, or a malformed
-    record, before any check: CsvRecordError, naming the line, never another failure. A
-    field that long that is an amount or balance is past the limit (R2, T04 review 19)."""
+    record: the records before it are returned with the CsvRecordError naming its line, so
+    the caller still checks them (T04 review 22); a header it cannot read is raised."""
     # The physical lines as the CSV reader sees them, to find where each record starts: a
     # record is named by its first line, never by a continuation of a multi-line field
     # (T04 review 21). Blank lines between records are skipped by the reader and counted here.
@@ -112,6 +124,7 @@ def read_records(text: str) -> tuple[list[str], list[tuple[int, dict]]]:
             line += 1
         return line
 
+    header: list[str] | None = None
     try:
         header = [h.strip() for h in (reader.fieldnames or [])]
         reader.fieldnames = header
@@ -125,10 +138,15 @@ def read_records(text: str) -> tuple[list[str], list[tuple[int, dict]]]:
     except csv.Error as e:
         line = start(before) if "before" in locals() else 1
         if "field larger than field limit" in str(e):
-            raise CsvRecordError(f"line {line}: {TOO_LONG} (longer than {csv.field_size_limit():,} characters); "
-                                 "an amount or balance that long would be past the £10,000,000,000,000 limit") from None
-        raise CsvRecordError(f"line {line}: not a readable CSV record ({e})") from None
-    return header, rows
+            err = CsvRecordError(f"line {line}: {TOO_LONG} (longer than {csv.field_size_limit():,} characters); "
+                                 "an amount or balance that long would be past the £10,000,000,000,000 limit",
+                                 too_long=True)
+        else:
+            err = CsvRecordError(f"line {line}: not a readable CSV record ({e})")
+        if header is None:
+            raise err from None
+        return header, rows, err
+    return header, rows, None
 
 
 def load_csv(path: Path, account_name: str | None = None, today: date | None = None,
@@ -149,9 +167,9 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
             f"not UTF-8 (byte {e.start}); re-save it as 'CSV UTF-8' (Excel) and try again"
         ]) from e
     try:
-        header, rows = read_records(text)
+        header, rows, unreadable = read_records(text)
     except CsvRecordError as e:
-        raise StatementError(path, [str(e)]) from None
+        raise StatementError(path, [str(e)], ["too_long" if e.too_long else "file"]) from None
     # A column named twice would let the second silently replace the first's value on every
     # line, before any check (R2, T04 review 14): refused, naming the column.
     twice = sorted({h for h in header if h and header.count(h) > 1})
@@ -167,20 +185,28 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         raise StatementError(path, [
             f"missing column(s): {', '.join(missing)} (found: {', '.join(header) or 'none'}).{hint}"
         ])
-    if not rows:
+    if not rows and unreadable is None:
         raise StatementError(path, ["no transactions"])
 
     problems: list[str] = []
+    kinds: list[str] = []
+
+    def add(kind: str, text: str) -> None:
+        problems.append(text)
+        kinds.append(kind)
+
+    if unreadable is not None:  # the records before it are still checked (T04 review 22)
+        add("too_long" if unreadable.too_long else "line", str(unreadable))
     parsed: list[tuple[int, str, date | None, str, float | None, float | None]] = []
     seen: dict[str, int] = {}
     for i, r in rows:  # i: the record's line in the file, blank lines counted
         if None in r:
-            problems.append(f"line {i}: more fields than the header has columns")
+            add("line", f"line {i}: more fields than the header has columns")
         tid = (r["id"] or "").strip()
         if not tid:
-            problems.append(f"line {i}: empty id")
+            add("line", f"line {i}: empty id")
         elif tid in seen:
-            problems.append(f"line {i}: duplicate id {tid} (first on line {seen[tid]})")
+            add("line", f"line {i}: duplicate id {tid} (first on line {seen[tid]})")
         else:
             seen[tid] = i
         raw_date = (r["date"] or "").strip()
@@ -189,19 +215,19 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
             if len(raw_date) != 10:
                 raise ValueError
         except ValueError:
-            problems.append(f"line {i}: date {r['date']!r} is not YYYY-MM-DD")
+            add("line", f"line {i}: date {r['date']!r} is not YYYY-MM-DD")
             d = None
         if d and d > today:
-            problems.append(f"line {i}: date {d} is in the future")
+            add("line", f"line {i}: date {d} is in the future")
         amount, balance = _number(r["amount"]), _number(r["balance"])
         for field, value, raw in (("amount", amount, r["amount"]), ("balance", balance, r["balance"])):
             if value is None and _over_limit(raw):
-                problems.append(f"line {i}: {field} {raw!r} is {AT_LIMIT}; no figure could be reported to the penny")
+                add("limit", f"line {i}: {field} {raw!r} is {AT_LIMIT}; no figure could be reported to the penny")
         if amount is None and not _over_limit(r["amount"]):
-            problems.append(f"line {i}: amount {r['amount']!r} is not a plain number like -1150.00 "
+            add("line", f"line {i}: amount {r['amount']!r} is not a plain number like -1150.00 "
                             "(under £10,000,000,000,000)")
         if balance is None and not _over_limit(r["balance"]):
-            problems.append(f"line {i}: balance {r['balance']!r} is not a plain number like 2304.17 "
+            add("line", f"line {i}: balance {r['balance']!r} is not a plain number like 2304.17 "
                             "(under £10,000,000,000,000)")
         parsed.append((i, tid, d, (r["description"] or "").strip(), amount, balance))
 
@@ -213,14 +239,14 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
     prev_date: date | None = None
     for line, _, d, _, _, _ in parsed:
         if d and prev_date and d < prev_date:
-            problems.append(f"line {line}: date {d} is out of order (after {prev_date})")
+            add("line", f"line {line}: date {d} is out of order (after {prev_date})")
         prev_date = d or prev_date
 
     prev_balance: float | None = None
     for line, _, _, _, amount, balance in parsed:
         if None not in (amount, balance, prev_balance) and not follows(
                 float_pence(prev_balance), float_pence(amount), float_pence(balance)):
-            problems.append(
+            add("line",
                 f"line {line}: running balance {balance:.2f} does not follow from previous {prev_balance:.2f} "
                 f"{'+' if amount >= 0 else '-'} {abs(amount):.2f}"
             )
@@ -228,9 +254,9 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
             prev_balance = balance
 
     for name in flows_at_limit([float_pence(a) for _, _, _, _, a, _ in parsed if a is not None]):
-        problems.append(f"{name} totals {AT_LIMIT}: no figure could be reported to the penny")  # each named
+        add("flow", f"{name} totals {AT_LIMIT}: no figure could be reported to the penny")  # each named
     if problems:
-        raise StatementError(path, problems)
+        raise StatementError(path, problems, kinds)
     txns = [Transaction(id=tid, date=d, description=desc, amount=amount, balance=balance)
             for _, tid, d, desc, amount, balance in parsed]
     return Statement(account_name=account_name or "Applicant", transactions=txns)

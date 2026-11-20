@@ -98,3 +98,22 @@ def test_an_unreadable_policy_is_a_policy_error_and_resume_refuses_naming_the_fi
         pol.load_policy(f)
     with pytest.raises(pol.OutcomeUnknown, match=r"M10.*cannot be read"):
         pol.reevaluate(stored, [m], [m.model_copy(update={"value": 1.0})], f)
+
+
+@pytest.mark.parametrize("same_policy", [True, False])
+def test_a_rule_stored_without_its_comparison_falls_back_to_the_same_policy(tmp_path, same_policy):
+    # T04 review 22: an earlier release's rule result holds no operator or threshold; a
+    # changed figure raised a raw error instead of using the hash-checked policy or refusing.
+    from cma import policy as pol
+
+    f, stored, m = _filed(tmp_path)
+    old = stored.model_copy(update={"rules": [r.model_copy(update={"op": "", "threshold": None})
+                                              for r in stored.rules]})
+    if not same_policy:
+        f.write_text(f.read_text().replace("cover", "cover cover"))
+    new = m.model_copy(update={"value": 1.0})
+    if same_policy:
+        assert pol.reevaluate(old, [m], [new], f).rules[0].outcome.value == "refer"
+    else:
+        with pytest.raises(pol.OutcomeUnknown, match="M10"):
+            pol.reevaluate(old, [m], [new], f)

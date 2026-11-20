@@ -135,6 +135,11 @@ def _from_stored(stored: PolicyResult, before: list[Metric], now: list[Metric]) 
         if old is not None and old.value == new.value:
             rules.append(r)
             continue
+        if r.op not in OPS or r.threshold is None:
+            # A rule stored without its comparison (an earlier release's result): only the
+            # policy can say its outcome (T04 review 22).
+            raise OutcomeUnknown(f"{r.metric_id}, which rule {r.rule_id} reads, changed and its stored "
+                                 "result does not hold the rule")
         was, will = _band(r, old.value if old else None), _band(r, new.value)
         if will[0] == "missing" or (will[0] == "fail" and was[0] != "fail"):
             raise OutcomeUnknown(f"{r.metric_id}, which rule {r.rule_id} reads, now "
