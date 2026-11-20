@@ -276,6 +276,28 @@ def _has_lookaround(pattern: str) -> bool:
     return walk(_sre_parse.parse(pattern))
 
 
+_ANCHORS = {"AT_BEGINNING", "AT_END", "AT_BEGINNING_STRING", "AT_END_STRING"}
+
+
+def _has_anchor(pattern: str) -> bool:
+    """The pattern tests where the line starts or ends (^, $, \\A, \\Z)."""
+    def walk(sub: _sre_parse.SubPattern) -> bool:
+        for op, av in sub:
+            if str(op) == "AT" and str(av) in _ANCHORS:
+                return True
+            stack = [av]
+            while stack:
+                item = stack.pop()
+                if isinstance(item, _sre_parse.SubPattern):
+                    if walk(item):
+                        return True
+                elif isinstance(item, (list, tuple)):
+                    stack.extend(item)
+        return False
+
+    return walk(_sre_parse.parse(pattern))
+
+
 def _atoms(sub: _sre_parse.SubPattern):
     """The single-character elements a parsed pattern is made of, through groups,
     alternatives and repeats."""
@@ -437,6 +459,13 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                 # would (T03 review 21).
                 problems.append(f"{where}: pattern uses a lookahead or lookbehind, which a v2 table "
                                 "does not allow: an exception could hide another list's wording (R4)")
+            if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
+                    and r.get("bank_code") is not True and _has_anchor(r["pattern"])):
+                # An anchor tests the whole line beside a match: CASH DEPOSIT$ misses
+                # FPS CASH DEPOSIT STRIPE, so it hides wording as an exception would. Only
+                # the bank's own code keeps its ^ (D137).
+                problems.append(f"{where}: pattern uses an anchor (^, $, \\A or \\Z), which a v2 table "
+                                "allows only on the bank's returned-payment code")
             if r.get("pattern") in BANK_RETURN_CODES and r.get("bank_code") is not True:
                 problems.append(f"{where}: the bank's own returned-payment code must carry bank_code: true")
             for key in ("pattern", "unless", "requires"):

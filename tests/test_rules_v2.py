@@ -1632,12 +1632,17 @@ def test_a_pattern_that_cannot_be_matched_at_every_position_is_refused_at_load()
 
 @pytest.mark.contracts
 def test_an_anchored_cue_without_the_flag_gets_no_bank_code_exception():
-    """T03 review 12: anchoring an ordinary cue with ^ used to grant it the exception."""
+    """T03 review 12: anchoring an ordinary cue with ^ used to grant it the exception. Since
+    D137 an anchor is refused on every rule but the bank's code, so no anchored cue loads,
+    and the unanchored one gets no exception either."""
     refund = {"id": "refund", "pattern": "^REFUND", "direction": "in", "category": "refund_in",
               "protected": True, "stage": "line_type"}
     pot = {"id": "pot", "names": ["TO SAVINGS"], "direction": "in", "category": "own_account_transfer",
            "protected": True, "stage": "line_type"}
-    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, refund, pot], "category_order": ["returned_dd", "refund_in"]}, "v2", "t", "0")
+    data = {"id": "v2", "frozen": False, "rules": [BANK, refund, pot], "category_order": ["returned_dd", "refund_in"]}
+    with pytest.raises(RulesetError, match="anchor"):
+        categorise.ruleset_from_data(data, "v2", "t", "0")
+    rs = categorise.ruleset_from_data({**data, "rules": [BANK, {**refund, "pattern": "REFUND"}, pot]}, "v2", "t", "0")
     assert classify(_t("REFUND TO SAVINGS", 50.0), rs) == (C.OTHER, "v2:conflict:refund+pot")
 
 
@@ -1883,3 +1888,19 @@ def test_a_phrase_set_aside_inside_a_longer_one_hides_nothing():
                                        "category_order": ["revenue_card_settlement", "cash_deposit"]},
                                       "v2", "t", "0")
     assert classify(_t("XYZ FPS CASH DEPOSIT", 200.0), rs) == (C.OTHER, "v2:conflict:rail+cash")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("pattern", [r"CASH DEPOSIT$", r"^CASH DEPOSIT", r"\ACASH DEPOSIT", r"CASH DEPOSIT\Z",
+                                     r"(?:^|COUNTER )CASH DEPOSIT"])
+def test_a_v2_pattern_may_not_carry_an_anchor_except_the_bank_code(pattern):
+    """D137 / R4: an anchor tests the whole line beside a match, so CASH DEPOSIT$ would miss
+    FPS CASH DEPOSIT STRIPE and the gateway would make it trading receipts."""
+    cash = {"id": "cash", "pattern": pattern, "direction": "in", "category": "cash_deposit", "stage": "names"}
+    with pytest.raises(RulesetError, match="anchor"):
+        categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, cash]}, "v2", "t", "0")
+
+
+@pytest.mark.contracts
+def test_the_shipped_v2_table_loads_with_its_bank_code_anchor():
+    assert any(r.bank_code for r in load_ruleset("v2").rules)
