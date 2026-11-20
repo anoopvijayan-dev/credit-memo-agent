@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 258,
+  "next_id": 259,
   "decisions": [
     {
       "id": "D1",
@@ -5177,6 +5177,24 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T17:27:42.286Z"
+    },
+    {
+      "id": "D258",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "Owner decision of 2026-11-20, given in chat: accept these as edge cases outside the guarantee and push development forward. Write scope limits under R2 and R53, keeping everything else in revision 28. (1) cma import monzo reads each row in order and stops at the first problem it meets, reading the amount before the other fields; with that problem it says money in or money out at the limit among the rows read so far. Naming every problem in an export is outside R2. (2) cma processes that share a checkpoint file serialise starting a review, refreshing a resumed one and applying a decision with a lock file beside it. Another program writing to the checkpoint file, removing or replacing the lock file, and a process stopped part-way through a write are outside the single-decision guarantee, as D99 and D144 say for case files. (3) The memo and its evidence are made in full before either is written and are moved into place, evidence first. A disk failure, a full disk or an interruption after a decision is recorded and before both files are in place is outside the guarantee; the decision stays recorded in the checkpoint and a second export of a decided review is outside this release. (4) Statement lines are named by the line on which each record starts, blank lines counted; a field too long for the CSV reader is named as too long to read, not as an amount at the limit.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-20T17:32:38.186Z",
+      "effect": "changes requested: Owner decision of 2026-11-20, given in chat: accept these as edge cases outside the guarantee and push development forward. Write scope limits under R2 and R53, keeping everything else in revision 28. (1) cma import monzo reads each row in order and stops at the first problem it meets, reading the amount before the other fields; with that problem it says money in or money out at the limit among the rows read so far. Naming every problem in an export is outside R2. (2) cma processes that share a checkpoint file serialise starting a review, refreshing a resumed one and applying a decision with a lock file beside it. Another program writing to the checkpoint file, removing or replacing the lock file, and a process stopped part-way through a write are outside the single-decision guarantee, as D99 and D144 say for case files. (3) The memo and its evidence are made in full before either is written and are moved into place, evidence first. A disk failure, a full disk or an interruption after a decision is recorded and before both files are in place is outside the guarantee; the decision stays recorded in the checkpoint and a second export of a decided review is outside this release. (4) Statement lines are named by the line on which each record starts, blank lines counted; a field too long for the CSV reader is named as too long to read, not as an amount at the limit.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-20T17:32:38.171Z"
     }
   ]
 }
