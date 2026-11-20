@@ -198,7 +198,9 @@ def vat_due_dates(stagger: int, start: date, end: date) -> list[tuple[date, date
     out = []
     y, m = _add_months(start.year, start.month, -1)
     while (y, m) <= (end.year, end.month):
-        if m in VAT_STAGGERS[stagger]:
+        # A quarter outside the calendar's years (before year 1 or after 9999) has no dates:
+        # it is skipped, never an error that would stop the reconciliation (T04 review 7).
+        if m in VAT_STAGGERS[stagger] and y >= 1 and _add_months(y, m, 2)[0] <= 9999:
             q_end = _month_end(y, m)
             dy, dm = _add_months(y, m, 2)
             due = date(dy, dm, 7)

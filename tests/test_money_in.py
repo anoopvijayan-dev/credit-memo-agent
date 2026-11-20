@@ -541,3 +541,15 @@ def test_an_import_refusal_says_which_flow_reached_the_limit(tmp_path, flow):
                  f"L2,2026-01-06,B,{sign}6000000000000.00,{sign}9999999999999.99\n")
     with pytest.raises(ingest.StatementError, match=f"money {flow} totals"):
         ingest.load_csv(f)
+
+
+@pytest.mark.contracts
+def test_a_statement_in_year_one_still_gets_its_reconciliation():
+    """T04 review 7: a VAT quarter before year 1 is skipped, never a ValueError that would
+    stop the reconciliation refusal."""
+    lines = [Transaction(id="L1", date=date(1, 1, 5), description="a", amount=10.0, balance=10.0,
+                         category=Category.REVENUE_CARD),
+             Transaction(id="L2", date=date(1, 2, 5), description="b", amount=5.0, balance=15.0, category=None)]
+    with pytest.raises(metrics.ReconciliationError) as e:
+        metrics.compute(Statement(account_name="x", transactions=lines), vat_stagger=1)
+    assert e.value.lines == ["L2"]
