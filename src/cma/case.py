@@ -367,6 +367,11 @@ def _held_result(check: LogCheck | None) -> LogCheck:
     is being saved, never intact. With no steady read, nothing is claimed."""
     if check is None:
         return _unchecked("being saved: the log changed during every read", in_progress=True)
+    if check.recorded is None:
+        # No recorded count (the head record could not be read): no entry can be placed among
+        # the recorded ones, so none is named (T12 review 43).
+        return _unchecked("being saved: the head record could not be read while another writer "
+                          "held the case", in_progress=True)
     if check.first_bad is not None and not check.past_recorded:
         return check
     return check.as_recorded()
@@ -526,9 +531,24 @@ class CaseLog:
             except OSError:
                 return False
 
+        def case_lock_ours() -> bool:
+            try:
+                return (hold is not None and _file_id(os.stat(self.lock_path)) == hold.lock_id
+                        and os.fstat(hold.lock_fd).st_nlink > 0
+                        and _file_id(os.stat(self.lock_path)) == hold.lock_id)
+            except OSError:
+                return False
+
         if ours():
             check = _check(self._read_log(), _read_head(self.head_path))
             if ours():
+                return check
+        if case_lock_ours():
+            # Only the gate changed: this thread's case lock still excludes every writer, so
+            # it is no other writer. The read is taken again (P15) and, with the case lock
+            # still its own, is the truth (T12 review 43).
+            check = _check(self._read_log(), _read_head(self.head_path))
+            if case_lock_ours():
                 return check
         # Hold the gate shared, so no writer can take the case during this read; then try
         # the case lock shared. Free: one read under it is the truth. Held: the writer that
@@ -925,6 +945,8 @@ class CaseLog:
         try:
             yield
         except OSError as e:
+            if self._save_confirmed:
+                raise  # confirmed and settled: a held handler's error is its own (review 43)
             raise SaveNotRecorded(f"{self.path}: the save could not be completed ({e.__class__.__name__}: "
                                   f"{e}); the save was not recorded") from e
         except (SaveNotRecorded, SaveNotConfirmed, GeneratorExit):

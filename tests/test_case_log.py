@@ -3177,3 +3177,69 @@ def test_an_interruption_entering_the_save_guard_leaves_no_stale_save(tmp_path, 
     assert not saving  # the guard took its own registration back
     log._saving = {}
     log.append("override", {"n": 3}, expected=2)
+
+
+
+@pytest.mark.invariants
+def test_p15_a_holder_whose_gate_alone_was_replaced_still_names_its_torn_entry(tmp_path, monkeypatch):
+    """T12 review 43: the holder's own case lock still excludes every writer, so a replaced
+    gate makes it read again, never take itself for another writer and report being saved."""
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    with log.writer():
+        _replace_file(log.gate_path)
+        check = log.verify()
+    assert check.torn and check.first_bad == 3 and not check.in_progress
+
+
+@pytest.mark.invariants
+def test_p15_with_the_head_unreadable_a_reader_names_no_entry_while_another_holds(tmp_path, monkeypatch):
+    """T12 review 43: no recorded count, so no entry can be placed among the recorded ones."""
+    log = _log(tmp_path, 2)
+    holding, done = threading.Event(), threading.Event()
+
+    def hold():
+        with case.CaseLog(log.path).writer():
+            holding.set()
+            done.wait(10)
+
+    t = threading.Thread(target=hold)
+    t.start()
+    assert holding.wait(5)
+    log.head_path.write_bytes(b"not a head record\n")
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    try:
+        check = case.CaseLog(log.path).verify()
+    finally:
+        done.set()
+        t.join(10)
+    assert check.first_bad is None and not check.ok
+
+
+@pytest.mark.invariants
+@pytest.mark.skipif(os.name == "nt" or not hasattr(signal, "SIGUSR1"), reason="sends a signal to itself")
+def test_a_held_handlers_os_error_after_a_confirmed_save_is_its_own(tmp_path, monkeypatch):
+    """T12 review 43: the save is confirmed and the log settled; the handler's own OSError
+    is delivered as it is, never turned into 'not recorded'."""
+    log = _log(tmp_path, 2)
+    real = case._check
+
+    def check(raw, recorded):
+        if isinstance(recorded, list) and len(recorded) == 3:
+            os.kill(os.getpid(), signal.SIGUSR1)
+        return real(raw, recorded)
+
+    def handler(n, frame):
+        raise OSError(5, "handler failed")
+
+    old = signal.signal(signal.SIGUSR1, handler)
+    try:
+        monkeypatch.setattr(case, "_check", check)
+        with pytest.raises(OSError, match="handler failed") as e:
+            log.append("override", {"n": 3}, expected=2)
+        assert not isinstance(e.value, case.CaseLogError)
+    finally:
+        signal.signal(signal.SIGUSR1, old)
+    monkeypatch.undo()
+    got = case.CaseLog(log.path).verify()
+    assert got.ok and got.head.position == 3
