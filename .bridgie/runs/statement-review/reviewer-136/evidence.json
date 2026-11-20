@@ -1,0 +1,94 @@
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "Checked the credit category map at src/cma/models.py:55, partitioning at src/cma/metrics.py:407, and GBP totals and line evidence at src/cma/metrics.py:447 and src/cma/metrics.py:486. The runner passed the named bucket invariant and MCP return contract.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "Checked the five-column import limit at src/cma/ingest.py:64 and src/cma/ingest.py:151, the integer-pence calculations at src/cma/metrics.py:256 and src/cma/metrics.py:436, and the output precision at src/cma/cli.py:292, src/cma/graph.py:172, src/cma/graph.py:226, src/cma/metrics.py:518 and src/cma/policy.py:107. Monzo applies the statement-line limit to a separately supplied opening balance, which rejects a statement whose transaction amounts, running balances and flow totals are all below the limit.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "Checked membership and the signed difference at src/cma/metrics.py:502, the CLI exit before review or export at src/cma/cli.py:99, and propagation through src/cma/mcp_server.py:80. The runner passed both refusal contracts and the minimum- and maximum-date regressions. The closing-balance loop stops at the last date at src/cma/metrics.py:232.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "Checked that unmatched credits default to OTHER at src/cma/categorise.py:1311 and src/cma/categorise.py:1360, and that OTHER maps exclusively to unexplained money in at src/cma/models.py:66. The runner passed the unknown-payer tests for v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "Checked integer totals and ID multiplicity at src/cma/metrics.py:502, and confirmed that M18 is a subset of M2 at src/cma/metrics.py:419 and is excluded from the partition. The runner passed the named synthetic, random and large-amount invariants.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "Checked signed sum and outflow evidence at src/cma/metrics.py:447 and src/cma/metrics.py:461, the closing-line evidence at src/cma/metrics.py:298, the M9 partial-credit note at src/cma/metrics.py:346, and the shared denominator and M26 evidence at src/cma/metrics.py:423 and src/cma/metrics.py:495. The runner passed the named invariants and the baseline evidence comparisons. The exact-zero debt-service branch at src/cma/metrics.py:311 and src/cma/metrics.py:361 leaves M10 without evidence at src/cma/metrics.py:471.",
+      "result": "pass",
+      "artifact": "dual_run-7.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "Traced the default credit through src/cma/models.py:66 and src/cma/metrics.py:407 into the M25 evidence emitted at src/cma/metrics.py:492. The runner passed the named P6 invariants for both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 137,
+      "criterion": "R2",
+      "claim": "The Monzo importer applies the £10 trillion statement-line ceiling to a supplied opening balance. The same opening balance is accepted when inferred from the export, and every transaction can satisfy the R2 limits in either case.",
+      "repro": "Use a Monzo export without a Balance column containing one GBP debit of £1.02, and run cma import monzo with --opening-balance 10000000000001.00. The importer refuses the option before reading the file. The only debit and total money out are £1.02, and the running balance is £9,999,999,999,999.98. Add that running balance to the export's Balance column and omit the option. The importer infers the same opening balance at line 186 and accepts the transaction."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 65,
+      "criterion": "R2",
+      "claim": "The claim that a credit above the former ceiling is counted and reported applies only to a manually constructed transaction. The normal import path correctly refuses that credit under the current R2.",
+      "repro": "Compare tests/test_money_in.py:262, which constructs a transaction and calls helpers, with the import contract at tests/test_money_in.py:405. A five-column CSV with a £10,000,000,000,000.01 credit and matching balance is refused before compute."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 392,
+      "criterion": "R2",
+      "claim": "The cited display probe and runner contract prove formatting on Metric objects. They do not execute the appendix or interactive CLI table for the claimed fractional-penny-sensitive breakdown.",
+      "repro": "Read the passed contract at line 392. It calls Metric.display_exact directly. A runner contract invoking cma run on three £0.60 credits in different buckets and asserting £1.80 in both the interactive table and the written appendix would prove the end-to-end claim."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 238,
+      "criterion": null,
+      "claim": "The producer's historical suite result and scratchpad probe outputs lack matching runner rows. The current runner proves 896 tests passed on the reviewed tree and 84 passed in the dual-run tier. It does not establish the historical counts or the separate repeated-compute probe.",
+      "repro": "Compare the producer's ca0092c suite claim with the runner's specified-3.log and dual_run-7.log and the reviewed HEAD 1cc1868. To establish the historical suite result, run python -m pytest -v -rs on ca0092c in a runner job. To establish the repeated-compute claim as a runtime result, add a named invariant comparing two complete results from the same statement and run python -m pytest -v -m invariants tests/test_money_in.py."
+    }
+  ],
+  "verdict": "fail"
+}

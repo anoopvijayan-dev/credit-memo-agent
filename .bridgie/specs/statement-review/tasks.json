@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-135/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R3 fail (src/cma/metrics.py:491 tests partition membership and the signed difference, and src/cma/cli.py:99 reports the failure. The runner passed the CLI and MCP refusal contracts and the minimum-date regression. The closing-balance loop at src/cma/metrics.py:232 still overflows at date.max before the partition check at :414.); major: The closing-balance loop advances one day after processing its last date. A statement ending at the maximum supported date raises OverflowError before reconciliation can name its missing credit and the difference. at src/cma/metrics.py:232; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-136/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (Checked the five-column import limit at src/cma/ingest.py:64 and src/cma/ingest.py:151, the integer-pence calculations at src/cma/metrics.py:256 and src/cma/metrics.py:436, and the output precision at src/cma/cli.py:292, src/cma/graph.py:172, src/cma/graph.py:226, src/cma/metrics.py:518 and src/cma/policy.py:107. Monzo applies the statement-line limit to a separately supplied opening balance, which rejects a statement whose transaction amounts, running balances and flow totals are all below the limit.); major: The Monzo importer applies the £10 trillion statement-line ceiling to a supplied opening balance. The same opening balance is accepted when inferred from the export, and every transaction can satisfy the R2 limits in either case. at src/cma/importers/monzo.py:137; reviewer verdict fail"
     },
     {
       "id": "T06",
