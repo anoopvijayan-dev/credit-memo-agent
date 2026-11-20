@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-158/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:86 checks the penny round trip, src/cma/metrics.py:512 handles unrepresentable M3, and src/cma/graph.py:175 and src/cma/cli.py:414 show pence. The UTF-8 recovery at src/cma/ingest.py:116 can discard earlier records or misidentify the record start.); major: On a CR-only Monzo export, a later invalid UTF-8 byte discards every preceding record, hiding the first row problem and any flow limit already reached. at src/cma/ingest.py:116; major: An invalid byte inside a multiline CSV record is attributed to its continuation line. at src/cma/ingest.py:118; major: The review lock uses the checkpoint path as supplied, so two processes sharing the same SQLite checkpoint through a symlink can take separate locks. This is a changed-consumer finding outside the scored T04 rows. at src/cma/cli.py:238; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-159/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:86 verifies the penny round trip, src/cma/metrics.py:510 computes M3 from pence and handles an unrepresentable result, and src/cma/graph.py:175 and src/cma/cli.py:415 display money to the penny. The BOM-prefixed UTF-8 recovery at src/cma/ingest.py:120 can discard a complete earlier row and misname the bad record. The Monzo CLI can also lose the refusal when it renders row text as Rich markup at src/cma/cli.py:442.); major: UTF-8 recovery uses an offset relative to the BOM-stripped input to slice the original bytes. It can drop the preceding complete record, suppress money in at the limit and attribute the UTF-8 error to the wrong line. at src/cma/ingest.py:120; major: The Monzo CLI interpolates the import error into Rich markup. A closing tag in a rejected cell can raise a markup error and suppress both the record-start line and the flow-limit diagnostic. at src/cma/cli.py:442; reviewer verdict fail"
     },
     {
       "id": "T06",
