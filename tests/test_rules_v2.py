@@ -2565,3 +2565,28 @@ def test_a_category_order_given_as_null_is_refused():
     """T03 review 47: given with no value is a field of the wrong kind, not one left out."""
     with pytest.raises(RulesetError, match="category_order is given with no value"):
         validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK], "category_order": None}, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_a_rule_for_any_direction_cannot_give_a_money_in_only_category():
+    """T03 review 49: direction any matches debits too."""
+    rule = {"id": "r", "names": ["R"], "direction": "any", "category": "revenue_transfer", "stage": "names"}
+    with pytest.raises(RulesetError, match=r"is for money in, so a rule for debits \(direction any\)"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_a_merge_key_in_the_table_is_refused_and_named(monkeypatch):
+    """T03 review 49: a merge key could bring in a repeated key the loader never sees."""
+    raw = categorise._table_bytes("v2")
+    edit = raw.replace(b"rules:", b"base: &b {direction: in}\nrules:\n  - {<<: *b, id: odd, names: [ODD], "
+                                  b"category: cash_deposit, stage: names, direction: out}", 1)
+    monkeypatch.setattr(categorise, "_table_bytes", lambda ruleset_id: edit)
+    categorise.load_ruleset.cache_clear()
+    try:
+        with pytest.raises(RulesetError) as e:
+            categorise.load_ruleset("v2")
+    finally:
+        monkeypatch.undo()
+        categorise.load_ruleset.cache_clear()
+    assert "merge keys (<<) are not allowed" in str(e.value)

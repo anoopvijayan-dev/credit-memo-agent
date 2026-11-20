@@ -485,7 +485,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                     # Never loaded as text, and named by rule and field (T03 review 31).
                     problems.append(f"{where}: {key} holds a {bad!r}")
         if not isinstance(r, dict):
-            problems.append(f"{where}: not a mapping")
+            problems.append(f"{where}: {r!r}" if isinstance(r, _Unbuilt) else f"{where}: not a mapping")
             continue
         # Every field is checked in each value it was given (review 40): the rule as given,
         # then once per value of each repeated field.
@@ -621,9 +621,10 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                     if direction in ("in", "any") and Category(category) not in CREDIT_BUCKET:
                         problems.append(f"{where}: category {category!r} has no money-in bucket, so a rule for "
                                         f"credits (direction {direction}) cannot give it")
-                    elif direction == "out" and Category(category) in _MONEY_IN_ONLY:
+                    if direction in ("out", "any") and Category(category) in _MONEY_IN_ONLY:
+                        # `any` matches debits too (review 49).
                         problems.append(f"{where}: category {category!r} is for money in, so a rule for debits "
-                                        "(direction out) cannot give it")
+                                        f"(direction {direction}) cannot give it")
             for key in ("pattern", "unless", "requires"):
                 if isinstance(r.get(key), str) and r[key]:
                     problem = _compile_problem(r[key])
@@ -841,7 +842,11 @@ class _UniqueKeyLoader(yaml.SafeLoader):
     def construct_mapping(self, node, deep=False):
         """A key given twice keeps neither value: it holds an unbuilt value, so validation
         names the rule and field beside the table's other faults (T03 review 35), and a
-        second `category:` can never silently win."""
+        second `category:` can never silently win. A merge key (<<) is refused: it brings in
+        keys whose repeats the loader would never see, and a rule table has no use for it
+        (review 49); the mapping is then an unbuilt value, named where it stands."""
+        if any(k.tag == "tag:yaml.org,2002:merge" for k, _ in node.value):
+            raise yaml.constructor.ConstructorError(None, None, "merge keys (<<) are not allowed", node.start_mark)
         mapping = super().construct_mapping(node, deep=deep)
         given: dict = {}
         for key_node, value_node in node.value:
@@ -869,7 +874,8 @@ class _UniqueKeyLoader(yaml.SafeLoader):
                 RecursionError, AttributeError) as e:
             self.recursive_objects.pop(node, None)
             text = node.value if isinstance(node, yaml.ScalarNode) else f"<{node.id}>"
-            return _Unbuilt(str(text), node.tag or type(e).__name__)
+            reason = getattr(e, "problem", None) or ""
+            return _Unbuilt(str(text), node.tag or type(e).__name__, str(reason))
 
 
 class _Unbuilt:
@@ -878,11 +884,12 @@ class _Unbuilt:
     field it sits in, beside the table's other faults, and it never loads as text (T03
     reviews 30 and 31)."""
 
-    def __init__(self, text: str, tag: str):
-        self.text, self.tag = text, tag
+    def __init__(self, text: str, tag: str, reason: str = ""):
+        self.text, self.tag, self.reason = text, tag, reason
 
     def __repr__(self) -> str:
-        return f"{self.tag.rsplit(':', 1)[-1]} value {self.text!r} that YAML cannot build"
+        why = f" ({self.reason})" if self.reason else ""
+        return f"{self.tag.rsplit(':', 1)[-1]} value {self.text!r} that YAML cannot build{why}"
 
 
 class _Repeated(_Unbuilt):
