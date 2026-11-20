@@ -204,7 +204,14 @@ def vat_due_dates(stagger: int, start: date, end: date) -> list[tuple[date, date
             q_end = _month_end(y, m)
             dy, dm = _add_months(y, m, 2)
             due = date(dy, dm, 7)
-            if q_end >= start - timedelta(days=1) and _add_working_days(due, VAT_DD_WORKING_DAYS) <= end:
+            # No date arithmetic that can leave the calendar (review 8): "ends no earlier than
+            # the day before the start" as a difference, and a due date whose working days run
+            # past year 9999 is outside the statement anyway.
+            try:
+                inside = _add_working_days(due, VAT_DD_WORKING_DAYS) <= end
+            except OverflowError:
+                inside = False
+            if (start - q_end).days <= 1 and inside:
                 out.append((q_end, due))
         y, m = _add_months(y, m, 1)
     return out

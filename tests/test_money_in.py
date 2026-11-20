@@ -553,3 +553,31 @@ def test_a_statement_in_year_one_still_gets_its_reconciliation():
     with pytest.raises(metrics.ReconciliationError) as e:
         metrics.compute(Statement(account_name="x", transactions=lines), vat_stagger=1)
     assert e.value.lines == ["L2"]
+
+
+@pytest.mark.contracts
+def test_a_statement_starting_at_the_first_date_python_has_still_gets_its_reconciliation():
+    """T04 review 8: no VAT date arithmetic leaves the calendar."""
+    lines = [Transaction(id="L1", date=date(1, 1, 1), description="a", amount=10.0, balance=10.0,
+                         category=Category.REVENUE_CARD),
+             Transaction(id="L2", date=date(1, 2, 5), description="b", amount=5.0, balance=15.0, category=None)]
+    with pytest.raises(metrics.ReconciliationError) as e:
+        metrics.compute(Statement(account_name="x", transactions=lines), vat_stagger=1)
+    assert e.value.lines == ["L2"]
+
+
+@pytest.mark.contracts
+def test_the_monzo_opening_balance_is_read_exactly_from_the_command_line(tmp_path):
+    """T04 review 8: --opening-balance is text read exactly; a third decimal is refused, never
+    rounded through a float."""
+    from typer.testing import CliRunner
+
+    src = tmp_path / "m.csv"
+    src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency\n"
+                   "tx_1,01/01/2026,09:00:00,Faster payment,ACME,10.00,GBP\n")
+    r = CliRunner().invoke(app, ["import", "monzo", str(src), "-o", str(tmp_path / "o.csv"),
+                                 "--opening-balance", "100.005"])
+    assert r.exit_code != 0 and "--opening-balance '100.005'" in r.output and "line 0" not in r.output
+    r = CliRunner().invoke(app, ["import", "monzo", str(src), "-o", str(tmp_path / "o.csv"),
+                                 "--opening-balance", "100.05"])
+    assert r.exit_code == 0 and "110.05" in (tmp_path / "o.csv").read_text()

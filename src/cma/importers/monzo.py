@@ -73,13 +73,14 @@ def _money(raw: str | None, field: str, line: int) -> int:
     """The amount in whole pence, read exactly from Monzo's text, never through a binary
     float; one the statement could not carry to the penny is refused (R2, T04 review 4)."""
     text = (raw or "").strip()
+    at = f"line {line}: " if line else ""  # line 0: the command line, not the export
     if not PLAIN_MONEY.match(text):
-        raise MonzoImportError(f"line {line}: {field} {raw!r} is not a plain amount like -12.40")
+        raise MonzoImportError(f"{at}{field} {raw!r} is not a plain amount like -12.40")
     p = Decimal(text) * 100
     if p != p.to_integral_value():
-        raise MonzoImportError(f"line {line}: {field} {raw!r} has more than two decimal places")
+        raise MonzoImportError(f"{at}{field} {raw!r} has more than two decimal places")
     if abs(p) >= MAX_STATEMENT_PENCE:
-        raise MonzoImportError(f"line {line}: {field} {raw!r} is £10,000,000,000,000 or more; no figure "
+        raise MonzoImportError(f"{at}{field} {raw!r} is £10,000,000,000,000 or more; no figure "
                                "could be reported to the penny")
     return int(p)
 
@@ -131,8 +132,10 @@ def describe(kind: str, name: str, amount: float, extra: str = "") -> str:
     return f"{prefix} {who}".strip()
 
 
-def convert(src: Path, dst: Path, opening_balance: float | None = None) -> ImportResult:
-    opening_pence = None if opening_balance is None else _money(repr(opening_balance), "--opening-balance", 0)
+def convert(src: Path, dst: Path, opening_balance: str | float | None = None) -> ImportResult:
+    """`opening_balance` is the text the person gave (read exactly), or a float from code."""
+    opening_pence = None if opening_balance is None else _money(
+        opening_balance if isinstance(opening_balance, str) else repr(opening_balance), "--opening-balance", 0)
     with Path(src).open(newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         header = [h.strip() for h in (reader.fieldnames or [])]

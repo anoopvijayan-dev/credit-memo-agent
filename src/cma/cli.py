@@ -306,9 +306,9 @@ def _print_policy(p):
 def import_monzo(
     export: Path = typer.Argument(..., help="The CSV exported from the Monzo app."),
     out: Path = typer.Option(..., "-o", "--out", help="Where to write the statement CSV. Keep it out of git."),
-    opening_balance: float | None = typer.Option(
+    opening_balance: str | None = typer.Option(
         None, help="Balance just before the first transaction. Needed when the export has no Balance column."
-    ),
+    ),  # text, read exactly by the importer, never rounded through a float first (T04 review 8)
 ):
     """Convert a Monzo export locally. Nothing is uploaded; the file stays on this machine."""
     from .importers import monzo
