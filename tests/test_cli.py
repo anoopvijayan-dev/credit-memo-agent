@@ -222,3 +222,47 @@ def test_resume_refuses_a_statement_the_loader_would_now_refuse(tmp_path, monkey
     r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C"], input="y\n\n")
     assert r.exit_code == 2 and "would now be refused" in r.output and "£10,000,000,000,000 or more" in r.output
     assert "Approved" not in r.output
+
+
+NEW_MONEY_IN = {"M17", "M18", "M19", "M20", "M21", "M22", "M23", "M24", "M25"}
+
+
+def _as_earlier_release(db, thread="case-1"):
+    """Rewrite a pending review's stored figures as the previous release left them: no total
+    money in or money-in buckets, and M2 a float sum a hair off the exact pence."""
+    from cma.graph import build, sqlite_checkpointer
+    from cma.llm import FakeLLM
+
+    cfg = {"configurable": {"thread_id": thread}}
+    with sqlite_checkpointer(db) as saver:
+        graph = build(FakeLLM(), checkpointer=saver)
+        old = [m if m.id != "M2" else m.model_copy(update={"value": m.value + 1e-7})
+               for m in graph.get_state(cfg).values["metrics"] if m.id not in NEW_MONEY_IN]
+        graph.update_state(cfg, {"metrics": old})
+        graph.invoke(None, cfg)  # back to the review, as the earlier release left it
+        assert graph.get_state(cfg).interrupts
+        assert not NEW_MONEY_IN & {m.id for m in graph.get_state(cfg).values["metrics"]}
+    return cfg
+
+
+def test_resume_decides_a_review_from_an_earlier_release_on_todays_figures(tmp_path):
+    # T04 review 16: a review drafted by the previous release resumed with its stored
+    # figures: no total money in or buckets (R1), float-derived sums (R2, P2). It still
+    # resumes (R53), on today's figures.
+    import json
+
+    from cma import ingest, metrics
+
+    db, csv = _pending(tmp_path)
+    _as_earlier_release(db)
+    out = tmp_path / "memo.md"
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C. Later",
+                            "--out", str(out)], input="y\n\n")
+    assert r.exit_code == 0, r.output
+    ev = json.loads((tmp_path / "memo.evidence.json").read_text())
+    got = {m["id"]: m for m in ev["metrics"]}
+    assert set(got) >= NEW_MONEY_IN
+    lines = {t.id: t for t in ingest.load_csv(csv).transactions}
+    assert metrics.float_pence(got["M2"]["value"]) == sum(metrics.float_pence(lines[i].amount)
+                                                          for i in got["M2"]["evidence"])
+    assert "M17" in out.read_text()  # the appendix lists today's figures

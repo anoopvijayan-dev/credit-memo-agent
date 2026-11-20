@@ -18,7 +18,14 @@ from rich.table import Table
 from . import guard as grd
 from . import synth
 from .categorise import RulesetError, active_ruleset
-from .graph import build, evidence_record, ruleset_used, sqlite_checkpointer
+from .graph import (
+    build,
+    evidence_record,
+    guard_fields,
+    refreshed,
+    ruleset_used,
+    sqlite_checkpointer,
+)
 from .ingest import StatementError, load_csv
 from .llm import get_llm
 from .metrics import AmountError, ReconciliationError
@@ -131,7 +138,13 @@ def resume(
         if problem:
             console.print(f"[red]Not resuming {thread}:[/red] {escape(problem)}")
             raise typer.Exit(code=2)
-        state = {**snap.values, "__interrupt__": snap.interrupts}
+        try:
+            # Today's figures, if the review was drafted by an earlier release (T04 review 16).
+            update = refreshed(snap.values)
+        except (AmountError, ReconciliationError) as e:
+            console.print(f"[red]Not resuming {thread}: refused, no figures shown.[/red] {escape(str(e))}")
+            raise typer.Exit(code=6) from e
+        state = {**snap.values, **update, "__interrupt__": snap.interrupts}
         _review(graph, cfg, state, reviewer, False, out)
 
 
@@ -191,7 +204,8 @@ def _review(graph, cfg, state, reviewer, yes, out):
     interrupts = state.get("__interrupt__") or []
     if not interrupts:
         raise typer.Exit(code=1)
-    payload = interrupts[0].value
+    # What is shown is what will be decided: the state's figures and grounding result.
+    payload = {**interrupts[0].value, **guard_fields(state["guard"])}
     # Settle which rule table the evidence will name while the review is still pending. A
     # review drafted by an older version has none stored, and naming it reads the packaged
     # v1 table; if that fails after the decision is recorded, the memo has no evidence and

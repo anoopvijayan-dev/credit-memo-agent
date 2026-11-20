@@ -209,6 +209,32 @@ def line_rule_ids(s: MemoState) -> list[str | None]:
     return [t.rule_id or (r.rule_id if r.category == t.category else None) for t, r in zip(txns, replay, strict=True)]
 
 
+def refreshed(s: MemoState) -> dict:
+    """A pending review's figures as this release computes them, with the policy and the
+    grounding check that follow from them, when they differ from the stored ones; else {}.
+
+    A review drafted by an earlier release can hold figures computed by its arithmetic and
+    no total money in or money-in buckets. Resumed here, it is decided, finalised and
+    recorded on today's figures (R1, R2, P2), and keeps resuming as before (R53); if its
+    memo no longer holds against them, approving it needs the grounding override, as for
+    any memo that fails the check (T04 review 16). Raises AmountError or
+    ReconciliationError when today's figures cannot be computed."""
+    fresh = met.compute(s["statement"].model_copy(deep=True), vat_stagger=s.get("vat_stagger"))
+    if [m.model_dump() for m in fresh] == [m.model_dump() for m in s["metrics"]]:
+        return {}
+    p = pol.load_policy(Path(s["policy_path"])) if s.get("policy_path") else None
+    policy = pol.evaluate(fresh, p)
+    g = grd.check(s["memo"], fresh, policy, required_headings=grd.REQUIRED_HEADINGS)
+    return {"metrics": fresh, "policy": policy, "guard": g}
+
+
+def guard_fields(g) -> dict:
+    """The grounding result as the review shows it."""
+    return {"guard_grounded": g.grounded,
+            "guard_unmatched": [f.number_text or f.reason for f in g.unmatched],
+            "guard_missing_citations": g.missing_citations}
+
+
 def evidence_record(s: MemoState) -> dict:
     """Everything needed to audit the memo later, as plain JSON."""
     return {
@@ -297,12 +323,12 @@ def build(llm: LLM | None = None, checkpointer=None):
         Each refusal is a fresh interrupt, so LangGraph replays earlier answers in order
         and the reviewer can always correct theirs.
         """
+        update = refreshed(s)  # a review drafted by an earlier release (T04 review 16)
+        s = {**s, **update}
         payload = {
             "memo": s["memo"],
             "policy_outcome": s["policy"].overall.value,
-            "guard_grounded": s["guard"].grounded,
-            "guard_unmatched": [f.number_text or f.reason for f in s["guard"].unmatched],
-            "guard_missing_citations": s["guard"].missing_citations,
+            **guard_fields(s["guard"]),
             "question": "Approve this memo for the credit file?",
             "error": None,
         }
@@ -310,7 +336,7 @@ def build(llm: LLM | None = None, checkpointer=None):
             decision = interrupt(payload)
             problem = _review_problem(decision, s["guard"].grounded)
             if problem is None:
-                return {"review": ReviewDecision(**decision)}
+                return {"review": ReviewDecision(**decision), **update}
             payload = {**payload, "error": problem}
 
     def finalise(s: MemoState) -> MemoState:
