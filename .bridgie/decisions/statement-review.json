@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 182,
+  "next_id": 183,
   "decisions": [
     {
       "id": "D1",
@@ -3678,6 +3678,26 @@
       "decided_at": "2026-11-20T07:55:30.302Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T07:49:17.412Z"
+    },
+    {
+      "id": "D182",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed HEAD 97b0566 against requirements.md:309. Canonical UTF-8 hashing, UTC timestamps, head comparison and first-bad-entry reporting are in src/cma/case.py:177–348. Holder recognition across path aliases, shared and steady reads, retry behavior and the sign-off guard are at src/cma/case.py:457–681. Writer exclusion, fork refusal, nested-save refusal, expected-position conflicts and repair checks are at src/cma/case.py:683–1102. Publication and take-back are at src/cma/case.py:1104–1185. Traced the production consumer at src/cma/cli.py:309–338. Checked duplicate submission, competing writers, empty and malformed inputs, Unicode, UTC, partial failure, filesystem permissions, separate case folders and CLI exit codes. This diff adds no currency calculations or database migration. The passed runner logs name the tamper, rebuilt-chain, torn-tail, duplicate-submit, CLI and default-handler interruption tests. The lock re-check and interrupted take-back still fail in the schedules below. No tests were run during this review.); major: The final writer check can approve a head rename after the case lock has been replaced. It samples the case lock before reading the gate and never checks the case lock again after that filesystem read. at src/cma/case.py:802; major: A custom signal handler can still interrupt the call into take-back after a failed read-back. The save leaves its own head published even though the take-back was still possible. at src/cma/case.py:1208; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T07:57:07.986Z"
     }
   ]
 }
