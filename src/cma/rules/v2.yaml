@@ -4,8 +4,8 @@
 # wording; HMRC repayments; refunds; explained non-trading money in).
 #
 # A rule matches when its pattern (or one of its names) matches the upper-cased
-# description, its `unless` does not, its `requires` (if any) does, and its direction
-# matches the sign of the amount. `names` are plain words matched whole, with any run of
+# description and its direction matches the sign of the amount. A v2 rule has no `unless`
+# or `requires`: an exception could hide another list's wording from the ambiguity check. `names` are plain words matched whole, with any run of
 # spaces between words; `pattern` is a Python regular expression.
 #
 # Two stages (design C1, revision 3). Stage 1, `line_type`, is explicit wording of what the
@@ -30,9 +30,9 @@
 # Names match whole words in any script: no letter or digit on either side, so
 # CAFÉSTRIPE LTD does not contain STRIPE.
 #
-# No hidden tie-breaks: an `unless` may exclude wording that is on no list (a cheque is
-# not cash), never another list's cue or name. Where two lists' wording meets, a longer
-# phrase goes on one list, or the credit is ambiguous.
+# No hidden tie-breaks: no rule has an exception (`unless` or `requires`), since one could
+# switch a rule off where another list's wording sits. Where two lists' wording meets, a
+# longer phrase goes on one list, or the credit is ambiguous.
 #
 # Protected rules come first and win over the case profile and firm rules; only a
 # per-line override changes a line they settle (R21). They are the line-type cues and the

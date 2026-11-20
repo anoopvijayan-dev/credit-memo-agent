@@ -1833,3 +1833,16 @@ def test_the_round_trip_pass_never_undoes_an_override_whatever_its_reference_rea
     categorise.categorise(s, v2, overrides={"in": LineOverride(C.REVENUE_TRANSFER, "v2:invoice_transfer")})
     got = next(t for t in s.transactions if t.id == "in")
     assert (got.category, got.rule_id) == (C.REVENUE_TRANSFER, "v2:invoice_transfer")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("key", ["unless", "requires"])
+def test_a_v2_rule_may_not_carry_an_exception_that_could_hide_cash_wording(key):
+    """T03 review 20 / R4: a cash rule whose exception names a rail (or that requires
+    wording a rail line lacks) would drop cash wording before the ambiguity check, and an
+    electronic credit with cash paid-in wording would reach trading receipts."""
+    rail = {"id": "rail", "names": ["FPS"], "direction": "in", "protected": True, "stage": "line_type"}
+    cash = {"id": "cash", "names": ["CASH DEPOSIT"], "direction": "in", "category": "cash_deposit",
+            "stage": "names", key: "FPS" if key == "unless" else "COUNTER"}
+    with pytest.raises(RulesetError, match=f"{key} is not allowed in a v2 table"):
+        categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rail, cash]}, "v2", "t", "0")

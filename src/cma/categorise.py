@@ -400,6 +400,16 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                 # These name the categoriser's own decisions in a line's provenance.
                 problems.append(f"{where}: id {r['id']!r} is reserved for the categoriser's own "
                                 "provenance")
+            for key in ("unless", "requires"):
+                if key in r:
+                    # An exception could switch a rule off where another list's wording sits
+                    # (cash wording beside a rail, say), deciding a collision before the
+                    # ambiguity check sees it. R4 lets an exception exclude only wording on no
+                    # list, which a pattern cannot be shown to keep to, so a v2 table has none:
+                    # list a longer phrase, or let the line be ambiguous (D52, T03 review 20).
+                    problems.append(f"{where}: {key} is not allowed in a v2 table: an exception could "
+                                    "hide another list's wording from the ambiguity check (R4); list a "
+                                    "longer phrase instead")
             if r.get("pattern") in BANK_RETURN_CODES and r.get("bank_code") is not True:
                 problems.append(f"{where}: the bank's own returned-payment code must carry bank_code: true")
             for key in ("pattern", "unless", "requires"):
