@@ -3171,11 +3171,11 @@ def test_an_interruption_entering_the_save_guard_leaves_no_stale_save(tmp_path, 
             raise KeyboardInterrupt  # just after registering
 
     saving = Interrupting()
-    log._saving = saving
+    monkeypatch.setattr(case, "_SAVING", saving)
     with pytest.raises(KeyboardInterrupt):
         log.append("override", {"n": 3}, expected=2)
     assert not saving  # the guard took its own registration back
-    log._saving = {}
+    monkeypatch.setattr(case, "_SAVING", {})
     log.append("override", {"n": 3}, expected=2)
 
 
@@ -3353,3 +3353,24 @@ def test_a_read_back_failing_while_a_lock_was_replaced_still_takes_a_fresh_read(
     entry = log.append("override", {"n": 3}, expected=2)
     monkeypatch.undo()
     assert entry.seq == 3 and case.CaseLog(log.path).verify().head.position == 3
+
+
+@pytest.mark.invariants
+def test_a_nested_save_through_a_second_handle_is_refused_too(tmp_path, monkeypatch):
+    """T12 review 48 / R42 revision 23: the guard is the thread's, for the case, whatever
+    CaseLog object or spelling of the path the nested save comes through."""
+    log = _log(tmp_path, 2)
+    other = case.CaseLog(str(tmp_path / "." / "log.jsonl"))
+    real, inner = case._utc_now, []
+
+    def nested():
+        if not inner:
+            inner.append(None)
+            with pytest.raises(case.CaseLogError, match="under way"):
+                other.append("override", {"inner": True}, expected=2)
+        return real()
+
+    monkeypatch.setattr(case, "_utc_now", nested)
+    log.append("override", {"outer": True}, expected=2)
+    check = log.verify()
+    assert check.ok and check.head.position == 3 and inner

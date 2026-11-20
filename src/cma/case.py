@@ -467,6 +467,9 @@ class _Hold:
         return _file_id(os.stat(gate_path)) == self.gate_id and _file_id(os.stat(lock_path)) == self.lock_id
 
 
+# (case log's real path, holder) -> the token of the save under way there (review 48).
+_SAVING: dict[tuple[str, tuple[int, int]], object] = {}
+
 # Each held case lock's identity -> the hold.
 _HELD: dict[tuple[int, int], _Hold] = {}
 _HELD_GUARD = threading.RLock()  # reentrant, like _state: a cleanup run by the GC cannot deadlock
@@ -495,7 +498,6 @@ class CaseLog:
         self._lock_id: tuple[int, int] | None = None  # the lock file's identity while held
         self._gate_id: tuple[int, int] | None = None  # the gate's identity when the case was taken
         self._pid = os.getpid()  # a CaseLog belongs to the process that opened it (R42)
-        self._saving: dict[tuple[int, int], object] = {}  # holders with a save under way here
         self._head_renamed = False  # the last head record's rename was done
 
     # --- reading -----------------------------------------------------------------------
@@ -927,20 +929,23 @@ class CaseLog:
         """One save at a time per holder: a save started inside another on the same thread
         (from a signal handler, a finaliser or a callback) is refused, since the writer lock
         admits it and the outer save's check would then be stale (T12 review 20)."""
-        me = _holder_id()
+        # Keyed by the case folder as the file system names it and the thread, shared by every
+        # CaseLog object, so a save begun inside another through a second handle to the same
+        # case (another object, another spelling of the path) is refused too (review 48).
+        key = (os.path.realpath(self.path), _holder_id())
         token = object()
         try:
             # One step: setdefault tests and registers together, so no signal handler can run
             # between the two and start a save that passes the test too (review 38). Inside
             # the region that removes it, so an interruption just after cannot leave the
             # thread unable to save again (review 42); only this save's own token is removed.
-            if self._saving.setdefault(me, token) is not token:
+            if _SAVING.setdefault(key, token) is not token:
                 raise CaseLogError(f"{self.path}: another save on this case log is under way in "
                                    "this thread; this save was refused")
             yield
         finally:
-            if self._saving.get(me) is token:
-                del self._saving[me]
+            if _SAVING.get(key) is token:
+                del _SAVING[key]
 
     @contextmanager
     def _os_errors_as_not_recorded(self) -> Iterator[None]:
