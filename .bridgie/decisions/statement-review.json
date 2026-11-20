@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 132,
+  "next_id": 134,
   "decisions": [
     {
       "id": "D1",
@@ -2695,6 +2695,46 @@
       "decided_at": "2026-11-20T01:29:57.717Z",
       "effect": "changes requested: Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Write D125-D127 into the requirements. R4: cash paid-in wording is never taken in by a payment-method cue's longer phrase (beside the bank's code, D101), and a v2 rule carries no unless or requires (D126). R42: a save is told it was recorded only once it reads back an intact log holding its entry where its head record lists it, and a repair re-checks, before each rename, that the log and head record are as its check read them (D125). Keep everything else in revision 13.; re-run bridgie shape statement-review",
       "created_at": "2026-11-20T01:29:57.707Z"
+    },
+    {
+      "id": "D132",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-14"
+      },
+      "context": "A payment-method cue inside a longer cash phrase (R4; revision 14, after 4adddf9). D127 keeps cash paid-in wording from being taken in by a payment-method cue's longer phrase, so FPS CASH DEPOSIT listed on the rail list is ambiguous. The other side is still open. A table edit can list FPS CASH DEPOSIT, or CHEQUES AND CASH PAID IN, on the cash list. At 4adddf9 (src/cma/categorise.py:762-765) the rail or cheque inside that phrase then counts only as the cash phrase. FPS CASH DEPOSIT becomes a cash deposit in trading receipts and M18, though the line says the money came by Faster Payment. R4's longer-phrase clause allows that reading, and its rail-with-cash clause forbids it. T03's reviewer judges R4 by its own text, and verify-53 to verify-67's majors were all table edits. No shipped cash phrase holds payment-method wording, so no shipped verdict moves either way.",
+      "options": [
+        "Neither takes the other in: a payment-method cue with cash paid-in wording is ambiguous whichever list holds the longer phrase; say it in R4 in the next revision (design default; T03 makes one condition two-way before its review)",
+        "The longer cash phrase takes the cue in, and R4 says so: the table author's phrase decides",
+        "Refuse at load a cash-list name that holds payment-method wording; patterns stay as they are"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T02:22:03.202Z"
+    },
+    {
+      "id": "D133",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Approve the design and requirements (R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R18 R19 R20 R21 R22 R23 R24 R25 R26 R27 R28 R29 R30 R31 R32 R33 R34 R35 R36 R37 R38 R39 R40 R41 R42 R43 R44 R45 R46 R47 R48 R50 R51 R52 R53 R54 R55 R56 P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20) for 'statement-review'? Branch bridgie/statement-review from claude/busy-ride-h88y5r.",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T02:22:03.213Z"
     }
   ]
 }
