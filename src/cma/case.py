@@ -50,8 +50,10 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import itertools
 import json
 import os
+import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -374,7 +376,20 @@ def _holder_id() -> tuple[int, int]:
     """Who holds a writer lock: the process and the thread. With the process in it, a
     forked child never passes for its parent (forking while holding is not supported; a
     child is refused rather than let in)."""
-    return os.getpid(), threading.get_ident()
+    return os.getpid(), _thread_token()
+
+
+# Thread idents are reused once a thread ends, so a new thread could pass for one that
+# still holds the case (T12 review 18). Each thread gets its own number, never reused.
+_THREAD_NUMBERS = itertools.count(1)
+_THREAD = threading.local()
+
+
+def _thread_token() -> int:
+    token = getattr(_THREAD, "token", None)
+    if token is None:
+        token = _THREAD.token = next(_THREAD_NUMBERS)
+    return token
 
 
 # The writer locks this process holds, by the lock file's identity (device and inode, so
@@ -770,8 +785,7 @@ class CaseLog:
         # log loads as torn at the same entry, and dropping it again repairs it.
         intact = self.path.read_bytes()[: check.intact_bytes]
         entry, line = self._encode(TORN_DROPPED, {"seq": check.first_bad, "by": by}, check.head)
-        tmp = self.path.with_name(self.path.name + ".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd, tmp = _staging_file(self.path)
         try:
             _write_all(fd, intact + line)
             os.fsync(fd)
@@ -800,8 +814,7 @@ class CaseLog:
 
     def _write_head(self, hashes: list[str]) -> None:
         """Replace the head file in one rename, after the last entry it names is on disk."""
-        tmp = self.head_path.with_name(self.head_path.name + ".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd, tmp = _staging_file(self.head_path)
         try:
             _write_all(fd, _head_bytes(hashes))
             os.fsync(fd)
@@ -847,6 +860,14 @@ class CaseLog:
 # (no delete sharing), so a rename that meets one is retried briefly, not failed mid-append.
 REPLACE_RETRIES = 40
 REPLACE_PAUSE = 0.025
+
+
+def _staging_file(target: Path) -> tuple[int, Path]:
+    """A new temporary file beside `target`, under a name of its own: a shared staging name
+    would let a writer that lost its lock reach a file another writer renamed into place
+    (T12 review 18). Created exclusively, readable only by its owner."""
+    fd, name = tempfile.mkstemp(prefix=target.name + ".", suffix=".tmp", dir=target.parent)
+    return fd, Path(name)
 
 
 def _replace(src: Path, dst: Path, before: Callable[[], None] | None = None) -> None:

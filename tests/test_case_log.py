@@ -1987,3 +1987,34 @@ def test_p15_with_both_locks_busy_an_unreadable_head_names_nothing(tmp_path, mon
     check = case.CaseLog(log.path).verify()
     monkeypatch.undo()
     assert not check.checked and check.first_bad is None
+
+
+@pytest.mark.invariants
+def test_p15_each_write_stages_under_a_name_of_its_own_and_leaves_none_behind(tmp_path):
+    # T12 review 18: a shared staging name let a writer that lost its lock reach a file
+    # another writer had renamed into place.
+    log = _log(tmp_path, 2)
+    _, a = case._staging_file(log.head_path)
+    _, b = case._staging_file(log.head_path)
+    assert a != b
+    a.unlink()
+    b.unlink()
+    log.append("override", {}, expected=2)
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+@pytest.mark.invariants
+def test_p15_a_thread_is_never_taken_for_one_that_ended(tmp_path):
+    # T12 review 18: thread idents are reused once a thread ends; the holder's identity is
+    # a per-thread number that never is.
+    seen_idents, seen_tokens = [], []
+
+    def record():
+        seen_idents.append(threading.get_ident())
+        seen_tokens.append(case._thread_token())
+
+    for _ in range(50):
+        t = threading.Thread(target=record)
+        t.start()
+        t.join()
+    assert len(set(seen_tokens)) == 50  # even where idents repeat
