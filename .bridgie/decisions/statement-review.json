@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 184,
+  "next_id": 185,
   "decisions": [
     {
       "id": "D1",
@@ -3718,6 +3718,26 @@
       "decided_at": "2026-11-20T08:07:30.399Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T08:01:33.479Z"
+    },
+    {
+      "id": "D184",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed HEAD b3ba156 against requirements.md:309. Canonical UTF-8 hashing, UTC timestamps, first-bad-entry reporting and head comparison are at src/cma/case.py:177–348. Holder recognition across path aliases, shared locking, steady reads, retries and the sign-off guard are at src/cma/case.py:457–681. Writer exclusion, inherited-handle refusal, nested-save refusal, expected-position conflicts and repair rechecks are at src/cma/case.py:683–1105. Publication, read-back and take-back are at src/cma/case.py:1107–1192. Traced the production CLI at src/cma/cli.py:309–338 and checked double submission, competing updates, empty and malformed inputs, Unicode, UTC, partial failure, OS permissions, case-folder isolation and CLI exit codes. The diff adds no currency arithmetic or database migration. The runner logs confirm 496 full-suite passes, 179 invariant passes and 13 contract passes, including the named CLI tamper, rebuilt-chain, torn-tail and duplicate-submit tests. The holder recheck and take-back schedules below fail P15. No tests were run during this review.); major: A holder can accept a read across a replaced case lock. Its post-read check samples the case lock before examining the gate and accepts the earlier lock identity even if the lock is replaced before that check completes. at src/cma/case.py:481; major: Signal deferral covers a fixed list of signals, so a Python handler for an omitted signal can still skip take-back after a failed read-back while the save owns the head. at src/cma/case.py:1200; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T08:09:08.820Z"
     }
   ]
 }
