@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 208,
+  "next_id": 209,
   "decisions": [
     {
       "id": "D1",
@@ -4194,6 +4194,26 @@
       "decided_at": "2026-11-20T10:34:20.841Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T10:29:43.007Z"
+    },
+    {
+      "id": "D208",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed revision 22 at requirements.md:312 against checkout 43332c6. Canonical encoding, head comparison, and first-bad-entry reporting are at src/cma/case.py:177, :285 and :1087. Holder and ordinary-reader lock checks, steady reads, and recorded-prefix reporting are at :461, :503, :701 and :364. Writer exclusion and fork refusal are at :762, nested-save refusal at :926, expected-position conflict at :995, and repair checks at :1043. Read-back and take-back are at :1244 and :1294. The runner logs confirm named passes for tampering, rebuilt chains, torn tails, duplicate submission, concurrent writers, repair failures, and the new read-back retry after an I/O error. A non-I/O interruption can still bypass the required retry after lock replacement. Traced the CLI consumer at src/cma/cli.py:321 and the sign-off guard at src/cma/case.py:736. Reviewed empty and malformed input, Unicode, UTC timestamps, per-folder isolation, and filesystem permissions. This change performs no currency arithmetic or migration.); major: A non-I/O interruption during the holder's read-back skips the post-read lock check and the fresh read P15 requires after a lock replacement. The save can report an unconfirmed outcome even though a fresh read would find the published entry intact. at src/cma/case.py:1269; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T10:35:50.127Z"
     }
   ]
 }
