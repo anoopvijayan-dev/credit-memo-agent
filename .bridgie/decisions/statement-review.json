@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 162,
+  "next_id": 163,
   "decisions": [
     {
       "id": "D1",
@@ -3285,6 +3285,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T05:49:01.825Z"
+    },
+    {
+      "id": "D162",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Reviewed revision 19 at /home/user/credit-memo-agent/.bridgie/specs/statement-review/requirements.md:53. The review checkout contains the original recognition clause at .bridgie/specs/statement-review/requirements.md:19. Mapped the maintained lists to src/cma/rules/v2.yaml:74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest matches and occurrence containment at src/cma/categorise.py:807,829, bank-code and ambiguity precedence at :916, and override, profile candidates and firm rules at :936,983. Traced ruleset selection, checkpoint replay and per-line evidence through src/cma/graph.py:188,221,250 and src/cma/cli.py:74,225. Checked repeat classification, duplicate and concurrent review paths, signed GBP inputs and date-only ingestion, Unicode boundaries, partial failure, override precedence, case-local inputs and evidence consumers. Runner logs confirm per-list provenance, CLI classification, ambiguity, containment, rollback and checkpoint tests. The malformed-pattern test leaves bank_code unset on the malformed rule, so it misses the raw TypeError at src/cma/categorise.py:534. That exception also bypasses the changed-frozen-table diagnostic at :684 when a changed v1 table enters strict validation.); major: A malformed pattern on a rule with bank_code: true raises a raw TypeError and discards all accumulated rule diagnostics. at src/cma/categorise.py:534; major: Changed v1 bytes can still bypass the required changed-frozen-table diagnostic. The loader compares the hash first, but only prefixes diagnostics when parsing or validation raises RulesetError. at src/cma/categorise.py:684; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T05:52:49.231Z"
     }
   ]
 }
