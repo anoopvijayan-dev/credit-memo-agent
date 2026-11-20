@@ -195,10 +195,12 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             if currency and currency != "GBP":
                 skipped += 1
                 continue
-            d = _parse_date(r["Date"])
-            t = (r.get("Time") or "00:00:00").strip()
+            # The amount first: a bad date on the row that takes money in or out to the limit
+            # is reported with the limit, not instead of it (T04 review 27).
             amount = _money(r["Amount"], "Amount", i)
             reading = amount
+            d = _parse_date(r["Date"])
+            t = (r.get("Time") or "00:00:00").strip()
             bal = _money(r["Balance"], "Balance", i) if has_balance and (r.get("Balance") or "").strip() else None
             refs = references(r.get("Notes and #tags"), r.get("Description"))
             desc = describe(r.get("Type", ""), r.get("Name", ""), amount, refs)

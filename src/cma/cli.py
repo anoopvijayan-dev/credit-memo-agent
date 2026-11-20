@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 
 try:
     import fcntl
@@ -98,25 +99,28 @@ def run(
     with _checkpointer(checkpoint_db) as saver:
         graph = build(get_llm(llm), checkpointer=saver)
         cfg = {"configurable": {"thread_id": thread_id}}
-        if graph.get_state(cfg).values:
-            console.print(f"[red]Review id {thread_id} is already used in {checkpoint_db}. Pick a new --thread.[/red]")
-            raise typer.Exit(code=2)
-        try:
-            state = graph.invoke(
-                {"statement_path": str(statement), "policy_path": str(policy) if policy else None,
-                 "vat_stagger": vat_stagger},
-                cfg,
-            )
-        except (StatementError, PolicyError, RulesetError, AmountError) as e:
-            console.print(f"[red]Refused.[/red] {escape(str(e))}")
-            raise typer.Exit(code=2) from e
-        except ReconciliationError as e:  # R3: no figures for a case whose buckets do not add up
-            # Line ids come from the statement, so they are escaped, never read as markup.
-            console.print(f"[red]Refused, no figures shown.[/red] {escape(str(e))}")
-            raise typer.Exit(code=6) from e
-        except Exception as e:  # the model provider: network, auth, cut-off reply
-            console.print(f"[red]The model call failed[/red] ({type(e).__name__}): {e}")
-            raise typer.Exit(code=4) from e
+        # The id check and the first write are one step under the review lock, so two runs
+        # never both start the same review id (T04 review 27).
+        with _review_lock(checkpoint_db):
+            if graph.get_state(cfg).values:
+                console.print(f"[red]Review id {thread_id} is already used in {checkpoint_db}. Pick a new --thread.[/red]")
+                raise typer.Exit(code=2)
+            try:
+                state = graph.invoke(
+                    {"statement_path": str(statement), "policy_path": str(policy) if policy else None,
+                     "vat_stagger": vat_stagger},
+                    cfg,
+                )
+            except (StatementError, PolicyError, RulesetError, AmountError) as e:
+                console.print(f"[red]Refused.[/red] {escape(str(e))}")
+                raise typer.Exit(code=2) from e
+            except ReconciliationError as e:  # R3: no figures for a case whose buckets do not add up
+                # Line ids come from the statement, so they are escaped, never read as markup.
+                console.print(f"[red]Refused, no figures shown.[/red] {escape(str(e))}")
+                raise typer.Exit(code=6) from e
+            except Exception as e:  # the model provider: network, auth, cut-off reply
+                console.print(f"[red]The model call failed[/red] ({type(e).__name__}): {e}")
+                raise typer.Exit(code=4) from e
         if checkpoint_db:
             console.print(f"review id: {thread_id} (kept in {checkpoint_db}; `cma resume {thread_id}` picks it up)")
         _review(graph, cfg, state, reviewer, yes, out, lock=checkpoint_db)
@@ -324,8 +328,14 @@ def _review(graph, cfg, state, reviewer, yes, out, lock: Path | None = None):
     if out:
         target = out if approved else out.with_name(out.stem + ".rejected.md")
         evidence = _evidence_path(target)
-        target.write_text(final["final_memo"])
-        evidence.write_text(json.dumps(evidence_record({**final, "ruleset": ruleset}), indent=2, default=str))
+        # Both are made in full before either is written, each is written beside its target
+        # and moved into place, evidence first: a failure while making them writes nothing,
+        # and no memo is left without its evidence (T04 review 27).
+        record = json.dumps(evidence_record({**final, "ruleset": ruleset}), indent=2, default=str)
+        for path, text in ((evidence, record), (target, final["final_memo"])):
+            part = path.with_name(path.name + ".part")
+            part.write_text(text)
+            os.replace(part, path)
         console.print(f"wrote {target} and {evidence}")
     if not approved:
         console.rule("Not approved")

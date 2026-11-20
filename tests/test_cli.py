@@ -482,3 +482,46 @@ def test_a_decision_racing_the_refresh_is_recorded_once(tmp_path, monkeypatch):
     with sqlite_checkpointer(db) as saver:
         state = build(FakeLLM(), checkpointer=saver).get_state(cfg)
     assert not state.interrupts and state.values["review"].reviewer == ("C" if c_recorded else "B. Other")
+
+
+def test_starting_a_review_waits_for_the_review_lock(tmp_path):
+    # T04 review 27: `cma run` checked that a review id was unused and wrote it outside the
+    # lock, so two runs could both start the same id. It takes the lock first.
+    import threading
+    import time
+
+    from cma import cli
+
+    pytest.importorskip("langgraph.checkpoint.sqlite")
+    db, csv = tmp_path / "reviews.sqlite", _statement(tmp_path)
+    held, released = threading.Event(), {}
+
+    def hold():
+        with cli._review_lock(db):
+            held.set()
+            time.sleep(4)
+            released["at"] = time.monotonic()
+
+    t = threading.Thread(target=hold)
+    t.start()
+    held.wait(5)
+    runner.invoke(app, ["run", str(csv), "--checkpoint-db", str(db), "--thread", "case-9"], input="\x04")
+    ended = time.monotonic()
+    t.join()
+    assert ended >= released["at"]  # it waited for the other process's step
+
+
+def test_a_failed_evidence_record_writes_no_memo(tmp_path, monkeypatch):
+    # T04 review 27: the memo was written before its evidence was made; a failure making the
+    # evidence left a memo with no evidence. Both are made before either is written.
+    from cma import cli
+
+    def broken(state):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cli, "evidence_record", broken)
+    out = tmp_path / "memo.md"
+    r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A", "--out", str(out)])
+    assert r.exit_code != 0
+    assert not out.exists() and not (tmp_path / "memo.evidence.json").exists()
+    assert not list(tmp_path.glob("*.part"))
