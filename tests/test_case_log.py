@@ -3099,3 +3099,41 @@ def test_p15_a_gate_moved_aside_and_replaced_after_its_first_look_is_caught(tmp_
         log.append("override", {"n": 3}, expected=2)
     monkeypatch.undo()
     assert len(_lines(log)) == 2
+
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("exc", ["conflict", "broken"])
+def test_another_operations_conflict_after_the_line_is_still_this_saves_report(tmp_path, monkeypatch, exc):
+    """T12 review 41: a callback's LogConflict or CaseLogBroken, raised once this save's line
+    is in the log, never becomes this save's report: it says not recorded, in its own words."""
+    log = _log(tmp_path, 2)
+
+    def callback(self, recorded, entry):
+        if exc == "conflict":
+            raise case.LogConflict(9, 10)
+        raise case.CaseLogBroken(self.path, 7, "is not a readable entry", False)
+
+    monkeypatch.setattr(case.CaseLog, "_publish", callback)
+    with pytest.raises(case.SaveNotRecorded, match="entry was written") as e:
+        log.append("override", {"n": 3}, expected=2)
+    assert not isinstance(e.value, (case.LogConflict, case.CaseLogBroken))
+    monkeypatch.undo()
+    check = case.CaseLog(log.path).verify()
+    assert check.torn and check.first_bad == 3
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("op", ["append", "drop"])
+def test_a_save_whose_check_judged_nothing_is_refused_as_unchecked_not_broken(tmp_path, monkeypatch, op):
+    """T12 review 41 / P15: retries exhausted give no verdict on any entry: the save is
+    refused as unchecked, never as a broken log at no entry."""
+    log = _log(tmp_path, 2)
+    monkeypatch.setattr(case.CaseLog, "verify", lambda self: case._unchecked(
+        "being saved: writers kept taking the case during every read", in_progress=True))
+    with pytest.raises(case.CaseLocked, match="could not be checked") as e:
+        if op == "append":
+            log.append("override", {"n": 3}, expected=2)
+        else:
+            log.drop_torn_entry(expected=2, by="A. Person")
+    assert not isinstance(e.value, case.CaseLogBroken)

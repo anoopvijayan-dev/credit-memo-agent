@@ -352,6 +352,15 @@ def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
     return failed(count + 1, f"was added after the head the head file records (entry {count})")
 
 
+def _refuse_unchecked_save(path: Path, check: LogCheck) -> None:
+    """A save whose check judged nothing (its retries ran out, or another writer held the
+    case through it) gives no verdict on any entry (P15): it is refused as unchecked, never
+    as a broken log at no entry (T12 review 41)."""
+    if not check.checked or check.in_progress:
+        raise CaseLocked(f"{path}: the case log could not be checked before saving ({check.reason or 'another writer holds it'}); "
+                         "nothing was written: try again")
+
+
 def _held_result(check: LogCheck | None) -> LogCheck:
     """One other writer held the case through a read (R43): only the recorded entries are
     judged. A change, removal or reordering at or before them is broken; what follows them
@@ -916,7 +925,7 @@ class CaseLog:
         except OSError as e:
             raise SaveNotRecorded(f"{self.path}: the save could not be completed ({e.__class__.__name__}: "
                                   f"{e}); the save was not recorded") from e
-        except (SaveNotRecorded, SaveNotConfirmed, LogConflict, CaseLogBroken, GeneratorExit):
+        except (SaveNotRecorded, SaveNotConfirmed, GeneratorExit):
             raise
         except BaseException as e:  # Ctrl-C after the line is still this save's report (review 32)
             if self._save_confirmed:
@@ -971,6 +980,7 @@ class CaseLog:
         snapshot = json.loads(blob)
         with self._one_save(), self.writer():
             check = self.verify()
+            _refuse_unchecked_save(self.path, check)
             if not check.ok:
                 raise CaseLogBroken(self.path, check.first_bad, check.reason, check.torn)
             if check.head.position != expected:
@@ -986,6 +996,7 @@ class CaseLog:
             raise ValueError("a name is required to drop a torn entry")
         with self._one_save(), self.writer():
             check = self.verify()
+            _refuse_unchecked_save(self.path, check)
             if not check.torn:
                 if check.ok:
                     raise CaseLogBroken(self.path, check.head.position + 1, "does not exist: nothing is torn", False)
@@ -1018,6 +1029,10 @@ class CaseLog:
             if self._log_digest() != check.log_digest or _read_head(self.head_path, raise_os=True) != recorded:
                 raise LogConflict(check.head.position, check.head.position + 1)
             self._require_lock_in_place()  # last, immediately before the rename (review 34)
+            # Marked once every check passed, immediately before the rename, so a refusal
+            # here stays the repair's own conflict and an interruption right after the rename
+            # is still the repair's report (reviews 31, 41).
+            self._repair_landed = True
 
         fd, tmp = _staging_file(self.path)
         try:
@@ -1026,10 +1041,6 @@ class CaseLog:
         finally:
             os.close(fd)
         try:
-            # Marked before the rename, so an interruption right after it is still the
-            # repair's (review 31); refused before it, the log is unchanged and still reads
-            # torn at the same entry, which the report says.
-            self._repair_landed = True
             _replace(tmp, self.path, before=unchanged)  # each attempt (D108)
         except BaseException:
             tmp.unlink(missing_ok=True)
