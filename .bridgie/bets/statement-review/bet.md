@@ -315,6 +315,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-20 D165 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-20 D161 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Own words after the line (de6a56e); the save's reads name their OS errors (D159). → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 - 2026-11-20 D162 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Malformed bank-code pattern named by rule; a changed v1 named changed whatever fails (5139e22). → task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03 [Anoop Vijayan]
+- 2026-11-20 D164 (question): One answer per report: the take-back's refusal is worded for the save, naming what stopped it, and no part of a not-confirmed report says the save was or was not recorded; say it in R42 in the next revision (design default; T12 words two refusals before its review) — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Built in T12 7fb3a23. → recorded [Anoop Vijayan]
 
 ## Idea
 
