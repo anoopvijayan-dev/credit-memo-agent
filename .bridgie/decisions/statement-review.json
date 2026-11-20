@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 273,
+  "next_id": 274,
   "decisions": [
     {
       "id": "D1",
@@ -5474,6 +5474,26 @@
       "decided_at": "2026-11-20T20:26:16.936Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T20:22:25.678Z"
+    },
+    {
+      "id": "D273",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:81 checks penny round-tripping, src/cma/metrics.py:512 makes unreportable M3 values n/a, and src/cma/graph.py:175 and src/cma/cli.py:415 show money to the penny. The currency-first and shared CSV limit regressions passed at contracts-4.log:81 and :82. src/cma/ingest.py:275 still makes an unsupported monetary-limit assertion for an unreadable field.); major: The oversized-field refusal claims that an amount or balance of that length would exceed £10 trillion. The field's length does not establish its value, and revision 29 requires the refusal to identify the field as too long to read without drawing that monetary conclusion. at src/cma/ingest.py:275; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T20:31:02.221Z"
     }
   ]
 }
