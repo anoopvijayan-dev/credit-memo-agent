@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-152/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:82 verifies penny round-trips and :256 checks flow limits. src/cma/metrics.py:512 computes M3 in integer pence and handles unrepresentable results. src/cma/graph.py:175 and src/cma/cli.py:352 show pennies, while src/cma/metrics.py:591 preserves whole-pound drafting. Monzo can still omit a known over-limit flow when the row that crosses the limit has a malformed balance.); major: Monzo knows the GBP amount that brings money in to the limit, but a malformed Balance on that same row prevents it from reporting the flow-limit failure. The exception handler totals only rows already appended to parsed. at src/cma/importers/monzo.py:197; major: The pending-checkpoint comparison and migration write are separate operations. A concurrent decision can commit between them, after which the migration can reopen the decided review. at src/cma/cli.py:165; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-153/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:82 checks penny round-trips, src/cma/ingest.py:256 checks flow limits, and src/cma/metrics.py:512 handles unrepresentable M3 results. src/cma/graph.py:175 and src/cma/cli.py:397 show pennies, while src/cma/metrics.py:591 preserves whole-pound drafting. The Monzo importer can still omit the flow-limit reason when a bad date is on the row that crosses the limit.); major: The importer reports only the malformed date when the same record contains the GBP amount that brings money in or out to the limit. The date is parsed before the amount is included in the flow diagnostic. at src/cma/importers/monzo.py:198; major: Starting a review does not use the lock that serializes review refreshes and decisions. Two submissions can both observe an unused review ID and then write separate checkpoint histories for that same ID. at src/cma/cli.py:101; major: A failed evidence write can leave the memo on disk and the review already decided, so resuming cannot finish the export. at src/cma/cli.py:328; reviewer verdict fail"
     },
     {
       "id": "T06",

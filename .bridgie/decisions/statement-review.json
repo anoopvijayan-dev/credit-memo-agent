@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 257,
+  "next_id": 258,
   "decisions": [
     {
       "id": "D1",
@@ -5157,6 +5157,26 @@
       "decided_at": "2026-11-20T17:23:36.128Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T17:18:40.897Z"
+    },
+    {
+      "id": "D257",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:82 checks penny round-trips, src/cma/ingest.py:256 checks flow limits, and src/cma/metrics.py:512 handles unrepresentable M3 results. src/cma/graph.py:175 and src/cma/cli.py:397 show pennies, while src/cma/metrics.py:591 preserves whole-pound drafting. The Monzo importer can still omit the flow-limit reason when a bad date is on the row that crosses the limit.); major: The importer reports only the malformed date when the same record contains the GBP amount that brings money in or out to the limit. The date is parsed before the amount is included in the flow diagnostic. at src/cma/importers/monzo.py:198; major: Starting a review does not use the lock that serializes review refreshes and decisions. Two submissions can both observe an unused review ID and then write separate checkpoint histories for that same ID. at src/cma/cli.py:101; major: A failed evidence write can leave the memo on disk and the review already decided, so resuming cannot finish the export. at src/cma/cli.py:328; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T17:27:42.286Z"
     }
   ]
 }
