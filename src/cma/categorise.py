@@ -370,7 +370,7 @@ def _repeat_crosses_words(pattern: str) -> bool:
     return walk(parsed)
 
 
-def _bank_code_shape(r: dict, *, with_stage: bool = False) -> bool:
+def _bank_code_shape(r: dict, *, with_stage: bool = False, every_combination: bool = False) -> bool:
     """The bank's returned-payment code as its own rule: the pinned text alone, as a
     returned-payment rule for credits, with no names or exceptions (and, `with_stage`, a
     line-type cue). Only this keeps its anchor, whatever other checks a table skips (T03
@@ -378,13 +378,15 @@ def _bank_code_shape(r: dict, *, with_stage: bool = False) -> bool:
     made only because another field is still a placeholder (review 44)."""
     if "names" in r or "unless" in r or "requires" in r:
         return False
-    for pattern, category, direction, stage in itertools.product(
-            _every(r.get("pattern")), _every(r.get("category")), _every(r.get("direction")), _every(r.get("stage"))):
-        if (_is_bank_code_text(pattern) and category == Category.RETURNED_DD.value
-                and direction in ("in", "any")  # it settles credits; a debit-only copy is not it
-                and (not with_stage or stage == "line_type")):
-            return True
-    return False
+    # With `every_combination`, every way the repeated fields' values combine must be the
+    # bank's code, since any one of them may be the table that loads (review 45).
+    shapes = (_is_bank_code_text(pattern) and category == Category.RETURNED_DD.value
+              and direction in ("in", "any")  # it settles credits; a debit-only copy is not it
+              and (not with_stage or stage == "line_type")
+              for pattern, category, direction, stage in itertools.product(
+                  _every(r.get("pattern")), _every(r.get("category")), _every(r.get("direction")),
+                  _every(r.get("stage"))))
+    return all(shapes) if every_combination else any(shapes)
 
 
 def _is_bank_code_text(value: object) -> bool:
@@ -477,7 +479,9 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
         # Every field is checked in each value it was given (review 40): the rule as given,
         # then once per value of each repeated field.
         for vi, r in enumerate(_variants(rule_given)):
-            cue_only = r.get("stage") == "line_type" and strict  # every table but the pinned v1 (review 35)
+            # Every table but the pinned v1 (review 35); a repeated stage is a cue where any value
+            # is, and each other value is judged in its own variant (review 45).
+            cue_only = "line_type" in _every(r.get("stage")) and strict
             for key in sorted((CUE_ONLY_KEYS if cue_only else RULE_KEYS) - set(r)):
                 problems.append(f"{where}: missing {key}")
             if not MATCH_KEYS & set(r):
@@ -508,7 +512,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                 # code at the start of the line: allowed only there, never gained by anchoring.
                 if not isinstance(r["bank_code"], bool):
                     problems.append(f"{where}: bank_code must be true or false")
-                elif r["bank_code"] and not _bank_code_shape(r, with_stage=True):
+                elif r["bank_code"] and not _bank_code_shape(r, with_stage=True, every_combination=True):
                     problems.append(f"{where}: bank_code is only for the bank's own returned-payment code "
                                     f"({', '.join(sorted(BANK_RETURN_CODES))}), alone, with no unless or requires, "
                                     "for credits (direction in or any)")
@@ -533,7 +537,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                     problems.append(f"{where}: pattern uses a lookahead or lookbehind, which a v2 table "
                                     "does not allow: an exception could hide another list's wording (R4)")
                 if (isinstance(rv.get("pattern"), str) and rv["pattern"] and not _compile_problem(rv["pattern"])
-                        and not _bank_code_shape(rv) and _has_anchor(rv["pattern"])):
+                        and not _bank_code_shape(rv, every_combination=True) and _has_anchor(rv["pattern"])):
                     # An anchor tests the whole line beside a match: CASH DEPOSIT$ misses
                     # FPS CASH DEPOSIT STRIPE, so it hides wording as an exception would. Only
                     # the bank's own code keeps its ^ (D137).
@@ -548,7 +552,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                     # These name the categoriser's own decisions in a line's provenance.
                     problems.append(f"{where}: id {r['id']!r} is reserved for the categoriser's own "
                                     "provenance")
-                if _is_bank_code_text(r.get("pattern")) and r.get("bank_code") is not True:
+                if _is_bank_code_text(r.get("pattern")) and not all(x is True for x in _every(r.get("bank_code"))):
                     problems.append(f"{where}: the bank's own returned-payment code must carry bank_code: true")
                 for key in ("pattern", "unless", "requires"):
                     if isinstance(r.get(key), str) and r[key] and not _compile_problem(r[key]) and _has_group_reference(r[key]):

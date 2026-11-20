@@ -2491,3 +2491,32 @@ def test_the_bank_code_shape_is_tried_with_each_value_of_its_repeated_fields():
         validate_ruleset({"id": "v2", "frozen": False, "rules": [bank]}, expected_id="v2")
     text = str(e.value)
     assert "bank_code is only for" not in text and "anchor" not in text
+
+
+
+@pytest.mark.contracts
+def test_a_bank_code_rule_is_named_if_any_combination_of_its_values_is_not_the_code():
+    """T03 review 45: with pattern and category both repeated, a combination that is not the
+    bank's code (another pattern with another category) makes the flag invalid."""
+    bank = {**BANK, "pattern": _repeated(BANK["pattern"], "^UNPAID X"), "category": _repeated("returned_dd", "rent")}
+    with pytest.raises(RulesetError, match="bank_code is only for"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [bank]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_a_repeated_bank_code_flag_of_true_counts_as_true():
+    bank = {**BANK, "bank_code": _repeated(True, True)}
+    with pytest.raises(RulesetError) as e:
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [bank]}, expected_id="v2")
+    assert "must carry bank_code: true" not in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_repeated_line_type_stage_does_not_ask_a_cue_for_a_category():
+    """T03 review 45: a payment-method cue with its stage given twice as line_type is still a
+    cue, which has no category."""
+    rail = {"id": "rail", "names": ["FPS"], "direction": "in", "protected": True,
+            "stage": _repeated("line_type", "line_type")}
+    with pytest.raises(RulesetError) as e:
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rail]}, expected_id="v2")
+    assert "missing category" not in str(e.value)
