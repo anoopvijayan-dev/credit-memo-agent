@@ -1,0 +1,110 @@
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to eight buckets. src/cma/metrics.py:396 and :475 build M17, M18 and the seven non-trading buckets with signed-pence totals and line IDs. M2 carries trading receipts at :436. src/cma/graph.py:258 and src/cma/mcp_server.py:80 use the same computation.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:56 and :151 and src/cma/importers/monzo.py:72 and :197 enforce exact input and the directional limits. src/cma/metrics.py:425 handles unreportable M3. src/cma/graph.py:172 and :226 and src/cma/cli.py:292 preserve pence in new output. The committed memo appendix still rounds GBP at examples/cafe_stretched.memo.md:50.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:403 and :491 check membership and the signed difference before refusing dangling reversals or uncategorised debits. The runner confirmed the CLI and MCP refusal contracts at src/cma/cli.py:99 and src/cma/mcp_server.py:74. VAT processing can still raise before reconciliation at src/cma/metrics.py:202.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1355 falls through to OTHER when no rule or override explains the credit. src/cma/models.py:66 maps OTHER to unexplained, and :69 excludes it from trading receipts. The runner passed the named unknown-credit tests under both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:396 and :491 compare integer penny totals and count membership by credit ID. M18 is a separate subset at :478 and never enters the bucket sum. The runner passed both named P1 tests, including the large amounts case.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:436–487 carries the T04 figures' evidence. The runner passed sum and outflow evidence checks, the M9 split-credit check at tests/test_money_in.py:509, and the fixture dual run. M10 can lose its previous-release evidence on a standalone v1 statement under supported Python 3.11 at src/cma/metrics.py:300 and :459. Monthly cells are assigned to T06.",
+      "result": "fail",
+      "artifact": "dual_run-7.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1360 assigns the unmatched credit to OTHER. src/cma/models.py:66 and :69 and src/cma/metrics.py:398 and :481 place its ID in M25 and keep it out of M2. The runner passed the named P6 invariants.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "examples/cafe_stretched.memo.md",
+      "line": 50,
+      "criterion": "R2",
+      "claim": "The committed memo appendix displays £190 for M22, while its evidence records £189.91. The shipped example loses the pennies that the appendix must show.",
+      "repro": "Open M22 in examples/cafe_stretched.memo.md and compare it with examples/cafe_stretched.memo.evidence.json:4649."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 202,
+      "criterion": "R3",
+      "claim": "VAT processing can prevent the required reconciliation refusal. A statement starting in January of year 1 reaches a year-zero quarter before the bucket check, and cma run treats the resulting ValueError as a model failure.",
+      "repro": "Use a one-row CSV dated 0001-01-02 with a £5 credit and £5 balance. Use the categoriser fault injection from tests/test_money_in.py:359 to leave the credit uncategorised. Invoke cma run with --vat-stagger 3. The previous quarter is December of year zero, so the CLI exits 4 before it can report 500 pence, the credit ID and exit 6."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 459,
+      "criterion": "P2",
+      "claim": "M10 can lose evidence the previous release cited for the same standalone v1 statement on Python 3.11. The previous release's float sum can leave a penny of apparent debt service after complete reversals. The integer sum correctly reaches zero, and the M10 evidence branch drops the previous release's IDs. The runner's fixture dual run used Python 3.13.",
+      "repro": "On Python 3.11, compare the previous release and this revision under v1 with no profile. In statement order, use 32 £0.01 debits and then one £9,000,000,000,000 debit described as DD ACME LOAN. Follow with 32 £0.01 credits and then one £9,000,000,000,000 credit described as UNPAID DD ACME LOAN. Use unique IDs and exact running balances from zero. Both flows are below the import limit and every debit is reversed. The old sum leaves -£0.0078125 before negation and rounding, so old M10 cites the lines. Current M8 sums to zero and current M10 cites none."
+    },
+    {
+      "severity": "minor",
+      "file": ".bridgie/runs/statement-review/hardener-29/claim.json",
+      "line": 5,
+      "criterion": null,
+      "claim": "The historical full-suite result at ca0092c is not_proven. The supplied runner logs prove 892 tests passed for the reviewed revision, including the named invariant, contract and dual-run tests.",
+      "repro": "Compare the claimed revision with git log and specified-3.log. A runner log for python -m pytest -v -rs at ca0092c would establish the historical test claim."
+    },
+    {
+      "severity": "minor",
+      "file": ".bridgie/runs/statement-review/hardener-29/claim.json",
+      "line": 9,
+      "criterion": "R2",
+      "claim": "The over-limit probe bypasses statement loading. It can demonstrate float conversion of a prebuilt metric input, while both production import paths refuse the claimed £10,000,000,000,000.01 credit as R2 requires.",
+      "repro": "Use £10,000,000,000,000.01 as the amount and balance of a one-row CSV. src/cma/ingest.py:64 rejects it. The passed direct conversion test at tests/test_money_in.py:262 calls metrics.pence and metrics._gbp without loading a statement."
+    },
+    {
+      "severity": "minor",
+      "file": ".bridgie/runs/statement-review/hardener-29/claim.json",
+      "line": 14,
+      "criterion": "R2",
+      "claim": "The probe output shows formatted values without establishing that the CLI and appendix rendered them. The named runner test also calls Metric.display_exact directly. The separate executed idempotency probe claim at line 15 is not_proven.",
+      "repro": "Compare the proof with tests/test_money_in.py:394 and the runner logs. To prove the rendering claim at runtime, run cma run on the three £0.60 credits and compare the interactive table and generated appendix. To prove the repeat-run claim, restore scratchpad/probe.py and have the runner record PYTHONPATH=src python scratchpad/probe.py, or run an equivalent named repeat-computation test."
+    }
+  ],
+  "verdict": "fail"
+}
