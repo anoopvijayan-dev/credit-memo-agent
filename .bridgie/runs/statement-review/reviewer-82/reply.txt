@@ -1,0 +1,62 @@
+```json
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed HEAD 7fb3a23 against the supplied revision 21, whose P15 is broader than the checkout's .bridgie/specs/statement-review/requirements.md:249. Strict UTF-8 encoding, UTC timestamps, chain validation, head comparison and torn-tail detection are at src/cma/case.py:193–348. Holder identity, folder aliases, steady reads, lock replacement and retry behavior are at src/cma/case.py:404–650. Writer exclusion, fork refusal, nested saves, expected-position conflicts and repair are at src/cma/case.py:681–944. Publication and take-back are at src/cma/case.py:988–1122. The CLI consumer is at src/cma/cli.py:309–338. Checked duplicate submissions, concurrent updates, empty and malformed inputs, Unicode, UTC, partial failures, OS access, case-folder isolation and consumers. The log performs no currency conversion. The passing runner logs name the CLI tamper and rebuilt-chain tests, torn-tail tests, contention and lock replacement tests, and duplicate-submit test. The earlier lock-refusal wording and pre-rename classification defects are fixed on their tested paths. P15 still fails when an uncaught nested-save refusal escapes after the outer save's line has been written.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-82/invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1047,
+      "criterion": "P15",
+      "claim": "An uncaught nested-save refusal can become the outer save's report after its line is already in the log. The nested refusal says 'nothing was written' at line 843, and the outer save's error wrapper at line 859 catches only OSError. The outer caller therefore gets neither the required not-recorded answer nor accurate wording about the line already written.",
+      "repro": "Create a log with two recorded entries. In a fault-injection test, have the next log-file fsync invoke append on the same CaseLog and thread without catching its exception, as a signal handler could do. The outer write has completed by this point. The outer call raises CaseLogError with 'nothing was written', the head still records two entries, and verify names entry 3 as torn. The passing nested-save test at tests/test_case_log.py:2070 catches the inner refusal before the outer line is written."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 325,
+      "criterion": "P15",
+      "claim": "With multiple extra entries beyond the recorded head, a later malformed line can make the check name the wrong first bad entry. The early chain-error return bypasses the earlier count discrepancy handled at line 348.",
+      "repro": "Start with two recorded entries. Append two correctly chained, canonical entries without changing the head, then append a newline-terminated malformed fifth line. With the case free, cma case check reports entry 5. The unchanged head establishes that the unexpected suffix starts at entry 3."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's CLI contract claim says a held case over a torn tail exits 0 and reports 'appending'. The CLI exits 4 and reports 'being saved', as the passing contracts test explicitly requires.",
+      "repro": "Check a case with a torn tail while another holder keeps its writer lock. The runner passed test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break, whose assertion at tests/test_case_log.py:1360 requires exit 4."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1213,
+      "criterion": "P15",
+      "claim": "The passing rapid-append test does not prove the producer disposition's exact schedule of two commits during each read retry followed by a held lock at fallback.",
+      "repro": "Inspect the test's free-running writer loop and 40 reader calls. It has no synchronization or assertions for commits per retry or the fallback state. To prove the exact claim, add a deterministic regression that forces that schedule and have the runner execute it with python -m pytest -v -m invariants."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 933,
+      "criterion": "P15",
+      "claim": "A repair staging write or sync failure leaves its temporary file behind. The unlink handler is entered only after staging and close succeed, so disk failures and retries can leave additional copies of the log prefix in the case folder.",
+      "repro": "Create a torn tail and inject an OSError from fsync on the repair staging descriptor. drop_torn_entry reports not recorded and preserves the original log, but leaves a log.jsonl.*.tmp file. Retry with the same failure to leave another file. The same cleanup ordering is present for head staging at src/cma/case.py:993."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```
