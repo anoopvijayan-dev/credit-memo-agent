@@ -477,8 +477,10 @@ class CaseLog:
 
         def ours() -> bool:
             try:
-                return (ids is not None and ids[0] == _file_id(os.stat(self.lock_path))
-                        and ids[1] == _file_id(os.stat(self.gate_path)))
+                # The gate first, the case lock last: no read follows the case lock's check
+                # (T12 review 36).
+                return (ids is not None and ids[1] == _file_id(os.stat(self.gate_path))
+                        and ids[0] == _file_id(os.stat(self.lock_path)))
             except OSError:
                 return False
 
@@ -1197,9 +1199,6 @@ REPLACE_RETRIES = 40
 REPLACE_PAUSE = 0.025
 
 
-_DEFERRED_SIGNALS = tuple(getattr(signal, n) for n in ("SIGINT", "SIGTERM", "SIGHUP", "SIGALRM", "SIGUSR1",
-                                                        "SIGUSR2", "SIGBREAK") if hasattr(signal, n))
-
 
 @contextmanager
 def _interrupts_deferred() -> Iterator[None]:
@@ -1216,12 +1215,18 @@ def _interrupts_deferred() -> Iterator[None]:
     pending: list[int] = []
     previous: dict[int, Any] = {}
     try:
-        for signum in _DEFERRED_SIGNALS:
-            handler = signal.getsignal(signum)
-            if signum == signal.SIGINT or callable(handler):
-                previous[signum] = signal.signal(signum, lambda n, frame: pending.append(n))
-    except (ValueError, OSError):  # pragma: no cover - a signal this platform will not let us set
-        pass
+        # Every signal this platform has, not a list (review 36): any whose handler is
+        # Python code, and Ctrl-C whatever its handler.
+        for signum in sorted(signal.valid_signals()):
+            try:
+                handler = signal.getsignal(signum)
+                if signum == signal.SIGINT or callable(handler):
+                    previous[signum] = signal.signal(signum, lambda n, frame: pending.append(n))
+            except (ValueError, OSError, TypeError):  # one the platform will not let us set
+                continue
+    except BaseException:
+        _restore(previous)
+        raise
     try:
         yield
     except BaseException:
