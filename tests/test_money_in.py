@@ -1273,3 +1273,15 @@ def test_a_whole_long_record_keeps_its_last_cell_when_a_later_record_has_a_bad_b
         monzo.convert(src, tmp_path / "o.csv")
     assert "money in totals £10,000,000,000,000 or more" in str(e.value)
     assert "line 3: a field is too long to read (Name)" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_readable_balance_at_the_limit_is_named_in_a_record_with_a_long_field(tmp_path):
+    """T04 review 43: in a record with a description too long to read, only the readable
+    amount was checked; a readable balance at the limit went unnamed."""
+    csv = tmp_path / "s.csv"
+    csv.write_text("id,date,amount,balance,description\n"
+                   "T1,2026-01-01,1.00,10000000000000.00," + "D" * 200_000 + "\n")
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    assert "line 2: balance '10000000000000.00' is £10,000,000,000,000 or more" in str(e.value)

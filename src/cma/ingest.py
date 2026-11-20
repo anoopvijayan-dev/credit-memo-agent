@@ -361,13 +361,18 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         # the columns are readable; otherwise its amount, toward money in or out.
         if unreadable.row is not None and set(REQUIRED) <= unreadable.readable:
             rows = [*rows, (unreadable.line, unreadable.row)]
-        elif unreadable.row is not None and "amount" in unreadable.readable:
-            raw = unreadable.row.get("amount")
-            if _over_limit(raw):
-                add("limit", f"line {unreadable.line}: amount {shown(raw)} is {AT_LIMIT}; no figure could be "
-                    "reported to the penny")
-            elif (value := _number(raw)) is not None:
-                extra_amounts.append(float_pence(value))
+        elif unreadable.row is not None:
+            # Each readable money cell is still checked against the line limit, the balance as
+            # well as the amount (T04 review 43); a readable amount counts toward the flows.
+            for field in ("amount", "balance"):
+                raw = unreadable.row.get(field)
+                if field not in unreadable.readable:
+                    continue
+                if _over_limit(raw):
+                    add("limit", f"line {unreadable.line}: {field} {shown(raw)} is {AT_LIMIT}; no figure could "
+                        "be reported to the penny")
+                elif field == "amount" and (value := _number(raw)) is not None:
+                    extra_amounts.append(float_pence(value))
     parsed: list[tuple[int, str, date | None, str, float | None, float | None]] = []
     seen: dict[str, int] = {}
     for i, r in rows:  # i: the record's line in the file, blank lines counted
