@@ -739,3 +739,35 @@ def test_an_amount_longer_than_the_csv_reader_reads_is_refused_naming_its_line(t
     assert "line 3:" in str(e.value) and "£10,000,000,000,000 or more" in str(e.value)
     r = CliRunner().invoke(app, ["run", str(csv), "--yes", "--reviewer", "A"])
     assert r.exit_code != 0 and "line 3:" in r.output and "model call failed" not in r.output
+
+
+@pytest.mark.contracts
+def test_problems_name_the_line_a_person_sees_blank_lines_counted(tmp_path):
+    """T04 review 20: the loader counted parsed records, so after a blank line every problem,
+    and the refusal of an oversized amount, named the wrong line."""
+    huge = "1" + "0" * 200_000 + ".00"
+    csv = tmp_path / "s.csv"
+    csv.write_text("id,date,description,amount,balance\n\nT1,2026-01-01,A,5.00,5.00\n\n"
+                   "T2,2026-01-02,B,x,5.00\n")
+    with pytest.raises(ingest.StatementError, match="line 5: amount 'x'"):
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    csv.write_text(f"id,date,description,amount,balance\n\nT1,2026-01-01,A,5.00,5.00\n\nT2,2026-01-02,B,{huge},5.00\n")
+    with pytest.raises(ingest.StatementError, match="line 5: a field is longer"):
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+
+
+@pytest.mark.contracts
+def test_the_monzo_importer_refuses_an_oversized_field_naming_its_line(tmp_path):
+    """T04 review 20: the Monzo importer raised the CSV reader's own error, which `cma import
+    monzo` does not handle, before it could name the line."""
+    from cma.importers import monzo
+
+    huge = "1" + "0" * 200_000 + ".00"
+    src = tmp_path / "m.csv"
+    src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance\n"
+                   "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n\n"
+                   f"tx_2,02/01/2026,09:00:00,Faster payment,ACME,{huge},GBP,90.00\n")
+    with pytest.raises(monzo.MonzoImportError, match=r"line 4: a field is longer.*£10,000,000,000,000 or more"):
+        monzo.convert(src, tmp_path / "o.csv")
+    r = CliRunner().invoke(app, ["import", "monzo", str(src), "--out", str(tmp_path / "o.csv")])
+    assert r.exit_code != 0 and "line 4: a field is longer" in " ".join(r.output.split())

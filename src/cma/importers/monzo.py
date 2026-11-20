@@ -33,6 +33,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from ..categorise import INVOICE_REF
+from ..ingest import CsvRecordError, read_records
 from ..metrics import (
     AT_LIMIT,
     at_limit,
@@ -146,9 +147,10 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
         opening_balance if isinstance(opening_balance, str) else repr(opening_balance), "--opening-balance", 0,
         limit=False)
     with Path(src).open(newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        header = [h.strip() for h in (reader.fieldnames or [])]
-        reader.fieldnames = header
+        try:
+            header, raw_rows = read_records(f.read())  # lines as the file has them (T04 review 20)
+        except CsvRecordError as e:
+            raise MonzoImportError(f"{src}: {e}") from None
         twice = sorted({h for h in header if h and header.count(h) > 1})  # T04 review 14
         if twice:
             raise MonzoImportError(f"{src}: column(s) named more than once: {', '.join(twice)}; keep one of each")
@@ -157,7 +159,6 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             raise MonzoImportError(
                 f"{src}: not a Monzo export; missing column(s): {', '.join(missing)}"
             )
-        raw_rows = list(reader)
     if not raw_rows:
         raise MonzoImportError(f"{src}: no transactions")
 
@@ -171,7 +172,7 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
     parsed = []
     skipped = 0
     seen: set[str] = set()
-    for i, r in enumerate(raw_rows, start=2):
+    for i, r in raw_rows:
         tid = (r.get("Transaction ID") or "").strip()
         if not tid:
             raise MonzoImportError(f"line {i}: empty Transaction ID")

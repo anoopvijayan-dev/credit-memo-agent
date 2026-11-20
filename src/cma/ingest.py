@@ -85,6 +85,32 @@ def _number(raw: str | None) -> float | None:
     return v if math.isfinite(v) and float_pence(v) == p else None
 
 
+class CsvRecordError(ValueError):
+    """The CSV reader could not read a record; the message names its line in the file."""
+
+
+def read_records(text: str) -> tuple[list[str], list[tuple[int, dict]]]:
+    """The stripped header and each record with its line in the file. Lines are counted as
+    the file has them, blank lines included, so every problem names the line a person sees
+    (T04 review 20). The CSV reader stops on a field longer than it reads, or a malformed
+    record, before any check: CsvRecordError, naming the line, never another failure. A
+    field that long that is an amount or balance is past the limit (R2, T04 review 19)."""
+    reader = csv.DictReader(io.StringIO(text, newline=""))
+    rows: list[tuple[int, dict]] = []
+    try:
+        header = [h.strip() for h in (reader.fieldnames or [])]
+        reader.fieldnames = header
+        for row in reader:
+            rows.append((reader.line_num, row))
+    except csv.Error as e:
+        line = max(reader.reader.line_num, 1)  # DictReader.line_num lags on an error
+        if "field larger than field limit" in str(e):
+            raise CsvRecordError(f"line {line}: a field is longer than {csv.field_size_limit():,} characters and "
+                                 f"is not read; an amount or balance that long is {AT_LIMIT}") from None
+        raise CsvRecordError(f"line {line}: not a readable CSV record ({e})") from None
+    return header, rows
+
+
 def load_csv(path: Path, account_name: str | None = None, today: date | None = None,
              data: bytes | None = None) -> Statement:
     """`data`, when given, is the file's bytes as the caller read them: the statement is
@@ -96,27 +122,16 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         if not path.is_file():
             raise StatementError(path, ["no such file"])
         data = path.read_bytes()
-    rows: list[dict] = []
     try:
-        reader = csv.DictReader(io.StringIO(data.decode("utf-8-sig"), newline=""))  # tolerate a byte-order mark
-        header = [h.strip() for h in (reader.fieldnames or [])]
-        reader.fieldnames = header
-        for row in reader:
-            rows.append(row)
-    except csv.Error as e:
-        # The CSV reader stops on a field longer than it reads, or a malformed record, before
-        # any check: refused here, naming the line, never reported as another failure. A field
-        # that long that is an amount or balance is past the limit (R2, T04 review 19).
-        line = len(rows) + 2 if "header" in locals() else 1
-        if "field larger than field limit" in str(e):
-            raise StatementError(path, [
-                f"line {line}: a field is longer than {csv.field_size_limit():,} characters and is not read; "
-                f"an amount or balance that long is {AT_LIMIT}"]) from None
-        raise StatementError(path, [f"line {line}: not a readable CSV record ({e})"]) from None
+        text = data.decode("utf-8-sig")  # tolerate a byte-order mark
     except UnicodeDecodeError as e:
         raise StatementError(path, [
             f"not UTF-8 (byte {e.start}); re-save it as 'CSV UTF-8' (Excel) and try again"
         ]) from e
+    try:
+        header, rows = read_records(text)
+    except CsvRecordError as e:
+        raise StatementError(path, [str(e)]) from None
     # A column named twice would let the second silently replace the first's value on every
     # line, before any check (R2, T04 review 14): refused, naming the column.
     twice = sorted({h for h in header if h and header.count(h) > 1})
@@ -138,7 +153,7 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
     problems: list[str] = []
     parsed: list[tuple[int, str, date | None, str, float | None, float | None]] = []
     seen: dict[str, int] = {}
-    for i, r in enumerate(rows, start=2):  # line 1 is the header
+    for i, r in rows:  # i: the record's line in the file, blank lines counted
         if None in r:
             problems.append(f"line {i}: more fields than the header has columns")
         tid = (r["id"] or "").strip()
