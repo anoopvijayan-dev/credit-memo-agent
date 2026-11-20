@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-137/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (Checked the statement limit and flow checks at src/cma/ingest.py:64 and src/cma/ingest.py:151, the Monzo opening-balance fix at src/cma/importers/monzo.py:137, exact M3 and its n/a path at src/cma/metrics.py:436, and table, evidence and prose precision at src/cma/cli.py:292, src/cma/graph.py:172, src/cma/graph.py:226 and src/cma/metrics.py:518. The normal figures pipeline still uses GBP float arithmetic outside the figures layer to decide whether a credit reverses a debit, which determines the exact figures and evidence that follow.); major: Returned-payment matching still performs money arithmetic in binary GBP floats outside the figures layer. The categoriser multiplies floats to build candidate keys and then sums the original GBP floats against a half-penny tolerance. That decision sets the effective category used for M8, M9, M12 and M14. at src/cma/categorise.py:1404; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-138/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (Checked amount and flow limits at src/cma/ingest.py:56-67 and :151-157, M3 at src/cma/metrics.py:435-450, and formatting and evidence at src/cma/cli.py:292 and src/cma/graph.py:172, :226, and :265. The reversal path still computes on GBP amounts outside the figures layer. The MCP load wrapper can also drop the required flow-limit diagnostic.); major: Returned-payment matching still performs money arithmetic outside the figures layer. The categoriser multiplies a decimal GBP amount by 100 and negates the resulting debit pence to decide which lines net against debt service, VAT, PAYE or operating cash flow. The change fixes binary-float arithmetic but does not meet the figures-layer restriction. at src/cma/categorise.py:1397; major: MCP can refuse a statement because its money in reaches the limit without telling the caller which flow reached it. The wrapper sorts and truncates the loader's diagnostics to ten entries. at src/cma/mcp_server.py:57; reviewer verdict fail"
     },
     {
       "id": "T06",

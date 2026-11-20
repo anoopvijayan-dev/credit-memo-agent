@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 240,
+  "next_id": 241,
   "decisions": [
     {
       "id": "D1",
@@ -4821,6 +4821,26 @@
       "decided_at": "2026-11-20T14:54:57.424Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T14:51:40.693Z"
+    },
+    {
+      "id": "D240",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (Checked amount and flow limits at src/cma/ingest.py:56-67 and :151-157, M3 at src/cma/metrics.py:435-450, and formatting and evidence at src/cma/cli.py:292 and src/cma/graph.py:172, :226, and :265. The reversal path still computes on GBP amounts outside the figures layer. The MCP load wrapper can also drop the required flow-limit diagnostic.); major: Returned-payment matching still performs money arithmetic outside the figures layer. The categoriser multiplies a decimal GBP amount by 100 and negates the resulting debit pence to decide which lines net against debt service, VAT, PAYE or operating cash flow. The change fixes binary-float arithmetic but does not meet the figures-layer restriction. at src/cma/categorise.py:1397; major: MCP can refuse a statement because its money in reaches the limit without telling the caller which flow reached it. The wrapper sorts and truncates the loader's diagnostics to ten entries. at src/cma/mcp_server.py:57; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T14:59:31.396Z"
     }
   ]
 }
