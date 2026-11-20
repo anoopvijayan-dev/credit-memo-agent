@@ -425,8 +425,31 @@ def _thread_token() -> int:
 # thread) holding each. A second CaseLog on the same file in the holding thread reads as
 # the holder: its own fallback lock would be refused by its own thread, which is not
 # another writer.
-# Each held case lock's identity -> (holder, the gate's identity when it took the case).
-_HELD: dict[tuple[int, int], tuple[tuple[int, int], tuple[int, int] | None]] = {}
+@dataclass(frozen=True)
+class _Hold:
+    """What a holder took: both lock files' identities and its open descriptors on them."""
+
+    owner: tuple[int, int]
+    lock_id: tuple[int, int]
+    gate_id: tuple[int, int] | None
+    lock_fd: int
+    gate_fd: int | None
+
+    def in_place(self, lock_path: Path, gate_path: Path) -> bool:
+        """Both lock files are still the ones taken. The paths are compared first, in any
+        order, and then the files held open: a file replaced (renamed over or removed) has
+        no name left, so its link count is zero for good. That last test sees a replacement
+        made at any moment before it, whichever file was looked at first, so the order of
+        the path checks leaves no window between them (T12 reviews 35 to 38)."""
+        if self.gate_id is None or self.gate_fd is None:
+            return False
+        if _file_id(os.stat(gate_path)) != self.gate_id or _file_id(os.stat(lock_path)) != self.lock_id:
+            return False
+        return os.fstat(self.lock_fd).st_nlink > 0 and os.fstat(self.gate_fd).st_nlink > 0
+
+
+# Each held case lock's identity -> the hold.
+_HELD: dict[tuple[int, int], _Hold] = {}
 _HELD_GUARD = threading.RLock()  # reentrant, like _state: a cleanup run by the GC cannot deadlock
 
 
@@ -447,12 +470,13 @@ class CaseLog:
         # short regions, on the same thread, cannot deadlock it.
         self._state = threading.RLock()
         self._lock_fd: int | None = None
+        self._gate_fd: int | None = None  # the gate passed, kept open while the case is held
         self._owner: tuple[int, int] | None = None  # (process id, thread ident) of the holder
         self._lock_depth = 0
         self._lock_id: tuple[int, int] | None = None  # the lock file's identity while held
         self._gate_id: tuple[int, int] | None = None  # the gate's identity when the case was taken
         self._pid = os.getpid()  # a CaseLog belongs to the process that opened it (R42)
-        self._saving: set[tuple[int, int]] = set()  # holders with a save under way here
+        self._saving: dict[tuple[int, int], object] = {}  # holders with a save under way here
         self._head_renamed = False  # the last head record's rename was done
 
     # --- reading -----------------------------------------------------------------------
@@ -466,25 +490,25 @@ class CaseLog:
         # the case's. A read across a replaced one falls through to a reader's checks
         # (T12 review 24).
         with self._state:
-            ids = (self._lock_id, self._gate_id) if self._owner == me else None
-        if ids is None:
+            hold = (_Hold(me, self._lock_id, self._gate_id, self._lock_fd, self._gate_fd)
+                    if self._owner == me and self._lock_id is not None and self._lock_fd is not None
+                    else None)
+        if hold is None:
             try:
                 lock_id = _file_id(os.stat(self.lock_path))
             except OSError:  # no lock file: nobody in this process holds it
                 lock_id = None
             if lock_id is not None:
                 with _HELD_GUARD:
-                    owner, gate_id = _HELD.get(lock_id, (None, None))
-                if owner == me:
-                    ids = (lock_id, gate_id)
+                    held = _HELD.get(lock_id)
+                if held is not None and held.owner == me:
+                    hold = held
 
         def ours() -> bool:
             try:
-                # Only the case lock: it is what this holder holds alone, and a second writer
-                # can hold the case only through a new case lock; a gate replaced while the
-                # case lock stays this holder's admits no one (T12 review 37). One check, so
-                # no read follows another's.
-                return ids is not None and ids[0] == _file_id(os.stat(self.lock_path))
+                # Both lock files, as P15 asks, checked so that no order leaves a window
+                # (_Hold.in_place, review 38).
+                return hold is not None and hold.in_place(self.lock_path, self.gate_path)
             except OSError:
                 return False
 
@@ -746,6 +770,7 @@ class CaseLog:
             # is taken or refused. The gate is created before the case lock, so a missing
             # gate means no writer has ever started here.
             gate = os.open(self.gate_path, flags, 0o600)
+            kept = False
             try:
                 if not _try_exclusive(gate):
                     raise _GateBusy(f"{self.path}: another window or command is checking or "
@@ -755,14 +780,17 @@ class CaseLog:
                     if gate_id != _file_id(os.stat(self.gate_path)):
                         raise CaseLocked(f"{self.path}: the case gate changed while it was passed")
                     self._take_case_lock(me, flags)
-                    self._gate_id = gate_id
+                    # The gate stays open, unlocked, while the case is held: its link count
+                    # tells whether it was replaced (review 38).
+                    self._gate_id, self._gate_fd, kept = gate_id, gate, True
                     with _HELD_GUARD:
-                        _HELD[self._lock_id] = (me, gate_id)
+                        _HELD[self._lock_id] = _Hold(me, self._lock_id, gate_id, self._lock_fd, gate)
                 finally:
                     with suppress(OSError):
                         _unlock(gate)
             finally:
-                os.close(gate)
+                if not kept:
+                    os.close(gate)
         return True
 
     def _take_case_lock(self, me: tuple[int, int], flags: int) -> None:
@@ -779,7 +807,7 @@ class CaseLog:
                 raise CaseLocked(f"{self.path}: the case lock file changed while it was taken")
             self._lock_fd, self._owner, self._lock_depth, self._lock_id = fd, me, 1, lock_id
             with _HELD_GUARD:
-                _HELD[lock_id] = (me, None)
+                _HELD[lock_id] = _Hold(me, lock_id, None, fd, None)
         except BaseException as e:
             # Whatever interrupts this (a lock error, or KeyboardInterrupt between
             # two steps) leaves no lock behind: once the descriptor is recorded
@@ -807,8 +835,9 @@ class CaseLog:
         # The gate first and the case lock last, immediately before the step: the case lock is
         # what a second writer would hold, so no read follows its check (T12 review 35).
         try:
-            in_place = (self._gate_id == _file_id(os.stat(self.gate_path))
-                        and self._lock_id == _file_id(os.stat(self.lock_path)))
+            in_place = (self._lock_id is not None and self._lock_fd is not None
+                        and _Hold(self._owner or (0, 0), self._lock_id, self._gate_id, self._lock_fd,
+                                  self._gate_fd).in_place(self.lock_path, self.gate_path))
         except FileNotFoundError:
             in_place = False
         # Any other error (the folder cannot be read) is raised as it is, and the save names
@@ -824,6 +853,10 @@ class CaseLog:
         self._lock_depth -= 1
         if self._lock_depth == 0:
             fd, self._lock_fd, self._owner = self._lock_fd, None, None
+            gate_fd, self._gate_fd = self._gate_fd, None
+            if gate_fd is not None:
+                with suppress(OSError):
+                    os.close(gate_fd)
             lock_id, self._lock_id = self._lock_id, None
             self._gate_id = None
             if lock_id is not None:
@@ -846,16 +879,17 @@ class CaseLog:
         (from a signal handler, a finaliser or a callback) is refused, since the writer lock
         admits it and the outer save's check would then be stale (T12 review 20)."""
         me = _holder_id()
-        with self._state:
-            if me in self._saving:
-                raise CaseLogError(f"{self.path}: another save on this case log is under way in "
-                                   "this thread; this save was refused")
-            self._saving.add(me)
+        token = object()
+        # One step: setdefault tests and registers together, so no signal handler can run
+        # between the two and start a save that passes the test too (review 38).
+        if self._saving.setdefault(me, token) is not token:
+            raise CaseLogError(f"{self.path}: another save on this case log is under way in "
+                               "this thread; this save was refused")
         try:
             yield
         finally:
-            with self._state:
-                self._saving.discard(me)
+            if self._saving.get(me) is token:
+                del self._saving[me]
 
     @contextmanager
     def _os_errors_as_not_recorded(self) -> Iterator[None]:

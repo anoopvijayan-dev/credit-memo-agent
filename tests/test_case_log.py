@@ -2984,13 +2984,10 @@ def test_p15_a_holders_read_counts_only_while_its_case_lock_is_the_cases(tmp_pat
         monkeypatch.undo()
     assert len(calls) >= 2 and got.ok
 
-    calls.clear()
     with log.writer():
-        _replace_file(log.gate_path)  # only the gate: the holder's read still stands
-        monkeypatch.setattr(case, "_check", lambda raw, recorded: (calls.append(None), real_check(raw, recorded))[1])
-        got = log.verify()
-        monkeypatch.undo()
-    assert len(calls) == 1 and got.ok
+        _replace_file(log.gate_path)  # the gate too (review 38): the holder does not trust its read
+        got = log.verify()           # and answers as a reader would
+    assert got.ok
 
 
 @pytest.mark.invariants
@@ -3052,3 +3049,28 @@ def test_a_held_readers_recorded_prefix_never_deep_copies_the_entries(tmp_path, 
     check = case.CaseLog(log.path).verify()
     held = check.as_recorded()
     assert held.recorded == 1 and held.intact_bytes == log.path.stat().st_size
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("first", ["gate", "lock"])
+def test_p15_a_lock_file_replaced_just_after_its_path_was_checked_is_still_caught(tmp_path, monkeypatch, first):
+    """T12 review 38: whichever file is looked at first, a replacement made right after its
+    path was checked leaves the held file with no name, which the last test sees."""
+    log = _log(tmp_path, 2)
+    real_stat, armed, done = case.os.stat, [], []
+    monkeypatch.setattr(case, "_utc_now", lambda real=case._utc_now: (armed.append(1), real())[1])
+    other = log.lock_path if first == "gate" else log.gate_path
+    target = log.gate_path if first == "gate" else log.lock_path
+
+    def stat(p, *a, **k):
+        got = real_stat(p, *a, **k)
+        if armed and not done and str(p) == str(other):
+            done.append(1)
+            _replace_file(target)  # the one already checked
+        return got
+
+    monkeypatch.setattr(case.os, "stat", stat)
+    with pytest.raises(case.CaseLocked, match="removed or replaced"):
+        log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    assert len(_lines(log)) == 2
