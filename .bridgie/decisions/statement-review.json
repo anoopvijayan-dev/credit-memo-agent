@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 232,
+  "next_id": 233,
   "decisions": [
     {
       "id": "D1",
@@ -4665,6 +4665,26 @@
       "decided_at": "2026-11-20T13:49:16.962Z",
       "effect": "design approved",
       "created_at": "2026-11-20T13:49:14.452Z"
+    },
+    {
+      "id": "D232",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:56 and :141-157 and src/cma/importers/monzo.py:72 and :197-214 enforce the statement boundary. src/cma/metrics.py:410-415 handles an unreportable M3. src/cma/graph.py:172 and src/cma/cli.py:292 render exact tables, while src/cma/metrics.py:492 and src/cma/policy.py:107 preserve whole-pound quotations. Both importers give a combined diagnostic when only one directional total reaches the limit. The committed appendix still shows rounded figures.); R3 fail (src/cma/metrics.py:390 checks reconciliation before refusing an uncategorised debit, and :476-486 checks amount and membership. src/cma/cli.py:99-102 and src/cma/mcp_server.py:74-80 passed the named refusal contracts. A dangling reversal reference can raise before the reconciliation check and suppress the required diagnostic.); P2 fail (The runner passed the named sum, outflow and single-credit M9 invariants and the fixture dual run. src/cma/metrics.py:427-432 preserves M5 and M6 evidence rules, and :397 and :472 cite M26's inputs. The M9 evidence note at :329 cannot identify each partially counted line when several credits share one cap.); major: An import refusal leaves the direction that reached the statement limit ambiguous. The Monzo converter uses the same combined diagnostic at src/cma/importers/monzo.py:200. at src/cma/ingest.py:154; major: A dangling reversal reference raises KeyError before reconciliation, so an accompanying unbucketed credit loses its pence difference and line ID. at src/cma/metrics.py:250; major: M9 labels every credit for a capped counterparty as partially counted. It computes one cap for the group and records no per-line allocation, so the note can list lines that could only be fully counted or entirely excluded. at src/cma/metrics.py:329; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T13:53:25.130Z"
     }
   ]
 }
