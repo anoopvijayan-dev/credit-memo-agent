@@ -601,3 +601,48 @@ def test_p5_a_custom_policys_free_text_never_reaches_the_prompt(home, tmp_path):
     assert "SNTLCASE" not in user and "SNTLPERSON" not in user and "(custom rule)" in user
     shipped = policy.evaluate(ms)
     assert "(custom rule)" not in draft_prompt(st, ms, shipped)
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("start", [
+    lambda s: s.run("sse"),
+    lambda s: s.run("streamable-http"),
+    lambda s: asyncio.run(s.run_sse_async()),
+    lambda s: asyncio.run(s.run_streamable_http_async()),
+])
+def test_http_transports_still_start_when_lock_is_off(home, monkeypatch, tmp_path, start):
+    """R53, T17 review 2: refusing to hand out an ASGI app must not stop the SDK's own HTTP
+    run methods, which build their app and serve it straight after the lock check."""
+    pytest.importorskip("mcp")
+    uvicorn = pytest.importorskip("uvicorn")
+    from cma import mcp_server
+
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    monkeypatch.setenv("CMA_DATA_DIR", str(tmp_path))
+    served = []
+
+    async def serve(self, *a, **k):
+        served.append(self.config.app)
+    monkeypatch.setattr(uvicorn.Server, "serve", serve)
+    start(mcp_server.server)
+    assert len(served) == 1 and callable(served[0])
+    # The app built for that run is not handed out afterwards either.
+    with pytest.raises(mcp_server.NoASGIApp):
+        mcp_server.server.sse_app()
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("field", ["id", "description"])
+def test_p5_a_custom_policys_rule_id_or_description_never_reaches_the_prompt(home, tmp_path, field):
+    """T17 review 2 / P5: a custom policy's rule id is free text too; only a shipped-form id
+    (R and digits) reaches the prompt, and the memo's [Rn] citation still works for it."""
+    from cma import categorise, ingest, metrics, policy
+
+    st = categorise.categorise(ingest.load_csv(_statement(tmp_path), account_name="ACME LTD"))
+    ms = metrics.compute(st)
+    custom = policy.load_policy()
+    custom["rules"][0] = {**custom["rules"][0], field: "SNTLCASE JANE DOE"}
+    p = policy.evaluate(ms, custom)
+    user = draft_prompt(st, ms, p)
+    assert "SNTLCASE" not in user and "JANE DOE" not in user
+    assert "| R2 |" in user  # the other rules keep their ids

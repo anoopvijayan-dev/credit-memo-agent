@@ -38,8 +38,9 @@ from ..categorise import INVOICE_REF
 REQUIRED = ("Transaction ID", "Date", "Type", "Name", "Amount")
 PLAIN_MONEY = re.compile(r"^[-+]?\d+(?:\.\d{1,2})?$")
 # A provider id is kept as it is and written to a CSV text cell, so it may not start with a
-# character a spreadsheet reads as a formula (=, +, -, @, tab, CR; R34). Monzo's are tx_...
-SAFE_ID = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:-]*$")
+# character a spreadsheet reads as a formula (=, +, -, @, tab, CR; R34). Of the characters
+# an id could always hold, only - can start one, so only a leading - is newly refused. Monzo's are tx_...
+SAFE_ID = re.compile(r"^[A-Za-z0-9_.:][A-Za-z0-9_.:-]*$")
 
 
 class MonzoImportError(ValueError):
@@ -160,7 +161,7 @@ def convert(src: Path, dst: Path, opening_balance: float | None = None) -> Impor
             raise MonzoImportError(f"line {i}: empty Transaction ID")
         if not SAFE_ID.match(tid):
             raise MonzoImportError(f"line {i}: unexpected characters in Transaction ID (it must start with a "
-                                   "letter, digit or _, then only letters, digits, _ . : -)")
+                                   "letter, digit, _ . or :, then only letters, digits, _ . : -)")
         if tid in seen:
             raise MonzoImportError(f"line {i}: duplicate Transaction ID {tid}")
         seen.add(tid)

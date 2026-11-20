@@ -161,6 +161,9 @@ def _threshold(value: float | None, unit: str) -> str:
     return "" if value is None else format_value(value, unit)
 
 
+_PROMPT_RULE_ID = re.compile(r"R\d{1,4}")
+
+
 def _shipped_descriptions() -> dict[str, str]:
     """The rule descriptions of the shipped default policy, by rule id."""
     try:
@@ -174,7 +177,9 @@ def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = F
     """The policy table. `for_prompt`: what goes to a hosted model, where a rule's free-text
     description is sent only when it is the shipped policy's own text for that rule; a custom
     policy's description could carry case or customer text, so it is replaced by the rule's
-    metric and requirement alone (P5, T17 review 1)."""
+    metric and requirement alone (P5, T17 review 1). A rule id is free text in a custom
+    policy too, so only an id of the shipped form (R and digits, which the memo cites as
+    [Rn]) is sent; any other is replaced (T17 review 2)."""
     shipped = _shipped_descriptions() if for_prompt else {}
     lines = ["| id | rule | metric | requirement | outcome | detail |", "|---|---|---|---|---|---|"]
     if overall_row:
@@ -185,10 +190,12 @@ def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = F
             req += f"; referred below {_threshold(r.refer_below, r.unit)}"
         if r.refer_above is not None:
             req += f"; referred above {_threshold(r.refer_above, r.unit)}"
-        description = r.description
+        rule_id, description = r.rule_id, r.description
         if for_prompt and shipped.get(r.rule_id) != r.description:
             description = "(custom rule)"
-        lines.append(f"| {r.rule_id} | {description} | {r.metric_id} | {req} | {r.outcome.value} | {r.detail} |")
+        if for_prompt and not _PROMPT_RULE_ID.fullmatch(r.rule_id):
+            rule_id = "(custom id)"
+        lines.append(f"| {rule_id} | {description} | {r.metric_id} | {req} | {r.outcome.value} | {r.detail} |")
     return "\n".join(lines)
 
 

@@ -16,16 +16,17 @@ INSTRUCTIONS..."), and an MCP client is a model, so no tool ever returns one (R3
 
 Offline lock: the server is a way for data to reach a model, so while offline_lock is on
 in firm.yaml (the default) it refuses to start, however it is started (main(), or an
-embedding script calling `server.run()`, an async runner or an ASGI app), and every tool
-refuses before reading a file. firm.yaml is read on each start and each call; an ASGI app
-reads it again when its ASGI server starts it (failing that start-up, before the server
-listens) and on every connection, so an app made while the lock was off and served later
-refuses too.
+embedding script calling `server.run()` or an async runner), and every tool refuses
+before reading a file. firm.yaml is read on each start and each call. No ASGI app is handed
+out (sse_app() and streamable_http_app() refuse): an ASGI server could open its socket for
+a saved app before anything in it ran. The HTTP run methods build their app and serve it in
+the same call, after reading the lock.
 """
 
 from __future__ import annotations
 
 import os
+from contextvars import ContextVar
 from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
@@ -46,22 +47,39 @@ class LockedMCPServer(MCPServer):
 
     async def run_sse_async(self, *args, **kwargs):
         firm.require_unlocked("Starting the MCP server")
-        return await super().run_sse_async(*args, **kwargs)
+        token = _BUILDING_FOR_RUN.set(True)
+        try:
+            return await super().run_sse_async(*args, **kwargs)
+        finally:
+            _BUILDING_FOR_RUN.reset(token)
 
     async def run_streamable_http_async(self, *args, **kwargs):
         firm.require_unlocked("Starting the MCP server")
-        return await super().run_streamable_http_async(*args, **kwargs)
+        token = _BUILDING_FOR_RUN.set(True)
+        try:
+            return await super().run_streamable_http_async(*args, **kwargs)
+        finally:
+            _BUILDING_FOR_RUN.reset(token)
 
     # No ASGI app is handed out: a saved app can be served later by an ASGI server that
     # opens its socket before the app is ever called (with lifespan off, nothing of the
     # app's runs first), so no check inside it can keep the server from listening under the
     # lock (R29, T17 review 1). The server starts only through the run methods above, each
-    # of which reads the lock before anything listens.
+    # of which reads the lock and then builds its app and serves it in the same call; only
+    # that build, inside a run method, gets an app (T17 review 2).
     def sse_app(self, *args, **kwargs):
-        raise NoASGIApp()
+        if not _BUILDING_FOR_RUN.get():
+            raise NoASGIApp()
+        return super().sse_app(*args, **kwargs)
 
     def streamable_http_app(self, *args, **kwargs):
-        raise NoASGIApp()
+        if not _BUILDING_FOR_RUN.get():
+            raise NoASGIApp()
+        return super().streamable_http_app(*args, **kwargs)
+
+
+# Set only while one of the run methods above, past its lock check, builds the app it serves.
+_BUILDING_FOR_RUN: ContextVar[bool] = ContextVar("cma_mcp_building_for_run", default=False)
 
 
 class NoASGIApp(firm.OfflineLockError):

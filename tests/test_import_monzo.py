@@ -179,7 +179,7 @@ def test_formula_leading_description_is_neutralised(tmp_path, kind):
     assert ingest.load_csv(out).transactions[0].description == cells[0]
 
 
-@pytest.mark.parametrize("tid", ["-2-3", ".tx", ":tx", "=1+1", "+1", "@x"])
+@pytest.mark.parametrize("tid", ["-2-3", "-tx", "=1+1", "+1", "@x"])
 def test_formula_leading_transaction_id_is_refused(tmp_path, tid):
     # R34: the provider's id is kept verbatim in a CSV text cell, so one a spreadsheet would
     # read as a formula is refused rather than written (verify-09).
@@ -188,3 +188,14 @@ def test_formula_leading_transaction_id_is_refused(tmp_path, tid):
     with pytest.raises(monzo.MonzoImportError, match="Transaction ID"):
         monzo.convert(_write(tmp_path, rows), out, opening_balance=100.00)
     assert not out.exists()
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("tid", [".tx", ":tx", "tx_1.2:3-4"])
+def test_ids_the_previous_release_took_still_import(tmp_path, tid):
+    # R53, T17 review 2: the formula guard refuses only a leading -, which no formula-safe id
+    # needs; ids starting with . or : imported before and still do.
+    out = tmp_path / "mine.csv"
+    rows = [_row(tid, "05/01/2026", "12:00:00", "Card payment", "Merchant", -10.00)]
+    monzo.convert(_write(tmp_path, rows), out, opening_balance=100.00)
+    assert ingest.load_csv(out).transactions[0].id == tid
