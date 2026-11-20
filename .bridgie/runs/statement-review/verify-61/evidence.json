@@ -1,0 +1,109 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest-match filtering and both ambiguity stages to src/cma/categorise.py:658,711,758, override precedence to :786, and unexplained classification, profile candidates and firm-rule exclusion to :835–850 and src/cma/models.py:54. Own-account pairing is implemented separately under R8. Traced CMA_RULESET selection and line provenance through src/cma/graph.py:221,251–252 and src/cma/cli.py:229. The runner log shows the per-list assertions ran, and the passing contracts tier confirms CLI provenance, idempotency and the prior bank-code and atomic-pattern regression cases. Reviewed repeat submission, concurrent calls on separate statements, sign and input boundaries, currency and date handling at ingest, partial output failure, override and profile isolation, rollback and evidence consumers. Accepted table edits can still suppress the mandatory bank-code verdict or make recorded candidate IDs ambiguous.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-61/contracts-4.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-61/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-61/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-61/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-61/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-61/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-61/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-61/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 382,
+      "criterion": "R4",
+      "claim": "The validator checks the returned-payment code's constraints only when bank_code is true. An accepted table edit can disable the mandatory bank-code verdict while leaving the code's pattern intact.",
+      "repro": "Set returned_dd.bank_code to false in v2.yaml and add UNPAID DD TO SAVINGS to own_pots_savings.names. Classify a £50 credit described as UNPAID DD TO SAVINGS under v2. The longer own-pot match removes returned_dd at line 720, yielding own_account_transfer where R4 requires returned_dd."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 845,
+      "criterion": "R4",
+      "claim": "Conflict provenance joins candidate IDs with +, but the rule ID validator at line 416 allows + inside IDs. Distinct candidate sets can therefore produce identical per-line evidence.",
+      "repro": "Rename the cash-paid-in rule to cash_paid_in+profile:director in a v2 table. With no profile, classify a £100 credit described as FPS CASH DEPOSIT JANE DOE. Compare its evidence with the stock table and Jane Doe named as a director. Both write v2:conflict:payment_rail+cash_paid_in+profile:director, although only the second case matched a profile candidate."
+    },
+    {
+      "severity": "major",
+      "file": "tests/test_rules_v2.py",
+      "line": 857,
+      "criterion": "R4",
+      "claim": "The runner contradicts the producer's full-suite and 10,000-line timing claims. The specified tier recorded 745 passes and one failure. Categorisation alone took about 2.18 seconds in the timing test. This benchmark is outside R4.",
+      "repro": "See the failure in reviewer-61/specified-3.log. The benchmark can be rerun with python -m pytest -v tests/test_rules_v2.py::test_categorise_10000_lines_under_v2_with_a_profile_is_fast. The contracts, invariants and dual_run tiers passed with 124, 138 and 83 tests respectively."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The claimed precedence documentation says a profile name can settle an ambiguous credit and omits cheque wording from the payment-method conflict. The classifier instead records the profile match as a candidate and treats cheque plus cash wording as ambiguous.",
+      "repro": "Compare the categoriser row with a £100 credit described as CHEQUE CASH DEPOSIT JANE DOE and a profile naming Jane Doe as a director. The classifier returns other with v2:conflict:cheque+cash_paid_in+profile:director."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "The claim that all modules under src, evals and tests passed compileall is unproven at that scope. The passing runner result covers src.",
+      "repro": "Compare reviewer-61/mechanical-2.log and its configured command with the claim. A passing runner row for python -m compileall -q src evals tests would prove the stated scope."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
