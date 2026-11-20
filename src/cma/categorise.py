@@ -403,7 +403,8 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
     strict = not (isinstance(data, dict) and data.get("frozen") is True and expected_id in FROZEN_SHA256)
     # The exceptions R4 forbids are checked on every table but the pinned one as its bytes
     # were verified (`sha256`), so a changed v1 names them too (T03 review 27).
-    verified = not strict and (sha256 is None or FROZEN_SHA256.get(expected_id) == sha256)
+    # Only a digest that matches the pin counts: no digest given is no verification (review 39).
+    verified = not strict and sha256 is not None and FROZEN_SHA256.get(expected_id) == sha256
     problems: list[str] = []
     if "id" not in data:
         problems.append("missing id")
@@ -417,6 +418,9 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
         for bad in _unbuilt_in(value) if key != "rules" or isinstance(value, _Unbuilt) else ():
             problems.append(f"{key} holds a {bad!r}")
     rules = data.get("rules")
+    if isinstance(rules, _Repeated):
+        # Each list given is still checked rule by rule (review 39); the repeat is named above.
+        rules = [r for v in rules.values if isinstance(v, list) for r in v]
     if not isinstance(rules, list) or not rules:
         raise RulesetError(f"{source}: " + "; ".join([*problems, "no rules"]))
     categories = {c.value for c in Category}
@@ -583,6 +587,13 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
             # or with the rule's exceptions, so no field's fault hides another's (review 29);
             # then together, as the loader joins them, when both build alone.
             own_ok = isinstance(r.get("pattern"), str) and bool(r["pattern"]) and not _compile_problem(r["pattern"])
+        # A value of a repeated field is compiled here, as a field given once is above, so
+        # one that does not compile is named rather than skipped (review 39).
+        for key in ("pattern", "unless", "requires"):
+            if isinstance(rule0.get(key), _Repeated) and isinstance(r.get(key), str) and r[key]:
+                problem = _compile_problem(r[key])
+                if problem:
+                    problems.append(f"{where}: {key} does not compile ({problem})")
             names_ok = "names" in r and _well_typed_text({"names": r["names"]})
             if own_ok:
                 parts.append(("its pattern", lambda r=r: matchers({"pattern": r["pattern"]})))

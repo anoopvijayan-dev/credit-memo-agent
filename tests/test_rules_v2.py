@@ -2284,3 +2284,41 @@ def test_a_loaded_rule_keeps_its_end_forced_matchers(monkeypatch):
 
     monkeypatch.setattr(categorise.re, "compile", no_compile)
     assert classify(_t("ZZ ABC ZZ", 10.0), rs)[0] is C.CASH_DEPOSIT
+
+
+
+@pytest.mark.contracts
+def test_a_repeated_rules_list_still_has_each_rule_checked(monkeypatch):
+    """T03 review 39: with rules given twice, the rules of both lists are still checked, so a
+    forbidden exception in either is named beside the repeat."""
+    raw = categorise._table_bytes("v1")
+    edit = raw.replace(b"frozen: true\n", b"frozen: true\nrules:\n  - {id: cashx, pattern: 'CASH(?!.*FPS)', "
+                                           b"direction: in, category: cash_deposit}\n", 1)
+    monkeypatch.setattr(categorise, "_table_bytes", lambda ruleset_id: edit)
+    categorise.load_ruleset.cache_clear()
+    try:
+        with pytest.raises(RulesetError) as e:
+            categorise.load_ruleset("v1")
+    finally:
+        monkeypatch.undo()
+        categorise.load_ruleset.cache_clear()
+    assert "rules holds a repeated key" in str(e.value) and "(cashx): pattern uses a lookahead" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_repeated_pattern_that_does_not_compile_is_named():
+    """T03 review 39: a value of a repeated pattern that does not compile is named."""
+    data = {"id": "v2", "frozen": False, "rules": [BANK, {
+        "id": "r", "pattern": categorise._Repeated("pattern given twice", "repeated key", ["X", "("]),
+        "direction": "in", "category": "cash_deposit", "stage": "names"}]}
+    with pytest.raises(RulesetError, match=r"rule 2 \(r\): pattern does not compile"):
+        validate_ruleset(data, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_no_digest_is_no_verification_for_v1_data():
+    """T03 review 39: validating v1-shaped data without its bytes' digest exempts nothing:
+    a forbidden exception in it is named."""
+    rule = {"id": "cashx", "pattern": "CASH", "direction": "in", "category": "cash_deposit", "unless": "FPS"}
+    with pytest.raises(RulesetError, match=r"\(cashx\): unless is not allowed"):
+        validate_ruleset({"id": "v1", "frozen": True, "rules": [rule]}, expected_id="v1")
