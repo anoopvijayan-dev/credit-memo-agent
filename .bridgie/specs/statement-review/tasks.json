@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-143/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R1 fail (src/cma/models.py:55 and src/cma/metrics.py:483–490,523–525,562–570 map and report the eight GBP buckets. src/cma/graph.py:266–269 can bind those figures to a different statement version, so the exported breakdown can omit credits from the statement it identifies.); R2 fail (src/cma/ingest.py:73–84,143–180 and src/cma/importers/monzo.py:189–230 enforce the pence and import limits. src/cma/metrics.py:512–517 handles an unreportable M3. src/cma/cli.py:309–312 and src/cma/graph.py:172,252 expose pence, while src/cma/metrics.py:591–595 and src/cma/policy.py:107 preserve whole-pound prose for figure quotes. The separate parse and hash reads at src/cma/graph.py:266–269 allow exact figures from one version to be recorded against another.); P2 fail (src/cma/metrics.py:419–429,523–574 computes the T04 sum, outflow and derived evidence and carries M9 partial-credit IDs. The named invariants and scoped legacy comparisons ran. An export can still cite an M2 line whose signed amount in the statement identified by the evidence hash differs from the reported sum, through src/cma/graph.py:242–252,266–269.); major: A statement replaced during loading can produce an evidence record that hashes one version and reports figures and line IDs from another. Resume accepts the mismatch because it checks the current file and recomputes from the checkpoint's stored transaction objects. at src/cma/graph.py:269; major: The producer's additive migration claim overstates resume compatibility. A legacy review with refreshed figures becomes dependent on a policy file its checkpoint previously did not need to reopen. The same policy is also loaded again after the reviewer answers, so a concurrent edit can change the policy written to evidence after the CLI displayed it. at src/cma/graph.py:225; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-144/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: major: The additive-only migration claim overstates resume compatibility. The optional evidence field lets an old checkpoint load, but the refresh rejects an existing pending review whenever any policy input changes, even if the policy outcome would stay the same. at src/cma/graph.py:236; reviewer verdict fail"
     },
     {
       "id": "T06",
