@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 177,
+  "next_id": 178,
   "decisions": [
     {
       "id": "D1",
@@ -3578,6 +3578,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T07:22:53.089Z"
+    },
+    {
+      "id": "D177",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest-match containment, bank-code and cash/payment-method precedence, both-stage candidates, and profile, firm-rule and per-line override precedence through src/cma/categorise.py:907,927,1014,1043,1081. Traced per-line provenance, legacy replay and CLI/MCP consumers through src/cma/categorise.py:1192, src/cma/graph.py:188,210,250, src/cma/cli.py:77,188,229 and src/cma/mcp_server.py:77,84. Reviewed repeat submission, concurrent invocations on separate statements, signed amounts and Unicode boundaries, GBP minor units and date-only ingestion, failure before checkpoint creation, ruleset selection, case-local inputs, and rollback. The runner log confirms the per-list, CLI v2, idempotency, checkpoint and dual-ruleset eval tests ran and passed. R4 fails because malformed YAML rule values can still load or suppress other rule diagnostics, and a changed frozen v1 can omit an anchor diagnostic for a debit-only copy of the bank code.); major: A failed YAML scalar conversion becomes ordinary text. A malformed rule field can therefore pass schema and matcher checks and affect categorisation. at src/cma/categorise.py:731; major: An invalid explicitly tagged boolean aborts YAML construction before the loader can name its rule and field or report independent rule faults. at src/cma/categorise.py:735; major: A changed v1 that retains frozen: true can reuse the bank-code anchor on a debit-only rule without that rule's anchor being named. The exemption checks the text and category and ignores direction. at src/cma/categorise.py:372; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T07:26:49.441Z"
     }
   ]
 }
