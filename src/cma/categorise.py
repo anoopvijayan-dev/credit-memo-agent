@@ -531,7 +531,8 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
             if problem:
                 problems.append(f"{where}: pattern and names do not compile together ({problem})")
     if strict:
-        flagged = {r.get("pattern") for r in rules if isinstance(r, dict) and r.get("bank_code") is True}
+        flagged = {r["pattern"] for r in rules if isinstance(r, dict) and r.get("bank_code") is True
+                   and isinstance(r.get("pattern"), str)}  # a malformed pattern is named by its rule
         for code in sorted(BANK_RETURN_CODES - flagged):
             problems.append(f"the bank's own returned-payment code {code} has no rule with bank_code: true "
                             "(R4: it settles a credit's line type)")
@@ -681,11 +682,13 @@ def load_ruleset(ruleset_id: str) -> Ruleset:
     changed = pinned is not None and digest != pinned
     try:
         data, ruleset = _parse_table(raw, ruleset_id, source, digest)
-    except RulesetError as e:
+    except Exception as e:  # whatever else the change breaks, a changed v1 is named as changed (review 26)
         if changed:
             raise RulesetError(f"{source}: frozen table {ruleset_id} has been changed (sha256 {digest}, "
                                f"pinned {pinned}); reinstall the package. It also fails to load: {e}") from e
-        raise
+        if isinstance(e, RulesetError):
+            raise
+        raise RulesetError(f"{source}: a malformed value could not be checked ({e.__class__.__name__}: {e})") from e
     if changed:
         raise RulesetError(f"{source}: frozen table {ruleset_id} has been changed "
                            f"(sha256 {digest}, pinned {pinned}); reinstall the package")

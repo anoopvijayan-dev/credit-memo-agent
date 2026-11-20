@@ -1963,3 +1963,33 @@ def test_a_malformed_pattern_is_named_never_raised_as_a_type_error(value):
     with pytest.raises(RulesetError) as e:
         validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, bad, cash]}, expected_id="v2")
     assert "rule 2 (bad)" in str(e.value) and "rule 3 (cash): unless is not allowed" in str(e.value)
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("value", [["^UNPAID DD\\b"], {"a": 1}])
+def test_a_malformed_pattern_on_a_bank_code_rule_is_named_never_a_type_error(value):
+    """T03 review 26: the same with bank_code: true, which the table-wide bank-code check
+    reads too."""
+    bad = {**BANK, "id": "bad", "pattern": value}
+    cash = {"id": "cash", "names": ["CASH DEPOSIT"], "direction": "in", "category": "cash_deposit",
+            "stage": "names", "unless": "FPS"}
+    with pytest.raises(RulesetError) as e:
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, bad, cash]}, expected_id="v2")
+    assert "rule 2 (bad)" in str(e.value) and "rule 3 (cash): unless is not allowed" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_changed_v1_with_a_malformed_bank_code_rule_is_still_named_changed(monkeypatch):
+    """T03 review 26: whatever exception the change provokes, a changed v1 is named as a
+    changed frozen table."""
+    raw = categorise._table_bytes("v1")
+    edit = raw.replace(b"rules:", b"rules:\n  - {id: bad, pattern: [x], direction: in, category: returned_dd, "
+                                  b"bank_code: true, stage: line_type, protected: true}", 1)
+    monkeypatch.setattr(categorise, "_table_bytes", lambda ruleset_id: edit)
+    categorise.load_ruleset.cache_clear()
+    try:
+        with pytest.raises(RulesetError, match="frozen table v1 has been changed"):
+            categorise.load_ruleset("v1")
+    finally:
+        monkeypatch.undo()
+        categorise.load_ruleset.cache_clear()
