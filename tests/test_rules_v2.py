@@ -2199,11 +2199,42 @@ def test_a_non_v1_table_marked_frozen_is_checked_as_a_maintained_list():
 
 @pytest.mark.contracts
 def test_the_form_a_longest_match_search_uses_is_compiled_at_load(monkeypatch):
-    """T03 review 35: the pattern forced to end at a position is built when the table loads,
-    never first on a transaction."""
+    """T03 reviews 35, 36: the pattern forced to end at a position is built when the table
+    loads, once per rule, and categorising lines of every length compiles nothing."""
     rule = {"id": "r", "pattern": "AB|ABC", "direction": "in", "category": "cash_deposit", "stage": "names"}
-    calls = []
-    real = categorise._ending_at
-    monkeypatch.setattr(categorise, "_ending_at", lambda source, rest: (calls.append(source), real(source, rest))[1])
-    categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rule]}, "v2", "t", "0")
-    assert calls
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rule]}, "v2", "t", "0")
+
+    def no_compile(*a, **k):
+        raise AssertionError("compiled while categorising")
+
+    monkeypatch.setattr(categorise.re, "compile", no_compile)
+    for pad in range(0, 60, 7):
+        assert classify(_t("X" * pad + " ABC " + "Y" * pad, 10.0), rs)[0] is C.CASH_DEPOSIT
+
+@pytest.mark.contracts
+def test_a_pattern_given_twice_has_each_value_checked(monkeypatch):
+    """T03 review 36: neither value of a repeated pattern is kept, and each is still checked,
+    so a forbidden exception in either is named."""
+    raw = categorise._table_bytes("v1")
+    edit = raw.replace(b"rules:", b"rules:\n  - {id: cashx, pattern: CASH, pattern: 'CASH(?!.*FPS)', direction: in, "
+                                  b"category: cash_deposit}", 1)
+    monkeypatch.setattr(categorise, "_table_bytes", lambda ruleset_id: edit)
+    categorise.load_ruleset.cache_clear()
+    try:
+        with pytest.raises(RulesetError, match=r"has been changed.*cashx\): pattern uses a lookahead"):
+            categorise.load_ruleset("v1")
+    finally:
+        monkeypatch.undo()
+        categorise.load_ruleset.cache_clear()
+
+
+@pytest.mark.contracts
+def test_a_non_v1_table_marked_frozen_builds_its_matchers_as_a_maintained_list(monkeypatch):
+    """T03 review 36: matcher validation for any table but the pinned v1 uses the maintained
+    (mark-aware) build, whatever its frozen flag."""
+    seen = []
+    real = categorise._rule_pattern
+    monkeypatch.setattr(categorise, "_rule_pattern", lambda r, frozen: (seen.append(frozen), real(r, frozen))[1])
+    rule = {"id": "a", "names": ["A"], "direction": "in", "category": "cash_deposit", "stage": "names"}
+    validate_ruleset({"id": "v3", "frozen": True, "rules": [BANK, rule]}, expected_id="v3")
+    assert seen and not any(seen)

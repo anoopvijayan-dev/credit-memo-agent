@@ -463,9 +463,11 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                 problems.append(f"{where}: bank_code is only for the bank's own returned-payment code "
                                 f"({', '.join(sorted(BANK_RETURN_CODES))}), alone, with no unless or requires, "
                                 "for credits (direction in or any)")
-        if not verified:
+        # A field given twice is checked in each of its values, so a repeated pattern never
+        # hides a forbidden exception (T03 review 36).
+        for rv in (_variants(r) if not verified else ()):
             for key in ("unless", "requires"):
-                if key in r:
+                if key in rv:
                     # An exception could switch a rule off where another list's wording sits
                     # (cash wording beside a rail, say), deciding a collision before the
                     # ambiguity check sees it. R4 lets an exception exclude only wording on no
@@ -474,15 +476,15 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                     problems.append(f"{where}: {key} is not allowed in a v2 table: an exception could "
                                     "hide another list's wording from the ambiguity check (R4); list a "
                                     "longer phrase instead")
-            if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
-                    and _has_lookaround(r["pattern"])):
+            if (isinstance(rv.get("pattern"), str) and rv["pattern"] and not _compile_problem(rv["pattern"])
+                    and _has_lookaround(rv["pattern"])):
                 # A lookahead or lookbehind is an exception inside the pattern: (?!.*FPS)
                 # would switch the rule off beside another list's wording, as an unless
                 # would (T03 review 21).
                 problems.append(f"{where}: pattern uses a lookahead or lookbehind, which a v2 table "
                                 "does not allow: an exception could hide another list's wording (R4)")
-            if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
-                    and not _bank_code_shape(r) and _has_anchor(r["pattern"])):
+            if (isinstance(rv.get("pattern"), str) and rv["pattern"] and not _compile_problem(rv["pattern"])
+                    and not _bank_code_shape(rv) and _has_anchor(rv["pattern"])):
                 # An anchor tests the whole line beside a match: CASH DEPOSIT$ misses
                 # FPS CASH DEPOSIT STRIPE, so it hides wording as an exception would. Only
                 # the bank's own code keeps its ^ (D137).
@@ -560,7 +562,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
     # Each rule's matchers are built here too, as the loader builds them, so a pattern that
     # compiles alone but cannot be used is named with the table's other faults, not found
     # only once everything else passes (T03 review 27).
-    frozen = data.get("frozen") is True
+    frozen = not strict  # only the pinned v1 builds its matchers as frozen (review 36)
     for i, r in enumerate(rules, start=1):
         if not isinstance(r, dict):
             continue
@@ -599,6 +601,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                         and any(p.startswith(where) and "do not compile together" in p for p in problems)):
                     problems.append(f"{where}: {what} cannot be used ({e.__class__.__name__}: {e})")
     problems += _category_order_problems(data, rules, strict)
+    problems = list(dict.fromkeys(problems))  # a check run on each variant names a fault once
     if problems:
         raise RulesetError(f"{source}: " + "; ".join(problems))
 
@@ -720,15 +723,17 @@ class _UniqueKeyLoader(yaml.SafeLoader):
         names the rule and field beside the table's other faults (T03 review 35), and a
         second `category:` can never silently win."""
         mapping = super().construct_mapping(node, deep=deep)
-        seen: set = set()
-        for key_node, _ in node.value:
+        given: dict = {}
+        for key_node, value_node in node.value:
             key = self.construct_object(key_node, deep=deep)
             try:
-                if key in seen:
-                    mapping[key] = _Unbuilt(f"{key} given twice", "repeated key")
-                seen.add(key)
+                given.setdefault(key, []).append(value_node)
             except TypeError:  # an unhashable key; the base class has reported it
                 continue
+        for key, nodes in given.items():
+            if len(nodes) > 1:
+                values = [self.construct_object(n, deep=deep) for n in nodes]
+                mapping[key] = _Repeated(f"{key} given twice", "repeated key", values)
         return mapping
 
     def construct_object(self, node, deep=False):
@@ -758,6 +763,23 @@ class _Unbuilt:
 
     def __repr__(self) -> str:
         return f"{self.tag.rsplit(':', 1)[-1]} value {self.text!r} that YAML cannot build"
+
+
+class _Repeated(_Unbuilt):
+    """A key given more than once: neither value is kept, and each is still checked."""
+
+    def __init__(self, text: str, tag: str, values: list):
+        super().__init__(text, tag)
+        self.values = values
+
+
+def _variants(r: dict, limit: int = 32) -> list[dict]:
+    """The rule once for each value of each field given more than once (up to `limit`)."""
+    out = [r]
+    for key, value in r.items():
+        if isinstance(value, _Repeated):
+            out = [{**v, key: x} for v in out for x in value.values][:limit]
+    return out
 
 
 def _unbuilt_in(value: object, _seen: set[int] | None = None) -> list[_Unbuilt]:
@@ -944,7 +966,7 @@ def _longest_sources_checked(r: dict, frozen: bool) -> tuple[str | None, ...]:
     sources = _longest_sources(r, frozen)
     for source in sources:
         if source is not None:
-            _ending_at(source, 0)
+            _ends(source)
     return sources
 
 
@@ -969,11 +991,22 @@ def _widest(source: str) -> int | None:
 
 
 @functools.lru_cache(maxsize=8192)
-@functools.lru_cache(maxsize=4096)
-def _ending_at(source: str, rest: int) -> re.Pattern[str]:
-    # The part, forced to end where exactly `rest` characters of the line remain: matched
-    # in the whole line, so its word edges see the real text on both sides.
-    return re.compile(f"(?:{source})(?=[\\s\\S]{{{rest}}}\\Z)")
+@functools.cache
+def _ends(source: str) -> tuple[re.Pattern[str], re.Pattern[str]]:
+    """The part forced to end at a position, in two forms built once per table at load
+    (T03 review 36), never per line: ending at the line's end, and ending one character
+    before the end of a window that stops one character after it. A table pattern's edges
+    (\\b, \\B, and the mark-aware edges it is rewritten with) look at most one character
+    past a match, so that one real character is all the second form needs to see."""
+    return re.compile(f"(?:{source})\\Z"), re.compile(f"(?:{source})(?=[\\s\\S]\\Z)")
+
+
+def _ends_at(source: str, description: str, start: int, end: int) -> bool:
+    """The part matches from `start` to exactly `end` of the whole line."""
+    at_line_end, before_one = _ends(source)
+    if end == len(description):
+        return at_line_end.match(description, start) is not None
+    return before_one.match(description, start, end + 1) is not None
 
 
 def _spans(rule: Rule, description: str) -> list[tuple[int, int]]:
@@ -990,7 +1023,7 @@ def _spans(rule: Rule, description: str) -> list[tuple[int, int]]:
                 widest = _widest(source)
                 top = len(description) if widest is None else min(len(description), start + widest)
                 for later in range(top, end, -1):
-                    if _ending_at(source, len(description) - later).match(description, start):
+                    if _ends_at(source, description, start, later):
                         end = later
                         break
             if end > start and end > longest.get(start, -1):
