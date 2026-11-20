@@ -206,6 +206,8 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             if problem is None and (bad_cells := unreadable_cells(r)):
                 problem = not_utf8(i)
                 problem.readable = set(header) - bad_cells
+            elif problem is not None:
+                problem.readable -= unreadable_cells(r)  # a cell with a bad byte is never read (T04 review 48)
             partial = problem is not None
             unreadable = problem
             # Its currency is needed only if the export has a Currency column; without one,

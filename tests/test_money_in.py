@@ -1362,3 +1362,18 @@ def test_monzo_skips_a_foreign_row_with_a_field_too_long_to_read_and_reads_on(tm
     src.write_text(ending.join(rows) + ending, newline="")
     with pytest.raises(monzo.MonzoImportError, match=r"line 3: a field is too long to read \(Name\)"):
         monzo.convert(src, tmp_path / "o.csv")
+
+
+@pytest.mark.contracts
+def test_a_bad_byte_in_a_long_record_after_a_skipped_foreign_row_is_never_read_as_money(tmp_path):
+    """T04 review 48: after a skipped foreign row with a bad byte, a later record with a field
+    too long to read kept a cell with a bad byte as readable, and its amount was read."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_bytes((_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n").encode()
+                    + b"tx_2,02/01/2026,09:00:00,Card payment,CAF\xe9,-5.00,EUR,\n"
+                    + b"tx_3,03/01/2026,09:00:00,Faster payment," + b"N" * 200_000 + b",-1.\xe900,GBP,89.00\n")
+    with pytest.raises(monzo.MonzoImportError) as e:
+        monzo.convert(src, tmp_path / "o.csv")
+    assert "line 4: a field is too long to read (Name)" in str(e.value) and "Amount" not in str(e.value)

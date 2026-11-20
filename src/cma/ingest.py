@@ -245,6 +245,13 @@ def read_data(data: bytes) -> tuple[list[str], list[tuple[int, dict]], CsvRecord
         if _NOT_UTF8_BYTE.search(cell):
             raise not_utf8(1, bad)
     header, rows, err = read_records(text)
+    # A cell with a bad byte is never read, in every record that cannot be read whole,
+    # however far reading went on (T04 review 48).
+    chain = err
+    while chain is not None:
+        if chain.row is not None:
+            chain.readable -= unreadable_cells(chain.row)
+        chain = chain.rest_err
     for k, (line, row) in enumerate(rows):
         bad_cells = unreadable_cells(row)
         if bad_cells:
@@ -252,8 +259,6 @@ def read_data(data: bytes) -> tuple[list[str], list[tuple[int, dict]], CsvRecord
             first.line, first.row, first.readable = line, row, set(header) - bad_cells
             first.rest, first.rest_err = rows[k + 1:], err
             return header, rows[:k], first
-    if err is not None and err.row is not None:
-        err.readable -= unreadable_cells(err.row)  # a cell with a bad byte is never read
     return header, rows, err
 
 
