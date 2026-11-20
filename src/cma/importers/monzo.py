@@ -69,7 +69,7 @@ def _parse_date(raw: str) -> date:
         raise MonzoImportError(f"unrecognised date {raw!r}") from e
 
 
-def _money(raw: str | None, field: str, line: int) -> int:
+def _money(raw: str | None, field: str, line: int, *, limit: bool = True) -> int:
     """The amount in whole pence, read exactly from Monzo's text, never through a binary
     float; one the statement could not carry to the penny is refused (R2, T04 review 4)."""
     text = (raw or "").strip()
@@ -79,7 +79,7 @@ def _money(raw: str | None, field: str, line: int) -> int:
     p = Decimal(text) * 100
     if p != p.to_integral_value():
         raise MonzoImportError(f"{at}{field} {raw!r} has more than two decimal places")
-    if abs(p) >= MAX_STATEMENT_PENCE:
+    if limit and abs(p) >= MAX_STATEMENT_PENCE:
         raise MonzoImportError(f"{at}{field} {raw!r} is £10,000,000,000,000 or more; no figure "
                                "could be reported to the penny")
     return int(p)
@@ -134,8 +134,11 @@ def describe(kind: str, name: str, amount: float, extra: str = "") -> str:
 
 def convert(src: Path, dst: Path, opening_balance: str | float | None = None) -> ImportResult:
     """`opening_balance` is the text the person gave (read exactly), or a float from code."""
+    # The opening balance is no line of the statement: like one inferred from the export, it
+    # is not held to the line limit; every walked balance is (R2, T04 review 10).
     opening_pence = None if opening_balance is None else _money(
-        opening_balance if isinstance(opening_balance, str) else repr(opening_balance), "--opening-balance", 0)
+        opening_balance if isinstance(opening_balance, str) else repr(opening_balance), "--opening-balance", 0,
+        limit=False)
     with Path(src).open(newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         header = [h.strip() for h in (reader.fieldnames or [])]

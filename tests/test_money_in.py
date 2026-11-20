@@ -592,3 +592,16 @@ def test_a_statement_ending_at_the_last_date_python_has_still_gets_its_reconcili
     with pytest.raises(metrics.ReconciliationError) as e:
         metrics.compute(Statement(account_name="x", transactions=lines), vat_stagger=1)
     assert e.value.lines == ["L2"]
+
+
+@pytest.mark.contracts
+def test_a_supplied_opening_balance_is_held_to_no_more_than_an_inferred_one(tmp_path):
+    """T04 review 10: the opening balance is no line; a large one is accepted when every
+    walked balance and amount is within R2's limits, whether supplied or inferred."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency\n"
+                   "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP\n")
+    r = monzo.convert(src, tmp_path / "o.csv", "10000000000000.00")
+    assert r.rows == 1 and "9999999999990.00" in (tmp_path / "o.csv").read_text()
