@@ -69,7 +69,7 @@ import re._compiler as _sre_compile  # to test what one parsed element of a patt
 import re._parser as _sre_parse  # the parser re uses; read only, to find back-references
 import sys
 import unicodedata
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib import resources
@@ -465,8 +465,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                 problems.append(f"{where}: pattern uses a lookahead or lookbehind, which a v2 table "
                                 "does not allow: an exception could hide another list's wording (R4)")
             if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
-                    and r.get("bank_code") is not True and not _is_bank_code_text(r["pattern"])
-                    and _has_anchor(r["pattern"])):
+                    and not _is_bank_code_text(r["pattern"]) and _has_anchor(r["pattern"])):
                 # An anchor tests the whole line beside a match: CASH DEPOSIT$ misses
                 # FPS CASH DEPOSIT STRIPE, so it hides wording as an exception would. Only
                 # the bank's own code keeps its ^ (D137).
@@ -546,30 +545,40 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
     # only once everything else passes (T03 review 27).
     frozen = data.get("frozen") is True
     for i, r in enumerate(rules, start=1):
-        if not isinstance(r, dict) or not _well_typed_text(r):
+        if not isinstance(r, dict):
             continue
         where = f"rule {i} ({r.get('id', '?')})"
-        if any(p.startswith(where) and "compile" in p for p in problems):
-            continue  # already named as not compiling
-        try:
-            _build_matchers(r, frozen)
-        except (re.error, OverflowError, RecursionError, MemoryError, TypeError, ValueError) as e:
-            problems.append(f"{where}: its pattern cannot be used ({e.__class__.__name__}: {e})")
+        # Each part is built when its own fields are well typed, so a malformed exception
+        # never hides a fault in the rule's own matcher, nor the other way (review 28).
+        parts: list[tuple[str, Callable[[], object]]] = []
+        if _well_typed_text(r) and not any(p.startswith(where) and "compile" in p for p in problems):
+            parts.append(("its pattern", lambda r=r: (_rule_pattern(r, frozen), _span_matchers(r, frozen),
+                                                       _longest_sources(r, frozen))))
+        for key in ("unless", "requires"):
+            if isinstance(r.get(key), str) and r[key] and not _compile_problem(r[key]):
+                parts.append((f"its {key}", lambda r=r, key=key: _side_pattern(r[key], frozen)))
+        for what, build in parts:
+            try:
+                build()
+            except (re.error, OverflowError, RecursionError, MemoryError, TypeError, ValueError) as e:
+                problems.append(f"{where}: {what} cannot be used ({e.__class__.__name__}: {e})")
     problems += _category_order_problems(data, rules)
     if problems:
         raise RulesetError(f"{source}: " + "; ".join(problems))
 
 
 def _well_typed_text(r: dict) -> bool:
-    """The rule's pattern, names and exceptions have the types the loader builds from."""
+    """The rule's pattern and names have the types the loader builds its matcher from."""
     if "pattern" not in r and "names" not in r:
         return False
     if "pattern" in r and not (isinstance(r["pattern"], str) and r["pattern"]):
         return False
-    if "names" in r and not (isinstance(r["names"], list) and r["names"]
-                             and all(isinstance(n, str) and n.strip() for n in r["names"])):
-        return False
-    return all(isinstance(r[k], str) and r[k] for k in ("unless", "requires") if k in r)
+    return "names" not in r or (isinstance(r["names"], list) and bool(r["names"])
+                                and all(isinstance(n, str) and n.strip() for n in r["names"]))
+
+
+def _span_matchers(r: dict, frozen: bool) -> tuple[re.Pattern[str], ...]:
+    return tuple(re.compile(f"(?=({part}))") for part in _rule_parts(r, frozen))
 
 
 def _build_matchers(r: dict, frozen: bool) -> tuple:
@@ -577,7 +586,7 @@ def _build_matchers(r: dict, frozen: bool) -> tuple:
     mark-aware for a v2 table), its exceptions, and the form that finds its matches at every
     position (_spans)."""
     return (_rule_pattern(r, frozen),
-            tuple(re.compile(f"(?=({part}))") for part in _rule_parts(r, frozen)),
+            _span_matchers(r, frozen),
             _longest_sources(r, frozen),
             _side_pattern(r["unless"], frozen) if "unless" in r else None,
             _side_pattern(r["requires"], frozen) if "requires" in r else None)

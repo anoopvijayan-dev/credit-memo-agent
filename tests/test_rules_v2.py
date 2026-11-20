@@ -2021,3 +2021,24 @@ def test_a_pattern_that_compiles_alone_but_cannot_be_used_is_named_with_other_fa
     with pytest.raises(RulesetError) as e:
         validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, flag, bad]}, expected_id="v2")
     assert "rule 2 (flag): its pattern cannot be used" in str(e.value) and "rule 3 (bad)" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_malformed_exception_does_not_hide_the_same_rules_matcher_fault():
+    """T03 review 28: a rule with an unusable pattern and a malformed unless gets both named."""
+    rule = {"id": "both", "pattern": "(?i)ACME", "direction": "in", "category": "cash_deposit",
+            "stage": "names", "unless": 3}
+    with pytest.raises(RulesetError) as e:
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")
+    assert "rule 2 (both): its pattern cannot be used" in str(e.value) and "unless" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_an_invalid_bank_code_flag_does_not_excuse_an_anchor():
+    """T03 review 28 / D137: only the bank's code text keeps its ^; a rule that sets the
+    flag without being that code still has its anchor named."""
+    rule = {"id": "fake", "pattern": "CASH DEPOSIT$", "direction": "in", "category": "returned_dd",
+            "stage": "line_type", "protected": True, "bank_code": True}
+    with pytest.raises(RulesetError) as e:
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")
+    assert "rule 2 (fake): pattern uses an anchor" in str(e.value) and "bank_code is only" in str(e.value)
