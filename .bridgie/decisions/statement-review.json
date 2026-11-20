@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 265,
+  "next_id": 266,
   "decisions": [
     {
       "id": "D1",
@@ -5314,6 +5314,26 @@
       "decided_at": "2026-11-20T19:20:37.936Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T19:16:40.927Z"
+    },
+    {
+      "id": "D265",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:86 checks the penny round trip, src/cma/metrics.py:510 derives M3 from integer pence, and src/cma/graph.py:175 and src/cma/cli.py:415 display monetary figures to the penny. The runner passed the BOM and markup regressions. The CSV reader still accepts an unterminated quoted field, which lets a malformed Monzo row absorb a later transaction. UTF-8 recovery also uses a stricter CSV dialect than the primary reader and can discard a prior record.); major: The primary CSV reader accepts an unterminated quoted field at EOF. Monzo can report a successful import while silently dropping a complete transaction that follows the malformed record. at src/cma/ingest.py:159; major: UTF-8 recovery interprets any error from a strict reparse as evidence of an open quote. A completed row accepted by the primary reader can be dropped, shifting the reported record start and hiding the flow-limit diagnostic. at src/cma/ingest.py:138; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T19:25:08.065Z"
     }
   ]
 }

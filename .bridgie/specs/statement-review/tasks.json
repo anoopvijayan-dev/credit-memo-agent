@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-159/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:86 verifies the penny round trip, src/cma/metrics.py:510 computes M3 from pence and handles an unrepresentable result, and src/cma/graph.py:175 and src/cma/cli.py:415 display money to the penny. The BOM-prefixed UTF-8 recovery at src/cma/ingest.py:120 can discard a complete earlier row and misname the bad record. The Monzo CLI can also lose the refusal when it renders row text as Rich markup at src/cma/cli.py:442.); major: UTF-8 recovery uses an offset relative to the BOM-stripped input to slice the original bytes. It can drop the preceding complete record, suppress money in at the limit and attribute the UTF-8 error to the wrong line. at src/cma/ingest.py:120; major: The Monzo CLI interpolates the import error into Rich markup. A closing tag in a rejected cell can raise a markup error and suppress both the record-start line and the flow-limit diagnostic. at src/cma/cli.py:442; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-160/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:86 checks the penny round trip, src/cma/metrics.py:510 derives M3 from integer pence, and src/cma/graph.py:175 and src/cma/cli.py:415 display monetary figures to the penny. The runner passed the BOM and markup regressions. The CSV reader still accepts an unterminated quoted field, which lets a malformed Monzo row absorb a later transaction. UTF-8 recovery also uses a stricter CSV dialect than the primary reader and can discard a prior record.); major: The primary CSV reader accepts an unterminated quoted field at EOF. Monzo can report a successful import while silently dropping a complete transaction that follows the malformed record. at src/cma/ingest.py:159; major: UTF-8 recovery interprets any error from a strict reparse as evidence of an open quote. A completed row accepted by the primary reader can be dropped, shifting the reported record start and hiding the flow-limit diagnostic. at src/cma/ingest.py:138; reviewer verdict fail"
     },
     {
       "id": "T06",
