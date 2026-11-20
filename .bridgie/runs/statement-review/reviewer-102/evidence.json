@@ -1,0 +1,60 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed 57984ea against the P15 text supplied in the review input. The checkout's requirements.md:249 contains an older, shorter version. Canonical hashing, head comparison, first-bad-entry reporting and torn-tail detection are implemented at src/cma/case.py:177–352 and reached through src/cma/cli.py:309–338. Holder and alias recognition, steady reads, lock validation, retries and the sign-off guard are at src/cma/case.py:438–700. Writer exclusion, inherited-handle refusal, the same-thread save guard and expected-position conflicts are at src/cma/case.py:711–985. Repair, write rechecks, read-back and take-back are at src/cma/case.py:988–1231. Reviewed double submit, concurrent updates, empty and malformed input, Unicode, nesting, UTC, partial failure, OS permissions, case-directory isolation and CLI consumers. The diff adds no currency arithmetic or database migration. Runner logs confirm 501 full-suite, 184 invariant and 13 contract passes, including the named tamper, rebuilt-chain, torn-tail, repair and duplicate-submit tests. The lock replacement schedules in the findings were traced by inspection. The holder and ordinary reader can accept obsolete lock identities.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 448,
+      "criterion": "P15",
+      "claim": "The holder's lock recheck assumes that a replaced pathname leaves the old inode with zero links. Moving the old file to another name before installing its replacement defeats that check, so a holder can accept a read across a replaced gate or proceed with a write after its case lock was replaced.",
+      "repro": "On a local POSIX filesystem, hold the case and pause the post-read check at the case-lock stat, after it has sampled the gate identity. Move log.jsonl.gate to saved.gate and install a fresh log.jsonl.gate, then resume. Both open files still have positive link counts, so verify returns the first read at line 518 without retrying as a non-holder. For the write path, keep a hard link to the old case lock and replace its case pathname after the final pathname stat has sampled the old identity. The per-write guard passes even though a fresh CaseLog can take the new case lock."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 537,
+      "criterion": "P15",
+      "claim": "An ordinary reader validates the gate before the case lock and never checks the gate again. It can return a verdict after the gate was replaced during final validation.",
+      "repro": "Read an intact case from a non-holder with both lock files present. Pause the final validation after the gate identity comparison and before the case-lock comparison. Rename a fresh file over log.jsonl.gate and resume. The case-lock comparison succeeds and verify returns the original check at line 558. Counting calls to the log read yields one where P15 requires a retry."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's exit-code claim contradicts the contract test it cites. A held case with a torn tail exits 4 and reports that it is being saved.",
+      "repro": "Inspect tests/test_case_log.py:1340 and the passing row in contracts-4.log. The test holds the case over a torn tail and asserts exit 4. Exit 0 is reached only after the in-progress branch."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 321,
+      "criterion": "P15",
+      "claim": "The producer's owner-only authorization claim exceeds what the CLI and the file-mode test establish. The CLI relies on effective filesystem access and does not verify that the invoking user owns the case root.",
+      "repro": "For an existing case, grant a second local user traversal of the case folder and read access to its log, head and lock files. That user can run cma case check and obtain the verdict. The cited test checks the creation modes of the log, case lock and head."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1214,
+      "criterion": "P15",
+      "claim": "The cited rapid-append test passed, but it does not prove the producer's claimed schedule of exactly two commits per retry followed by a held lock at fallback.",
+      "repro": "Inspect the test's worker loop and assertions. It starts an unsynchronized append loop and samples 40 reads without counting commits per attempt or asserting that the lock is held at fallback. To prove the claimed schedule, add synchronization and assertions for those interleavings and run python -m pytest -v tests/test_case_log.py -k test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
