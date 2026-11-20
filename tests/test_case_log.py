@@ -3074,3 +3074,28 @@ def test_p15_a_lock_file_replaced_just_after_its_path_was_checked_is_still_caugh
         log.append("override", {"n": 3}, expected=2)
     monkeypatch.undo()
     assert len(_lines(log)) == 2
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("move_aside", [True, False])
+def test_p15_a_gate_moved_aside_and_replaced_after_its_first_look_is_caught(tmp_path, monkeypatch, move_aside):
+    """T12 review 39: the gate is moved to another name (so its link count stays one) and
+    replaced while the case lock is being looked at; the gate is looked at again after it."""
+    log = _log(tmp_path, 2)
+    real_stat, armed, done = case.os.stat, [], []
+    monkeypatch.setattr(case, "_utc_now", lambda real=case._utc_now: (armed.append(1), real())[1])
+
+    def stat(p, *a, **k):
+        got = real_stat(p, *a, **k)
+        if armed and not done and str(p) == str(log.lock_path):
+            done.append(1)
+            if move_aside:
+                os.rename(log.gate_path, log.gate_path.with_name("aside"))
+            _replace_file(log.gate_path)
+        return got
+
+    monkeypatch.setattr(case.os, "stat", stat)
+    with pytest.raises(case.CaseLocked, match="removed or replaced"):
+        log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    assert len(_lines(log)) == 2

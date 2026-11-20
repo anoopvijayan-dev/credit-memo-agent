@@ -445,7 +445,12 @@ class _Hold:
             return False
         if _file_id(os.stat(gate_path)) != self.gate_id or _file_id(os.stat(lock_path)) != self.lock_id:
             return False
-        return os.fstat(self.lock_fd).st_nlink > 0 and os.fstat(self.gate_fd).st_nlink > 0
+        if os.fstat(self.lock_fd).st_nlink == 0 or os.fstat(self.gate_fd).st_nlink == 0:
+            return False
+        # The gate's path once more, after the case lock's: a gate moved aside and replaced
+        # after its first look is caught (review 39). A replacement finished within this last
+        # step is the window no check closes (R43, revision 22).
+        return _file_id(os.stat(gate_path)) == self.gate_id and _file_id(os.stat(lock_path)) == self.lock_id
 
 
 # Each held case lock's identity -> the hold.
@@ -533,8 +538,13 @@ class CaseLog:
                     # writer in through the new file, so the read proves nothing and is
                     # taken again (T12 review 23).
                     def in_place(*held: tuple[int, Path]) -> bool:
+                        # Each file held, then the first again, so neither is left with only
+                        # a sample taken before the other's (T12 review 39). A replacement
+                        # finished within this check's last step is the window no check
+                        # closes (R43 revision 22).
+                        order = [*held, *held[:1]] if len(held) > 1 else list(held)
                         try:
-                            return all(_file_id(os.fstat(fd)) == _file_id(os.stat(p)) for fd, p in held)
+                            return all(_file_id(os.fstat(fd)) == _file_id(os.stat(p)) for fd, p in order)
                         except OSError:
                             return False
 
