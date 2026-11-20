@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 191,
+  "next_id": 192,
   "decisions": [
     {
       "id": "D1",
@@ -3858,6 +3858,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T08:54:41.686Z"
+    },
+    {
+      "id": "D191",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest matches and containment at src/cma/categorise.py:1023–1084, bank-code precedence and ambiguity at :1132–1149, override, profile and firm-rule precedence at :1152–1229, and the unexplained bucket at src/cma/models.py:65. Traced byte pinning, field diagnostics and matcher construction at src/cma/categorise.py:397–610,689–708,858–886. Checked duplicate submissions and concurrent decisions at src/cma/cli.py:84,240, signed and zero amounts at src/cma/categorise.py:899,1166, pence and date-only ingestion at src/cma/ingest.py:42,100,127, partial output failure at src/cma/cli.py:228–229, path scope at src/cma/mcp_server.py:37–46, case-local classification inputs at src/cma/categorise.py:1310–1324, and CLI, MCP and historical evidence consumers at src/cma/graph.py:188–223,250–253 and src/cma/mcp_server.py:74–104. The runner logs confirm table-driven provenance, CLI evidence, idempotency, historical replay and both offline evals. R4 fails because repeated YAML fields can still suppress required diagnostics and the parsed-data validator grants the v1 exception exemption without a verified digest.); major: A repeated top-level rules key suppresses all diagnostics for the rules in both lists, including forbidden exceptions and unusable matchers. at src/cma/categorise.py:422; major: An invalid regex inside a repeated pattern field is silently skipped. The raw compilation diagnostic reads only the `_Repeated` placeholder, and the variant pass discards the compilation error when deciding whether to build a matcher. at src/cma/categorise.py:587; major: The parsed-data validator treats an omitted digest as verification of frozen v1, exempting arbitrary input from the forbidden-exception check. at src/cma/categorise.py:405; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T08:58:29.368Z"
     }
   ]
 }
