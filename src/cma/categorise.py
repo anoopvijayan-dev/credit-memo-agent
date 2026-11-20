@@ -102,6 +102,9 @@ ALL_RULE_KEYS = RULE_KEYS | MATCH_KEYS | OPTIONAL_KEYS
 # a table edit cannot grant the exception to payer wording.
 BANK_RETURN_CODES = frozenset({r"^UNPAID DD\b"})
 _RULE_ID = re.compile(r"[A-Za-z0-9_.\-]+")
+# The provenance ids the categoriser sets itself: "<table>:default", "<table>:round_trip"
+# and "<table>:conflict:..."; a rule with one of these ids could not be told from them.
+RESERVED_RULE_IDS = frozenset({"default", "round_trip", "conflict"})
 # A frozen table's SHA-256, pinned here. A file that validates but differs from these
 # bytes (a rule recategorised, CRLF line ends, frozen switched off) is refused, so the id
 # v1 in an evidence record always means this exact table.
@@ -393,6 +396,10 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                 # Candidates are recorded joined by + after a colon: an id holding either
                 # would make two different candidate sets read the same (T03 review 17).
                 problems.append(f"{where}: id may use only letters, digits, _, . and -")
+            if r.get("id") in RESERVED_RULE_IDS:
+                # These name the categoriser's own decisions in a line's provenance.
+                problems.append(f"{where}: id {r['id']!r} is reserved for the categoriser's own "
+                                "provenance")
             if r.get("pattern") in BANK_RETURN_CODES and r.get("bank_code") is not True:
                 problems.append(f"{where}: the bank's own returned-payment code must carry bank_code: true")
             for key in ("pattern", "unless", "requires"):
@@ -401,6 +408,12 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                     # which renumbers groups: a back-reference would silently change meaning.
                     problems.append(f"{where}: {key} uses a back-reference or a conditional group, "
                                     "which a v2 table does not allow")
+            if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
+                    and _sre_parse.parse(r["pattern"]).getwidth()[0] == 0):
+                # A match of no characters (a lookahead alone, an optional pattern) has no
+                # span, so the longer-phrase filter could never set it aside (T03 review 18).
+                problems.append(f"{where}: pattern can match without consuming any text, which a v2 "
+                                "table does not allow")
             if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
                     and _no_backtrack(r["pattern"])):
                 problems.append(f"{where}: pattern uses an atomic group or a possessive repeat, which a "
@@ -787,7 +800,9 @@ def credit_verdict(ruleset: Ruleset, description: str, amount: float) -> Verdict
         return Verdict((bank[0],))
     rails = [r for r in cues if r.category is None]
     names = [r for r in rules if r.stage == "names" and r.category is not None]
-    if rails and any(r.category is Category.CASH_DEPOSIT for r in names):
+    # Cash wording in either stage (a table edit may list it as a cue): a payment-method cue
+    # with cash wording is ambiguous by R4 whichever list the cash wording is on.
+    if rails and any(r.category is Category.CASH_DEPOSIT for r in (*cues, *names)):
         return Verdict(tuple(rules), ambiguous=True)  # step 3: electronic money is not cash
     bucketed = [r for r in cues if r.category is not None]
     if bucketed:  # step 4: the cues decide

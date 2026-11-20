@@ -1780,3 +1780,32 @@ def test_a_v2_rule_id_cannot_hold_a_separator_used_in_recorded_candidates(rule_i
     rule = {**GOOD, "id": rule_id, "stage": "names"}
     with pytest.raises(RulesetError, match="id may use only"):
         validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_cash_wording_listed_as_a_cue_is_still_ambiguous_with_a_rail():
+    """T03 review 18 / R4: a table edit putting cash wording in the line-type stage must not
+    let a rail and cash wording reach trading receipts."""
+    rail = {"id": "rail", "names": ["FPS"], "direction": "in", "protected": True, "stage": "line_type"}
+    cash = {"id": "cash", "names": ["CASH DEPOSIT"], "direction": "in", "category": "cash_deposit",
+            "protected": True, "stage": "line_type"}
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rail, cash]}, "v2", "t", "0")
+    assert classify(_t("FPS CASH DEPOSIT", 200.0), rs) == (C.OTHER, "v2:conflict:rail+cash")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("pattern", [r"(?=ACME)", r"(?:ACME)?", r"\b"])
+def test_a_v2_pattern_that_can_match_no_text_is_refused(pattern):
+    """T03 review 18: a match of no characters has no span for the longer-phrase filter."""
+    rule = {"id": "empty", "pattern": pattern, "direction": "in", "category": "revenue_card_settlement",
+            "stage": "names"}
+    with pytest.raises(RulesetError, match="without consuming any text"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("rule_id", ["default", "round_trip", "conflict"])
+def test_a_v2_rule_cannot_take_an_id_the_categoriser_uses_for_its_own_provenance(rule_id):
+    rule = {**GOOD, "id": rule_id, "stage": "names"}
+    with pytest.raises(RulesetError, match="reserved"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")
