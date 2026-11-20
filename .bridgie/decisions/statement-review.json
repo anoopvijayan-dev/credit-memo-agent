@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 178,
+  "next_id": 179,
   "decisions": [
     {
       "id": "D1",
@@ -3598,6 +3598,26 @@
       "decided_at": "2026-11-20T07:32:14.387Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T07:26:49.441Z"
+    },
+    {
+      "id": "D178",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed HEAD 50e1e4d against .bridgie/specs/statement-review/requirements.md:249. Canonical UTF-8 hashing, UTC timestamps, head comparison and first-bad-entry detection are in src/cma/case.py:176–348. Holder and path-alias recognition, lock identity checks, steady reads, busy-gate behavior and the intact-only API are at lines 459–667. Writer exclusion, fork refusal, nested-save refusal, expected-position conflicts, per-write lock checks and repair rechecks are at lines 682–1099. Publication, read-back and take-back are at lines 1101–1175. Traced the CLI consumer at src/cma/cli.py:309–338 and checked duplicate submission, concurrent writes, malformed and empty inputs, Unicode, UTC, partial failures, OS permissions and case-folder isolation. Currency arithmetic and database migrations are outside this change. Runner logs show the named tamper, rebuilt-chain, torn-tail, retry, CLI contract and both Ctrl-C tests passed. The read-back and take-back paths still have interruption cases that bypass the required outcome.); major: A Ctrl-C after a failed read-back has been detected can skip take-back while the published head is still the save's own. The caller gets a not-confirmed report and the entry stays recorded even though the take-back was never attempted. at src/cma/case.py:1142; major: GeneratorExit during take-back escapes as a raw exception. The caller receives neither a not-confirmed report nor the instruction to check the case log. at src/cma/case.py:1155; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T07:34:18.627Z"
     }
   ]
 }
