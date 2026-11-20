@@ -1,0 +1,127 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to eight buckets. src/cma/metrics.py:483 and :559–568 sum their signed pence and attach line IDs. The CLI and MCP contracts ran in contracts-4.log.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:83 checks the exact-money boundary, src/cma/metrics.py:512 computes M3 from integer pence, and src/cma/graph.py:175 and src/cma/cli.py:415 display GBP to the penny. The runner passed the previous combined UTF-8 and oversized-field regression. An oversized, unterminated foreign record still allows Monzo to export a truncated statement.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks bucket membership and the pence difference before returning figures. src/cma/cli.py:119 exits 6 with the diagnostic and src/cma/mcp_server.py:98 propagates it. The runner exercised both consumers, including a statement-supplied ID that looks like markup.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/models.py:66 maps OTHER to unexplained money in and :69 excludes it from trading receipts.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks pence and credit-ID multiplicity using M2 and the seven other buckets. M18 is constructed separately at :562. The runner passed the partition and large-pence invariants.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the figures delivered by T04, src/cma/metrics.py:523–573 attaches sum, outflow and derived evidence. The M9 cap note is calculated at :422–431 and attached at :545. The runner passed the sum, signed-outflow and note invariants and the fixture evidence comparisons in dual_run-7.log. The task schedule assigns monthly cells to T06 and M27/M28 to T07.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 feed the fallback category into M25 through src/cma/models.py:66 and src/cma/metrics.py:565. The runner passed both v1 and v2 unknown-payer tests and the generated unmatched-credit invariant.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-177/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-177/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-177/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-177/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-177/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-177/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-177/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 327,
+      "criterion": "R2",
+      "claim": "Monzo can successfully export a truncated statement when an oversized quoted field in a foreign record remains open at EOF. Recovery turns the remainder into an empty suffix, and the foreign-currency skip at src/cma/importers/monzo.py:224 discards the only error after the quote swallowed the following physical lines.",
+      "repro": "Use the header Transaction ID,Date,Type,Amount,Currency,Balance,Name. Add a valid GBP row ending in 10.00,GBP,10.00,ACME. Add an EUR row with Amount -1.00, an empty Balance and a Name consisting of an opening double quote followed by 200,000 N characters. On the next physical line add an otherwise valid GBP row and leave the double quote open through EOF. Run cma import monzo with a fresh output path. The code exports the first GBP row alone and reports success instead of refusing the unreadable record starting on line 3."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 314,
+      "criterion": "R2",
+      "claim": "The producer's scratchpad command is unverified, and its above-ceiling example calls the figures layer directly. It cannot establish that a statement above the import limit is accepted. The runner verifies the current checkout at 6aa62b5 with 982 passing tests, while the producer's 878-test result refers to ca0092c.",
+      "repro": "The scratchpad script is absent from the checkout and has no runner result row. With the original script available, PYTHONPATH=src python scratchpad/probe.py would verify its reported output. To check the import boundary separately, load a five-column statement containing a credit of 10000000000000.01 with ingest.load_csv. src/cma/ingest.py:81 rejects that amount. To verify the historical suite count, run python -m pytest -q in a checkout of ca0092c."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

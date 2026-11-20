@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 282,
+  "next_id": 283,
   "decisions": [
     {
       "id": "D1",
@@ -5654,6 +5654,26 @@
       "decided_at": "2026-11-20T21:44:26.991Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T21:41:12.099Z"
+    },
+    {
+      "id": "D282",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:83 checks the exact-money boundary, src/cma/metrics.py:512 computes M3 from integer pence, and src/cma/graph.py:175 and src/cma/cli.py:415 display GBP to the penny. The runner passed the previous combined UTF-8 and oversized-field regression. An oversized, unterminated foreign record still allows Monzo to export a truncated statement.); major: Monzo can successfully export a truncated statement when an oversized quoted field in a foreign record remains open at EOF. Recovery turns the remainder into an empty suffix, and the foreign-currency skip at src/cma/importers/monzo.py:224 discards the only error after the quote swallowed the following physical lines. at src/cma/ingest.py:327; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T21:48:33.562Z"
     }
   ]
 }
