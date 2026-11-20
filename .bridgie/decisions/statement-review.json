@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 171,
+  "next_id": 172,
   "decisions": [
     {
       "id": "D1",
@@ -3458,6 +3458,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T06:46:43.317Z"
+    },
+    {
+      "id": "D171",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Reviewed the supplied revision 21. The checkout's .bridgie/specs/statement-review/requirements.md:19 contains the original recognition clause. Mapped the maintained lists to src/cma/rules/v2.yaml:74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest matches, containment, bank-code precedence, both-stage candidates, overrides, profile names and firm rules through src/cma/categorise.py:850,872,959,988,1026. Traced table selection, replay and per-line evidence through src/cma/cli.py:77,229 and src/cma/graph.py:188,221,251. Checked repeat submission and concurrent review handling, signed amounts, empty and Unicode inputs, date-only ingestion, refusal before checkpoint creation, the ruleset allow-list, statement-local inputs and evidence consumers. The runner logs confirm per-list provenance, CLI v2, checkpoint replay and both offline evals. R4 fails because a malformed exception can suppress the same rule's matcher diagnostic and an invalid bank-code flag can suppress the anchor diagnostic.); major: A malformed exception suppresses validation of the same rule's otherwise usable input fields. Revision 21 explicitly requires the wrapped-pattern fault and the malformed exception to be reported together. at src/cma/categorise.py:549; major: A rule with an invalid bank_code: true flag skips the anchor check merely by setting the flag. R4 exempts only the pinned bank-code pattern and requires changed v1 to name each forbidden exception. at src/cma/categorise.py:468; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T06:51:08.713Z"
     }
   ]
 }
