@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 167,
+  "next_id": 168,
   "decisions": [
     {
       "id": "D1",
@@ -3382,6 +3382,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T06:14:35.844Z"
+    },
+    {
+      "id": "D167",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Reviewed the supplied revision 20. The checkout's .bridgie/specs/statement-review/requirements.md:19 contains the original recognition clause. Mapped the required lists to src/cma/rules/v2.yaml:74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest matches and containment at src/cma/categorise.py:810,832, bank-code and ambiguity precedence at :919, and override, profile and firm-rule precedence at :949,986. Traced ruleset selection, checkpoint replay and per-line evidence through src/cma/cli.py:77,229 and src/cma/graph.py:188,221,250. Checked repeat submission and concurrent review paths, signed amounts and date-only ingestion, Unicode and malformed fields, refusal before checkpoint creation, the ruleset allow-list, case-local inputs and evidence consumers. The runner confirms per-list provenance, CLI v2, checkpoint replay, both offline evals and the prior malformed bank-code repros. R4 fails because a changed v1 can still skip rule-by-rule exception diagnostics and because validation can omit a rule's unusable pattern when another rule has a reported fault.); major: The exception-check exemption depends on the requested id and the YAML frozen flag rather than the verified byte hash. A changed packaged v1 is refused, but its diagnostic omits forbidden rule exceptions. at src/cma/categorise.py:390; major: An error found during schema validation prevents the loader from discovering faults in other rules' compiled matchers. R4 requires malformed rule fields to be named alongside the table's other faults. at src/cma/categorise.py:540; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T06:19:05.844Z"
     }
   ]
 }
