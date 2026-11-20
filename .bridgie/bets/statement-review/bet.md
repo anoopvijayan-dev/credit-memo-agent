@@ -297,6 +297,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-20 D150 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-20 D146 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Holder and busy-gate reads count only while the lock files are the case's; take-back is compare-only; not confirmed answer (D143). → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 - 2026-11-20 D147 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Each occurrence counts on its own (D142). → task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03 [Anoop Vijayan]
+- 2026-11-20 D149 (question): Keep the lock re-check on the take-back, as on every head rename; a take-back it stops answers not confirmed (design default; R42 stays satisfiable; T12 turns one check back on and changes the test at tests/test_case_log.py:2401 before its review) — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Built in T12 7c8fba2. → recorded [Anoop Vijayan]
 
 ## Idea
 
