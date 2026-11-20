@@ -1250,24 +1250,22 @@ class CaseLog:
             held = now.entries[entry.seq - 1].hash if now.ok and len(now.entries) >= entry.seq else None
             # The read-back counts only while both lock files are still the ones taken, as any
             # holder's read does (T12 review 45); otherwise it confirms nothing.
-            try:
-                self._require_lock_in_place()
-                locks_held = True
-            except CaseLocked:
-                locks_held = False
+            if self._locks_replaced():
                 failure[0] = "a case lock file was removed or replaced during the read-back"
-            if not locks_held:
-                # The read is taken again, fresh, through the gate and case lock as they now
-                # are (P15, T12 review 46); only an intact log holding the entry, read so,
-                # confirms the save.
-                again = self.verify()
-                held = (again.entries[entry.seq - 1].hash
-                        if again.ok and not again.in_progress and len(again.entries) >= entry.seq else None)
-                locks_held = held == entry.hash
-            confirmed = held == entry.hash and locks_held
+                confirmed = self._fresh_read_holds(entry)
+            else:
+                confirmed = held == entry.hash
             self._save_confirmed = confirmed
         except OSError as e:  # the read-back itself failed: named, never read as a change (D159)
             failure[0] = f"the log could not be read back ({e.__class__.__name__}: {e})"
+            # A lock file replaced during that failed read still calls for the fresh read
+            # (P15, T12 review 47), whatever stopped the first.
+            try:
+                if self._locks_replaced():
+                    confirmed = self._fresh_read_holds(entry)
+                    self._save_confirmed = confirmed
+            except Exception:
+                confirmed = False
         except BaseException as e:  # interrupted, Ctrl-C included (reviews 30, 32)
             failure[0] = f"the read-back was interrupted ({e.__class__.__name__})"
         finally:
@@ -1275,6 +1273,23 @@ class CaseLog:
             # answer included, goes on to the take-back (review 33).
             if not confirmed:
                 self._take_back(recorded, entry, failure[0])
+
+    def _locks_replaced(self) -> bool:
+        """A lock file this holder took is no longer the case's (an error examining them is
+        raised, to be named)."""
+        try:
+            self._require_lock_in_place()
+        except CaseLocked:
+            return True
+        return False
+
+    def _fresh_read_holds(self, entry: Entry) -> bool:
+        """A fresh read, through the gate and case lock as they now are (P15, T12 review 46),
+        finds an intact log holding `entry` where its head record lists it."""
+        again = self.verify()
+        held = (again.entries[entry.seq - 1].hash
+                if again.ok and not again.in_progress and len(again.entries) >= entry.seq else None)
+        return held == entry.hash
 
     def _take_back(self, recorded: list[str], entry: Entry, failure: str) -> NoReturn:
         """Not told recorded, so not left recorded either (P15): the head record goes back to

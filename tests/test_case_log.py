@@ -3331,3 +3331,25 @@ def test_a_read_back_across_a_replaced_lock_takes_a_fresh_read(tmp_path, monkeyp
     assert entry.seq == 3 and len(verifies) == 2  # the save's check, then the fresh read
     got = case.CaseLog(log.path).verify()
     assert got.ok and got.head.position == 3
+
+
+@pytest.mark.invariants
+def test_a_read_back_failing_while_a_lock_was_replaced_still_takes_a_fresh_read(tmp_path, monkeypatch):
+    """T12 review 47: the read-back hits an I/O error and a case lock was replaced meanwhile;
+    the fresh read through the lock files as they now are still decides, and with nobody
+    else writing it finds the entry: the save is confirmed."""
+    log = _log(tmp_path, 2)
+    real, done = case._read_head, []
+
+    def head(path, *, raise_os=False):
+        got = real(path)
+        if raise_os and isinstance(got, list) and len(got) == 3 and not done:
+            done.append(1)
+            _replace_file(log.lock_path)
+            raise OSError(5, "read failed")
+        return real(path, raise_os=raise_os)
+
+    monkeypatch.setattr(case, "_read_head", head)
+    entry = log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    assert entry.seq == 3 and case.CaseLog(log.path).verify().head.position == 3
