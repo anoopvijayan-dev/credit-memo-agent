@@ -622,3 +622,21 @@ def test_returned_payment_matching_compares_exact_pence(monkeypatch):
     near = [lines[0].model_copy(update={"amount": -0.28, "balance": -0.28}),
             lines[1].model_copy(update={"reverses": None})]
     assert categorise.link_reversals(Statement(account_name="x", transactions=near)).transactions[1].reverses is None
+
+
+@pytest.mark.contracts
+def test_returned_payment_matching_takes_its_pence_from_the_figures_layer(monkeypatch):
+    """T04 review 12: the categoriser does no money arithmetic of its own; the size it matches
+    a returned DD to its debit by comes from metrics, the figures layer (R2)."""
+    from cma import metrics
+
+    lines = [
+        Transaction(id="D1", date=date(2026, 1, 1), description="DD ACME", amount=-5.00, balance=-5.00,
+                    category=Category.SUPPLIER),
+        Transaction(id="R1", date=date(2026, 1, 2), description="UNPAID DD ACME", amount=7.00, balance=2.00,
+                    category=Category.RETURNED_DD),
+    ]
+    st = Statement(account_name="x", transactions=lines)
+    assert categorise.link_reversals(st).transactions[1].reverses is None
+    monkeypatch.setattr(metrics, "size_pence", lambda t: 1)  # the figures layer decides the match
+    assert categorise.link_reversals(st).transactions[1].reverses == "D1"

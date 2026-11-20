@@ -53,9 +53,14 @@ def _statement(path: str):
     try:
         return ingest.load_csv(p)
     except ingest.StatementError as e:
-        lines = sorted({x.split(":", 1)[0] for x in e.problems})
-        raise ValueError(f"{path}: statement refused, {len(e.problems)} problem(s) on {', '.join(lines[:10])}; "
-                         "run `cma run` locally to see them") from None
+        # A problem with the whole statement (money in or out reaching the limit) is said in
+        # full, ahead of the line labels, never cut off by them (R2, T04 review 12); a line's
+        # text stays local, only its label is given.
+        whole = [x for x in e.problems if not x.startswith("line ")]
+        lines = sorted({x.split(":", 1)[0] for x in e.problems if x.startswith("line ")})
+        said = "; ".join(whole) + ("; " if whole and lines else "")
+        raise ValueError(f"{path}: statement refused, {len(e.problems)} problem(s): {said}"
+                         f"{'on ' + ', '.join(lines[:10]) if lines else ''}; run `cma run` locally to see them") from None
 
 
 @server.tool()

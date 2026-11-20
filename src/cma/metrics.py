@@ -116,6 +116,16 @@ def pence(t: Transaction) -> int:
     return _whole_pence(t.amount, f"line {t.id}: amount")
 
 
+def size_pence(t: Transaction) -> int | None:
+    """The line's amount in whole pence, without its sign, or None if it is not whole pence:
+    the key the categoriser matches a returned payment to the debit it undoes by, computed
+    here so no money arithmetic is done outside the figures layer (R2, T04 review 12)."""
+    try:
+        return abs(pence(t))
+    except AmountError:
+        return None
+
+
 def balance_pence(t: Transaction) -> int:
     """The line's running balance in whole pence."""
     return _whole_pence(t.balance, f"line {t.id}: balance")

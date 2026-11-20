@@ -57,3 +57,18 @@ def test_descriptions_only_on_request_and_marked_untrusted(data):
     assert "description" not in rows[0] and "untrusted_description" not in rows[0]
     rows = mcp_server.transactions_for("cafe.csv", ["T00001"], include_descriptions=True)
     assert rows[0]["untrusted_description"]
+
+
+def test_a_refusal_says_which_flow_reached_the_limit_however_many_lines_are_wrong(data):
+    """T04 review 12: a statement refused because its money in reaches R2's limit says so
+    through MCP, even when more than ten lines are also named; no cell value is echoed."""
+    rows = ["id,date,description,amount,balance",
+            "T1,2026-01-01,A,9999999999999.99,9999999999999.99",
+            "T2,2026-01-02,B,9999999999999.99,9999999999999.99"]
+    rows += [f"X{i},SECRET-DATE,C,1.00,1.00" for i in range(12)]
+    (data / "data" / "big.csv").write_text("\n".join(rows) + "\n")
+    with pytest.raises(ValueError) as e:
+        mcp_server.statement_summary("big.csv")
+    msg = str(e.value)
+    assert "money in totals £10,000,000,000,000 or more" in msg and "money out" not in msg
+    assert "SECRET-DATE" not in msg and "line 3" in msg

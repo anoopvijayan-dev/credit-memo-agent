@@ -72,7 +72,6 @@ import sys
 import unicodedata
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from decimal import Decimal
 from functools import lru_cache
 from importlib import resources
 from typing import Literal
@@ -1391,22 +1390,18 @@ def link_reversals(statement: Statement) -> Statement:
     taken: set[str] = set()
     txns = statement.transactions
 
-    def pence(v: float) -> int | None:
-        """The amount in whole pence, read exactly from the decimal the float carries; no
-        binary-float arithmetic decides a match (R2, T04 review 11)."""
-        q = Decimal(repr(v)) * 100
-        return int(q) if q.is_finite() and q == q.to_integral_value() else None
+    from .metrics import size_pence  # the figures layer does the arithmetic (R2, T04 review 12)
 
     # Debits by (amount in pence, payee), in statement order: each returned DD looks only
     # at the debits it could undo, latest first, not back through the whole statement.
     debits: dict[tuple[int, str], list[int]] = {}
     for j, o in enumerate(txns):
-        p = pence(o.amount)
-        if p is not None and p < 0 and o.category not in (Category.RETURNED_DD, None):
-            debits.setdefault((-p, counterparty(o.description)), []).append(j)
+        p = size_pence(o)
+        if p is not None and o.amount < 0 and o.category not in (Category.RETURNED_DD, None):
+            debits.setdefault((p, counterparty(o.description)), []).append(j)
     for i, r in enumerate(txns):
-        p = pence(r.amount)
-        if r.category != Category.RETURNED_DD or p is None or p <= 0:
+        p = size_pence(r)
+        if r.category != Category.RETURNED_DD or p is None or r.amount <= 0:
             continue
         candidates = debits.get((p, counterparty(r.description)), [])  # same pence, same payee
         for j in reversed(candidates[: bisect.bisect_left(candidates, i)]):
