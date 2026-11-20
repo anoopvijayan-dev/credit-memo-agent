@@ -1,6 +1,7 @@
 """Firm configuration and the offline lock (R29, R30, R34; properties P18 and P5)."""
 
 import asyncio
+import contextlib
 import json
 import re
 import socket
@@ -343,10 +344,10 @@ def test_p18_graph_refuses_a_hosted_request_under_the_runs_lock(home, no_network
     # on: the request is refused before it is sent, and nothing is drafted.
     (home / "firm.yaml").write_text("offline_lock: false\n")
     model = llm.AnthropicLLM()
-    graph = build(model)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    graph = build(model, firm_config=firm.load())
     with pytest.raises(firm.OfflineLockError, match="offline lock"):
-        graph.invoke({"statement_path": str(_statement(tmp_path)), "run_offline_lock": True},
-                     {"configurable": {"thread_id": "t"}})
+        graph.invoke({"statement_path": str(_statement(tmp_path))}, {"configurable": {"thread_id": "t"}})
     assert [c for c in sdks if c[1] == "request"] == [] and no_network == []
 
 
@@ -646,3 +647,140 @@ def test_p5_a_custom_policys_rule_id_or_description_never_reaches_the_prompt(hom
     user = draft_prompt(st, ms, p)
     assert "SNTLCASE" not in user and "JANE DOE" not in user
     assert "| R2 |" in user  # the other rules keep their ids
+
+
+# --- T17 review 3 ---------------------------------------------------------------------
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("supplied", [{"run_offline_lock": False}, {"offline_lock": False},
+                                      {"run_offline_lock": False, "offline_lock": False}])
+def test_p18_graph_input_cannot_override_the_firms_lock(home, no_network, sdks, tmp_path, supplied):
+    """T17 review 3 / R29, P18: a client made while firm.yaml was unlocked, then the lock
+    turned on before a new run: whatever the caller puts in the graph's input, the run reads
+    firm.yaml itself, refuses the request before it is sent, and nothing is drafted."""
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    model = llm.AnthropicLLM()
+    graph = build(model)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    with pytest.raises(firm.OfflineLockError, match="offline lock"):
+        graph.invoke({"statement_path": str(_statement(tmp_path)), **supplied},
+                     {"configurable": {"thread_id": "t"}})
+    assert [c for c in sdks if c[1] == "request"] == [] and no_network == []
+
+
+@pytest.mark.invariants
+def test_p18_a_runs_reading_is_used_once_and_never_by_a_later_run(home, no_network, sdks, tmp_path, monkeypatch):
+    """T17 review 3 / P18: the reading the CLI hands to build() is the first run's only; a
+    later run on the same graph, started after the lock was turned on, reads firm.yaml."""
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    cfg = firm.load()
+    model = llm.AnthropicLLM(firm_config=cfg)
+    monkeypatch.setattr(llm.AnthropicLLM, "_send", lambda self, s, u: llm.FakeLLM().complete(s, u))
+    graph = build(model, firm_config=cfg)
+    first = graph.invoke({"statement_path": str(_statement(tmp_path))}, {"configurable": {"thread_id": "a"}})
+    assert evidence_record({**first, "review": None})["egress"]["offline_lock"] is False
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    sent = []
+    monkeypatch.setattr(llm.AnthropicLLM, "_send", lambda self, s, u: sent.append(u) or "")
+    with pytest.raises(firm.OfflineLockError):
+        graph.invoke({"statement_path": str(_statement(tmp_path))}, {"configurable": {"thread_id": "b"}})
+    assert sent == [] and no_network == []
+
+
+def _custom_id_policy(rule_id):
+    from cma import policy
+
+    custom = policy.load_policy()
+    custom["rules"][0] = {**custom["rules"][0], "id": rule_id}
+    return custom
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("rule_id", ["R4242", "R10", "R0", "R12345", "SNTL R4242"])
+def test_p5_a_custom_rule_id_in_the_shipped_form_never_reaches_the_prompt(home, tmp_path, rule_id):
+    """T17 review 3 / P5: a custom id spelt like a shipped one (R and digits) is still free
+    text the policy's author chose, and can be a case sentinel; only the shipped policy's
+    own ids reach a prompt, first draft or redraft."""
+    from cma import categorise, guard, ingest, metrics, policy
+    from cma.graph import redraft_ids
+
+    st = categorise.categorise(ingest.load_csv(_statement(tmp_path), account_name="ACME LTD"))
+    ms = metrics.compute(st)
+    p = policy.evaluate(ms, _custom_id_policy(rule_id))
+    user = draft_prompt(st, ms, p)
+    assert rule_id not in user and "(custom id)" in user
+    # A draft citing the custom rule with a wrong limit: the redraft line names nothing of it.
+    memo = llm.FakeLLM().complete("", user) + f"\nThe limit is 0.01x [{rule_id}].\n"
+    g = guard.check(memo, ms, p, required_headings=guard.REQUIRED_HEADINGS)
+    ids = redraft_ids(g, ms, p)
+    assert rule_id not in ids
+    redraft = draft_prompt(st, ms, p, redraft=ids)
+    assert rule_id not in redraft and REDRAFT_IDS.fullmatch(redraft[len(user):])
+
+
+@pytest.mark.invariants
+def test_p5_cli_custom_policy_prompts_carry_no_sentinel(home, no_network, sdks, tmp_path, monkeypatch):
+    """T17 review 3 / P5: through `cma run --policy` with a hosted model, the initial prompt
+    and every redraft prompt carry no sentinel from the statement or the custom policy."""
+    import yaml
+
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
+    for i, row in enumerate(rows):
+        row["description"] = f"R4242 SNTLDESC{i:05d} {row['description']}"
+    path, _ = synth.write(rows, truth, tmp_path)
+    custom = _custom_id_policy("R4242")
+    custom["rules"][1] = {**custom["rules"][1], "description": "SNTLPOLICY JANE DOE"}
+    pol_path = tmp_path / "custom.yaml"
+    pol_path.write_text(yaml.safe_dump(custom))
+    prompts = []
+
+    def send(self, system, user):
+        prompts.append(system + user)
+        return llm.FakeLLM(hallucinate=True).complete(system, user) + "\nThe limit is 0.01x [R4242].\n"
+
+    monkeypatch.setattr(llm.AnthropicLLM, "_send", send)
+    r = CliRunner().invoke(app, ["run", str(path), "--llm", "anthropic", "--policy", str(pol_path),
+                                 "--yes", "--reviewer", "A", "--out", str(tmp_path / "memo.md")])
+    assert prompts, r.output
+    assert len(prompts) > 1  # the redraft path ran
+    for p in prompts:
+        for sentinel in ("R4242", "SNTLDESC", "SNTLPOLICY", "JANE DOE"):
+            assert sentinel not in p
+    assert no_network == []
+
+
+class _BindStopped(Exception):
+    pass
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("transport", ["run_sse_async", "run_streamable_http_async"])
+@pytest.mark.parametrize("lock", ["offline_lock: false\n", "offline_lock: true\n"])
+def test_p18_http_start_binds_no_socket_under_the_lock(home, monkeypatch, tmp_path, transport, lock):
+    """T17 review 3 / R29, P18: the SDK's real HTTP start, with uvicorn's own startup (no
+    stand-in for serve): under the lock it is refused before any socket is bound; with the
+    lock off it reaches the bind of its listening socket on loopback (stopped there)."""
+    pytest.importorskip("mcp")
+    pytest.importorskip("uvicorn")
+    from cma import mcp_server
+
+    (home / "firm.yaml").write_text(lock)
+    monkeypatch.setenv("CMA_DATA_DIR", str(tmp_path))
+    bound = []
+
+    def bind(self, address):
+        bound.append(address)
+        raise _BindStopped(address)
+
+    monkeypatch.setattr(socket.socket, "bind", bind)
+    start = getattr(mcp_server.server, transport)
+    if "true" in lock:
+        with pytest.raises(firm.OfflineLockError, match="offline lock"):
+            asyncio.run(start(host="127.0.0.1", port=0))
+        assert bound == []
+    else:
+        # uvicorn stops on the failed bind, by exiting or by raising it
+        with contextlib.suppress(_BindStopped, SystemExit, BaseExceptionGroup):
+            asyncio.run(start(host="127.0.0.1", port=0))
+        assert bound and bound[0][0] == "127.0.0.1"

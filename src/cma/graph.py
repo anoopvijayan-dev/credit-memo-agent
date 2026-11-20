@@ -18,9 +18,11 @@ payer, the account's real name, a case profile field, a file path or the policy'
 line naming the metric and rule ids the guard flagged, and nothing else: never the
 rejected draft, the guard's reasons or any number it quoted.
 
-Offline lock: a run reads firm.yaml once, at its start (the CLI reads it before making the
-model client, and passes the same reading in). Every hosted request in the run is checked
-against that value, and the evidence records it.
+Offline lock: a run reads firm.yaml once, at its start. The CLI reads it before making the
+model client and hands that reading to `build`, which uses it for the first run only; any
+other run reads firm.yaml in `load`. Nothing in the graph's input can set the run's lock
+(T17 review 3). Every hosted request in the run is checked against that value, and the
+evidence records it.
 
 Checkpoints: the default MemorySaver lives in memory, so a pending review is lost when
 the process exits. Pass a durable checkpointer (`sqlite_checkpointer(path)`, needs the
@@ -121,7 +123,7 @@ class MemoState(TypedDict, total=False):
     policy_path: str | None
     vat_stagger: int | None
     model: str
-    run_offline_lock: bool | None  # input: the run's one reading of firm.yaml, if the caller made it
+    run_offline_lock: bool | None  # never read: an input before T17 review 3, kept so old checkpoints load
     offline_lock: bool
     egress: str
     statement_sha256: str
@@ -161,9 +163,6 @@ def _threshold(value: float | None, unit: str) -> str:
     return "" if value is None else format_value(value, unit)
 
 
-_PROMPT_RULE_ID = re.compile(r"R\d{1,4}")
-
-
 def _shipped_descriptions() -> dict[str, str]:
     """The rule descriptions of the shipped default policy, by rule id."""
     try:
@@ -178,8 +177,8 @@ def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = F
     description is sent only when it is the shipped policy's own text for that rule; a custom
     policy's description could carry case or customer text, so it is replaced by the rule's
     metric and requirement alone (P5, T17 review 1). A rule id is free text in a custom
-    policy too, so only an id of the shipped form (R and digits, which the memo cites as
-    [Rn]) is sent; any other is replaced (T17 review 2)."""
+    policy too, whatever its spelling (R4242 can be a sentinel), so only an id the shipped
+    policy itself uses is sent; any other is replaced (T17 reviews 2 and 3)."""
     shipped = _shipped_descriptions() if for_prompt else {}
     lines = ["| id | rule | metric | requirement | outcome | detail |", "|---|---|---|---|---|---|"]
     if overall_row:
@@ -193,16 +192,18 @@ def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = F
         rule_id, description = r.rule_id, r.description
         if for_prompt and shipped.get(r.rule_id) != r.description:
             description = "(custom rule)"
-        if for_prompt and not _PROMPT_RULE_ID.fullmatch(r.rule_id):
+        if for_prompt and r.rule_id not in shipped:
             rule_id = "(custom id)"
         lines.append(f"| {rule_id} | {description} | {r.metric_id} | {req} | {r.outcome.value} | {r.detail} |")
     return "\n".join(lines)
 
 
 def redraft_ids(g: GuardResult, metrics: list[Metric], policy: PolicyResult) -> list[str]:
-    """The metric and rule ids the guard flagged, and only ids that are in the tables, so
-    nothing the model wrote (a made-up tag included) goes back into a prompt."""
-    known = {m.id for m in metrics} | {r.rule_id for r in policy.rules}
+    """The metric and rule ids the guard flagged, and only ids the prompt's tables show, so
+    nothing the model wrote (a made-up tag included) goes back into a prompt, nor a custom
+    rule id the rule table masked (T17 review 3)."""
+    shipped = _shipped_descriptions()
+    known = {m.id for m in metrics} | {r.rule_id for r in policy.rules if r.rule_id in shipped}
     found = set(g.missing_citations)
     for f in g.unmatched:
         found.update(re.findall(r"\b[MR]\d+\b", f.reason))
@@ -287,20 +288,25 @@ def evidence_record(s: MemoState) -> dict:
     }
 
 
-def build(llm: LLM | None = None, checkpointer=None):
+def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfig | None = None):
+    """`firm_config`: the caller's reading of firm.yaml, made just before this build (the CLI
+    makes it before the model client). It is the first run's reading and is used once; every
+    later run of this graph reads firm.yaml at its own start."""
     llm = llm or get_llm()
+    handed = [firm_config] if firm_config is not None else []
 
     def load(s: MemoState) -> MemoState:
-        lock = s.get("run_offline_lock")
+        reading = handed.pop() if handed else firm.load()
         path = Path(s["statement_path"])
         statement = ingest.load_csv(path)
         return {
             "statement": statement,
             "statement_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
-            # The run's one reading of firm.yaml: the caller's, or read now. Every hosted
-            # request in this run is checked against it, and the evidence records it.
-            "offline_lock": lock if lock is not None else firm.load().offline_lock,
+            # The run's one reading of firm.yaml: the one handed to build() for its first run,
+            # or read now; never the graph's input. Every hosted request in this run is
+            # checked against it, and the evidence records it.
+            "offline_lock": reading.offline_lock is not False,
             "run_offline_lock": None,
             "egress": "offline" if isinstance(llm, FakeLLM) else f"{llm.name}:{getattr(llm, 'model', '-')}",
             # A run starts clean, even on a thread that has run before.

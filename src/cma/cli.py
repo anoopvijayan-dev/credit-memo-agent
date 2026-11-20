@@ -83,7 +83,7 @@ def run(
         raise typer.Exit(code=2) from e
     thread_id = thread or str(uuid.uuid4())
     with _checkpointer(checkpoint_db) as saver:
-        graph = build(model, checkpointer=saver)
+        graph = build(model, checkpointer=saver, firm_config=firm_config)
         cfg = {"configurable": {"thread_id": thread_id}}
         if graph.get_state(cfg).values:
             console.print(f"[red]Review id {thread_id} is already used in {checkpoint_db}. Pick a new --thread.[/red]")
@@ -91,7 +91,7 @@ def run(
         try:
             state = graph.invoke(
                 {"statement_path": str(statement), "policy_path": str(policy) if policy else None,
-                 "vat_stagger": vat_stagger, "run_offline_lock": firm_config.offline_lock},
+                 "vat_stagger": vat_stagger},
                 cfg,
             )
         except (StatementError, PolicyError, FirmConfigError, OfflineLockError, RulesetError) as e:
