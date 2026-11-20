@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 136,
+  "next_id": 137,
   "decisions": [
     {
       "id": "D1",
@@ -2775,6 +2775,24 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T02:27:30.123Z"
+    },
+    {
+      "id": "D136",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Write D132 into R4: a payment-method cue with cash paid-in wording is ambiguous whichever list holds the longer phrase; neither takes the other in. Also state in R4 that a v2 rule's pattern may not carry an exception of its own (no lookahead or lookbehind), as D126 refused unless and requires (T03 78556a7). T12 cd298cc builds R42 revision 14 as written (both lock files re-checked before each step, byte-exact repair re-check, the first empty head record created and never renamed over one); state in R42 that the per-step re-check covers the gate as well as the case lock. Keep everything else in revision 14.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-20T02:34:28.407Z",
+      "effect": "changes requested: Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Write D132 into R4: a payment-method cue with cash paid-in wording is ambiguous whichever list holds the longer phrase; neither takes the other in. Also state in R4 that a v2 rule's pattern may not carry an exception of its own (no lookahead or lookbehind), as D126 refused unless and requires (T03 78556a7). T12 cd298cc builds R42 revision 14 as written (both lock files re-checked before each step, byte-exact repair re-check, the first empty head record created and never renamed over one); state in R42 that the per-step re-check covers the gate as well as the case lock. Keep everything else in revision 14.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-20T02:34:28.394Z"
     }
   ]
 }
