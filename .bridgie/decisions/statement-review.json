@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 200,
+  "next_id": 201,
   "decisions": [
     {
       "id": "D1",
@@ -4034,6 +4034,26 @@
       "decided_at": "2026-11-20T09:53:15.960Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T09:47:52.820Z"
+    },
+    {
+      "id": "D200",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed 33cfac2 against requirements.md:249. Canonical encoding, hash-chain validation, head comparison and first-bad-entry reporting are in src/cma/case.py:177–352. Reader lock validation and retries are in src/cma/case.py:447–672. The holder retry at src/cma/case.py:546–552 bypasses the gate, and the sign-off guard at src/cma/case.py:726 consumes that result. Writer exclusion, inherited-handle refusal, nested saves, expected positions, repair and take-back are in src/cma/case.py:757–1286. The production CLI reaches verification at src/cma/cli.py:309–338. Runner logs confirm the named changed, removed, reordered, rebuilt-chain and torn-tail tests, plus duplicate-submit, partial-failure and CLI contract tests. Traced concurrent updates, empty and malformed inputs, Unicode, UTC timestamps, filesystem permissions, case-folder isolation and consumers. P15 introduces no currency arithmetic or migration. The sign-off guard has no production sign-off caller in this checkout.); major: After detecting that the gate changed during a holder's read, verify accepts a retry that never goes through or checks the current gate. P15 requires the holder to retry as a non-holder and validate the lock files that retry relies on. require_intact can accept the resulting unchecked read as a whole-log decision. at src/cma/case.py:546; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T09:54:38.164Z"
     }
   ]
 }
