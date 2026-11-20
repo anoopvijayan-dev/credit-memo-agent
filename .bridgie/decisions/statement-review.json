@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 249,
+  "next_id": 250,
   "decisions": [
     {
       "id": "D1",
@@ -5001,6 +5001,24 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T16:16:45.220Z"
+    },
+    {
+      "id": "D249",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "Owner decision of 2026-11-20, given in chat: accept these as edge cases outside the guarantee and push development forward. Write one scope limit under R53 (cma resume). A review left pending by an earlier release resumes and is decided, finalised and recorded on the figures this release computes (R1, R2, P2). Where a figure a policy rule reads differs, each rule's outcome is taken from the stored policy result when it settles it (the value passes, with or without a referral, or fails a rule it already failed), and otherwise from the policy file the review was drafted with, identified by the hash stored with the review. When neither settles it (the file is missing or changed, or the review stores no hash), cma resume refuses, naming the figure and saying to run cma run on the statement again; the stored review is untouched and nothing is recorded. Such a refusal keeps R53: resuming a review whose policy outcome cannot be known is outside its guarantee, and storing a copy of every policy in the checkpoint is outside this release. Keep everything else in revision 27.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-20T16:21:55.792Z",
+      "effect": "changes requested: Owner decision of 2026-11-20, given in chat: accept these as edge cases outside the guarantee and push development forward. Write one scope limit under R53 (cma resume). A review left pending by an earlier release resumes and is decided, finalised and recorded on the figures this release computes (R1, R2, P2). Where a figure a policy rule reads differs, each rule's outcome is taken from the stored policy result when it settles it (the value passes, with or without a referral, or fails a rule it already failed), and otherwise from the policy file the review was drafted with, identified by the hash stored with the review. When neither settles it (the file is missing or changed, or the review stores no hash), cma resume refuses, naming the figure and saying to run cma run on the statement again; the stored review is untouched and nothing is recorded. Such a refusal keeps R53: resuming a review whose policy outcome cannot be known is outside its guarantee, and storing a copy of every policy in the checkpoint is outside this release. Keep everything else in revision 27.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-20T16:21:55.779Z"
     }
   ]
 }
