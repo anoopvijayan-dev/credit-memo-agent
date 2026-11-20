@@ -611,6 +611,19 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                 problems.append(f"{where}: direction {r['direction']!r} is not one of {list(DIRECTIONS)}")
             if isinstance(r.get("category"), str) and r["category"] not in categories:
                 problems.append(f"{where}: category {r['category']!r} is not a category")
+            if strict and vi == 0:
+                # Direction and category must agree, in every combination of the values given
+                # (review 47): a rule that can match a credit gives a category with a money-in
+                # bucket, and a debits-only rule never gives a money-in-only category.
+                for direction, category in itertools.product(_every(r.get("direction")), _every(r.get("category"))):
+                    if not (isinstance(direction, str) and isinstance(category, str) and category in categories):
+                        continue
+                    if direction in ("in", "any") and Category(category) not in CREDIT_BUCKET:
+                        problems.append(f"{where}: category {category!r} has no money-in bucket, so a rule for "
+                                        f"credits (direction {direction}) cannot give it")
+                    elif direction == "out" and Category(category) in _MONEY_IN_ONLY:
+                        problems.append(f"{where}: category {category!r} is for money in, so a rule for debits "
+                                        "(direction out) cannot give it")
             for key in ("pattern", "unless", "requires"):
                 if isinstance(r.get(key), str) and r[key]:
                     problem = _compile_problem(r[key])
@@ -731,6 +744,9 @@ def _category_order_problems(data: dict, rules: list, strict: bool = True) -> li
         return out
     if not strict:
         return ["a frozen table has no category_order"] if "category_order" in data else []
+    if order is None and "category_order" in data:
+        # Given, with no value: a field of the wrong kind, never taken as left out (review 47).
+        return ["category_order is given with no value; list the categories, or leave the key out"]
     if order is None:
         order = []
     if not isinstance(order, list) or not all(isinstance(c, str) for c in order):
@@ -875,6 +891,12 @@ class _Repeated(_Unbuilt):
     def __init__(self, text: str, tag: str, values: list):
         super().__init__(text, tag)
         self.values = values
+
+
+# Categories only money in can have: a rule for debits never gives one (review 47).
+_MONEY_IN_ONLY = frozenset({Category.REVENUE_CARD, Category.REVENUE_TRANSFER, Category.CASH_DEPOSIT,
+                            Category.LOAN_DRAWDOWN, Category.REFUND_IN, Category.HMRC_REPAYMENT,
+                            Category.OTHER_EXPLAINED_IN, Category.DIRECTOR_FUNDING})
 
 
 def _every(value: object) -> list:

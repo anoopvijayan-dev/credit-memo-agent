@@ -2540,3 +2540,28 @@ def test_a_bank_code_only_in_one_alternative_is_missing_from_the_other_version()
     bank = {**BANK, "pattern": _repeated(BANK["pattern"], "UNPAID X")}
     with pytest.raises(RulesetError, match="has no rule with bank_code"):
         validate_ruleset({"id": "v2", "frozen": False, "rules": [bank]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("direction,category", [("in", "rent"), ("any", "supplier"), ("out", "revenue_transfer")])
+def test_a_rules_direction_and_category_must_agree(direction, category):
+    """T03 review 47: a credit rule gives a category with a money-in bucket; a debit rule never
+    gives a money-in-only category."""
+    rule = {"id": "r", "names": ["R"], "direction": direction, "category": category, "stage": "names"}
+    with pytest.raises(RulesetError, match=r"\(r\): category"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_a_repeated_direction_and_category_must_agree_in_every_combination():
+    rule = {"id": "r", "names": ["R"], "direction": _repeated("out", "in"), "category": _repeated("supplier", "rent"),
+            "stage": "names"}
+    with pytest.raises(RulesetError, match=r"category 'supplier' has no money-in bucket"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_a_category_order_given_as_null_is_refused():
+    """T03 review 47: given with no value is a field of the wrong kind, not one left out."""
+    with pytest.raises(RulesetError, match="category_order is given with no value"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK], "category_order": None}, expected_id="v2")
