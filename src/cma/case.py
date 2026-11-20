@@ -449,6 +449,7 @@ class CaseLog:
         self._gate_id: tuple[int, int] | None = None  # the gate's identity when the case was taken
         self._pid = os.getpid()  # a CaseLog belongs to the process that opened it (R42)
         self._saving: set[tuple[int, int]] = set()  # holders with a save under way here
+        self._head_renamed = False  # the last head record's rename was done
 
     # --- reading -----------------------------------------------------------------------
 
@@ -804,8 +805,10 @@ class CaseLog:
         # Any other error (the folder cannot be read) is raised as it is, and the save names
         # it (D159): a lock that cannot be examined is not shown removed or replaced.
         if not in_place:
+            # The step is refused; what the save as a whole wrote is for the save to say,
+            # since it may already have written its line (T12 review 28).
             raise CaseLocked(f"{self.path}: a case lock file was removed or replaced while this "
-                             "window held the case; nothing was written")
+                             "window held the case; the step was refused")
 
     def _release_one_level(self) -> None:
         """Leave one level of this process's writer lock (call under _state)."""
@@ -983,6 +986,7 @@ class CaseLog:
         _fsync_dir(self.head_path.parent)
 
     def _write_head(self, hashes: list[str], *, was: list[str] | None = None) -> None:
+        self._head_renamed = False  # set once the rename is done: what an error after means
         """Replace the head file in one rename, after the last entry it names is on disk.
         With `was`, the head file must still record exactly those entries just before the
         rename, or nothing is published."""
@@ -1002,6 +1006,7 @@ class CaseLog:
                     raise SaveNotRecorded(f"{self.path}: the head file changed while this save was "
                                           "being recorded; the save was not recorded")
             _replace(tmp, self.head_path, before=before)
+            self._head_renamed = True
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
@@ -1052,6 +1057,7 @@ class CaseLog:
         it: a writer is told its save was recorded only if an intact log holds the entry at
         its position, so a log that reads intact never lacks a save reported as recorded
         (R42, revision 13). Stopped after the line, the save says it was not recorded."""
+        self._head_renamed = False
         try:
             self._write_head([*recorded, entry.hash], was=recorded)
         except SaveNotRecorded:
@@ -1065,9 +1071,9 @@ class CaseLog:
         except OSError as e:
             # Failed before the head record's rename, the save is not recorded; after it (the
             # folder could not be synced), the head may list it though it may not last, so
-            # it is not confirmed (T12 review 25). A raw OSError never reaches the caller.
-            published = _read_head(self.head_path)
-            if published == recorded:
+            # it is not confirmed (T12 review 25). Which of the two is known from the rename
+            # itself, never inferred from a head that may not be readable (review 28).
+            if not self._head_renamed:
                 raise SaveNotRecorded(f"{self.path}: the head record could not be written ({e}); "
                                       "the save was not recorded") from e
             raise SaveNotConfirmed(f"{self.path}: the head record could not be made durable ({e}), so "

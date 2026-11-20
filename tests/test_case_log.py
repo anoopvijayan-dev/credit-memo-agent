@@ -2586,3 +2586,60 @@ def test_a_save_names_an_os_error_in_its_own_reads(tmp_path, monkeypatch, site):
             log.append("override", {"n": 3}, expected=2)
     assert "Permission denied" in str(e.value), str(e.value)
     assert "changed since you loaded it" not in str(e.value) and "removed or replaced" not in str(e.value)
+
+
+def _chain(e):
+    seen = []
+    while e is not None and e not in seen:
+        seen.append(e)
+        e = e.__cause__ or e.__context__
+    return " | ".join(str(x) for x in seen)
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("when", ["after_line", "take_back_refused"])
+def test_no_part_of_the_report_or_its_causes_says_nothing_was_written(tmp_path, monkeypatch, when):
+    """T12 review 28 / P15: once the line is on disk, neither the report nor any exception
+    it carries says nothing was written."""
+    log = _log(tmp_path, 2)
+    prefix = log.path.read_bytes()
+    if when == "after_line":
+        real = case._write_all
+
+        def then_the_lock_goes(fd, data, before=None):
+            real(fd, data, before)
+            if b'"seq":3' in data:
+                log.lock_path.unlink()
+
+        monkeypatch.setattr(case, "_write_all", then_the_lock_goes)
+    else:
+        real = case.CaseLog._write_head
+
+        def then_lock_and_log_are_replaced(self, hashes, **kw):
+            real(self, hashes, **kw)
+            if len(hashes) == 3:
+                _replace_file(self.lock_path)
+                self.path.write_bytes(prefix)
+
+        monkeypatch.setattr(case.CaseLog, "_write_head", then_lock_and_log_are_replaced)
+    with pytest.raises((case.SaveNotRecorded, case.SaveNotConfirmed)) as e:
+        log.append("override", {"n": 3}, expected=2)
+    assert "nothing was written" not in _chain(e.value)
+
+
+@pytest.mark.invariants
+def test_a_head_that_cannot_be_read_before_its_rename_is_not_recorded(tmp_path, monkeypatch):
+    """T12 review 28: the pre-rename re-check fails every time, so the rename never ran:
+    the save is not recorded, never 'not confirmed'."""
+    log = _log(tmp_path, 2)
+    real = case._read_head
+
+    def head(path, *, raise_os=False):
+        if raise_os:
+            raise PermissionError(13, "Permission denied")
+        return real(path)
+
+    monkeypatch.setattr(case, "_read_head", head)
+    with pytest.raises(case.SaveNotRecorded, match="Permission denied") as e:
+        log.append("override", {"n": 3}, expected=2)
+    assert not isinstance(e.value, case.SaveNotConfirmed)
