@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 149,
+  "next_id": 151,
   "decisions": [
     {
       "id": "D1",
@@ -3032,6 +3032,45 @@
       "decided_at": "2026-11-20T04:22:37.614Z",
       "effect": "changes requested: Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Write D142-D144 into the requirements: R4 by match (D142); R42 and P15 the third answer, not confirmed, for a save whose take-back cannot be made (D143); R43 and P15 that lock-file interference beyond a read across a lock file the reader holds is outside what a reader can know, and a check after it stops gives the true answer (D144). Also state in R43 that a holder's read and a busy-gate read count only while the lock files are still the case's, and in R42 that the take-back checks only that the head record is still the save's own (T12 0d339cc). Keep everything else in revision 16.; re-run bridgie shape statement-review",
       "created_at": "2026-11-20T04:22:37.601Z"
+    },
+    {
+      "id": "D149",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-17"
+      },
+      "context": "D148 asks R42 to say that the take-back checks only that the head record is still the save's own, as T12's 0d339cc builds. Written so, R42 contradicts its own guarantee under lock-file interference. Save A passes its re-check before its head rename, and the case lock file is replaced. Repair B takes the new lock and finds A's line torn; a person confirms dropping it; B renames the repaired log and passes its re-check before its head rename. A's head record lands, A's read-back finds its entry gone, and the take-back's head check passes. B's head record lands, and B reads back an intact log and is told recorded. The take-back's rename then puts back the older head record. B's entry is now past the recorded entries as a torn write, and a confirmed drop leaves an intact log without a save told recorded. A take-back that re-checks the lock files finds the replaced case lock and is not made, so A is not confirmed (D143), which also answers verify-72's third finding. Revision 17 keeps that re-check. Which should R42 say?",
+      "options": [
+        "Keep the lock re-check on the take-back, as on every head rename; a take-back it stops answers not confirmed (design default; R42 stays satisfiable; T12 turns one check back on and changes the test at tests/test_case_log.py:2401 before its review)",
+        "Check only the head record, as D148 asks and 0d339cc builds, and write into R42's guarantee that under lock-file interference a take-back can leave the entry of a repair told recorded past the recorded entries, where a confirmed drop then removes it"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T04:41:05.539Z"
+    },
+    {
+      "id": "D150",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Approve the design and requirements (R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R18 R19 R20 R21 R22 R23 R24 R25 R26 R27 R28 R29 R30 R31 R32 R33 R34 R35 R36 R37 R38 R39 R40 R41 R42 R43 R44 R45 R46 R47 R48 R50 R51 R52 R53 R54 R55 R56 P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20) for 'statement-review'? Branch bridgie/statement-review from claude/busy-ride-h88y5r.",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T04:41:05.552Z"
     }
   ]
 }
