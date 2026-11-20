@@ -2145,3 +2145,22 @@ def test_an_unknown_tag_or_a_self_referencing_value_is_named_with_the_other_faul
         monkeypatch.undo()
         categorise.load_ruleset.cache_clear()
     assert "(odd): names" in str(e.value) and "(other): direction" in str(e.value)
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("value", ["!!int [1, 2]", "!!bool {a: 1}", "!!timestamp [x]", "!!float [1.0]"])
+def test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults(monkeypatch, value):
+    """T03 review 33: a list or mapping carrying a scalar tag is an unbuilt value too."""
+    raw = categorise._table_bytes("v2")
+    edit = raw.replace(b"rules:", ("rules:\n  - {id: odd, names: [ODD], direction: in, category: " + value
+                                   + ", stage: names}\n  - {id: other, names: [X], direction: sideways, "
+                                   "category: cash_deposit, stage: names}").encode(), 1)
+    monkeypatch.setattr(categorise, "_table_bytes", lambda ruleset_id: edit)
+    categorise.load_ruleset.cache_clear()
+    try:
+        with pytest.raises(RulesetError) as e:
+            categorise.load_ruleset("v2")
+    finally:
+        monkeypatch.undo()
+        categorise.load_ruleset.cache_clear()
+    assert "(odd): category holds a" in str(e.value) and "(other): direction" in str(e.value)

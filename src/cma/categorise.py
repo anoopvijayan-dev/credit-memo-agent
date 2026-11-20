@@ -760,7 +760,10 @@ def _scalar_or_unbuilt(base):
         try:
             return base(loader, node)
         except (ValueError, TypeError, OverflowError, KeyError, yaml.constructor.ConstructorError):
-            return _Unbuilt(loader.construct_scalar(node), node.tag)
+            # A collection tagged as a scalar (!!int [1]) has no scalar text to read back,
+            # so it is named by its kind, never constructed again (T03 review 33).
+            text = node.value if isinstance(node, yaml.ScalarNode) else f"<{node.id}>"
+            return _Unbuilt(str(text), node.tag)
     return construct
 
 
