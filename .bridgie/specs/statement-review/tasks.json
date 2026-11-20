@@ -40,12 +40,12 @@
         "T01",
         "T02"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 6,
       "max_attempts": 6,
       "branch": "bridgie-task/statement-review/T03",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-71/evidence.json",
-      "escalation": "blocked after 6 attempts. Last verdict fail: R4 fail (Reviewed revision 15. The maintained lists and directions are in src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. The loader checks exceptions at src/cma/categorise.py:425 and :433. Match length, bank-code priority, ambiguity, profile candidates and override precedence are implemented at :754, :786, :848, :855, :874 and :925. CLI selection and provenance reach the evidence through src/cma/graph.py:221 and :250 and src/cma/cli.py:229. The runner logs confirm the per-list, CLI, exception rejection, both direct containment directions, idempotency, legacy replay, rollback and both offline eval tests passed. Reviewed repeat submission, concurrent and case-local state, amount and Unicode boundaries, currency and date inputs, partial publication, authority to settle ambiguity and evidence consumers. A discarded third match can still suppress a payment cue inside a cash phrase, allowing an ambiguous credit into trading receipts.); major: Containment uses spans from rules that are themselves discarded. A discarded gateway match can suppress a payment cue inside a surviving cash phrase, defeating the cash and payment-method exception. at src/cma/categorise.py:791; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-73/evidence.json",
+      "escalation": "blocked after 6 attempts. Last verdict fail: R4 fail (Reviewed the maintained lists in src/cma/rules/v2.yaml:74,117,137,146,155,163,211,254,277,299,304,339,356,373,394. The loader rejects exceptions at src/cma/categorise.py:445,453,461. Longest-match selection is at :783, bank-code and cue precedence at :887, and override, profile and firm-rule precedence at :917 and :963. CLI selection and line provenance reach evidence through src/cma/graph.py:251 and :221 and src/cma/cli.py:229. Runner logs confirm per-list and CLI tests, direct cash and payment-method containment tests, the single-occurrence three-phrase case, idempotency, checkpoint replay, rollback and both offline evals. Reviewed repeat submissions, concurrent and case-local classification, amount and Unicode boundaries, currency and date inputs, partial output, authority to settle ambiguity and evidence consumers. R4 fails because containment can use a discarded occurrence of a rule when a separate occurrence keeps that rule eligible.); major: Containment tracks surviving rules rather than surviving matches. A discarded gateway occurrence can still suppress a payment-method cue when another occurrence of the same gateway rule survives elsewhere on the line. The resulting cash deposit enters trading receipts. at src/cma/categorise.py:820; reviewer verdict fail"
     },
     {
       "id": "T04",
