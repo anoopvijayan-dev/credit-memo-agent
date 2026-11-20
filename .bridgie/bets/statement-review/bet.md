@@ -418,6 +418,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-20 D259 (question): Outside the export guarantee, as revision 29 writes R53: no build change; a second run to the same --out can replace the first run's memo and evidence (design default) — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. → recorded [Anoop Vijayan]
 - 2026-11-20 D257 (unblock): take over manually — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. T04 at c2460a0 (review 27), judged against the R2 and R53 scope limits in the new revision. → task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04 [Anoop Vijayan]
 - 2026-11-20 D261 (unblock): take over manually — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. T04 at the latest commit (review 28). → task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04 [Anoop Vijayan]
+- 2026-11-20 D262 (unblock): take over manually — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. T04 at the latest commit (review 29). → task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04 [Anoop Vijayan]
 
 ## Idea
 
