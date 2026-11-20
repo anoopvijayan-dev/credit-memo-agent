@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 189,
+  "next_id": 190,
   "decisions": [
     {
       "id": "D1",
@@ -3818,6 +3818,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T08:42:41.397Z"
+    },
+    {
+      "id": "D189",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced byte pinning and validation at src/cma/categorise.py:468,565,848, longest matches and containment at :995,1012,1034, bank-code and cash conflicts at :1121, and overrides, profile candidates and firm rules at :1141,1188. Category.OTHER maps to unexplained at src/cma/models.py:65. Traced double submit and concurrent-update checks at src/cma/cli.py:84,243, zero and signed amount handling at src/cma/categorise.py:889, pence and date-only input at src/cma/ingest.py:42,100,127, partial output failure at src/cma/cli.py:228, path scope at src/cma/mcp_server.py:37, case-local inputs at src/cma/categorise.py:1299, and evidence consumers and historical replay at src/cma/graph.py:188,210 and src/cma/mcp_server.py:74,90. The full runner log confirms table-driven provenance, CLI evidence, idempotency, legacy replay, and both offline evals. R4 fails because repeated fields still suppress required diagnostics and a loaded table can compile rule matchers during categorisation.); major: The 32-variant cap lets a repeated pattern hide a forbidden exception from the changed-v1 refusal. at src/cma/categorise.py:781; major: Matcher validation skips all values of a repeated pattern field, even when one compiles alone and fails in a matcher form. at src/cma/categorise.py:580; major: The matcher forms are stored in a global LRU with 8,192 entries. A loaded rule retains only the source, so eviction causes the categoriser to compile its matcher forms again. at src/cma/categorise.py:1006; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T08:46:27.481Z"
     }
   ]
 }
