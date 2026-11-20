@@ -2148,7 +2148,9 @@ def test_an_unknown_tag_or_a_self_referencing_value_is_named_with_the_other_faul
 
 
 @pytest.mark.contracts
-@pytest.mark.parametrize("value", ["!!int [1, 2]", "!!bool {a: 1}", "!!timestamp [x]", "!!float [1.0]"])
+@pytest.mark.parametrize("value", ["!!int [1, 2]", "!!bool {a: 1}", "!!timestamp [x]", "!!float [1.0]",
+                                   "!!str [1]", "!!null [1]", "!!seq x", "!!map 1", "!!omap [1]", "!!set [1]",
+                                   "!!pairs x", "!!binary [1]", "{<<: 1}"])
 def test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults(monkeypatch, value):
     """T03 review 33: a list or mapping carrying a scalar tag is an unbuilt value too."""
     raw = categorise._table_bytes("v2")

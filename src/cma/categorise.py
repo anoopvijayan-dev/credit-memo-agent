@@ -709,6 +709,10 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) 
     )
 
 
+class _DuplicateKey(yaml.constructor.ConstructorError):
+    """A repeated key: refused as such, never recovered as an unbuilt value."""
+
+
 class _UniqueKeyLoader(yaml.SafeLoader):
     """safe_load keeps the last of two equal keys, so a second `category:` inside a rule
     would silently change it with nothing left for the validator to see. Refuse instead."""
@@ -722,11 +726,26 @@ class _UniqueKeyLoader(yaml.SafeLoader):
             except TypeError:  # an unhashable key; the base class reports it
                 continue
             if duplicate:
-                raise yaml.constructor.ConstructorError(
+                raise _DuplicateKey(
                     "while constructing a mapping", node.start_mark,
                     f"found duplicate key {key!r}", key_node.start_mark)
             seen.add(key)
         return super().construct_mapping(node, deep=deep)
+
+    def construct_object(self, node, deep=False):
+        """Every node is built in full where it stands, and one that cannot be built (any
+        tag on any kind of node: !!str [1], !!seq x, !!omap with a bad pair, a bad merge,
+        an alias that contains itself) becomes an unbuilt value, so validation names its
+        rule and field beside the table's other faults (T03 reviews 30 to 34)."""
+        try:
+            return super().construct_object(node, deep=True)
+        except _DuplicateKey:
+            raise
+        except (yaml.constructor.ConstructorError, ValueError, TypeError, OverflowError, KeyError,
+                RecursionError, AttributeError) as e:
+            self.recursive_objects.pop(node, None)
+            text = node.value if isinstance(node, yaml.ScalarNode) else f"<{node.id}>"
+            return _Unbuilt(str(text), node.tag or type(e).__name__)
 
 
 class _Unbuilt:
