@@ -33,7 +33,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from ..categorise import INVOICE_REF
-from ..ingest import CsvRecordError, read_data, shown
+from ..ingest import CsvRecordError, not_utf8, read_data, shown, unreadable_cells
 from ..metrics import (
     AT_LIMIT,
     at_limit,
@@ -189,9 +189,25 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
         # currency and amount first (T04 review 36).
         # A record that cannot be read whole (a field too long to read, a bad byte) is still
         # read, after the others, for its currency and amount if they can be (T04 reviews 36-37).
-        long_row = (unreadable.line, unreadable.row) if unreadable is not None and unreadable.row else None
-        for i, r in [*raw_rows, *([long_row] if long_row else [])]:
-            partial = long_row is not None and r is long_row[1]
+        # Past a bad byte, reading goes on, so a row in another currency is skipped whatever
+        # bytes it holds and the rows after it are read (T04 review 46); a field too long to
+        # read stops reading at its record, so the import is refused after that record.
+        queue: list[tuple[int, dict, CsvRecordError | None]] = [(i, r, None) for i, r in raw_rows]
+        stopped, err = None, unreadable
+        while err is not None:
+            if err.row is not None:
+                queue.append((err.line, err.row, err))
+            if err.rest is None:
+                stopped = err
+                break
+            queue += [(i, r, None) for i, r in err.rest]
+            err = err.rest_err
+        for i, r, problem in queue:
+            if problem is None and (bad_cells := unreadable_cells(r)):
+                problem = not_utf8(i)
+                problem.readable = set(header) - bad_cells
+            partial = problem is not None
+            unreadable = problem
             # Its currency is needed only if the export has a Currency column; without one,
             # every row is GBP (T04 review 38). Currency is read before the amount is needed
             # (revision 29; T04 review 39).
@@ -250,8 +266,8 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
         if not note:
             raise
         raise MonzoImportError(f"{note}{e}") from None
-    if unreadable is not None:  # after the records before it are checked (T04 review 22)
-        raise MonzoImportError(f"{src}: {flows_before()}{unreadable}")
+    if stopped is not None:  # reading stopped; after the records before it are checked (T04 review 22)
+        raise MonzoImportError(f"{src}: {flows_before()}{stopped}")
     if not parsed:
         raise MonzoImportError(f"{src}: no GBP transactions")
     # Money in or out at the limit is said before anything else about the export (its

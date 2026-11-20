@@ -1322,3 +1322,22 @@ def test_a_header_field_too_long_is_named_before_a_later_bad_byte_in_it(tmp_path
         ingest.load_csv(csv, today=date(2026, 6, 1))
     with pytest.raises(monzo.MonzoImportError, match="line 1: a field is too long to read"):
         monzo.convert(csv, tmp_path / "o.csv")
+
+
+@pytest.mark.contracts
+def test_monzo_skips_a_foreign_row_with_a_bad_byte_and_reads_on(tmp_path):
+    """T04 review 46: a row in another currency, which the importer skips, refused the export
+    when it also held a byte that is not UTF-8; reading now goes on past it."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_bytes((_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n").encode()
+                    + b"tx_2,02/01/2026,09:00:00,Card payment,CAF\xe9,-5.00,EUR,\n"
+                    + b"tx_3,03/01/2026,09:00:00,Faster payment,ACME,-1.00,GBP,89.00\n")
+    r = monzo.convert(src, tmp_path / "o.csv")
+    assert r.rows == 2 and r.skipped_non_gbp == 1
+    src.write_bytes((_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n").encode()
+                    + b"tx_2,02/01/2026,09:00:00,Card payment,CAF\xe9,-5.00,EUR,\n"
+                    + b"tx_3,03/01/2026,09:00:00,Faster payment,B\xe9,-1.00,GBP,89.00\n")
+    with pytest.raises(monzo.MonzoImportError, match="line 4: not UTF-8"):
+        monzo.convert(src, tmp_path / "o.csv")

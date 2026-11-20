@@ -109,8 +109,12 @@ class CsvRecordError(ValueError):
         self.line: int | None = None
         self.row: dict | None = None
         # The record's fields that can be trusted: for a field too long to read, every other
-        # field; for a bad byte, the fields wholly before it (T04 review 37).
+        # field; for a bad byte, the fields without one (T04 reviews 37 and 46).
         self.readable: set[str] = set()
+        # For a bad byte only: the records after this one, read on past it, and what stopped
+        # reading after them, if anything (T04 review 46). None: reading stopped here.
+        self.rest: list[tuple[int, dict]] | None = None
+        self.rest_err: CsvRecordError | None = None
 
 
 def shown(raw: str | None, limit: int = 40) -> str:
@@ -175,7 +179,6 @@ def _read_long_record(text: str, header: list[str]) -> dict:
     return row
 
 
-NOT_UTF8 = "not UTF-8 (byte {}); re-save it as 'CSV UTF-8' (Excel) and try again"
 
 
 def _ends_in_quotes(text: str) -> bool:
@@ -198,60 +201,58 @@ def _ends_in_quotes(text: str) -> bool:
     return state == "quoted"
 
 
+_NOT_UTF8_BYTE = re.compile("[\udc80-\udcff]")  # a byte that is not UTF-8, decoded with surrogateescape
+
+
+def unreadable_cells(row: dict) -> set:
+    """The columns of a record whose cells hold a byte that is not UTF-8."""
+    bad = {k for k, v in row.items() if k is not None and isinstance(v, str) and _NOT_UTF8_BYTE.search(v)}
+    if any(_NOT_UTF8_BYTE.search(v) for v in row.get(None) or []):
+        bad.add(None)
+    return bad
+
+
+def not_utf8(line: int, byte: int | None = None) -> CsvRecordError:
+    where = f" (byte {byte})" if byte is not None else ""
+    return CsvRecordError(f"line {line}: not UTF-8{where}; re-save it as 'CSV UTF-8' (Excel) and try again")
+
+
 def read_data(data: bytes) -> tuple[list[str], list[tuple[int, dict]], CsvRecordError | None]:
-    """read_records on a file's bytes. If a byte is not UTF-8, every record before the one it
-    falls in is still returned and checked, and the CsvRecordError names that record's first
-    line, whatever the file's line endings (CR, LF or CRLF) and even when the record runs
-    over several lines (T04 reviews 29-30). A bad byte in the header line is raised."""
-    # A byte-order mark is set aside first, so the bad byte's offset and the slice before it
-    # are both taken in the same bytes (T04 review 31); the offset reported counts the mark.
+    """read_records on a file's bytes. A byte that is not UTF-8 is decoded as a marked
+    character (surrogateescape), so reading goes on past it: the records before the first
+    record holding one are returned, and the CsvRecordError names that record's line and
+    the byte, carries its cells (`readable`: those without a bad byte) and every record
+    after it (`rest`, `rest_err`), so a caller can skip a record its own rules exclude, a
+    row in another currency, and read on (T04 review 46). The byte offset counts a
+    byte-order mark (T04 review 31). A bad byte in the header is raised, after a header
+    cell before it that is too long for the reader (T04 review 45)."""
     bom = len(codecs.BOM_UTF8) if data.startswith(codecs.BOM_UTF8) else 0
     body = data[bom:]
     try:
         return read_records(body.decode("utf-8"))
     except UnicodeDecodeError as e:
-        bad = e.start
-    text = body[:bad].decode("utf-8")
-    bad += bom
-    physical = list(io.StringIO(text, newline=""))
-    # The bad byte is in the header only if the header record itself did not reach its line
-    # end, even one whose quoted name runs over several lines (T04 reviews 33 and 44). A
-    # first data record cut part-way is a data record, named by its own line, and its
-    # readable cells are still used below.
-    head_cells, head_ended = _split_record_ended(text)
-    if not head_ended:
-        # A header cell before the bad byte already too long for the reader is the first
-        # problem, named as the reader would name it (T04 review 45).
-        limit = csv.field_size_limit()
-        if any(len(c) > limit for c in head_cells):
+        bad = e.start + bom
+    text = body.decode("utf-8", "surrogateescape")
+    limit = csv.field_size_limit()
+    for cell in _split_record_ended(text)[0]:  # the header, cell by cell in order
+        if len(cell) > limit:
             raise CsvRecordError(f"line 1: {TOO_LONG} (header): longer than {limit:,} characters", too_long=True)
-        raise CsvRecordError("line 1: " + NOT_UTF8.format(bad))
-    header, rows, err = read_records(text, cut=True)
-    if err is not None:
-        return header, rows, err  # an earlier record the reader stopped on comes first
-    at_line_end = text.endswith(("\n", "\r"))
-    line = len(physical) + 1  # the bad byte starts a new record
-    if rows:
-        start = rows[-1][0]
-        # Is the last record closed, or still open in a quoted field at the bad byte? Read as
-        # the reader reads it, so a record it accepted is never dropped (T04 review 32).
-        if _ends_in_quotes("".join(physical[start - 1:])) or not at_line_end:
-            _, row = rows.pop()  # the record the bad byte falls in
-            line = start
-            # Its fields wholly before the bad byte can still be read: a readable amount there
-            # still counts toward money in or out (T04 review 37). The last field read is the
-            # one the bad byte cut.
-            try:
-                cells = next(csv.reader(io.StringIO("".join(physical[start - 1:]), newline="")), [])
-            except csv.Error:
-                cells = []
-            err = CsvRecordError(f"line {line}: " + NOT_UTF8.format(bad))
-            err.line, err.row, err.readable = line, row, set(header[:max(len(cells) - 1, 0)])
-            return header, rows, err
-    return header, rows, CsvRecordError(f"line {line}: " + NOT_UTF8.format(bad))
+        if _NOT_UTF8_BYTE.search(cell):
+            raise not_utf8(1, bad)
+    header, rows, err = read_records(text)
+    for k, (line, row) in enumerate(rows):
+        bad_cells = unreadable_cells(row)
+        if bad_cells:
+            first = not_utf8(line, bad)
+            first.line, first.row, first.readable = line, row, set(header) - bad_cells
+            first.rest, first.rest_err = rows[k + 1:], err
+            return header, rows[:k], first
+    if err is not None and err.row is not None:
+        err.readable -= unreadable_cells(err.row)  # a cell with a bad byte is never read
+    return header, rows, err
 
 
-def read_records(text: str, cut: bool = False) -> tuple[list[str], list[tuple[int, dict]], CsvRecordError | None]:
+def read_records(text: str) -> tuple[list[str], list[tuple[int, dict]], CsvRecordError | None]:
     """The stripped header and each record with its line in the file. Lines are counted as
     the file has them, blank lines included, so every problem names the line a person sees
     (T04 review 20). The CSV reader stops on a field longer than it reads, or a malformed
@@ -296,10 +297,9 @@ def read_records(text: str, cut: bool = False) -> tuple[list[str], list[tuple[in
             err = CsvRecordError(f"line {line}: {TOO_LONG}{which}: longer than {limit:,} characters", too_long=True)
             if header is not None:
                 # The field too long to read is never read as a value (T04 review 37). Only the
-                # columns the record holds are readable, never one filled in as empty; and if
-                # the record itself runs to a bad byte that cut the text, its last cell may be
-                # cut too (T04 reviews 41-42). A record ending at its own line end is whole.
-                present = len(cells) - (1 if cut and not ended else 0)
+                # columns the record holds are readable, never one filled in as empty (T04
+                # review 41); a byte that is not UTF-8 no longer cuts the text (T04 review 46).
+                present = len(cells)
                 err.line, err.row = line, row
                 err.readable = {h for h, c in zip(header[:max(present, 0)], cells, strict=False) if len(c) <= limit}
         else:
@@ -309,8 +309,7 @@ def read_records(text: str, cut: bool = False) -> tuple[list[str], list[tuple[in
         return header, rows, err
     # A quoted field still open at the end of the file would hold every line after its
     # start, other transactions included: refused, naming the line it starts on (T04 review 32).
-    # (`cut`: the text stops at a bad byte, and read_data names the record it falls in.)
-    if not cut and rows and _ends_in_quotes("".join(physical[rows[-1][0] - 1:])):
+    if rows and _ends_in_quotes("".join(physical[rows[-1][0] - 1:])):
         start, row = rows.pop()
         err = CsvRecordError(f"line {start}: a quoted field is not closed before the end of the file")
         # The fields wholly before the open one can still be read (T04 review 38).
