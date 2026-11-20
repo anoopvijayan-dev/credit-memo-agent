@@ -543,13 +543,10 @@ class CaseLog:
             check = _check(self._read_log(), _read_head(self.head_path))
             if ours():
                 return check
-        if case_lock_ours():
-            # Only the gate changed: this thread's case lock still excludes every writer, so
-            # it is no other writer. The read is taken again (P15) and, with the case lock
-            # still its own, is the truth (T12 review 43).
-            check = _check(self._read_log(), _read_head(self.head_path))
-            if case_lock_ours():
-                return check
+        # Otherwise the read is taken again as a reader takes it, through the gate as it now
+        # is, checking the lock files that read relies on (P15, T12 review 44). A case lock
+        # that reader finds held, and that is still this thread's own, is no other writer
+        # (review 43): the read under the gate is the truth.
         # Hold the gate shared, so no writer can take the case during this read; then try
         # the case lock shared. Free: one read under it is the truth. Held: the writer that
         # holds it cannot be replaced while the gate is held, so after a steady read the
@@ -594,6 +591,11 @@ class CaseLog:
                             locked = True
                             check = _check(self._read_log(), _read_head(self.head_path))
                             if in_place(*held):
+                                return check
+                            continue
+                        if case_lock_ours() and in_place(*held):
+                            check = _check(self._read_log(), _read_head(self.head_path))
+                            if case_lock_ours() and in_place(*held):
                                 return check
                             continue
                         check = self._steady()

@@ -3243,3 +3243,23 @@ def test_a_held_handlers_os_error_after_a_confirmed_save_is_its_own(tmp_path, mo
     monkeypatch.undo()
     got = case.CaseLog(log.path).verify()
     assert got.ok and got.head.position == 3
+
+
+@pytest.mark.invariants
+def test_p15_a_holders_retry_after_a_gate_change_goes_through_the_gate(tmp_path, monkeypatch):
+    """T12 review 44: the holder's second read is a reader's, through the gate as it now is,
+    and its own case lock found held there is no other writer: the torn entry is named."""
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    real_shared, gates = case.CaseLog._shared, []
+
+    def shared(self, path):
+        gates.append(path)
+        return real_shared(self, path)
+
+    with log.writer():
+        _replace_file(log.gate_path)
+        monkeypatch.setattr(case.CaseLog, "_shared", shared)
+        check = log.verify()
+        monkeypatch.undo()
+    assert gates == [log.gate_path] and check.torn and check.first_bad == 3 and not check.in_progress
