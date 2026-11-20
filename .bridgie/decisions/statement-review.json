@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 181,
+  "next_id": 182,
   "decisions": [
     {
       "id": "D1",
@@ -3658,6 +3658,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T07:45:12.605Z"
+    },
+    {
+      "id": "D181",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest matches, containment, the bank-code exception, cash and payment-method conflicts, both-stage candidates, and override, profile and firm-rule precedence through src/cma/categorise.py:947,969,1057,1077,1122. Verified that OTHER maps to unexplained money in at src/cma/models.py:65. Traced validation before checkpoint creation, CLI evidence, legacy replay and MCP consumers through src/cma/cli.py:77,229, src/cma/graph.py:188,210,250 and src/cma/mcp_server.py:77,84. Reviewed repeat submission, concurrent invocation, case-local inputs, ruleset allowlisting, signed amounts, date-only ingestion, Unicode boundaries and rollback. Runner logs show the per-list, CLI, idempotency, replay, dual-ruleset evaluation and 10,000-line categoriser tests passed. The malformed-field requirement fails because a collection explicitly tagged as a scalar still aborts YAML construction before the validator can name the rule, its field and independent faults.); major: The malformed-scalar recovery path calls the scalar constructor again even when the YAML node is a collection. The second ConstructorError aborts table construction and suppresses rule-level diagnostics. at src/cma/categorise.py:763; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T07:49:17.412Z"
     }
   ]
 }
