@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-150/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:82 checks exact penny round-trips and :256 checks statement flows. src/cma/metrics.py:512 handles an unrepresentable M3. src/cma/cli.py:330 and src/cma/graph.py:172 display pennies, and src/cma/metrics.py:594 preserves whole pounds in the drafting prompt. The Monzo path at src/cma/importers/monzo.py:190 still hides a known over-limit flow when a later GBP row has an invalid date.); major: A later invalid date suppresses the exact flow-limit diagnostic for GBP records the importer has already parsed. at src/cma/importers/monzo.py:190; major: The migration reopens the policy after displaying a review whose outcome it already resolved. The new handler reports a refusal, but the decision based on the displayed figures is lost. at src/cma/graph.py:347; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-151/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:82 verifies penny round-trips and src/cma/ingest.py:256 checks flow limits. src/cma/metrics.py:512 computes M3 from integer pence and handles unrepresentable results. src/cma/cli.py:340 and src/cma/graph.py:175 display pennies, and src/cma/metrics.py:594 preserves whole-pound drafting. src/cma/importers/monzo.py:217 can refuse a parsed export before reporting its known over-limit flow.); major: The importer can report a missing opening balance while suppressing the flow-limit diagnostic for a fully parsed export. at src/cma/importers/monzo.py:217; major: Migration writes a previously read review into the current thread without checking that the thread still points to that pending checkpoint. A concurrent resume can reopen an already decided review. at src/cma/cli.py:155; reviewer verdict fail"
     },
     {
       "id": "T06",

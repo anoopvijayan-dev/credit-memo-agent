@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 255,
+  "next_id": 256,
   "decisions": [
     {
       "id": "D1",
@@ -5117,6 +5117,26 @@
       "decided_at": "2026-11-20T17:05:57.819Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T17:01:31.722Z"
+    },
+    {
+      "id": "D255",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:82 verifies penny round-trips and src/cma/ingest.py:256 checks flow limits. src/cma/metrics.py:512 computes M3 from integer pence and handles unrepresentable results. src/cma/cli.py:340 and src/cma/graph.py:175 display pennies, and src/cma/metrics.py:594 preserves whole-pound drafting. src/cma/importers/monzo.py:217 can refuse a parsed export before reporting its known over-limit flow.); major: The importer can report a missing opening balance while suppressing the flow-limit diagnostic for a fully parsed export. at src/cma/importers/monzo.py:217; major: Migration writes a previously read review into the current thread without checking that the thread still points to that pending checkpoint. A concurrent resume can reopen an already decided review. at src/cma/cli.py:155; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T17:10:04.986Z"
     }
   ]
 }
