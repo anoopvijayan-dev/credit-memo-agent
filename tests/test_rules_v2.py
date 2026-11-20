@@ -1734,3 +1734,23 @@ def test_the_bank_code_rule_takes_no_exceptions():
             "protected": True, "stage": "line_type", "bank_code": True, "unless": "SAVINGS"}
     with pytest.raises(RulesetError, match="no unless or requires"):
         validate_ruleset({"id": "v2", "frozen": False, "rules": [bank]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_the_bank_code_rule_must_apply_to_credits():
+    """T03 review 16: a direction that excludes credits would switch the bank's code off."""
+    bank = {"id": "returned_dd", "pattern": r"^UNPAID DD\b", "direction": "out", "category": "returned_dd",
+            "protected": True, "stage": "line_type", "bank_code": True}
+    with pytest.raises(RulesetError, match="for credits"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [bank]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("pattern", [r"(?>ACME|ACME FASTER PAYMENT LTD)", r"\bACME\w*+"])
+def test_a_v2_pattern_that_cannot_backtrack_is_refused_at_load(pattern):
+    """T03 review 16: forcing a later end cannot reopen an atomic group or a possessive
+    repeat, so the longest match could not be found (D102)."""
+    rule = {"id": "atomic", "pattern": pattern, "direction": "in", "category": "revenue_card_settlement",
+            "stage": "names"}
+    with pytest.raises(RulesetError, match="atomic group or a possessive repeat"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [rule]}, expected_id="v2")

@@ -269,6 +269,26 @@ def _atoms(sub: _sre_parse.SubPattern):
             yield from _atoms(av)
 
 
+def _no_backtrack(pattern: str) -> bool:
+    """An atomic group or a possessive repeat: forcing a later end cannot reopen it, so the
+    longest match at a start could not be found (T03 review 16)."""
+    def walk(sub: _sre_parse.SubPattern) -> bool:
+        for op, av in sub:
+            if str(op) in ("ATOMIC_GROUP", "POSSESSIVE_REPEAT"):
+                return True
+            stack = [av]
+            while stack:
+                item = stack.pop()
+                if isinstance(item, _sre_parse.SubPattern):
+                    if walk(item):
+                        return True
+                elif isinstance(item, (list, tuple)):
+                    stack.extend(item)
+        return False
+
+    return walk(_sre_parse.parse(pattern))
+
+
 def _repeat_crosses_words(pattern: str) -> bool:
     """A repeat that can take in both a space and a word character (.*, [A-Z ]+, (?:\\d+\\s)+):
     with the longest match counting (D102), it would swallow every other list's wording
@@ -361,9 +381,11 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                 problems.append(f"{where}: bank_code must be true or false")
             elif r["bank_code"] and not (r.get("stage") == "line_type" and r.get("category") == Category.RETURNED_DD.value
                                          and r.get("pattern") in BANK_RETURN_CODES and "names" not in r
-                                         and "unless" not in r and "requires" not in r):
+                                         and "unless" not in r and "requires" not in r
+                                         and r.get("direction") in ("in", "any")):
                 problems.append(f"{where}: bank_code is only for the bank's own returned-payment code "
-                                f"({', '.join(sorted(BANK_RETURN_CODES))}), alone, with no unless or requires")
+                                f"({', '.join(sorted(BANK_RETURN_CODES))}), alone, with no unless or requires, "
+                                "for credits (direction in or any)")
         if data.get("frozen") is False:
             for key in ("pattern", "unless", "requires"):
                 if isinstance(r.get(key), str) and r[key] and not _compile_problem(r[key]) and _has_group_reference(r[key]):
@@ -371,6 +393,10 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                     # which renumbers groups: a back-reference would silently change meaning.
                     problems.append(f"{where}: {key} uses a back-reference or a conditional group, "
                                     "which a v2 table does not allow")
+            if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
+                    and _no_backtrack(r["pattern"])):
+                problems.append(f"{where}: pattern uses an atomic group or a possessive repeat, which a "
+                                "v2 table does not allow: the longest match could not be found (D102)")
             if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
                     and _repeat_crosses_words(r["pattern"])):
                 problems.append(f"{where}: pattern has a repeat that can run across words (such as .* or "
