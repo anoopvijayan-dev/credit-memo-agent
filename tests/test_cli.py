@@ -435,3 +435,50 @@ def test_a_review_decided_while_resume_opens_it_is_never_reopened(tmp_path, monk
     with sqlite_checkpointer(db) as saver:
         state = build(FakeLLM(), checkpointer=saver).get_state(cfg)
     assert not state.interrupts and state.values["review"].reviewer == "B. Other"
+
+
+def test_a_decision_racing_the_refresh_is_recorded_once(tmp_path, monkeypatch):
+    # T04 review 26: the pending check and the refresh write were separate steps, so a
+    # decision committed between them was reopened and decided again. Every process holds
+    # the review lock for check-and-write and for a decision: exactly one is recorded.
+    import threading
+    import time
+
+    import typer as _typer
+
+    from cma import cli
+    from cma.graph import build, sqlite_checkpointer
+    from cma.llm import FakeLLM
+
+    db, _ = _pending(tmp_path)
+    _as_earlier_release(db)
+    cfg = {"configurable": {"thread_id": "case-1"}}
+    other: dict = {}
+
+    def b_decides():
+        with sqlite_checkpointer(db) as saver:
+            try:
+                cli._decide(build(FakeLLM(), checkpointer=saver), cfg, {"approved": False, "reviewer": "B. Other"},
+                            db)
+                other["recorded"] = True
+            except _typer.Exit as e:
+                other["recorded"], other["code"] = False, e.exit_code
+
+    real = cli._still_pending
+
+    def racing(graph, c, snap):
+        ok = real(graph, c, snap)
+        t = threading.Thread(target=b_decides)
+        t.start()
+        other["thread"] = t
+        time.sleep(1.0)  # B tries to decide between C's check and C's write
+        return ok
+
+    monkeypatch.setattr(cli, "_still_pending", racing)
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C"], input="y\n\n")
+    other["thread"].join(30)
+    c_recorded = r.exit_code == 0
+    assert c_recorded != other["recorded"], (r.exit_code, other, r.output)  # exactly one decision
+    with sqlite_checkpointer(db) as saver:
+        state = build(FakeLLM(), checkpointer=saver).get_state(cfg)
+    assert not state.interrupts and state.values["review"].reviewer == ("C" if c_recorded else "B. Other")

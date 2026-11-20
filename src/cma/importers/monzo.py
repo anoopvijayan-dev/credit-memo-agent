@@ -173,9 +173,13 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
     def flows_before() -> str:
         """Money in or out among the records read so far already at the limit: said with any
         later problem, so a bad row or an unreadable field never hides it (T04 reviews 23-24)."""
-        reached = flows_at_limit([a for *_, a, _b in parsed])
+        # The row being read counts once its amount is known, even if a later field of it is
+        # bad (T04 review 26).
+        reached = flows_at_limit([a for *_, a, _b in parsed] + ([reading] if reading is not None else []))
         return (f"{' and '.join(reached)} {'total' if len(reached) > 1 else 'totals'} {AT_LIMIT} in the lines "
-                "before it: no figure could be reported to the penny; ") if reached else ""
+                "read so far: no figure could be reported to the penny; ") if reached else ""
+
+    reading: int | None = None
 
     try:
         for i, r in raw_rows:
@@ -194,10 +198,12 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             d = _parse_date(r["Date"])
             t = (r.get("Time") or "00:00:00").strip()
             amount = _money(r["Amount"], "Amount", i)
+            reading = amount
             bal = _money(r["Balance"], "Balance", i) if has_balance and (r.get("Balance") or "").strip() else None
             refs = references(r.get("Notes and #tags"), r.get("Description"))
             desc = describe(r.get("Type", ""), r.get("Name", ""), amount, refs)
             parsed.append((d, t, tid, desc, amount, bal))
+            reading = None
     except MonzoImportError as e:
         note = flows_before()
         if not note:

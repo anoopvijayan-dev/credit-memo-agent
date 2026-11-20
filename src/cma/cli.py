@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
 import json
 import uuid
 from contextlib import contextmanager
@@ -113,7 +119,7 @@ def run(
             raise typer.Exit(code=4) from e
         if checkpoint_db:
             console.print(f"review id: {thread_id} (kept in {checkpoint_db}; `cma resume {thread_id}` picks it up)")
-        _review(graph, cfg, state, reviewer, yes, out)
+        _review(graph, cfg, state, reviewer, yes, out, lock=checkpoint_db)
 
 
 @app.command()
@@ -154,19 +160,16 @@ def resume(
             # they answer (T04 review 24). The review returns to the reviewer as it was. It is
             # written only if the review is still the pending one read above; a review someone
             # decided or refreshed meanwhile is never reopened (T04 review 25).
-            now = graph.get_state(cfg)
-            if not now.interrupts or now.config["configurable"].get("checkpoint_id") != \
-                    snap.config["configurable"].get("checkpoint_id"):
-                if now.values.get("review"):
-                    _decided_elsewhere(now.values)
-                console.print(f"[red]Not resuming {thread}:[/red] the review changed while it was being opened; "
-                              "run `cma resume` again")
-                raise typer.Exit(code=2)
-            graph.update_state(cfg, {**update, "refreshed_for_review": True}, as_node="guard")
-            state = graph.invoke(None, cfg)
+            with _review_lock(checkpoint_db):  # the check and the write are one step (T04 review 26)
+                if not _still_pending(graph, cfg, snap):
+                    console.print(f"[red]Not resuming {thread}:[/red] the review changed while it was being "
+                                  "opened; run `cma resume` again")
+                    raise typer.Exit(code=2)
+                graph.update_state(cfg, {**update, "refreshed_for_review": True}, as_node="guard")
+                state = graph.invoke(None, cfg)
         else:
             state = {**snap.values, "__interrupt__": snap.interrupts}
-        _review(graph, cfg, state, reviewer, False, out)
+        _review(graph, cfg, state, reviewer, False, out, lock=checkpoint_db)
 
 
 def _stored_state_problem(values: dict) -> str | None:
@@ -219,6 +222,43 @@ def _evidence_path(memo: Path) -> Path:
 
 
 @contextmanager
+def _review_lock(db: Path | None):
+    """Held by every `cma` process while it checks a pending review and writes to it: a
+    resume refreshing figures, and a decision being applied. The check and the write are
+    then one step for every process sharing the checkpoint file, so a review decided by one
+    is never reopened or decided again by another (T04 review 26)."""
+    if db is None:
+        yield
+        return
+    with open(db.with_name(db.name + ".lock"), "a+b") as f:
+        if fcntl is not None:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+        else:  # Windows
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def _still_pending(graph, cfg, snap) -> bool:
+    """Whether the review is still the pending one `snap` read: same checkpoint, waiting."""
+    now = graph.get_state(cfg)
+    if now.interrupts and now.config["configurable"].get("checkpoint_id") == \
+            snap.config["configurable"].get("checkpoint_id"):
+        return True
+    if now.values.get("review"):
+        _decided_elsewhere(now.values)
+    return False
+
+
+@contextmanager
 def _checkpointer(path: Path | None):
     if path is None:
         yield None
@@ -233,7 +273,7 @@ def _checkpointer(path: Path | None):
         raise typer.Exit(code=2) from e
 
 
-def _review(graph, cfg, state, reviewer, yes, out):
+def _review(graph, cfg, state, reviewer, yes, out, lock: Path | None = None):
     interrupts = state.get("__interrupt__") or []
     if not interrupts:
         raise typer.Exit(code=1)
@@ -271,14 +311,14 @@ def _review(graph, cfg, state, reviewer, yes, out):
     else:
         decision = _ask(payload, grounded, reviewer)
 
-    final = _decide(graph, cfg, decision)
+    final = _decide(graph, cfg, decision, lock)
     while "__interrupt__" in final:
         payload = final["__interrupt__"][0].value
         console.print(f"[red]Not accepted:[/red] {payload['error']}")
         if yes:
             raise typer.Exit(code=3)
         decision = _ask(payload, grounded, reviewer)
-        final = _decide(graph, cfg, decision)
+        final = _decide(graph, cfg, decision, lock)
 
     approved = final["review"].approved
     if out:
@@ -296,13 +336,18 @@ def _review(graph, cfg, state, reviewer, yes, out):
         console.print(Markdown(final["final_memo"]))
 
 
-def _decide(graph, cfg, decision: dict) -> dict:
+def _decide(graph, cfg, decision: dict, lock: Path | None = None) -> dict:
     """Resume with this decision, and make sure it is the one that was recorded.
 
     Two people can open the same pending review from a shared --checkpoint-db. If
     someone else decided first, resuming is a no-op that returns *their* decision; say
     so instead of reporting it as ours.
     """
+    with _review_lock(lock):  # checked and applied as one step (T04 review 26)
+        return _decide_locked(graph, cfg, decision)
+
+
+def _decide_locked(graph, cfg, decision: dict) -> dict:
     if not graph.get_state(cfg).interrupts:
         _decided_elsewhere(graph.get_state(cfg).values)
     try:
