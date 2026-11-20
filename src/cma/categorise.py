@@ -419,13 +419,20 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
             problems.append(f"{key} holds a {bad!r}")
     rules = data.get("rules")
     if isinstance(rules, _Repeated):
-        # Each list given is still checked rule by rule (review 39); the repeat is named above.
+        # Each list given is still checked rule by rule (review 39), and a value that is not a
+        # list of rules, or is empty, is named too (review 40); the repeat is named above.
+        for k, v in enumerate(rules.values, start=1):
+            if not isinstance(v, list):
+                problems.append(f"rules value {k} of {len(rules.values)} is not a list of rules")
+            elif not v:
+                problems.append(f"rules value {k} of {len(rules.values)} is empty")
         rules = [r for v in rules.values if isinstance(v, list) for r in v]
     if not isinstance(rules, list) or not rules:
         raise RulesetError(f"{source}: " + "; ".join([*problems, "no rules"]))
     categories = {c.value for c in Category}
     seen: set[str] = set()
-    for i, r in enumerate(rules, start=1):
+    for i, rule_given in enumerate(rules, start=1):
+        r = rule_given
         where = f"rule {i} ({r.get('id', '?') if isinstance(r, dict) and not isinstance(r.get('id'), _Unbuilt) else '?'})"
         if isinstance(r, dict):
             for key, value in r.items():
@@ -435,132 +442,135 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
         if not isinstance(r, dict):
             problems.append(f"{where}: not a mapping")
             continue
-        cue_only = r.get("stage") == "line_type" and strict  # every table but the pinned v1 (review 35)
-        for key in sorted((CUE_ONLY_KEYS if cue_only else RULE_KEYS) - set(r)):
-            problems.append(f"{where}: missing {key}")
-        if not MATCH_KEYS & set(r):
-            problems.append(f"{where}: missing pattern (or names)")
-        for key in sorted(set(r) - ALL_RULE_KEYS, key=repr):
-            problems.append(f"{where}: unknown key {key!r}")
-        # Every field is a string. Checking the type first means a list, a mapping, a
-        # number or null is reported here, not raised later as a TypeError.
-        for key in sorted((RULE_KEYS | {"pattern", "unless", "requires"}) & set(r)):
-            if not isinstance(r[key], str) or not r[key]:
-                problems.append(f"{where}: {key} {r[key]!r} is not a non-empty string")
-        if "names" in r:
-            names = r["names"]
-            if not isinstance(names, list) or not names or not all(isinstance(n, str) and n.strip() for n in names):
-                problems.append(f"{where}: names must be a non-empty list of non-empty strings")
-            elif len({" ".join(n.upper().split()) for n in names}) != len(names):
-                problems.append(f"{where}: a name is listed twice")
-        if "protected" in r:
-            if not isinstance(r["protected"], bool):
-                problems.append(f"{where}: protected must be true or false")
-            elif r["protected"] and any(not isinstance(p, dict) or not p.get("protected") for p in rules[:i - 1]):
-                # One ordered pass and the precedence agree only if the protected rules come first.
-                problems.append(f"{where}: a protected rule must come before every rule that is not")
-        if "bank_code" in r:
-            # The one exception to the ambiguity rule is the bank's own returned-payment
-            # code at the start of the line: allowed only there, never gained by anchoring.
-            if not isinstance(r["bank_code"], bool):
-                problems.append(f"{where}: bank_code must be true or false")
-            elif r["bank_code"] and not (r.get("stage") == "line_type" and r.get("category") == Category.RETURNED_DD.value
-                                         and _is_bank_code_text(r.get("pattern")) and "names" not in r
-                                         and "unless" not in r and "requires" not in r
-                                         and r.get("direction") in ("in", "any")):
-                problems.append(f"{where}: bank_code is only for the bank's own returned-payment code "
-                                f"({', '.join(sorted(BANK_RETURN_CODES))}), alone, with no unless or requires, "
-                                "for credits (direction in or any)")
-        # A field given twice is checked in each of its values, so a repeated pattern never
-        # hides a forbidden exception (T03 review 36).
-        for rv in (_variants(r) if not verified else ()):
-            for key in ("unless", "requires"):
-                if key in rv:
-                    # An exception could switch a rule off where another list's wording sits
-                    # (cash wording beside a rail, say), deciding a collision before the
-                    # ambiguity check sees it. R4 lets an exception exclude only wording on no
-                    # list, which a pattern cannot be shown to keep to, so a v2 table has none:
-                    # list a longer phrase, or let the line be ambiguous (D52, T03 review 20).
-                    problems.append(f"{where}: {key} is not allowed in a v2 table: an exception could "
-                                    "hide another list's wording from the ambiguity check (R4); list a "
-                                    "longer phrase instead")
-            if (isinstance(rv.get("pattern"), str) and rv["pattern"] and not _compile_problem(rv["pattern"])
-                    and _has_lookaround(rv["pattern"])):
-                # A lookahead or lookbehind is an exception inside the pattern: (?!.*FPS)
-                # would switch the rule off beside another list's wording, as an unless
-                # would (T03 review 21).
-                problems.append(f"{where}: pattern uses a lookahead or lookbehind, which a v2 table "
-                                "does not allow: an exception could hide another list's wording (R4)")
-            if (isinstance(rv.get("pattern"), str) and rv["pattern"] and not _compile_problem(rv["pattern"])
-                    and not _bank_code_shape(rv) and _has_anchor(rv["pattern"])):
-                # An anchor tests the whole line beside a match: CASH DEPOSIT$ misses
-                # FPS CASH DEPOSIT STRIPE, so it hides wording as an exception would. Only
-                # the bank's own code keeps its ^ (D137).
-                problems.append(f"{where}: pattern uses an anchor (^, $, \\A or \\Z), which a v2 table "
-                                "allows only on the bank's returned-payment code")
-        if strict:
-            if isinstance(r.get("id"), str) and not _RULE_ID.fullmatch(r["id"]):
-                # Candidates are recorded joined by + after a colon: an id holding either
-                # would make two different candidate sets read the same (T03 review 17).
-                problems.append(f"{where}: id may use only letters, digits, _, . and -")
-            if isinstance(r.get("id"), str) and r["id"] in RESERVED_RULE_IDS:
-                # These name the categoriser's own decisions in a line's provenance.
-                problems.append(f"{where}: id {r['id']!r} is reserved for the categoriser's own "
-                                "provenance")
-            if _is_bank_code_text(r.get("pattern")) and r.get("bank_code") is not True:
-                problems.append(f"{where}: the bank's own returned-payment code must carry bank_code: true")
+        # Every field is checked in each value it was given (review 40): the rule as given,
+        # then once per value of each repeated field.
+        for vi, r in enumerate(_variants(rule_given)):
+            cue_only = r.get("stage") == "line_type" and strict  # every table but the pinned v1 (review 35)
+            for key in sorted((CUE_ONLY_KEYS if cue_only else RULE_KEYS) - set(r)):
+                problems.append(f"{where}: missing {key}")
+            if not MATCH_KEYS & set(r):
+                problems.append(f"{where}: missing pattern (or names)")
+            for key in sorted(set(r) - ALL_RULE_KEYS, key=repr):
+                problems.append(f"{where}: unknown key {key!r}")
+            # Every field is a string. Checking the type first means a list, a mapping, a
+            # number or null is reported here, not raised later as a TypeError.
+            for key in sorted((RULE_KEYS | {"pattern", "unless", "requires"}) & set(r)):
+                if not isinstance(r[key], str) or not r[key]:
+                    problems.append(f"{where}: {key} {r[key]!r} is not a non-empty string")
+            if "names" in r:
+                names = r["names"]
+                if not isinstance(names, list) or not names or not all(isinstance(n, str) and n.strip() for n in names):
+                    problems.append(f"{where}: names must be a non-empty list of non-empty strings")
+                elif len({" ".join(n.upper().split()) for n in names}) != len(names):
+                    problems.append(f"{where}: a name is listed twice")
+            if "protected" in r:
+                if not isinstance(r["protected"], bool):
+                    problems.append(f"{where}: protected must be true or false")
+                elif r["protected"] and any(not isinstance(p, dict) or not p.get("protected") for p in rules[:i - 1]):
+                    # One ordered pass and the precedence agree only if the protected rules come first.
+                    problems.append(f"{where}: a protected rule must come before every rule that is not")
+            if "bank_code" in r:
+                # The one exception to the ambiguity rule is the bank's own returned-payment
+                # code at the start of the line: allowed only there, never gained by anchoring.
+                if not isinstance(r["bank_code"], bool):
+                    problems.append(f"{where}: bank_code must be true or false")
+                elif r["bank_code"] and not (r.get("stage") == "line_type" and r.get("category") == Category.RETURNED_DD.value
+                                             and _is_bank_code_text(r.get("pattern")) and "names" not in r
+                                             and "unless" not in r and "requires" not in r
+                                             and r.get("direction") in ("in", "any")):
+                    problems.append(f"{where}: bank_code is only for the bank's own returned-payment code "
+                                    f"({', '.join(sorted(BANK_RETURN_CODES))}), alone, with no unless or requires, "
+                                    "for credits (direction in or any)")
+            # A field given twice is checked in each of its values, so a repeated pattern never
+            # hides a forbidden exception (T03 review 36).
+            for rv in (_variants(r) if not verified else ()):
+                for key in ("unless", "requires"):
+                    if key in rv:
+                        # An exception could switch a rule off where another list's wording sits
+                        # (cash wording beside a rail, say), deciding a collision before the
+                        # ambiguity check sees it. R4 lets an exception exclude only wording on no
+                        # list, which a pattern cannot be shown to keep to, so a v2 table has none:
+                        # list a longer phrase, or let the line be ambiguous (D52, T03 review 20).
+                        problems.append(f"{where}: {key} is not allowed in a v2 table: an exception could "
+                                        "hide another list's wording from the ambiguity check (R4); list a "
+                                        "longer phrase instead")
+                if (isinstance(rv.get("pattern"), str) and rv["pattern"] and not _compile_problem(rv["pattern"])
+                        and _has_lookaround(rv["pattern"])):
+                    # A lookahead or lookbehind is an exception inside the pattern: (?!.*FPS)
+                    # would switch the rule off beside another list's wording, as an unless
+                    # would (T03 review 21).
+                    problems.append(f"{where}: pattern uses a lookahead or lookbehind, which a v2 table "
+                                    "does not allow: an exception could hide another list's wording (R4)")
+                if (isinstance(rv.get("pattern"), str) and rv["pattern"] and not _compile_problem(rv["pattern"])
+                        and not _bank_code_shape(rv) and _has_anchor(rv["pattern"])):
+                    # An anchor tests the whole line beside a match: CASH DEPOSIT$ misses
+                    # FPS CASH DEPOSIT STRIPE, so it hides wording as an exception would. Only
+                    # the bank's own code keeps its ^ (D137).
+                    problems.append(f"{where}: pattern uses an anchor (^, $, \\A or \\Z), which a v2 table "
+                                    "allows only on the bank's returned-payment code")
+            if strict:
+                if isinstance(r.get("id"), str) and not _RULE_ID.fullmatch(r["id"]):
+                    # Candidates are recorded joined by + after a colon: an id holding either
+                    # would make two different candidate sets read the same (T03 review 17).
+                    problems.append(f"{where}: id may use only letters, digits, _, . and -")
+                if isinstance(r.get("id"), str) and r["id"] in RESERVED_RULE_IDS:
+                    # These name the categoriser's own decisions in a line's provenance.
+                    problems.append(f"{where}: id {r['id']!r} is reserved for the categoriser's own "
+                                    "provenance")
+                if _is_bank_code_text(r.get("pattern")) and r.get("bank_code") is not True:
+                    problems.append(f"{where}: the bank's own returned-payment code must carry bank_code: true")
+                for key in ("pattern", "unless", "requires"):
+                    if isinstance(r.get(key), str) and r[key] and not _compile_problem(r[key]) and _has_group_reference(r[key]):
+                        # Matches are found at every position by wrapping the pattern in a group,
+                        # which renumbers groups: a back-reference would silently change meaning.
+                        problems.append(f"{where}: {key} uses a back-reference or a conditional group, "
+                                        "which a v2 table does not allow")
+                if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
+                        and _sre_parse.parse(r["pattern"]).getwidth()[0] == 0):
+                    # A match of no characters (a lookahead alone, an optional pattern) has no
+                    # span, so the longer-phrase filter could never set it aside (T03 review 18).
+                    problems.append(f"{where}: pattern can match without consuming any text, which a v2 "
+                                    "table does not allow")
+                if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
+                        and _no_backtrack(r["pattern"])):
+                    problems.append(f"{where}: pattern uses an atomic group or a possessive repeat, which a "
+                                    "v2 table does not allow: the longest match could not be found (D102)")
+                if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
+                        and _repeat_crosses_words(r["pattern"])):
+                    problems.append(f"{where}: pattern has a repeat that can run across words (such as .* or "
+                                    "[A-Z ]+), which a v2 table does not allow: list the phrases as names")
+            if "stage" in r and r["stage"] not in STAGES:
+                problems.append(f"{where}: stage {r['stage']!r} is not one of {list(STAGES)}")
+            if strict:
+                # Line-type wording beats every name list, the case profile and firm rules
+                # included, so it is protected and comes before any name list.
+                if "stage" not in r:
+                    problems.append(f"{where}: missing stage (line_type or names)")
+                elif r["stage"] == "line_type":
+                    if not r.get("protected"):
+                        problems.append(f"{where}: a line_type rule must be protected")
+                    if any(isinstance(p, dict) and p.get("stage") == "names" for p in rules[:i - 1]):
+                        problems.append(f"{where}: a line_type rule must come before every names rule")
+            if vi == 0 and isinstance(r.get("id"), str):  # once per rule, as given
+                if r["id"] in seen:
+                    problems.append(f"{where}: duplicate id")
+                seen.add(r["id"])
+            if isinstance(r.get("direction"), str) and r["direction"] not in DIRECTIONS:
+                problems.append(f"{where}: direction {r['direction']!r} is not one of {list(DIRECTIONS)}")
+            if isinstance(r.get("category"), str) and r["category"] not in categories:
+                problems.append(f"{where}: category {r['category']!r} is not a category")
             for key in ("pattern", "unless", "requires"):
-                if isinstance(r.get(key), str) and r[key] and not _compile_problem(r[key]) and _has_group_reference(r[key]):
-                    # Matches are found at every position by wrapping the pattern in a group,
-                    # which renumbers groups: a back-reference would silently change meaning.
-                    problems.append(f"{where}: {key} uses a back-reference or a conditional group, "
-                                    "which a v2 table does not allow")
-            if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
-                    and _sre_parse.parse(r["pattern"]).getwidth()[0] == 0):
-                # A match of no characters (a lookahead alone, an optional pattern) has no
-                # span, so the longer-phrase filter could never set it aside (T03 review 18).
-                problems.append(f"{where}: pattern can match without consuming any text, which a v2 "
-                                "table does not allow")
-            if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
-                    and _no_backtrack(r["pattern"])):
-                problems.append(f"{where}: pattern uses an atomic group or a possessive repeat, which a "
-                                "v2 table does not allow: the longest match could not be found (D102)")
-            if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
-                    and _repeat_crosses_words(r["pattern"])):
-                problems.append(f"{where}: pattern has a repeat that can run across words (such as .* or "
-                                "[A-Z ]+), which a v2 table does not allow: list the phrases as names")
-        if "stage" in r and r["stage"] not in STAGES:
-            problems.append(f"{where}: stage {r['stage']!r} is not one of {list(STAGES)}")
-        if strict:
-            # Line-type wording beats every name list, the case profile and firm rules
-            # included, so it is protected and comes before any name list.
-            if "stage" not in r:
-                problems.append(f"{where}: missing stage (line_type or names)")
-            elif r["stage"] == "line_type":
-                if not r.get("protected"):
-                    problems.append(f"{where}: a line_type rule must be protected")
-                if any(isinstance(p, dict) and p.get("stage") == "names" for p in rules[:i - 1]):
-                    problems.append(f"{where}: a line_type rule must come before every names rule")
-        if isinstance(r.get("id"), str):
-            if r["id"] in seen:
-                problems.append(f"{where}: duplicate id")
-            seen.add(r["id"])
-        if isinstance(r.get("direction"), str) and r["direction"] not in DIRECTIONS:
-            problems.append(f"{where}: direction {r['direction']!r} is not one of {list(DIRECTIONS)}")
-        if isinstance(r.get("category"), str) and r["category"] not in categories:
-            problems.append(f"{where}: category {r['category']!r} is not a category")
-        for key in ("pattern", "unless", "requires"):
-            if isinstance(r.get(key), str) and r[key]:
-                problem = _compile_problem(r[key])
+                if isinstance(r.get(key), str) and r[key]:
+                    problem = _compile_problem(r[key])
+                    if problem:
+                        problems.append(f"{where}: {key} does not compile ({problem})")
+            # A pattern and names that each compile can still fail joined (a global flag such
+            # as (?i) is allowed only at the start), so the joined text is checked too.
+            if (isinstance(r.get("pattern"), str) and r["pattern"] and isinstance(r.get("names"), list) and r["names"]
+                    and all(isinstance(n, str) and n.strip() for n in r["names"]) and not _compile_problem(r["pattern"])):
+                problem = _compile_problem(_rule_pattern_text(r))
                 if problem:
-                    problems.append(f"{where}: {key} does not compile ({problem})")
-        # A pattern and names that each compile can still fail joined (a global flag such
-        # as (?i) is allowed only at the start), so the joined text is checked too.
-        if (isinstance(r.get("pattern"), str) and r["pattern"] and isinstance(r.get("names"), list) and r["names"]
-                and all(isinstance(n, str) and n.strip() for n in r["names"]) and not _compile_problem(r["pattern"])):
-            problem = _compile_problem(_rule_pattern_text(r))
-            if problem:
-                problems.append(f"{where}: pattern and names do not compile together ({problem})")
+                    problems.append(f"{where}: pattern and names do not compile together ({problem})")
     if strict:
         flagged = {r["pattern"] for r in rules if isinstance(r, dict) and r.get("bank_code") is True
                    and isinstance(r.get("pattern"), str)}  # a malformed pattern is named by its rule
@@ -587,13 +597,13 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
             # or with the rule's exceptions, so no field's fault hides another's (review 29);
             # then together, as the loader joins them, when both build alone.
             own_ok = isinstance(r.get("pattern"), str) and bool(r["pattern"]) and not _compile_problem(r["pattern"])
-        # A value of a repeated field is compiled here, as a field given once is above, so
-        # one that does not compile is named rather than skipped (review 39).
-        for key in ("pattern", "unless", "requires"):
-            if isinstance(rule0.get(key), _Repeated) and isinstance(r.get(key), str) and r[key]:
-                problem = _compile_problem(r[key])
-                if problem:
-                    problems.append(f"{where}: {key} does not compile ({problem})")
+            # A value of a repeated field is compiled here, as a field given once is above,
+            # so one that does not compile is named rather than skipped (review 39).
+            for key in ("pattern", "unless", "requires"):
+                if isinstance(rule0.get(key), _Repeated) and isinstance(r.get(key), str) and r[key]:
+                    problem = _compile_problem(r[key])
+                    if problem:
+                        problems.append(f"{where}: {key} does not compile ({problem})")
             names_ok = "names" in r and _well_typed_text({"names": r["names"]})
             if own_ok:
                 parts.append(("its pattern", lambda r=r: matchers({"pattern": r["pattern"]})))

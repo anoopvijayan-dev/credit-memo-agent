@@ -2322,3 +2322,44 @@ def test_no_digest_is_no_verification_for_v1_data():
     rule = {"id": "cashx", "pattern": "CASH", "direction": "in", "category": "cash_deposit", "unless": "FPS"}
     with pytest.raises(RulesetError, match=r"\(cashx\): unless is not allowed"):
         validate_ruleset({"id": "v1", "frozen": True, "rules": [rule]}, expected_id="v1")
+
+
+
+def _repeated(*values):
+    return categorise._Repeated("given twice", "repeated key", list(values))
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("values,named", [
+    (["(", "X"], "pattern does not compile"),            # the earlier value fails to compile
+    (["(?i)ACME", "X"], "its pattern cannot be used"),    # the earlier value fails only when wrapped
+])
+def test_every_value_of_a_repeated_pattern_is_compiled_and_built(values, named):
+    """T03 review 40: not only the last value of a repeated pattern."""
+    data = {"id": "v2", "frozen": False, "rules": [BANK, {
+        "id": "r", "pattern": _repeated(*values), "direction": "in", "category": "cash_deposit", "stage": "names"}]}
+    with pytest.raises(RulesetError, match=rf"rule 2 \(r\): {named}"):
+        validate_ruleset(data, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_every_value_of_a_repeated_field_gets_the_fields_own_checks():
+    """T03 review 40: a repeated direction has each value checked, so a bad one is named."""
+    data = {"id": "v2", "frozen": False, "rules": [BANK, {
+        "id": "r", "names": ["X"], "direction": _repeated("in", "sideways"), "category": "cash_deposit",
+        "stage": "names"}]}
+    with pytest.raises(RulesetError, match=r"rule 2 \(r\): direction 'sideways' is not one of"):
+        validate_ruleset(data, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_each_value_of_a_repeated_rules_key_is_named_when_it_is_no_list_of_rules():
+    """T03 review 40: a non-list or empty value of a repeated rules key is named, beside the
+    rules of the other value."""
+    data = {"id": "v2", "frozen": False, "rules": _repeated("oops", [], [BANK, {
+        "id": "r", "names": ["X"], "direction": "sideways", "category": "cash_deposit", "stage": "names"}])}
+    with pytest.raises(RulesetError) as e:
+        validate_ruleset(data, expected_id="v2")
+    text = str(e.value)
+    assert "rules value 1 of 3 is not a list of rules" in text and "rules value 2 of 3 is empty" in text
+    assert "direction 'sideways'" in text
