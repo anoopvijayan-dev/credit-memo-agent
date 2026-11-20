@@ -468,23 +468,46 @@ class CaseLog:
             if attempt:
                 time.sleep(READ_PAUSE)
             try:
-                with self._shared(self.gate_path):
+                with self._shared(self.gate_path) as gate_fd:
+                    # What the reader holds counts only while the lock files it holds are
+                    # still the case's: a gate or case lock replaced during the read lets a
+                    # writer in through the new file, so the read proves nothing and is
+                    # taken again (T12 review 23).
+                    def in_place(*held: tuple[int, Path]) -> bool:
+                        try:
+                            return all(_file_id(os.fstat(fd)) == _file_id(os.stat(p)) for fd, p in held)
+                        except OSError:
+                            return False
+
                     try:
                         case_fd = os.open(self.lock_path, _PROBE_FLAGS)
                     except FileNotFoundError:
                         # Behind the gate with no case lock file: no writer holds the case,
                         # and none can take it while the gate is held, so one read is the
                         # truth.
-                        return _check(self._read_log(), _read_head(self.head_path))
+                        check = _check(self._read_log(), _read_head(self.head_path))
+                        if in_place((gate_fd, self.gate_path)) and not self.lock_path.exists():
+                            return check
+                        continue
                     locked = False
                     try:
+                        held = ((gate_fd, self.gate_path), (case_fd, self.lock_path))
                         if _try_shared(case_fd):
                             locked = True
-                            return _check(self._read_log(), _read_head(self.head_path))
+                            check = _check(self._read_log(), _read_head(self.head_path))
+                            if in_place(*held):
+                                return check
+                            continue
                         check = self._steady()
                         if _try_shared(case_fd):  # its writer let go during the read
                             locked = True
-                            return _check(self._read_log(), _read_head(self.head_path))
+                            check = _check(self._read_log(), _read_head(self.head_path))
+                            if in_place(*held):
+                                return check
+                            continue
+                        seen_held = True
+                        if not in_place(*held):
+                            continue
                         return _held_result(check)
                     finally:
                         if locked:  # released before closing: on Windows a close may not
@@ -542,7 +565,7 @@ class CaseLog:
                           in_progress=False)
 
     @contextmanager
-    def _shared(self, path: Path) -> Iterator[None]:
+    def _shared(self, path: Path) -> Iterator[int]:
         """Hold `path` locked shared through a fresh descriptor: readers never exclude each
         other; CaseLocked while a writer holds it alone. A missing file raises
         FileNotFoundError and nothing is created (a check writes nothing)."""
@@ -551,7 +574,7 @@ class CaseLog:
             if not _try_shared(fd):
                 raise CaseLocked(f"{self.path}: another window or command is writing to this case")
             try:
-                yield
+                yield fd
             finally:
                 with suppress(OSError):
                     _unlock(fd)
@@ -974,8 +997,18 @@ class CaseLog:
         now = _check(self._read_log(), _read_head(self.head_path))
         held = now.entries[entry.seq - 1].hash if now.ok and len(now.entries) >= entry.seq else None
         if held != entry.hash:
-            raise SaveNotRecorded(f"{self.path}: the log changed while this save was being "
-                                  "recorded; the save was not recorded")
+            # Not told recorded, so not left recorded either (P15): the head record goes
+            # back to the entries before this one, if it is still the one this save
+            # published, and the entry is again past the recorded entries, as a crash leaves
+            # it (T12 review 23). If the head record changed meanwhile, it is left alone.
+            undone = False
+            with suppress(CaseLogError, OSError):
+                self._write_head(recorded, was=[*recorded, entry.hash])
+                undone = True
+            raise SaveNotRecorded(
+                f"{self.path}: the log changed while this save was being recorded; the save was "
+                "not recorded" + ("" if undone else ", and its head record could not be taken back: "
+                                  "check the case log before anything else is saved"))
 
 
 # On Windows a reader's open file blocks a rename over it for the moment the read takes

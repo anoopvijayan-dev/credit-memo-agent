@@ -2269,3 +2269,77 @@ def test_p15_a_gate_removed_or_replaced_during_a_save_stops_the_line(tmp_path, m
         log.append("override", {"n": 3}, expected=2)
     monkeypatch.undo()
     assert len(_lines(log)) == 2 and log.verify().ok
+
+
+@pytest.mark.invariants
+def test_a_failed_read_back_takes_the_head_record_back(tmp_path, monkeypatch):
+    """T12 review 23 / P15: a save not told recorded is not left recorded. After its read-back
+    fails, the head record it published goes back to the entries before it."""
+    log = _log(tmp_path, 2)
+    prefix = log.path.read_bytes()
+    real = case.CaseLog._write_head
+
+    def then_the_log_is_replaced(self, hashes, **kw):
+        real(self, hashes, **kw)
+        if len(hashes) == 3:
+            self.path.write_bytes(prefix)
+
+    monkeypatch.setattr(case.CaseLog, "_write_head", then_the_log_is_replaced)
+    with pytest.raises(case.SaveNotRecorded, match=r"not recorded$"):
+        log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    check = case.CaseLog(log.path).verify()
+    assert check.ok and check.head.position == 2  # the head no longer records the lost save
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("which", ["gate", "lock"])
+def test_p15_a_read_across_a_replaced_lock_file_is_taken_again(tmp_path, monkeypatch, which):
+    """T12 review 23 / R43: a reader holding a gate (or case lock) that was replaced during
+    its read cannot know one writer held the case through it, so it reads again."""
+    log = _log(tmp_path, 2)
+    writer = case.CaseLog(log.path)
+    reader = case.CaseLog(log.path)
+    real_steady, real_check, calls = case.CaseLog._steady, case._check, []
+
+    def replace(path):
+        fresh = path.with_name("fresh-" + path.name)
+        fresh.write_bytes(b"")
+        os.replace(fresh, path)
+
+    def steady_then_replace(self):
+        calls.append("steady")
+        got = real_steady(self)
+        if len(calls) == 1:
+            replace(log.gate_path if which == "gate" else log.lock_path)
+        return got
+
+    def check_then_replace(raw, recorded):
+        calls.append("free")
+        if len(calls) == 1:
+            replace(log.gate_path if which == "gate" else log.lock_path)
+        return real_check(raw, recorded)
+
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    if which == "gate":
+        holding, done = threading.Event(), threading.Event()
+
+        def hold():  # another thread holds the case: the reader takes the steady-read path
+            with writer.writer():
+                holding.set()
+                done.wait(10)
+
+        t = threading.Thread(target=hold)
+        t.start()
+        assert holding.wait(5)
+        monkeypatch.setattr(case.CaseLog, "_steady", steady_then_replace)
+        try:
+            check = reader.verify()
+        finally:
+            done.set()
+            t.join(10)
+        assert calls.count("steady") >= 2 and check.in_progress
+    else:
+        monkeypatch.setattr(case, "_check", check_then_replace)
+        check = reader.verify()
+        assert calls.count("free") >= 2 and check.ok
