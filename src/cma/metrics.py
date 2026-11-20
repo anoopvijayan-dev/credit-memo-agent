@@ -230,11 +230,10 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
     # with none is in no bucket, so it is left to the reconciliation below, which names it
     # with every other line that is not in exactly one bucket and the whole difference
     # (R3, T04 review 4).
-    loose_debits = [t for t in txns if t.category is None and not _whole_pence_exact(t.amount)]
-    loose_debits += [t for t in txns if t.category is None and (_whole_pence_exact(t.amount) or 0) <= 0
-                     and t not in loose_debits]
-    if loose_debits:
-        raise AmountError(f"line {loose_debits[0].id} has no category: categorise() must run before compute()")
+    # A line with no category: a credit is in no bucket and is named by the reconciliation
+    # below with every other unplaced credit and the whole difference; a debit is refused
+    # after that, so it never hides the credits' report (R3, T04 reviews 4 and 5).
+    loose_debits = [t for t in txns if t.category is None and (_whole_pence_exact(t.amount) or 0) <= 0]
     if vat_stagger is not None and vat_stagger not in VAT_STAGGERS:
         raise ValueError("vat_stagger must be 1, 2 or 3")
 
@@ -389,6 +388,8 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
             buckets[b].append(t)
     money_in = total(credits)
     _reconcile(credits, rev, buckets, money_in, total_revenue, total, pos)
+    if loose_debits:
+        raise AmountError(f"line {loose_debits[0].id} has no category: categorise() must run before compute()")
     cash = [t for t in rev if t.category == Category.CASH_DEPOSIT]
 
     # M16 and M26 share one denominator: money in less lending drawdowns, returned DDs and

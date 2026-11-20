@@ -474,3 +474,20 @@ def test_the_monzo_import_reads_money_exactly_and_refuses_what_it_cannot_carry(t
                    f"tx_1,01/01/2026,09:00:00,Faster payment,ACME,{amount},GBP,{amount}\n")
     with pytest.raises(monzo.MonzoImportError):
         monzo.convert(src, tmp_path / "out.csv")
+
+
+@pytest.mark.contracts
+def test_an_uncategorised_debit_never_hides_the_credits_reconciliation():
+    """T04 review 5: with an uncategorised debit and an unbucketed credit, the credit's
+    reconciliation (difference and line) is reported; the debit alone is refused after."""
+    lines = [_line("L1", "a", 12.34, Category.REVENUE_CARD), _line("L2", "b", 5.00, Category.OTHER),
+             _line("L3", "c", -2.00, Category.SUPPLIER)]
+    s = Statement(account_name="x", transactions=lines)
+    s.transactions[1].category = None
+    s.transactions[2].category = None
+    with pytest.raises(metrics.ReconciliationError) as e:
+        metrics.compute(s)
+    assert e.value.lines == ["L2"] and "500 pence" in str(e.value)
+    s.transactions[1].category = Category.OTHER
+    with pytest.raises(metrics.AmountError, match="L3 has no category"):
+        metrics.compute(s)
