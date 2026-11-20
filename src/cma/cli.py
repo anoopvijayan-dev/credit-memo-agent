@@ -235,7 +235,8 @@ def _review_lock(db: Path | None):
     if db is None:
         yield
         return
-    with open(db.with_name(db.name + ".lock"), "a+b") as f:
+    real = Path(db).resolve()  # one lock however the file is reached, through a symlink too (T04 review 30)
+    with open(real.with_name(real.name + ".lock"), "a+b") as f:
         if fcntl is not None:
             fcntl.flock(f, fcntl.LOCK_EX)
             try:

@@ -33,7 +33,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from ..categorise import INVOICE_REF
-from ..ingest import CsvRecordError, decode_lines, read_records
+from ..ingest import CsvRecordError, read_data
 from ..metrics import (
     AT_LIMIT,
     at_limit,
@@ -150,14 +150,10 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
     # Lines as the file has them (T04 review 20); the records before one the reader
     # cannot read, or before a byte that is not UTF-8, are checked first, so a problem
     # among them is the one reported (T04 review 29).
-    text, undecodable = decode_lines(Path(src).read_bytes())
-    if undecodable is not None and "\n" not in text:
-        raise MonzoImportError(f"{src}: {undecodable}")
     try:
-        header, raw_rows, unreadable = read_records(text)
+        header, raw_rows, unreadable = read_data(Path(src).read_bytes())
     except CsvRecordError as e:
         raise MonzoImportError(f"{src}: {e}") from None
-    unreadable = unreadable or undecodable
     twice = sorted({h for h in header if h and header.count(h) > 1})  # T04 review 14
     if twice:
         raise MonzoImportError(f"{src}: column(s) named more than once: {', '.join(twice)}; keep one of each")

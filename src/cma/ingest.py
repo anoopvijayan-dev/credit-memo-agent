@@ -105,18 +105,38 @@ class CsvRecordError(ValueError):
         self.too_long = too_long
 
 
-def decode_lines(data: bytes) -> tuple[str, CsvRecordError | None]:
-    """The text of every whole line before the first byte that is not UTF-8, and, if there
-    is one, a CsvRecordError naming its line and byte. The lines before it are still read
-    and checked, so a later bad byte never hides a problem among them (T04 review 29)."""
+NOT_UTF8 = "not UTF-8 (byte {}); re-save it as 'CSV UTF-8' (Excel) and try again"
+
+
+def read_data(data: bytes) -> tuple[list[str], list[tuple[int, dict]], CsvRecordError | None]:
+    """read_records on a file's bytes. If a byte is not UTF-8, every record before the one it
+    falls in is still returned and checked, and the CsvRecordError names that record's first
+    line, whatever the file's line endings (CR, LF or CRLF) and even when the record runs
+    over several lines (T04 reviews 29-30). A bad byte in the header line is raised."""
     try:
-        return data.decode("utf-8-sig"), None  # tolerate a byte-order mark
+        return read_records(data.decode("utf-8-sig"))  # tolerate a byte-order mark
     except UnicodeDecodeError as e:
-        good = data[:e.start]
-        text = good[:good.rfind(b"\n") + 1].decode("utf-8-sig")
-        line = len(list(io.StringIO(text, newline=""))) + 1
-        return text, CsvRecordError(f"line {line}: not UTF-8 (byte {e.start}); re-save it as 'CSV UTF-8' "
-                                    "(Excel) and try again")
+        bad = e.start
+    text = data[:bad].decode("utf-8-sig")
+    physical = list(io.StringIO(text, newline=""))
+    if not physical or not physical[0].endswith(("\n", "\r")):
+        raise CsvRecordError("line 1: " + NOT_UTF8.format(bad))
+    header, rows, err = read_records(text)
+    if err is not None:
+        return header, rows, err  # an earlier record the reader stopped on comes first
+    at_line_end = text.endswith(("\n", "\r"))
+    line = len(physical) + 1  # the bad byte starts a new record
+    if rows:
+        start = rows[-1][0]
+        try:  # is the last record closed, or still open in a quoted field at the bad byte?
+            list(csv.reader(io.StringIO("".join(physical[start - 1:]), newline=""), strict=True))
+            still_open = False
+        except csv.Error:
+            still_open = True
+        if still_open or not at_line_end:
+            rows.pop()  # the record the bad byte falls in
+            line = start
+    return header, rows, CsvRecordError(f"line {line}: " + NOT_UTF8.format(bad))
 
 
 def read_records(text: str) -> tuple[list[str], list[tuple[int, dict]], CsvRecordError | None]:
@@ -175,14 +195,10 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         if not path.is_file():
             raise StatementError(path, ["no such file"])
         data = path.read_bytes()
-    text, undecodable = decode_lines(data)
-    if undecodable is not None and "\n" not in text:  # not even the header line can be read
-        raise StatementError(path, [str(undecodable).split(": ", 1)[1]])
     try:
-        header, rows, unreadable = read_records(text)
+        header, rows, unreadable = read_data(data)
     except CsvRecordError as e:
         raise StatementError(path, [str(e)], ["too_long" if e.too_long else "file"]) from None
-    unreadable = unreadable or undecodable
     # A column named twice would let the second silently replace the first's value on every
     # line, before any check (R2, T04 review 14): refused, naming the column.
     twice = sorted({h for h in header if h and header.count(h) > 1})

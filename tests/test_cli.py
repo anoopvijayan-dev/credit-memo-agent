@@ -538,3 +538,33 @@ def test_exporting_never_touches_a_sibling_file(tmp_path):
     assert r.exit_code == 0, r.output
     assert all(s.read_text() == "keep me" for s in siblings) and out.exists()
     assert not [p for p in tmp_path.iterdir() if p.name.startswith(".") and p.name.endswith(".part")]
+
+
+def test_the_review_lock_is_one_lock_through_a_symlink(tmp_path):
+    # T04 review 30: the lock was named from the path as given, so two processes reaching
+    # one checkpoint file through a symlink took separate locks.
+    import os
+    import threading
+    import time
+
+    from cma import cli
+
+    real = tmp_path / "reviews.sqlite"
+    real.write_bytes(b"")
+    link = tmp_path / "alias.sqlite"
+    os.symlink(real, link)
+    held, order = threading.Event(), []
+
+    def hold():
+        with cli._review_lock(real):
+            held.set()
+            time.sleep(1.0)
+            order.append("first released")
+
+    t = threading.Thread(target=hold)
+    t.start()
+    held.wait(5)
+    with cli._review_lock(link):
+        order.append("second acquired")
+    t.join()
+    assert order == ["first released", "second acquired"]

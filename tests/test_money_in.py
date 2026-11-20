@@ -997,3 +997,31 @@ def test_monzo_opening_balance_refusals_name_the_line(tmp_path):
     src.write_text(_MONZO_HEAD + "\ntx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n")
     with pytest.raises(monzo.MonzoImportError, match=r"implies 100.00 at line 3 \(tx_1"):
         monzo.convert(src, tmp_path / "o.csv", "50.00")
+
+
+@pytest.mark.contracts
+def test_a_bad_byte_in_a_cr_only_export_still_reads_the_lines_before_it(tmp_path):
+    """T04 review 30: the UTF-8 recovery cut at the last LF, so in a file with CR line
+    endings every record before a bad byte was discarded."""
+    from cma.importers import monzo
+
+    big = "9999999999999.99"
+    src = tmp_path / "m.csv"
+    rows = [_MONZO_HEAD.strip(), f"tx_1,01/01/2026,09:00:00,Faster payment,ACME,{big},GBP,{big}",
+            f"tx_2,02/01/2026,09:00:00,Faster payment,ACME,{big},GBP,{big}"]
+    src.write_bytes("\r".join(rows).encode() + b"\rtx_3,03/01/2026,09:00:00,Faster payment,CAF\xe9,-1.00,GBP,1.00\r")
+    with pytest.raises(monzo.MonzoImportError) as e:
+        monzo.convert(src, tmp_path / "o.csv")
+    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "line 4: not UTF-8" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_bad_byte_in_a_multiline_record_names_the_record_start(tmp_path):
+    """T04 review 30: a bad byte on the continuation of a quoted multi-line field was named by
+    that continuation line, not the line its record starts on."""
+    csv = tmp_path / "s.csv"
+    csv.write_bytes(b'id,date,description,amount,balance\nT1,2026-01-01,A,1.00,1.00\n'
+                    b'T2,2026-01-02,"first line\nCAF\xe9",1.00,2.00\n')
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    assert "line 3: not UTF-8" in str(e.value) and "line 4" not in str(e.value)
