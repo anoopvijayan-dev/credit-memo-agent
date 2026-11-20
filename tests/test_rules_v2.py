@@ -2520,3 +2520,23 @@ def test_a_repeated_line_type_stage_does_not_ask_a_cue_for_a_category():
     with pytest.raises(RulesetError) as e:
         validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rail]}, expected_id="v2")
     assert "missing category" not in str(e.value)
+
+
+
+@pytest.mark.contracts
+def test_a_lookaround_in_a_pattern_that_does_not_compile_is_still_named():
+    """T03 review 46: (?<!FPS.*)CASH parses but does not compile (a variable look-behind);
+    the forbidden exception in it is named beside the compile fault."""
+    cash = {"id": "cash", "pattern": "(?<!FPS.*)CASH", "direction": "in", "category": "cash_deposit", "stage": "names"}
+    with pytest.raises(RulesetError) as e:
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, cash]}, expected_id="v2")
+    assert "does not compile" in str(e.value) and "lookahead or lookbehind" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_bank_code_only_in_one_alternative_is_missing_from_the_other_version():
+    """T03 review 46: a repeated pattern carrying the code in one value only leaves the other
+    version of the table without the bank's code, which is named."""
+    bank = {**BANK, "pattern": _repeated(BANK["pattern"], "UNPAID X")}
+    with pytest.raises(RulesetError, match="has no rule with bank_code"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [bank]}, expected_id="v2")

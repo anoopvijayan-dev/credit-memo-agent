@@ -395,6 +395,17 @@ def _is_bank_code_text(value: object) -> bool:
     return isinstance(value, str) and value in BANK_RETURN_CODES
 
 
+def _parses(pattern: str) -> bool:
+    """The pattern can be read as a regular expression's structure, whether or not it then
+    compiles: exceptions written into it (lookarounds, anchors, back-references) are looked
+    for in every such pattern, so a compile failure never hides one (T03 review 46)."""
+    try:
+        _sre_parse.parse(pattern)
+    except Exception:
+        return False
+    return True
+
+
 def _compile_problem(pattern: str) -> str | None:
     # re.error is not the only way a pattern fails to compile: a repeat count past
     # the engine's limit raises OverflowError, deep nesting RecursionError.
@@ -529,14 +540,14 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                         problems.append(f"{where}: {key} is not allowed in a v2 table: an exception could "
                                         "hide another list's wording from the ambiguity check (R4); list a "
                                         "longer phrase instead")
-                if (isinstance(rv.get("pattern"), str) and rv["pattern"] and not _compile_problem(rv["pattern"])
+                if (isinstance(rv.get("pattern"), str) and rv["pattern"] and _parses(rv["pattern"])
                         and _has_lookaround(rv["pattern"])):
                     # A lookahead or lookbehind is an exception inside the pattern: (?!.*FPS)
                     # would switch the rule off beside another list's wording, as an unless
                     # would (T03 review 21).
                     problems.append(f"{where}: pattern uses a lookahead or lookbehind, which a v2 table "
                                     "does not allow: an exception could hide another list's wording (R4)")
-                if (isinstance(rv.get("pattern"), str) and rv["pattern"] and not _compile_problem(rv["pattern"])
+                if (isinstance(rv.get("pattern"), str) and rv["pattern"] and _parses(rv["pattern"])
                         and not _bank_code_shape(rv, every_combination=True) and _has_anchor(rv["pattern"])):
                     # An anchor tests the whole line beside a match: CASH DEPOSIT$ misses
                     # FPS CASH DEPOSIT STRIPE, so it hides wording as an exception would. Only
@@ -555,22 +566,22 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                 if _is_bank_code_text(r.get("pattern")) and not all(x is True for x in _every(r.get("bank_code"))):
                     problems.append(f"{where}: the bank's own returned-payment code must carry bank_code: true")
                 for key in ("pattern", "unless", "requires"):
-                    if isinstance(r.get(key), str) and r[key] and not _compile_problem(r[key]) and _has_group_reference(r[key]):
+                    if isinstance(r.get(key), str) and r[key] and _parses(r[key]) and _has_group_reference(r[key]):
                         # Matches are found at every position by wrapping the pattern in a group,
                         # which renumbers groups: a back-reference would silently change meaning.
                         problems.append(f"{where}: {key} uses a back-reference or a conditional group, "
                                         "which a v2 table does not allow")
-                if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
+                if (isinstance(r.get("pattern"), str) and r["pattern"] and _parses(r["pattern"])
                         and _sre_parse.parse(r["pattern"]).getwidth()[0] == 0):
                     # A match of no characters (a lookahead alone, an optional pattern) has no
                     # span, so the longer-phrase filter could never set it aside (T03 review 18).
                     problems.append(f"{where}: pattern can match without consuming any text, which a v2 "
                                     "table does not allow")
-                if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
+                if (isinstance(r.get("pattern"), str) and r["pattern"] and _parses(r["pattern"])
                         and _no_backtrack(r["pattern"])):
                     problems.append(f"{where}: pattern uses an atomic group or a possessive repeat, which a "
                                     "v2 table does not allow: the longest match could not be found (D102)")
-                if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
+                if (isinstance(r.get("pattern"), str) and r["pattern"] and _parses(r["pattern"])
                         and _repeat_crosses_words(r["pattern"])):
                     problems.append(f"{where}: pattern has a repeat that can run across words (such as .* or "
                                     "[A-Z ]+), which a v2 table does not allow: list the phrases as names")
@@ -615,8 +626,13 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
     if strict:
         # Every value of a repeated pattern or flag counts (review 44); a malformed one is
         # named by its rule.
-        flagged = {p for r in rules if isinstance(r, dict) and True in _every(r.get("bank_code"))
-                   for p in _every(r.get("pattern")) if isinstance(p, str)}
+        # A code is present in every version of the table only on a rule whose every pattern
+        # value is that code and every flag value is true: an alternative carries it in some
+        # versions only (review 46).
+        flagged = {pats[0] for r in rules if isinstance(r, dict)
+                   and all(x is True for x in _every(r.get("bank_code")))
+                   for pats in [_every(r.get("pattern"))]
+                   if pats and isinstance(pats[0], str) and all(x == pats[0] for x in pats)}
         for code in sorted(BANK_RETURN_CODES - flagged):
             problems.append(f"the bank's own returned-payment code {code} has no rule with bank_code: true "
                             "(R4: it settles a credit's line type)")
