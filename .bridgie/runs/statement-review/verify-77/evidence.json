@@ -1,0 +1,109 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Reviewed R4 revision 18 from the packet. The worktree requirement at .bridgie/specs/statement-review/requirements.md:19 contains the original recognition clause. The maintained lists are in src/cma/rules/v2.yaml:74,117,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest matches and per-occurrence containment at src/cma/categorise.py:760,787,809, bank-code and ambiguity precedence at :896, and override, profile, firm-rule and candidate handling at :916,963. Traced ruleset selection, provenance, checkpoint replay and output at src/cma/graph.py:188,221,250 and src/cma/cli.py:229,240. Checked repeat classification, duplicate and concurrent review paths, signed GBP amounts and date-only ingestion at src/cma/ingest.py:47,100, Unicode boundaries, partial failure, override authority, case-local inputs and evidence consumers. Runner logs confirm the per-list provenance, CLI, ambiguity, containment, rollback and checkpoint tests. The non-v1 frozen flag no longer skips the exception checks for well-formed rules. A changed frozen v1 table can still fail validation before the hash check and miss the required changed-table diagnostic.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-77/specified-3.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-77/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-77/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-77/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-77/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-77/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-77/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-77/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 667,
+      "criterion": "R4",
+      "claim": "The loader validates and compiles v1 before comparing its bytes to the pinned hash. A table that still declares id v1 and frozen true can therefore fail with a schema or rule error instead of being refused as a changed frozen table.",
+      "repro": "In a packaged copy of v1.yaml, keep id: v1 and frozen: true and replace its rules list with rules: []. In a fresh process, load v1. The validator raises 'cma/rules/v1.yaml: no rules' at line 399 before the loader reaches the required 'frozen table v1 has been changed' diagnostic. The runner's changed-v1 tests cover schema-valid edits and do not establish this error path."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 473,
+      "criterion": "R4",
+      "claim": "A malformed pattern can interrupt rule validation with a raw TypeError before forbidden exceptions are reported by rule name. This contradicts the producer's claim that malformed table values are refused with a diagnostic naming the problem.",
+      "repro": "In a copy of v2.yaml, set frozen: true and set the cash_paid_in rule's pattern to the YAML list [CASH DEPOSIT], retaining its names. Add unless: FPS to the same rule. Load the packaged copy in a fresh process with CMA_RULESET=v2. Validation accumulates the type and forbidden-unless errors, then tests the list against BANK_RETURN_CODES and raises TypeError before emitting either diagnostic."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The documented precedence says a profile name can settle ambiguous wording. The implementation records the profile name as an additional candidate and leaves the credit unexplained.",
+      "repro": "Classify a £900 credit described as FPS CREDIT CASH DEPOSIT REF JANE DOE with JANE DOE in the director profile. The result is OTHER with v2:conflict:payment_rail+cash_paid_in+profile:director, as asserted by the runner-passing director-reference test."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1385,
+      "criterion": "R4",
+      "claim": "The passing shuffle test covers its sample statements. The producer's broader claim that within-stage shuffling preserves every category on whole statements fails for overlapping debit rules.",
+      "repro": "Categorise a statement containing a £10 debit described as RENT PAYROLL. The shipped table selects payroll. Swap the payroll and rent rules within the unprotected names stage and categorise a fresh copy. The debit now selects rent because src/cma/categorise.py:942 returns the first match."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "The producer's compile-all claim for src, evals and tests is not_proven. The passing runner compile tier covers src only.",
+      "repro": "Compare the claimed command with reviewer-77/mechanical-2.log and its command row. A passing runner row for python -m compileall -q src evals tests would prove the broader claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
