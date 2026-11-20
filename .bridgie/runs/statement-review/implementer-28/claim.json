@@ -1,0 +1,38 @@
+{
+  "task": "T04",
+  "claims": [
+    {
+      "text": "P1, P2 and P6 hold as invariants tests named p1/p2/p6. They run over all 9 synthetic cases and 40 seeded random statements, under both v1 and v2. The random credits under v2 cover every money-in category, cash_deposit and default-rule credits included. P1: M2 + M19..M25 = M17 in pence, every credit id is in exactly one bucket's evidence, and M18's evidence is a subset of M2's. P2: the evidence lines of M2, M17-M25 (and, negated, M8, M11, M12, M14) total the figure to the penny. P6: every credit set by the default rule is in M25 and M26 and not in M2.",
+      "proof_cmd": "python -m pytest -q -m invariants -k 'p1 or p2 or p6'",
+      "proof_output": "5 passed, 861 deselected in 4.66s"
+    },
+    {
+      "text": "metrics.compute returns M1-M26 in order: M17 Total money in, M18 Cash deposits within trading receipts, M19-M25 the seven non-trading buckets (from models.CREDIT_BUCKET), and M26 Unexplained share of money in. M16 keeps the name 'Non-trading money in (share)' and now shares M26's denominator: money in less lending drawdowns, returned DDs and own-account transfers. Figures are computed in integer pence, so 0.1 + 0.2 is exactly 0.3. An amount with a fraction of a penny is refused, naming the line. Ratios are rounded half to even from the exact quotient of the pence.",
+      "proof_cmd": "python -m pytest tests/test_money_in.py -v",
+      "proof_output": "test_p1_buckets_sum_to_total_money_in_and_every_credit_is_in_exactly_one PASSED\ntest_p2_evidence_lines_total_each_sum_figure_to_the_penny PASSED\ntest_p6_a_credit_no_rule_matches_is_unexplained_and_never_trading PASSED\ntest_p6_an_unknown_payer_lands_in_m25[v1] PASSED\ntest_p6_an_unknown_payer_lands_in_m25[v2] PASSED\ntest_each_bucket_holds_its_categories_and_m18_is_cash_inside_m2 PASSED\ntest_buckets_that_do_not_reconcile_are_refused_naming_pence_and_lines PASSED\ntest_a_statement_with_no_credits_has_zero_money_in_and_no_share PASSED\ntest_an_amount_with_fractional_pence_is_refused PASSED\ntest_cma_run_exits_non_zero_naming_the_difference_and_the_lines PASSED\ntest_mcp_compute_metrics_carries_m17_to_m26 PASSED\n11 passed in 3.64s"
+    },
+    {
+      "text": "R3 is enforced in three places. metrics.compute raises ReconciliationError, a ValueError carrying difference_pence and the line ids in statement order, in three cases: the buckets do not sum to M17; a credit is in no bucket or in more than one; or a non-credit line is counted as trading receipts. `cma run` catches the error and exits 6 with 'Refused, no figures shown.', the difference in pence and the line ids, before any memo is written. MCP compute_metrics returns M1..M26 and raises the same error for such a case. The contract tests cover the CLI (a credit forced into a category with no bucket) and MCP.",
+      "proof_cmd": "python -m pytest -q -m contracts",
+      "proof_output": "235 passed, 631 deselected in 27.69s"
+    },
+    {
+      "text": "M1-M16 keep their ids, units, values and evidence on every committed synthetic case, fixture and golden. This holds for the P7 v1 baseline, the P7 v2 corpus and the previous-release dual-run comparison, after moving M1-M16 to pence arithmetic.",
+      "proof_cmd": "python -m pytest -q -m dual_run",
+      "proof_output": "83 passed, 783 deselected in 17.57s"
+    },
+    {
+      "text": "The full suite, every invariants test, ruff, compileall and the offline evals under v1 and v2 all pass.",
+      "proof_cmd": "python -m pytest -q; python -m pytest -q -m invariants; ruff check src tests evals; python -m compileall -q src; python evals/run_evals.py; CMA_RULESET=v2 python evals/run_evals.py",
+      "proof_output": "866 passed in 66.25s\n143 passed, 723 deselected in 32.80s\nAll checks passed!\n(compileall: no output)\n9/9 memos fully grounded; model = fake; ruleset = v1\n9/9 memos fully grounded; model = fake; ruleset = v2"
+    }
+  ],
+  "files_changed": [
+    "src/cma/metrics.py",
+    "src/cma/cli.py",
+    "src/cma/mcp_server.py",
+    "tests/test_money_in.py",
+    "tests/test_previous_release.py"
+  ],
+  "notes": "Test edits: tests/test_previous_release.py compared every metric with the previous release. It now compares M1-M16 only, as its name says, because M17-M26 have no previous value. It also allows M16's method sentence to change beside M2's, because M16's denominator now also leaves out own-account transfers (design: M16 and M26 share one denominator). Neither the synthetic cases nor the example has an own-account credit, so no M16 value moves (the dual_run tier proves it).\n\nExit code: cma run uses exit 6 for a reconciliation refusal. Exit 2 is a refusal of the inputs, 3 a memo that cannot be approved, and 4 a model failure. Without the new handler the error was reported as a model failure (exit 4).\n\nR2 pence arithmetic now covers M1-M16 as well: sums, offsets, M3 (total * 1461 / (48 * days)), and the M4, M10, M15, M16 and M26 ratios, which are rounded half to even from the exact quotient. M10 on the cafe-stretched s3 golden sits on a rounding tie; exact rounding matches the baseline (1.959), while a float ratio of pence gave 1.9589. M5 is a balance and is reported as given.\n\nNot done here: the committed examples (examples/cafe_stretched.memo.md and .evidence.json) are not regenerated. No test reads M17-M26 from them, so they still show M1-M16 only. FakeLLM's sentence about M16 ('Unclassified money in') is not reworded. Both are consumer-trace items the design lists for the release, not for this task's requirements. Nothing is committed; the runner commits."
+}
