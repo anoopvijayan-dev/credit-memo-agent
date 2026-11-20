@@ -381,3 +381,31 @@ def test_a_decision_that_can_no_longer_be_applied_is_not_recorded(tmp_path, monk
     monkeypatch.undo()
     with sqlite_checkpointer(db) as saver:
         assert build(FakeLLM(), checkpointer=saver).get_state({"configurable": {"thread_id": "case-1"}}).interrupts
+
+
+def test_the_decision_is_applied_to_the_figures_the_reviewer_saw(tmp_path, monkeypatch):
+    # T04 review 24: resume worked out an earlier release's figures to show the reviewer,
+    # then the graph worked them out again (reopening the policy) after the answer, so a
+    # change in between lost the decision. They are written into the review before it is
+    # shown; afterwards there is nothing left to refresh.
+    import json
+
+    from cma import graph as g
+
+    db, _ = _pending(tmp_path)
+    _as_earlier_release(db)
+    seen = []
+    real = g.refreshed
+
+    def watched(s):
+        got = real(s)
+        seen.append(got)
+        return got
+
+    monkeypatch.setattr(g, "refreshed", watched)  # the graph's own refresh, after the CLI's
+    out = tmp_path / "memo.md"
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C", "--out", str(out)],
+                      input="y\n\n")
+    assert r.exit_code == 0, r.output
+    assert seen and all(x == {} for x in seen)  # nothing worked out again inside the graph
+    assert {m["id"] for m in json.loads((tmp_path / "memo.evidence.json").read_text())["metrics"]} >= NEW_MONEY_IN

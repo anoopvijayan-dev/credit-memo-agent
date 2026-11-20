@@ -148,7 +148,14 @@ def resume(
         except StaleReviewError as e:
             console.print(f"[red]Not resuming {thread}:[/red] {escape(str(e))}")
             raise typer.Exit(code=2) from e
-        state = {**snap.values, **update, "__interrupt__": snap.interrupts}
+        if update:
+            # Today's figures are written into the stored review before it is shown, so the
+            # decision is applied to exactly what the reviewer saw: nothing is read again after
+            # they answer (T04 review 24). The review returns to the reviewer as it was.
+            graph.update_state(cfg, {**update, "refreshed_for_review": True}, as_node="guard")
+            state = graph.invoke(None, cfg)
+        else:
+            state = {**snap.values, "__interrupt__": snap.interrupts}
         _review(graph, cfg, state, reviewer, False, out)
 
 

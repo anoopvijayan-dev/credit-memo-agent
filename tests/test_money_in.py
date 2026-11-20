@@ -832,3 +832,19 @@ def test_monzo_says_money_in_at_the_limit_before_an_unreadable_field(tmp_path):
         monzo.convert(src, tmp_path / "o.csv")
     assert "money in totals £10,000,000,000,000 or more" in str(e.value)
     assert "line 4: a field is too long to read" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_monzo_says_money_in_at_the_limit_before_any_later_bad_row(tmp_path):
+    """T04 review 24: a later row with an invalid date hid that money in among the rows
+    already read had reached the limit."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance\n"
+                   "tx_1,01/01/2026,09:00:00,Faster payment,ACME,9999999999999.99,GBP,9999999999999.99\n"
+                   "tx_2,02/01/2026,09:00:00,Faster payment,ACME,9999999999999.99,GBP,9999999999999.99\n"
+                   "tx_3,not a date,09:00:00,Faster payment,ACME,-1.00,GBP,1.00\n")
+    with pytest.raises(monzo.MonzoImportError) as e:
+        monzo.convert(src, tmp_path / "o.csv")
+    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "not a date" in str(e.value)

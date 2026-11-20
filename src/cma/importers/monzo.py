@@ -174,33 +174,42 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
     parsed = []
     skipped = 0
     seen: set[str] = set()
-    for i, r in raw_rows:
-        tid = (r.get("Transaction ID") or "").strip()
-        if not tid:
-            raise MonzoImportError(f"line {i}: empty Transaction ID")
-        if not SAFE_ID.match(tid):
-            raise MonzoImportError(f"line {i}: unexpected characters in Transaction ID {tid!r}")
-        if tid in seen:
-            raise MonzoImportError(f"line {i}: duplicate Transaction ID {tid}")
-        seen.add(tid)
-        currency = (r.get("Currency") or "GBP").strip().upper()
-        if currency and currency != "GBP":
-            skipped += 1
-            continue
-        d = _parse_date(r["Date"])
-        t = (r.get("Time") or "00:00:00").strip()
-        amount = _money(r["Amount"], "Amount", i)
-        bal = _money(r["Balance"], "Balance", i) if has_balance and (r.get("Balance") or "").strip() else None
-        refs = references(r.get("Notes and #tags"), r.get("Description"))
-        desc = describe(r.get("Type", ""), r.get("Name", ""), amount, refs)
-        parsed.append((d, t, tid, desc, amount, bal))
 
-    if unreadable is not None:  # after the records before it are checked (T04 review 22)
-        # Money in or out among them already at the limit is said too (T04 review 23).
+    def flows_before() -> str:
+        """Money in or out among the records read so far already at the limit: said with any
+        later problem, so a bad row or an unreadable field never hides it (T04 reviews 23-24)."""
         reached = flows_at_limit([a for *_, a, _b in parsed])
-        flows = (f"{' and '.join(reached)} {'total' if len(reached) > 1 else 'totals'} {AT_LIMIT} in the lines "
-                 "before it: no figure could be reported to the penny; ") if reached else ""
-        raise MonzoImportError(f"{src}: {flows}{unreadable}")
+        return (f"{' and '.join(reached)} {'total' if len(reached) > 1 else 'totals'} {AT_LIMIT} in the lines "
+                "before it: no figure could be reported to the penny; ") if reached else ""
+
+    try:
+        for i, r in raw_rows:
+            tid = (r.get("Transaction ID") or "").strip()
+            if not tid:
+                raise MonzoImportError(f"line {i}: empty Transaction ID")
+            if not SAFE_ID.match(tid):
+                raise MonzoImportError(f"line {i}: unexpected characters in Transaction ID {tid!r}")
+            if tid in seen:
+                raise MonzoImportError(f"line {i}: duplicate Transaction ID {tid}")
+            seen.add(tid)
+            currency = (r.get("Currency") or "GBP").strip().upper()
+            if currency and currency != "GBP":
+                skipped += 1
+                continue
+            d = _parse_date(r["Date"])
+            t = (r.get("Time") or "00:00:00").strip()
+            amount = _money(r["Amount"], "Amount", i)
+            bal = _money(r["Balance"], "Balance", i) if has_balance and (r.get("Balance") or "").strip() else None
+            refs = references(r.get("Notes and #tags"), r.get("Description"))
+            desc = describe(r.get("Type", ""), r.get("Name", ""), amount, refs)
+            parsed.append((d, t, tid, desc, amount, bal))
+    except MonzoImportError as e:
+        note = flows_before()
+        if not note:
+            raise
+        raise MonzoImportError(f"{note}{e}") from None
+    if unreadable is not None:  # after the records before it are checked (T04 review 22)
+        raise MonzoImportError(f"{src}: {flows_before()}{unreadable}")
     parsed.sort(key=lambda x: (x[0], x[1], x[2]))
     first = parsed[0]
     # Everything below is whole pence (T04 review 4).

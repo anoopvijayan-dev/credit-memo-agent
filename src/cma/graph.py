@@ -112,6 +112,9 @@ class MemoState(TypedDict, total=False):
     guard: GuardResult
     guard_feedback: str
     redrafts: int
+    # Set when `cma resume` has written today's figures into a review drafted by an earlier
+    # release, before showing it: the review goes on to the reviewer as it was (T04 review 24).
+    refreshed_for_review: bool
     review: ReviewDecision | None
     final_memo: str | None
 
@@ -331,7 +334,7 @@ def build(llm: LLM | None = None, checkpointer=None):
         return {"guard": g, "guard_feedback": feedback}
 
     def route_after_guard(s: MemoState) -> str:
-        if s["guard"].grounded or s.get("redrafts", 0) >= MAX_REDRAFTS:
+        if s["guard"].grounded or s.get("redrafts", 0) >= MAX_REDRAFTS or s.get("refreshed_for_review"):
             return "review"
         return "redraft"
 
