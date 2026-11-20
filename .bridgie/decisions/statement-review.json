@@ -2808,12 +2808,12 @@
         "Refuse only the end anchors ($, \\Z); keep ^ for wording a bank prints at the start of a line"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "Refuse at load a v2 pattern with an anchor (^, $, \\A or \\Z), naming the rule; the bank's code listed in code keeps its ^; say it in R4 in the next revision (design default; T03 adds one validator check before its review)",
+      "free_text": "Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Built in T03 (anchors refused on every v2 pattern but the bank's code).",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-20T03:47:50.828Z",
+      "effect": "recorded",
       "created_at": "2026-11-20T03:26:02.739Z"
     },
     {

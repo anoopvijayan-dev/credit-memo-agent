@@ -281,6 +281,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-20 D138 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-20 D134 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Both lock files and the log's bytes are re-checked before each step; a first append creates its empty head record and never renames over one (cd298cc). → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 - 2026-11-20 D135 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Rail and cash wording never hide each other inside a longer phrase; v2 patterns refuse lookarounds (78556a7). → task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03 [Anoop Vijayan]
+- 2026-11-20 D137 (question): Refuse at load a v2 pattern with an anchor (^, $, \A or \Z), naming the rule; the bank's code listed in code keeps its ^; say it in R4 in the next revision (design default; T03 adds one validator check before its review) — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Built in T03 (anchors refused on every v2 pattern but the bank's code). → recorded [Anoop Vijayan]
 
 ## Idea
 
