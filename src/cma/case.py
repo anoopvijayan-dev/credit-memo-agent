@@ -53,6 +53,7 @@ import hashlib
 import itertools
 import json
 import os
+import signal
 import tempfile
 import threading
 import time
@@ -862,7 +863,7 @@ class CaseLog:
         except OSError as e:
             raise SaveNotRecorded(f"{self.path}: the save could not be completed ({e.__class__.__name__}: "
                                   f"{e}); the save was not recorded") from e
-        except (SaveNotRecorded, SaveNotConfirmed, LogConflict, CaseLogBroken, GeneratorExit):
+        except (SaveNotRecorded, SaveNotConfirmed, LogConflict, CaseLogBroken, GeneratorExit, _SettledInterrupt):
             raise
         except BaseException as e:  # Ctrl-C after the line is still this save's report (review 32)
             # Anything else that stops a save once its line has started to reach the log (a
@@ -957,11 +958,11 @@ class CaseLog:
             # Before the rename over the log (R42, revision 13): the lock is the one taken,
             # the log has not grown and the head file still records what the check read, so
             # the repair never replaces a save made since it looked (T12 review 21).
-            self._require_lock_in_place()
             # The log's bytes, not only its length (revision 14): a log rewritten to the same
             # length since the check is not the one the repair read.
             if self._log_digest() != check.log_digest or _read_head(self.head_path, raise_os=True) != recorded:
                 raise LogConflict(check.head.position, check.head.position + 1)
+            self._require_lock_in_place()  # last, immediately before the rename (review 34)
 
         fd, tmp = _staging_file(self.path)
         try:
@@ -1040,10 +1041,12 @@ class CaseLog:
 
             def before() -> None:
                 stage[0] = "checks"
-                self._require_lock_in_place()
                 if was is not None and _read_head(self.head_path, raise_os=True) != was:
                     raise SaveNotRecorded(f"{self.path}: the head file changed while this save was "
                                           "being recorded; the save was not recorded")
+                # The lock last, immediately before the rename, after every read the step
+                # makes (T12 review 34).
+                self._require_lock_in_place()
                 stage[0] = "rename"
             _replace(tmp, self.head_path, before=before)
             self._head_renamed = True
@@ -1099,6 +1102,10 @@ class CaseLog:
         return entry
 
     def _publish(self, recorded: list[str], entry: Entry) -> None:
+        with _interrupts_deferred():
+            self._publish_now(recorded, entry)
+
+    def _publish_now(self, recorded: list[str], entry: Entry) -> None:
         """Record `entry` after the `recorded` entries, then confirm the log as read now holds
         it: a writer is told its save was recorded only if an intact log holds the entry at
         its position, so a log that reads intact never lacks a save reported as recorded
@@ -1182,6 +1189,35 @@ class CaseLog:
 # (no delete sharing), so a rename that meets one is retried briefly, not failed mid-append.
 REPLACE_RETRIES = 40
 REPLACE_PAUSE = 0.025
+
+
+class _SettledInterrupt(KeyboardInterrupt):
+    """A Ctrl-C held off during a save that then confirmed: delivered as it is, since the
+    save's entry is recorded and the log settled."""
+
+
+@contextmanager
+def _interrupts_deferred() -> Iterator[None]:
+    """Hold Ctrl-C off while a save publishes its head record, reads it back and, if need
+    be, takes it back: an interrupt between finding the read-back failed and starting the
+    take-back would otherwise leave a save recorded that was never confirmed (T12 review 34).
+    A Ctrl-C that arrives meanwhile is delivered once the log is settled, unless the save
+    is already reporting its own answer. Only the main thread receives signals, and only a
+    default handler is replaced."""
+    if (threading.current_thread() is not threading.main_thread()
+            or signal.getsignal(signal.SIGINT) is not signal.default_int_handler):
+        yield
+        return
+    pending: list[object] = []
+    previous = signal.signal(signal.SIGINT, lambda signum, frame: pending.append(signum))
+    try:
+        yield
+    except BaseException:
+        signal.signal(signal.SIGINT, previous)
+        raise  # the save's own answer stands
+    signal.signal(signal.SIGINT, previous)
+    if pending:
+        raise _SettledInterrupt  # the save is confirmed and the log settled; the stop stands
 
 
 def _staging_file(target: Path) -> tuple[int, Path]:

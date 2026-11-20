@@ -8,6 +8,7 @@ kind of tamper exhaustively, which is the property over all logs of those sizes.
 import contextlib
 import json
 import os
+import signal
 import threading
 import time
 
@@ -2838,3 +2839,69 @@ def test_the_take_back_runs_for_any_read_back_that_does_not_confirm(tmp_path, mo
     monkeypatch.undo()
     check = case.CaseLog(log.path).verify()
     assert check.torn and check.first_bad == 3
+
+
+@pytest.mark.invariants
+def test_p15_a_lock_replaced_during_the_head_check_stops_the_rename(tmp_path, monkeypatch):
+    """T12 review 34: the lock is re-checked last, after the head record is read, so a lock
+    replaced during that read stops the head record's rename."""
+    log = _log(tmp_path, 2)
+    real = case._read_head
+
+    def head(path, *, raise_os=False):
+        got = real(path, raise_os=raise_os)
+        if raise_os and isinstance(got, list) and len(got) == 2:  # the publish's own check
+            _replace_file(log.lock_path)
+        return got
+
+    monkeypatch.setattr(case, "_read_head", head)
+    with pytest.raises(case.SaveNotRecorded):
+        log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    assert case._read_head(log.head_path) == [json.loads(x)["hash"] for x in _lines(log)[:2]]
+
+
+@pytest.mark.invariants
+@pytest.mark.skipif(not hasattr(signal, "SIGINT") or os.name == "nt", reason="sends SIGINT to itself")
+def test_ctrl_c_just_before_the_take_back_is_held_off_until_it_is_done(tmp_path, monkeypatch):
+    """T12 review 34 / P15: Ctrl-C that lands between a failed read-back and the take-back
+    waits until the take-back is done, so the save's answer is not recorded and the head
+    no longer lists its entry."""
+    log = _log(tmp_path, 2)
+    prefix = log.path.read_bytes()
+    real_head, real_take_back = case.CaseLog._write_head, case.CaseLog._take_back
+
+    def head(self, hashes, **kw):
+        real_head(self, hashes, **kw)
+        if len(hashes) == 3:
+            self.path.write_bytes(prefix)  # the read-back will fail
+
+    def take_back(self, recorded, entry, failure):
+        os.kill(os.getpid(), signal.SIGINT)  # Ctrl-C at the door of the take-back
+        return real_take_back(self, recorded, entry, failure)
+
+    monkeypatch.setattr(case.CaseLog, "_write_head", head)
+    monkeypatch.setattr(case.CaseLog, "_take_back", take_back)
+    with pytest.raises(case.SaveNotRecorded):
+        log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    assert case._read_head(log.head_path) == [json.loads(x)["hash"] for x in _lines(log)[:2]]
+
+
+@pytest.mark.invariants
+@pytest.mark.skipif(not hasattr(signal, "SIGINT") or os.name == "nt", reason="sends SIGINT to itself")
+def test_ctrl_c_during_a_save_that_confirms_is_delivered_once_the_log_is_settled(tmp_path, monkeypatch):
+    log = _log(tmp_path, 2)
+    real = case._check
+
+    def check(raw, recorded):
+        if isinstance(recorded, list) and len(recorded) == 3:
+            os.kill(os.getpid(), signal.SIGINT)
+        return real(raw, recorded)
+
+    monkeypatch.setattr(case, "_check", check)
+    with pytest.raises(KeyboardInterrupt):
+        log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    got = case.CaseLog(log.path).verify()
+    assert got.ok and got.head.position == 3  # recorded, and the log consistent
