@@ -1,0 +1,54 @@
+```json
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed HEAD ba46921 against .bridgie/specs/statement-review/requirements.md:249. Canonical UTF-8 hashing, UTC timestamps, head comparison, and first-bad-entry and torn-tail detection are at src/cma/case.py:177–349. Holder recognition across path aliases, steady reads, retry exhaustion, and the sign-off guard are at src/cma/case.py:457–681. Writer exclusion, inherited-handle refusal, nested-save refusal, expected-position conflicts, and save rechecks are at src/cma/case.py:685–1109. Publication, read-back, and take-back are at src/cma/case.py:1111–1196. Reviewed duplicate submission, competing writers, empty and malformed logs, deep JSON and Unicode, UTC, partial failure, filesystem permissions, case-folder isolation, and the CLI consumer at src/cma/cli.py:309–338. The diff adds no currency arithmetic or database migration. Runner logs confirm 498 full-suite passes, 181 invariant passes, and 13 contract passes, including the named CLI tamper, rebuilt-chain, torn-tail, and duplicate-submit cases. The lock replacement and deep JSON findings below fail P15. No tests were run during this review.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 482,
+      "criterion": "P15",
+      "claim": "A holder can accept a read after the gate it relies on has been replaced before the post-read validation completes. Checking the case lock last closes the case-lock schedule from the previous review but leaves the gate sample stale.",
+      "repro": "Hold log.writer() and call verify(). On the second stat of the gate, capture its original stat result, rename a new gate over it, then return the captured result. Leave the case lock unchanged. The post-read check accepts both identities and returns the original read without retrying. The existing test at tests/test_case_log.py:2967 replaces the case lock during the gate stat and does not cover replacement of the gate itself."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 159,
+      "criterion": "P15",
+      "claim": "On supported Python 3.11, a reader can raise RecursionError while reporting a valid recorded prefix during a save. The held-reader path serializes each validated entry via dataclasses.asdict, whose recursive traversal of nested lists consumes more stack than the JSON encoder and decoder used to accept the entry.",
+      "repro": "On CPython 3.11 with its default recursion limit, append a payload containing about 650 nested one-element lists under a dictionary key. Then hold the case in a different thread while a fresh CaseLog verifies it. The regular append and free-case verification can process the payload, but the steady held-reader path reaches as_recorded() and raises during _line() at src/cma/case.py:187 instead of returning the recorded prefix as being saved."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 333,
+      "criterion": "P15",
+      "claim": "The producer's CLI contract claim gives exit 0 and 'appending' for a held torn tail. The implementation and passing contract test expect exit 4 and 'being saved', which is consistent with P15.",
+      "repro": "See the runner's passing test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break in contracts-4.log. The test at tests/test_case_log.py:1340 holds the case over a torn tail and asserts exit 4."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1214,
+      "criterion": "P15",
+      "claim": "The producer's claim that the passing stress test forces two commits during every read retry and checks an exact contiguous prefix is not proven. The test samples a background writer without coordinating commits or requiring an in-progress result.",
+      "repro": "Inspect the stress test at tests/test_case_log.py:1214. It makes 40 reads and checks only that none names a bad entry and that the final log verifies. To prove the claimed schedule, add a test that synchronizes the commits with each attempted read, holds the writer through the fallback, and asserts the result and sequence numbers. Run python -m pytest -v tests/test_case_log.py -k forced_commits_on_each_retry after adding that test."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "gpt-6"
+  }
+}
+```
