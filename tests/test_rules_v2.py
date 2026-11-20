@@ -2042,3 +2042,15 @@ def test_an_invalid_bank_code_flag_does_not_excuse_an_anchor():
     with pytest.raises(RulesetError) as e:
         validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")
     assert "rule 2 (fake): pattern uses an anchor" in str(e.value) and "bank_code is only" in str(e.value)
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("other", [{"unless": "("}, {"names": [3]}])
+def test_a_fault_in_another_field_never_hides_an_unusable_pattern(other):
+    """T03 review 29 / R4: (?i)ACME compiles alone but fails in the span matcher; it is named
+    whether the rule's unless fails to compile or its names are malformed."""
+    rule = {"id": "r", "pattern": "(?i)ACME", "direction": "in", "category": "cash_deposit",
+            "stage": "names", **other}
+    with pytest.raises(RulesetError) as e:
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")
+    assert "rule 2 (r): its pattern cannot be used" in str(e.value)

@@ -551,17 +551,36 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
         # Each part is built when its own fields are well typed, so a malformed exception
         # never hides a fault in the rule's own matcher, nor the other way (review 28).
         parts: list[tuple[str, Callable[[], object]]] = []
-        if _well_typed_text(r) and not any(p.startswith(where) and "compile" in p for p in problems):
-            parts.append(("its pattern", lambda r=r: (_rule_pattern(r, frozen), _span_matchers(r, frozen),
-                                                       _longest_sources(r, frozen))))
+
+        def matchers(sub: dict) -> tuple:
+            return _rule_pattern(sub, frozen), _span_matchers(sub, frozen), _longest_sources(sub, frozen)
+
+        # The pattern and the names are each built alone, whatever is wrong with the other
+        # or with the rule's exceptions, so no field's fault hides another's (review 29);
+        # then together, as the loader joins them, when both build alone.
+        own_ok = isinstance(r.get("pattern"), str) and bool(r["pattern"]) and not _compile_problem(r["pattern"])
+        names_ok = "names" in r and _well_typed_text({"names": r["names"]})
+        if own_ok:
+            parts.append(("its pattern", lambda r=r: matchers({"pattern": r["pattern"]})))
+        if names_ok:
+            parts.append(("its names", lambda r=r: matchers({"names": r["names"]})))
+        if own_ok and names_ok:
+            parts.append(("its pattern and names together",
+                          lambda r=r: matchers({"pattern": r["pattern"], "names": r["names"]})))
         for key in ("unless", "requires"):
             if isinstance(r.get(key), str) and r[key] and not _compile_problem(r[key]):
                 parts.append((f"its {key}", lambda r=r, key=key: _side_pattern(r[key], frozen)))
+        failed = False
         for what, build in parts:
+            if failed and what == "its pattern and names together":
+                continue  # already named by the part that fails alone
             try:
                 build()
             except (re.error, OverflowError, RecursionError, MemoryError, TypeError, ValueError) as e:
-                problems.append(f"{where}: {what} cannot be used ({e.__class__.__name__}: {e})")
+                failed = failed or what in ("its pattern", "its names")
+                if not (what == "its pattern and names together"
+                        and any(p.startswith(where) and "do not compile together" in p for p in problems)):
+                    problems.append(f"{where}: {what} cannot be used ({e.__class__.__name__}: {e})")
     problems += _category_order_problems(data, rules)
     if problems:
         raise RulesetError(f"{source}: " + "; ".join(problems))
