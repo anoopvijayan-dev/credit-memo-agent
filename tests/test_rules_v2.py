@@ -1809,3 +1809,27 @@ def test_a_v2_rule_cannot_take_an_id_the_categoriser_uses_for_its_own_provenance
     rule = {**GOOD, "id": rule_id, "stage": "names"}
     with pytest.raises(RulesetError, match="reserved"):
         validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_cash_wording_inside_a_longer_rail_phrase_is_not_hidden():
+    """T03 review 19 / R4: a table edit listing FPS CASH DEPOSIT on the rail list must not
+    hide the cash wording inside it; the credit stays ambiguous."""
+    rail = {"id": "rail", "names": ["FPS CASH DEPOSIT"], "direction": "in", "protected": True,
+            "stage": "line_type"}
+    cash = {"id": "cash", "names": ["CASH DEPOSIT"], "direction": "in", "category": "cash_deposit",
+            "stage": "names"}
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rail, cash]}, "v2", "t", "0")
+    assert classify(_t("FPS CASH DEPOSIT", 200.0), rs) == (C.OTHER, "v2:conflict:rail+cash")
+
+
+@pytest.mark.contracts
+def test_the_round_trip_pass_never_undoes_an_override_whatever_its_reference_reads():
+    """T03 review 19: overridden lines are named by id; an override whose reference looks
+    like the table's own provenance is still a person's decision."""
+    lines = [_t("FPS DEBIT ACME LTD", -500.0, "out"), _t("FPS CREDIT ACME LTD INV 12", 500.0, "in")]
+    s = Statement(account_name="a", transactions=lines)
+    v2 = load_ruleset("v2")
+    categorise.categorise(s, v2, overrides={"in": LineOverride(C.REVENUE_TRANSFER, "v2:invoice_transfer")})
+    got = next(t for t in s.transactions if t.id == "in")
+    assert (got.category, got.rule_id) == (C.REVENUE_TRANSFER, "v2:invoice_transfer")

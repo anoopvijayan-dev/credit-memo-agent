@@ -69,7 +69,7 @@ import re._compiler as _sre_compile  # to test what one parsed element of a patt
 import re._parser as _sre_parse  # the parser re uses; read only, to find back-references
 import sys
 import unicodedata
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib import resources
@@ -747,7 +747,11 @@ def credit_matches(ruleset: Ruleset, description: str, amount: float) -> list[Ru
     matched = [(r, _spans(r, desc)) for r in hits]
 
     def inside_longer(rule: Rule, spans: list[tuple[int, int]]) -> bool:
-        others = [o for other, ss in matched if other is not rule for o in ss]
+        # Cash wording is never hidden inside a payment-method cue's phrase: a rail with
+        # cash wording is ambiguous by R4 whatever list the rail phrase is on (review 19).
+        others = [o for other, ss in matched if other is not rule
+                  and not (rule.category is Category.CASH_DEPOSIT and other.category is None
+                           and other.stage == "line_type") for o in ss]
         return bool(spans) and all(any(a <= s and e <= b and b - a > e - s for a, b in others) for s, e in spans)
 
     # The bank's own code settles the line type before the longer-phrase rule (D101): it is
@@ -941,7 +945,8 @@ def link_reversals(statement: Statement) -> Statement:
 OUTGOING_TRANSFER = re.compile(r"^(?:FPS DEBIT|BACS DEBIT|TFR)\b")
 
 
-def unmark_round_trips(statement: Statement, ruleset_id: str | None = None) -> Statement:
+def unmark_round_trips(statement: Statement, ruleset_id: str | None = None, *,
+                       overridden: Collection[str] = ()) -> Statement:
     """A "customer" the applicant also sends transfers to is not counted as revenue.
 
     Money sent out by transfer and received back with an invoice reference is the
@@ -950,12 +955,16 @@ def unmark_round_trips(statement: Statement, ruleset_id: str | None = None) -> S
     understated revenue, which a person can add back; the alternative is gameable.
 
     Only a category the built-in table set is undone: a person's override, a profile name
-    or a firm rule ranks above the table and is left alone.
+    or a firm rule ranks above the table and is left alone. Overridden lines are named by
+    id (`overridden`), not inferred from their provenance text, which an override's own
+    reference could imitate (T03 review 19).
     """
+    overridden = set(overridden)
     paid_out = {counterparty(t.description) for t in statement.transactions
                 if t.amount < 0 and OUTGOING_TRANSFER.search(t.description.upper())}
     for t in statement.transactions:
-        set_by_table = ruleset_id is None or (t.rule_id or "").startswith(f"{ruleset_id}:")
+        set_by_table = t.id not in overridden and (
+            ruleset_id is None or (t.rule_id or "").startswith(f"{ruleset_id}:"))
         if t.category == Category.REVENUE_TRANSFER and counterparty(t.description) in paid_out and set_by_table:
             t.category = Category.OTHER
             if ruleset_id is not None:
@@ -977,4 +986,4 @@ def categorise(
         t.category, t.rule_id = classify(t, ruleset, override=overrides.get(t.id), profile=profile,
                                          firm_rules=firm_rules)
         t.reverses = None
-    return link_reversals(unmark_round_trips(statement, ruleset.id))
+    return link_reversals(unmark_round_trips(statement, ruleset.id, overridden=overrides.keys()))
