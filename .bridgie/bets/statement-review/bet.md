@@ -344,6 +344,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-20 D193 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-20 D190 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Each lock-file check looks at the first file again last; the residual window is stated in R43/P15 (523c5df). → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 - 2026-11-20 D191 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Only a matching digest exempts v1; repeated rules lists and non-compiling repeated values named (4c017d4). → task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03 [Anoop Vijayan]
+- 2026-11-20 D194 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Any error after the line lands is the save own report; an unchecked save is refused as unchecked (review 41). → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 
 ## Idea
 
