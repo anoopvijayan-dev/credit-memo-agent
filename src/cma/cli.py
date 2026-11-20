@@ -12,6 +12,7 @@ import typer
 from langgraph.types import Command
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.table import Table
 
 from . import guard as grd
@@ -20,7 +21,7 @@ from .categorise import RulesetError, active_ruleset
 from .graph import build, evidence_record, ruleset_used, sqlite_checkpointer
 from .ingest import StatementError
 from .llm import get_llm
-from .metrics import ReconciliationError
+from .metrics import AmountError, ReconciliationError
 from .policy import PolicyError
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -92,11 +93,12 @@ def run(
                  "vat_stagger": vat_stagger},
                 cfg,
             )
-        except (StatementError, PolicyError, RulesetError) as e:
-            console.print(f"[red]Refused.[/red] {e}")
+        except (StatementError, PolicyError, RulesetError, AmountError) as e:
+            console.print(f"[red]Refused.[/red] {escape(str(e))}")
             raise typer.Exit(code=2) from e
         except ReconciliationError as e:  # R3: no figures for a case whose buckets do not add up
-            console.print(f"[red]Refused, no figures shown.[/red] {e}")
+            # Line ids come from the statement, so they are escaped, never read as markup.
+            console.print(f"[red]Refused, no figures shown.[/red] {escape(str(e))}")
             raise typer.Exit(code=6) from e
         except Exception as e:  # the model provider: network, auth, cut-off reply
             console.print(f"[red]The model call failed[/red] ({type(e).__name__}): {e}")

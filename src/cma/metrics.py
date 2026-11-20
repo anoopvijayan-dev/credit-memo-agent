@@ -7,7 +7,10 @@ missing figure means (see `when_missing` in the policy file), not this module.
 
 Money is added up in integer pence (R2): each amount is turned into whole pence once,
 every sum and comparison is of pence, and a figure is turned back into pounds only when
-it is reported. An amount with a fraction of a penny is refused, never rounded.
+it is reported. An amount with a fraction of a penny is refused, never rounded. Balances
+are compared in pence too. An amount, a balance or a figure of MAX_PENCE or more is refused:
+below it a figure has at most 15 significant digits, so the pounds a figure is reported in
+print as exactly the pence it was computed from, and reported buckets add up as printed.
 
 Money in (R1, R3): every credit is in exactly one bucket (models.CREDIT_BUCKET), M2 is
 trading receipts and M19-M25 the other seven buckets, and together they make M17 to the
@@ -68,6 +71,16 @@ BUCKET_METRICS: dict[Bucket, tuple[str, str, str]] = {
 NOT_IN_SHARE = {Category.LOAN_DRAWDOWN, Category.RETURNED_DD, Category.OWN_ACCOUNT_TRANSFER}
 
 
+# 10**15 pence (£10 trillion): every whole number of pence below it has at most 15
+# significant digits, which a binary float holds and prints back exactly.
+MAX_PENCE = 10**15
+
+
+class AmountError(ValueError):
+    """An amount, balance or figure that cannot be counted in whole pence or reported
+    exactly in pounds; nothing is computed from the statement."""
+
+
 class ReconciliationError(ValueError):
     """The money-in buckets do not sum to total money in, or a credit is in no bucket or
     in more than one (R3). Carries the difference in pence and the ids of the lines."""
@@ -82,15 +95,26 @@ class ReconciliationError(ValueError):
         )
 
 
-def pence(t: Transaction) -> int:
-    """The line's amount in whole pence. A fraction of a penny is refused, never rounded."""
+def _whole_pence(v: float, what: str) -> int:
     try:
-        p = Decimal(repr(t.amount)) * 100
+        p = Decimal(repr(v)) * 100
     except InvalidOperation:
         p = None
     if p is None or not p.is_finite() or p != p.to_integral_value():
-        raise ValueError(f"line {t.id}: amount is not a whole number of pence")
+        raise AmountError(f"{what} is not a whole number of pence")
+    if abs(p) >= MAX_PENCE:
+        raise AmountError(f"{what} is too large to count to the penny (the limit is {MAX_PENCE} pence)")
     return int(p)
+
+
+def pence(t: Transaction) -> int:
+    """The line's amount in whole pence. A fraction of a penny is refused, never rounded."""
+    return _whole_pence(t.amount, f"line {t.id}: amount")
+
+
+def balance_pence(t: Transaction) -> int:
+    """The line's running balance in whole pence."""
+    return _whole_pence(t.balance, f"line {t.id}: balance")
 
 
 def _ratio(num: int | float, den: int | float, places: int, scale: int = 1) -> float:
@@ -100,9 +124,13 @@ def _ratio(num: int | float, den: int | float, places: int, scale: int = 1) -> f
     return float(q.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_EVEN))
 
 
-def _gbp(p: int | float) -> float:
-    """Pence back to pounds, for reporting only."""
-    return round(p / 100, 2)
+def _gbp(p: int) -> float:
+    """Pence back to pounds, for reporting only. Below MAX_PENCE the quotient of two ints
+    is the float nearest the exact pounds, and it prints as those pounds exactly."""
+    if abs(p) >= MAX_PENCE:
+        raise AmountError(f"a figure of {p} pence is too large to report to the penny "
+                          f"(the limit is {MAX_PENCE} pence)")
+    return p / 100
 
 
 def _month(d: date) -> str:
@@ -161,18 +189,18 @@ def vat_due_dates(stagger: int, start: date, end: date) -> list[tuple[date, date
     return out
 
 
-def end_of_day_balances(txns: list[Transaction]) -> dict[date, tuple[float, str]]:
-    """Closing balance for every calendar day from the first transaction to the last,
-    carried forward over days with no transactions, with the id of the line that set it."""
+def end_of_day_balances(txns: list[Transaction]) -> dict[date, tuple[int, str]]:
+    """Closing balance in pence for every calendar day from the first transaction to the
+    last, carried forward over days with no transactions, with the id of the line that set it."""
     last: dict[date, Transaction] = {}
     for t in txns:  # file order; the last line of a day sets its closing balance
         last[t.date] = t
-    out: dict[date, tuple[float, str]] = {}
+    out: dict[date, tuple[int, str]] = {}
     d, end = min(last), max(last)
     current = last[d]
     while d <= end:
         current = last.get(d, current)
-        out[d] = (current.balance, current.id)
+        out[d] = (balance_pence(current), current.id)
         d += timedelta(days=1)
     return out
 
@@ -185,8 +213,9 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
         raise ValueError("vat_stagger must be 1, 2 or 3")
 
     by_id = statement.by_id()
-    for t in txns:
-        pence(t)  # refuse a fraction of a penny before any figure is computed
+    for t in txns:  # refuse a fraction of a penny before any figure is computed
+        pence(t)
+        balance_pence(t)
 
     def total(lines) -> int:
         return sum(pence(t) for t in lines)
@@ -225,7 +254,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
             trend_note = "No revenue in the earliest quarter of whole months, so there is no base to compare with."
 
     # Balances
-    lowest = min(txns, key=lambda t: t.balance)
+    lowest = min(txns, key=balance_pence)
     eod = end_of_day_balances(txns)
     overdrawn = sorted(d for d, (bal, _) in eod.items() if bal < 0)
     pos = {t.id: i for i, t in enumerate(txns)}
@@ -341,7 +370,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
     unclassified_share = _ratio(total(unclassified), total_in, 2, 100) if total_in else None
     unexplained_share = _ratio(total(unexplained), total_in, 2, 100) if total_in else None
 
-    def g(p: int | float | None) -> float | None:
+    def g(p: int | None) -> float | None:
         return None if p is None else _gbp(p)
 
     return [
@@ -357,7 +386,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
                evidence=[t.id for t in rev]),
         Metric(id="M4", name="Revenue trend", value=trend, unit="pct", method=trend_note,
                evidence=[t.id for t in rev if _month(t.date) in whole[:3] + whole[-3:]] if trend is not None else []),
-        Metric(id="M5", name="Lowest balance", value=round(lowest.balance, 2), unit="GBP",
+        Metric(id="M5", name="Lowest balance", value=_gbp(balance_pence(lowest)), unit="GBP",
                method="Lowest running balance after any transaction in the period.", evidence=[lowest.id]),
         Metric(id="M6", name="Days overdrawn", value=len(overdrawn), unit="days",
                method="Calendar days that closed overdrawn, carrying the balance over days with no transactions.",

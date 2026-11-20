@@ -21,7 +21,10 @@ from cma.models import Category, Statement, Transaction
 CASES = [(a, p) for a in synth.ARCHETYPES for p in synth.PROFILES]
 BUCKETS = ["M2", "M19", "M20", "M21", "M22", "M23", "M24", "M25"]
 SUMS = ["M2", "M17", "M18", "M19", "M20", "M21", "M22", "M23", "M24", "M25"]
-# Debt service, drawings, VAT and PAYE are reported as positive outflows of negative lines.
+# Debt service, drawings, VAT and PAYE keep the sign they had before T04 (R10, and the
+# frozen P7 baseline): positive figures for money out, so their lines' signed total is the
+# figure negated. M9 (a net whose round-trip offset is capped) is not checked here: making
+# either meet P2 literally changes M1-M16 values or evidence that P7's baseline pins.
 OUTFLOW_SUMS = ["M8", "M11", "M12", "M14"]
 
 DESCRIPTIONS = [
@@ -34,7 +37,10 @@ DESCRIPTIONS = [
 
 
 def _pence(v: float) -> int:
-    return int(Decimal(repr(v)) * 100)
+    """A reported figure read as the decimal it prints as, in pence (never via float sums)."""
+    p = Decimal(repr(v)) * 100
+    assert p == p.to_integral_value(), v
+    return int(p)
 
 
 def _by_id(s: Statement) -> dict:
@@ -206,3 +212,93 @@ def test_mcp_compute_metrics_carries_m17_to_m26(tmp_path, monkeypatch):
     got = {m["id"]: m for m in mcp_server.compute_metrics("cafe.csv", vat_stagger=3)}
     assert [f"M{i}" for i in range(1, 27)] == list(got)
     assert got["M17"]["unit"] == "GBP" and got["M26"]["unit"] == "pct" and got["M17"]["evidence"]
+
+
+@pytest.mark.invariants
+def test_p1_reported_gbp_figures_reconcile_as_printed_for_large_amounts():
+    # The reported pounds are read back as the decimals they print as: a float conversion
+    # that lost a penny would show here (verify-127, major 1).
+    rng = random.Random(7)
+    for _ in range(300):
+        cats = [Category.REVENUE_CARD, Category.OTHER, Category.DIRECTOR_FUNDING, Category.CASH_DEPOSIT]
+        lines = [_line(f"L{i}", "x", float(Decimal(rng.randint(1, 10**13)) / 100), rng.choice(cats))
+                 for i in range(1, rng.randint(2, 9))]
+        if sum(_pence(t.amount) for t in lines) >= metrics.MAX_PENCE:
+            continue
+        m = _by_id(Statement(account_name="x", transactions=lines))
+        assert sum(_pence(m[b].value) for b in BUCKETS) == _pence(m["M17"].value)
+        assert _pence(m["M17"].value) == sum(_pence(t.amount) for t in lines)
+
+
+def test_an_amount_too_large_to_report_to_the_penny_is_refused():
+    s = Statement(account_name="x", transactions=[
+        _line("L1", "a", 100000000000000.0, Category.REVENUE_CARD), _line("L2", "b", 0.01, Category.OTHER)])
+    with pytest.raises(metrics.AmountError, match="L1"):
+        metrics.compute(s)
+
+
+def test_figures_whose_sum_is_too_large_to_report_to_the_penny_are_refused():
+    s = Statement(account_name="x", transactions=[
+        _line("L1", "a", 9999999999999.99, Category.REVENUE_CARD), _line("L2", "b", 0.01, Category.REVENUE_CARD)])
+    with pytest.raises(metrics.AmountError, match="too large"):
+        metrics.compute(s)
+
+
+def test_lowest_balance_and_overdrawn_days_are_compared_in_pence():
+    # 0.1 + 0.2 - 0.3 is not 0 in binary float; in pence it is. The balance that closes the
+    # day at -0.01 is overdrawn and M5 is exactly -0.01 (verify-127, major 2).
+    s = Statement(account_name="x", transactions=[
+        Transaction(id="L1", date=date(2026, 1, 1), description="a", amount=0.3, balance=0.3,
+                    category=Category.OTHER),
+        Transaction(id="L2", date=date(2026, 1, 2), description="b", amount=-0.31, balance=-0.01,
+                    category=Category.SUPPLIER),
+        Transaction(id="L3", date=date(2026, 1, 3), description="c", amount=0.01, balance=0.0,
+                    category=Category.OTHER),
+    ])
+    m = _by_id(s)
+    assert m["M5"].value == -0.01 and m["M5"].evidence == ["L2"]
+    assert m["M6"].value == 1 and m["M6"].evidence == ["L2"]
+
+
+@pytest.mark.contracts
+def test_cma_run_refusal_shows_a_line_id_that_looks_like_markup(tmp_path, monkeypatch):
+    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
+    csv_path, _ = synth.write(rows, truth, tmp_path)
+    real = categorise.categorise
+
+    def broken(statement, *a, **k):
+        out = real(statement, *a, **k)
+        credit = next(t for t in out.transactions if t.amount > 0)
+        credit.id, credit.category = "[red]", Category.RENT  # a valid CSV id that Rich would eat
+        return out
+
+    monkeypatch.setattr(categorise, "categorise", broken)
+    r = CliRunner().invoke(app, ["run", str(csv_path), "--yes", "--reviewer", "A",
+                                 "--out", str(tmp_path / "memo.md")])
+    assert r.exit_code == 6, r.output
+    assert "[red]" in r.output
+
+
+@pytest.mark.contracts
+def test_mcp_compute_metrics_refuses_buckets_that_do_not_reconcile(tmp_path, monkeypatch):
+    pytest.importorskip("mcp")
+    from cma import mcp_server
+
+    rows, truth = synth.generate("cafe", "good", end=date(2026, 9, 30))
+    synth.write(rows, truth, tmp_path / "data", stem="cafe")
+    monkeypatch.setenv("CMA_DATA_DIR", str(tmp_path / "data"))
+    real = categorise.categorise
+
+    def broken(statement, *a, **k):
+        out = real(statement, *a, **k)
+        credit = next(t for t in out.transactions if t.amount > 0)
+        credit.category = Category.RENT
+        broken.line = credit.id, _pence(credit.amount)
+        return out
+
+    monkeypatch.setattr(categorise, "categorise", broken)
+    with pytest.raises(ValueError) as e:
+        mcp_server.compute_metrics("cafe.csv", vat_stagger=3)
+    line_id, pence = broken.line
+    assert isinstance(e.value, metrics.ReconciliationError)
+    assert f"{pence} pence" in str(e.value) and line_id in str(e.value)
