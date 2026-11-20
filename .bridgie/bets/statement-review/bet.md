@@ -387,6 +387,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-20 D231 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-20 D228 (unblock): take over manually — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended option. T04 at 74ad8af (review 5). → task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04 [Anoop Vijayan]
 - 2026-11-20 D230 (question): Whole pounds, as the memo's prose; the record beside them has the pence (design default; R2 as revision 26 writes it) — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward). Recommended option. → recorded [Anoop Vijayan]
+- 2026-11-20 D232 (unblock): take over manually — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward). T04 at 3886917 (review 6). → task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04 [Anoop Vijayan]
 
 ## Idea
 
