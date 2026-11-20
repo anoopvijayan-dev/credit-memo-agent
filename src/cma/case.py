@@ -862,9 +862,9 @@ class CaseLog:
         except OSError as e:
             raise SaveNotRecorded(f"{self.path}: the save could not be completed ({e.__class__.__name__}: "
                                   f"{e}); the save was not recorded") from e
-        except (SaveNotRecorded, SaveNotConfirmed, LogConflict, CaseLogBroken):
+        except (SaveNotRecorded, SaveNotConfirmed, LogConflict, CaseLogBroken, GeneratorExit):
             raise
-        except Exception as e:
+        except BaseException as e:  # Ctrl-C after the line is still this save's report (review 32)
             # Anything else that stops a save once its line has started to reach the log (a
             # nested save refused from a signal handler, say) is still this save's report:
             # never another operation's words, which may say nothing was written (review 29).
@@ -1135,21 +1135,25 @@ class CaseLog:
             held = now.entries[entry.seq - 1].hash if now.ok and len(now.entries) >= entry.seq else None
         except OSError as e:  # the read-back itself failed: named, never read as a change (D159)
             held, failure = None, f"the log could not be read back ({e.__class__.__name__}: {e})"
-        except Exception as e:  # interrupted (a nested save refused): still take back (review 30)
+        except BaseException as e:  # interrupted, Ctrl-C included: still take back (reviews 30, 32)
+            if isinstance(e, GeneratorExit):
+                raise
             held, failure = None, f"the read-back was interrupted ({e.__class__.__name__})"
         if held != entry.hash:
             # Not told recorded, so not left recorded either (P15): the head record goes
             # back to the entries before this one, if it is still the one this save
             # published, and the entry is again past the recorded entries, as a crash leaves
             # it (T12 review 23). If the head record changed meanwhile, it is left alone.
-            refused: Exception | None = None
+            refused: BaseException | None = None
             try:
                 # Its own record only (`was`), and like every head rename only while both
                 # lock files are still the ones taken: under interference a take-back could
                 # otherwise replace a head another writer has since published and been told
                 # is recorded (T12 review 25). Refused, the save is not confirmed (D143).
                 self._write_head(recorded, was=[*recorded, entry.hash])
-            except Exception as e:  # whatever stops it, the answer is not confirmed (review 31)
+            except BaseException as e:  # whatever stops it, Ctrl-C included: not confirmed (31, 32)
+                if isinstance(e, GeneratorExit):
+                    raise
                 refused = e
             if refused is not None:
                 # One answer per report (D164): what stopped the take-back is named in the

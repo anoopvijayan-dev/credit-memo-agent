@@ -2768,3 +2768,32 @@ def test_a_take_back_stopped_by_any_exception_is_not_confirmed(tmp_path, monkeyp
     monkeypatch.setattr(case, "_read_head", head)
     with pytest.raises(case.SaveNotConfirmed):
         log.append("override", {"n": 3}, expected=2)
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("where", ["read_back", "take_back"])
+def test_ctrl_c_during_read_back_or_take_back_still_gets_the_saves_answer(tmp_path, monkeypatch, where):
+    """T12 review 32 / P15: Ctrl-C in the read-back still takes the head back (not recorded,
+    entry past the recorded ones); Ctrl-C stopping the take-back answers not confirmed and
+    says to check the log."""
+    log = _log(tmp_path, 2)
+    real, calls = case._read_head, []
+
+    def head(path, *, raise_os=False):
+        got = real(path)
+        if raise_os and isinstance(got, list) and len(got) == 3:
+            calls.append(None)
+            if where == "take_back" or len(calls) == 1:
+                raise KeyboardInterrupt
+        return real(path, raise_os=raise_os)
+
+    monkeypatch.setattr(case, "_read_head", head)
+    expected = case.SaveNotConfirmed if where == "take_back" else case.SaveNotRecorded
+    with pytest.raises(expected) as e:
+        log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    if where == "take_back":
+        assert "check the case log" in str(e.value)
+    else:
+        check = case.CaseLog(log.path).verify()
+        assert check.torn and check.first_bad == 3
