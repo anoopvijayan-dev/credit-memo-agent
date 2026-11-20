@@ -120,12 +120,18 @@ def shown(raw: str | None, limit: int = 40) -> str:
 
 
 def _split_record(text: str) -> list[str]:
+    return _split_record_ended(text)[0]
+
+
+def _split_record_ended(text: str) -> tuple[list[str], bool]:
     """The cells of the record at the start of `text`, by the CSV reader's own rules (the
     default dialect, not strict), with no field-size limit. Used only for a record with a
-    field too long for the reader, so the process-wide limit is never changed (T04 review 39)."""
+    field too long for the reader, so the process-wide limit is never changed (T04 review 39).
+    Also says whether the record ended at a line end, or ran to the end of `text`."""
     cells: list[str] = []
     cell: list[str] = []
     state = "start"
+    ended = False
     for ch in text:
         if state == "quoted":
             if ch == '"':
@@ -140,6 +146,7 @@ def _split_record(text: str) -> list[str]:
                 cells.append("".join(cell))
                 cell, state = [], "start"
             elif ch in "\r\n":
+                ended = True
                 break
             else:
                 cell.append(ch)
@@ -148,6 +155,7 @@ def _split_record(text: str) -> list[str]:
             cells.append("".join(cell))
             cell, state = [], "start"
         elif ch in "\r\n":
+            ended = True
             break
         elif state == "start" and ch == '"':
             state = "quoted"
@@ -155,7 +163,7 @@ def _split_record(text: str) -> list[str]:
             cell.append(ch)
             state = "field"
     cells.append("".join(cell))
-    return cells
+    return cells, ended
 
 
 def _read_long_record(text: str, header: list[str]) -> dict:
@@ -275,16 +283,17 @@ def read_records(text: str, cut: bool = False) -> tuple[list[str], list[tuple[in
             # about its value, so no monetary conclusion is drawn (revision 29; T04 review 40).
             limit = csv.field_size_limit()
             text_of_record = "".join(physical[line - 1:])
-            cells = _split_record(text_of_record) if header is not None else []
+            cells, ended = _split_record_ended(text_of_record) if header is not None else ([], True)
             row = _read_long_record(text_of_record, header) if header is not None else None
             long_ = [h for h, c in zip(header or [], cells, strict=False) if len(c) > limit]
             which = f" ({', '.join(long_)})" if long_ else ""
             err = CsvRecordError(f"line {line}: {TOO_LONG}{which}: longer than {limit:,} characters", too_long=True)
             if header is not None:
                 # The field too long to read is never read as a value (T04 review 37). Only the
-                # columns the record holds are readable, never one filled in as empty; and in
-                # text cut at a bad byte, its last cell may be cut too (T04 review 41).
-                present = len(cells) - (1 if cut else 0)
+                # columns the record holds are readable, never one filled in as empty; and if
+                # the record itself runs to a bad byte that cut the text, its last cell may be
+                # cut too (T04 reviews 41-42). A record ending at its own line end is whole.
+                present = len(cells) - (1 if cut and not ended else 0)
                 err.line, err.row = line, row
                 err.readable = {h for h, c in zip(header[:max(present, 0)], cells, strict=False) if len(c) <= limit}
         else:

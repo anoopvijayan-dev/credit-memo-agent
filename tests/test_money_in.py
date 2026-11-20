@@ -1255,3 +1255,21 @@ def test_a_long_field_cut_by_a_bad_byte_never_makes_an_empty_amount_readable(tmp
                      "tx_1,01/01/2026,09:00:00,Faster payment," + "N" * 200_000).encode() + b"\xe9,-1.00,GBP,1.00\n")
     with pytest.raises(monzo.MonzoImportError, match=r"line 2: a field is too long to read \(Name\)"):
         monzo.convert(src, tmp_path / "o.csv")
+
+
+@pytest.mark.contracts
+def test_a_whole_long_record_keeps_its_last_cell_when_a_later_record_has_a_bad_byte(tmp_path):
+    """T04 review 42: a bad byte in a later record made the last cell of an earlier, whole
+    record with a field too long to read count as cut, dropping its readable amount."""
+    from cma.importers import monzo
+
+    big = "9999999999999.99"
+    head = "Transaction ID,Date,Time,Type,Name,Currency,Balance,Amount\n"
+    src = tmp_path / "m.csv"
+    src.write_bytes((head + f"tx_1,01/01/2026,09:00:00,Faster payment,ACME,GBP,{big},{big}\n"
+                     f"tx_2,02/01/2026,09:00:00,Faster payment," + "N" * 200_000 + f",GBP,{big},{big}\n").encode()
+                    + b"tx_3,03/01/2026,09:00:00,Faster payment,CAF\xe9,GBP,1.00,-1.00\n")
+    with pytest.raises(monzo.MonzoImportError) as e:
+        monzo.convert(src, tmp_path / "o.csv")
+    assert "money in totals £10,000,000,000,000 or more" in str(e.value)
+    assert "line 3: a field is too long to read (Name)" in str(e.value)
