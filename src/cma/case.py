@@ -855,6 +855,7 @@ class CaseLog:
         naming the error, never raw. Where the head record was already published, _publish
         has answered not confirmed instead."""
         self._line_at: int | None = None  # where this save's line starts, once it is being written
+        self._repair_landed = False  # a repair's replacement log is in place
         self._head_renamed = False
         try:
             yield
@@ -867,12 +868,20 @@ class CaseLog:
             # Anything else that stops a save once its line has started to reach the log (a
             # nested save refused from a signal handler, say) is still this save's report:
             # never another operation's words, which may say nothing was written (review 29).
-            if self._line_at is None:
+            if self._repair_landed and not self._head_renamed:
+                raise SaveNotRecorded(f"{self.path}: the repair was interrupted after its repaired log was "
+                                      f"put in place ({e.__class__.__name__}); the repair was not recorded: "
+                                      "the log reads torn at the same entry, and dropping it again repairs "
+                                      "it") from None
+            if self._line_at is None and not self._head_renamed:
                 raise
-            try:
-                written = os.stat(self.path).st_size > self._line_at
-            except OSError:
-                written = True  # cannot tell: never claim nothing was written
+            if self._line_at is not None:
+                try:
+                    written = os.stat(self.path).st_size > self._line_at
+                except OSError:
+                    written = True  # cannot tell: never claim nothing was written
+            else:
+                written = True
             if not written and not self._head_renamed:
                 raise
             what = e.__class__.__name__
@@ -962,6 +971,7 @@ class CaseLog:
             os.close(fd)
         try:
             _replace(tmp, self.path, before=unchanged)  # each attempt (D108)
+            self._repair_landed = True
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
@@ -1114,6 +1124,8 @@ class CaseLog:
             held = now.entries[entry.seq - 1].hash if now.ok and len(now.entries) >= entry.seq else None
         except OSError as e:  # the read-back itself failed: named, never read as a change (D159)
             held, failure = None, f"the log could not be read back ({e.__class__.__name__}: {e})"
+        except Exception as e:  # interrupted (a nested save refused): still take back (review 30)
+            held, failure = None, f"the read-back was interrupted ({e.__class__.__name__})"
         if held != entry.hash:
             # Not told recorded, so not left recorded either (P15): the head record goes
             # back to the entries before this one, if it is still the one this save

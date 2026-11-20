@@ -2691,3 +2691,43 @@ def test_a_nested_save_refused_after_the_outer_line_is_the_outer_saves_not_recor
     monkeypatch.undo()
     check = case.CaseLog(log.path).verify()
     assert check.torn and check.first_bad == 3
+
+
+@pytest.mark.invariants
+def test_a_repair_interrupted_after_its_log_lands_says_the_repair_was_not_recorded(tmp_path, monkeypatch):
+    """T12 review 30: a nested save refused (uncaught) after a repair's replacement log is in
+    place still reports the repair as not recorded, in its own words."""
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+
+    def nested(self, recorded, entry):
+        log.append("override", {"nested": True}, expected=2)  # refused, and not caught
+
+    monkeypatch.setattr(case.CaseLog, "_publish", nested)
+    with pytest.raises(case.SaveNotRecorded, match="repair was not recorded") as e:
+        log.drop_torn_entry(expected=2, by="A. Person")
+    assert "nothing was written" not in _chain(e.value)
+    monkeypatch.undo()
+    check = case.CaseLog(log.path).verify()
+    assert check.torn and check.first_bad == 3  # the drop entry, unrecorded: drop it again
+
+
+@pytest.mark.invariants
+def test_a_read_back_interrupted_still_takes_the_head_back(tmp_path, monkeypatch):
+    """T12 review 30 / P15: an interruption during the read-back (a nested save refused) is a
+    failed read-back: the head record this save published is taken back, so the entry is
+    left past the recorded entries and the save is not recorded."""
+    log = _log(tmp_path, 2)
+    real = case._check
+
+    def check(raw, recorded):
+        if isinstance(recorded, list) and len(recorded) == 3:
+            log.append("override", {"nested": True}, expected=3)  # refused, and not caught
+        return real(raw, recorded)
+
+    monkeypatch.setattr(case, "_check", check)
+    with pytest.raises(case.SaveNotRecorded, match="read-back was interrupted"):
+        log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    got = case.CaseLog(log.path).verify()
+    assert got.torn and got.first_bad == 3
