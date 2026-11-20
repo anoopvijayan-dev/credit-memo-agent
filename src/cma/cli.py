@@ -14,9 +14,10 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.table import Table
 
+from . import firm, synth
 from . import guard as grd
-from . import synth
 from .categorise import RulesetError, active_ruleset
+from .firm import FirmConfigError, OfflineLockError
 from .graph import build, evidence_record, ruleset_used, sqlite_checkpointer
 from .ingest import StatementError
 from .llm import get_llm
@@ -75,12 +76,14 @@ def run(
         # Refuse a bad CMA_RULESET before the graph checkpoints anything: a refusal after the first
         # checkpoint would leave the review id taken, so a corrected retry could not reuse it.
         active_ruleset()
-    except RulesetError as e:
+        firm_config = firm.load()  # the run's one reading of firm.yaml
+        model = get_llm(llm, firm_config=firm_config)  # under the lock a hosted model is refused here
+    except (RulesetError, OfflineLockError, FirmConfigError) as e:
         console.print(f"[red]Refused.[/red] {e}")
         raise typer.Exit(code=2) from e
     thread_id = thread or str(uuid.uuid4())
     with _checkpointer(checkpoint_db) as saver:
-        graph = build(get_llm(llm), checkpointer=saver)
+        graph = build(model, checkpointer=saver)
         cfg = {"configurable": {"thread_id": thread_id}}
         if graph.get_state(cfg).values:
             console.print(f"[red]Review id {thread_id} is already used in {checkpoint_db}. Pick a new --thread.[/red]")
@@ -88,10 +91,12 @@ def run(
         try:
             state = graph.invoke(
                 {"statement_path": str(statement), "policy_path": str(policy) if policy else None,
-                 "vat_stagger": vat_stagger},
+                 "vat_stagger": vat_stagger, "run_offline_lock": firm_config.offline_lock},
                 cfg,
             )
-        except (StatementError, PolicyError, RulesetError) as e:
+        except (StatementError, PolicyError, FirmConfigError, OfflineLockError, RulesetError) as e:
+            # OfflineLockError here: a hosted request refused before it was sent, so a
+            # refusal, not a model failure.
             console.print(f"[red]Refused.[/red] {e}")
             raise typer.Exit(code=2) from e
         except Exception as e:  # the model provider: network, auth, cut-off reply

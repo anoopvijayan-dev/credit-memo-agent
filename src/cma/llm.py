@@ -4,6 +4,12 @@ The memo graph only needs `complete(system, user) -> str`. `FakeLLM` writes a me
 from the metrics table with no network call, so tests and CI run without keys. It
 also has a `hallucinate` switch so the grounding guard can be tested against a memo
 that invents a number.
+
+The hosted providers check the firm's offline lock (firm.yaml, on by default) before
+anything else, so under the lock no client is created and no connection is attempted.
+They check it again before every request, against the lock value the run read from
+firm.yaml at its start (or firm.yaml read then, outside a run), and the SDK clients are
+built with their own retries off, so every request the SDK sends passes that check.
 """
 
 from __future__ import annotations
@@ -11,6 +17,8 @@ from __future__ import annotations
 import os
 import re
 from typing import Protocol
+
+from . import firm
 
 
 class LLMError(RuntimeError):
@@ -36,7 +44,7 @@ class FakeLLM:
         rows = re.findall(r"^\| (M\d+) \| ([^|]+) \| ([^|]+) \|", user, re.MULTILINE)
         by_id = {mid: (name.strip(), val.strip()) for mid, name, val in rows}
         rules = re.findall(r"^\| (R\d+) \| ([^|]+) \| (M\d+) \| ([^|]+) \| (\w+) \|", user, re.MULTILINE)
-        overall = re.search(r"Overall policy outcome: (\w+)", user)
+        overall = re.search(r"^\| overall \|[^|]*\|[^|]*\|[^|]*\| (\w+) \|", user, re.MULTILINE)
         outcome = overall.group(1) if overall else "refer"
 
         def q(mid: str) -> str:
@@ -69,16 +77,43 @@ Policy outcome: {outcome}. {'The case meets policy and can proceed to approval.'
         return memo
 
 
-class AnthropicLLM:
+class HostedLLM:
+    """A model that runs off this machine. Every way it can send data checks the offline
+    lock first: making the client, and every request.
+
+    The SDK client is built with its own retries off (max_retries=0), so each request the
+    SDK sends is one `complete` call, and the lock check before it covers it. A run passes
+    the lock value it read from firm.yaml at its start (`offline_lock`), so the value that
+    decides a request is the one the run's evidence records; a caller outside a run passes
+    nothing, and firm.yaml is read for that request."""
+
+    name = "hosted"
+
+    def _check(self, what: str, offline_lock: bool | None) -> None:
+        if offline_lock is None:
+            firm.require_unlocked(what)
+        else:
+            firm.refuse_if_locked(offline_lock, what)
+
+    def complete(self, system: str, user: str, *, offline_lock: bool | None = None) -> str:
+        self._check(f"A request to a hosted model ({self.name})", offline_lock)
+        return self._send(system, user)
+
+    def _send(self, system: str, user: str) -> str:
+        raise NotImplementedError
+
+
+class AnthropicLLM(HostedLLM):
     name = "anthropic"
 
-    def __init__(self, model: str | None = None):
+    def __init__(self, model: str | None = None, *, firm_config: firm.FirmConfig | None = None):
+        (firm_config or firm.load()).require_offline_off("A hosted model (anthropic)")
         import anthropic
 
-        self.client = anthropic.Anthropic(timeout=120.0, max_retries=2)
+        self.client = anthropic.Anthropic(timeout=120.0, max_retries=0)
         self.model = model or os.getenv("CMA_ANTHROPIC_MODEL", "claude-sonnet-5-5")
 
-    def complete(self, system: str, user: str) -> str:
+    def _send(self, system: str, user: str) -> str:
         msg = self.client.messages.create(
             model=self.model,
             max_tokens=2000,
@@ -90,16 +125,17 @@ class AnthropicLLM:
         return "".join(block.text for block in msg.content if getattr(block, "type", "") == "text")
 
 
-class OpenAILLM:
+class OpenAILLM(HostedLLM):
     name = "openai"
 
-    def __init__(self, model: str | None = None):
+    def __init__(self, model: str | None = None, *, firm_config: firm.FirmConfig | None = None):
+        (firm_config or firm.load()).require_offline_off("A hosted model (openai)")
         from openai import OpenAI
 
-        self.client = OpenAI(timeout=120.0, max_retries=2)
+        self.client = OpenAI(timeout=120.0, max_retries=0)
         self.model = model or os.getenv("CMA_OPENAI_MODEL", "gpt-4.1")
 
-    def complete(self, system: str, user: str) -> str:
+    def _send(self, system: str, user: str) -> str:
         r = self.client.chat.completions.create(
             model=self.model,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -109,12 +145,13 @@ class OpenAILLM:
         return r.choices[0].message.content or ""
 
 
-def get_llm(name: str | None = None) -> LLM:
+def get_llm(name: str | None = None, *, firm_config: firm.FirmConfig | None = None) -> LLM:
+    """`firm_config` is the run's one reading of firm.yaml; without it firm.yaml is read here."""
     name = (name or os.getenv("CMA_LLM", "fake")).lower()
     if name == "fake":
         return FakeLLM()
     if name == "anthropic":
-        return AnthropicLLM()
+        return AnthropicLLM(firm_config=firm_config)
     if name == "openai":
-        return OpenAILLM()
+        return OpenAILLM(firm_config=firm_config)
     raise ValueError(f"unknown LLM provider {name!r}")

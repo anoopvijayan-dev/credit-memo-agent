@@ -11,6 +11,17 @@ and waits for a named person; nothing is final until they say so. `finalise` sta
 the decision and appends the figures, rules, model and file hashes the memo rests on,
 so the written memo can answer "where did this figure come from" on its own.
 
+Prompts: `draft_prompt` is the only thing that reaches the model. It carries the metric
+and rule tables, the period and a placeholder account name, never a description, a
+payer, the account's real name, a case profile field, a file path or the policy's name
+(ADR 001, R30); the overall policy outcome is a row of the rule table. A redraft adds one
+line naming the metric and rule ids the guard flagged, and nothing else: never the
+rejected draft, the guard's reasons or any number it quoted.
+
+Offline lock: a run reads firm.yaml once, at its start (the CLI reads it before making the
+model client, and passes the same reading in). Every hosted request in the run is checked
+against that value, and the evidence records it.
+
 Checkpoints: the default MemorySaver lives in memory, so a pending review is lost when
 the process exits. Pass a durable checkpointer (`sqlite_checkpointer(path)`, needs the
 `durable` extra) to keep pending reviews across restarts.
@@ -19,6 +30,7 @@ the process exits. Pass a durable checkpointer (`sqlite_checkpointer(path)`, nee
 from __future__ import annotations
 
 import hashlib
+import re
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TypedDict
@@ -30,11 +42,11 @@ from langgraph.types import interrupt
 from pydantic import ValidationError
 
 from . import categorise as cat
+from . import firm, ingest
 from . import guard as grd
-from . import ingest
 from . import metrics as met
 from . import policy as pol
-from .llm import LLM, get_llm
+from .llm import LLM, FakeLLM, HostedLLM, get_llm
 from .models import (
     EVIDENCE_SCHEMA_VERSION,
     GuardResult,
@@ -46,6 +58,11 @@ from .models import (
 )
 
 MAX_REDRAFTS = 2
+PROMPT_ACCOUNT_NAME = "Applicant"
+# A redraft prompt's only addition: this label and the metric and rule ids the guard flagged.
+# The guard's findings quote the model's own output, so they stay out of the prompt (R30);
+# they go to the reviewer.
+REDRAFT_LABEL = "Redraft ids:"
 
 # Our pydantic models travel through the checkpointer between the review interrupt and
 # the resume, so they must be on the allow-list.
@@ -95,7 +112,8 @@ Rules you must follow. An automatic check enforces 1-7 and rejects the draft if 
 6. Use exactly these headings, as "## " markdown headings: Business overview, Revenue, Cash position, Obligations and conduct, Recommendation.
 7. A policy limit takes its rule tag and is introduced as a limit: "above the 1.25x [R2] minimum", never "cover is 1.25x [R2]".
 8. The Recommendation states the policy outcome and names each rule that was referred or failed. You do not decide; the analyst does.
-9. Plain English, no hedging filler, under 400 words."""
+9. Plain English, no hedging filler, under 400 words.
+10. A "Redraft ids:" line means your previous draft failed the check. It lists the metric and rule ids whose figures were misquoted, untagged or not introduced as a limit ("none" if the fault was a number with no tag or a missing heading). Write the memo again from the tables."""
 
 
 class MemoState(TypedDict, total=False):
@@ -103,6 +121,9 @@ class MemoState(TypedDict, total=False):
     policy_path: str | None
     vat_stagger: int | None
     model: str
+    run_offline_lock: bool | None  # input: the run's one reading of firm.yaml, if the caller made it
+    offline_lock: bool
+    egress: str
     statement_sha256: str
     statement: Statement
     ruleset: dict  # {"id", "sha256"} of the categorisation table used (CMA_RULESET)
@@ -140,8 +161,10 @@ def _threshold(value: float | None, unit: str) -> str:
     return "" if value is None else format_value(value, unit)
 
 
-def rules_table(p: PolicyResult) -> str:
+def rules_table(p: PolicyResult, overall_row: bool = False) -> str:
     lines = ["| id | rule | metric | requirement | outcome | detail |", "|---|---|---|---|---|---|"]
+    if overall_row:
+        lines.append(f"| overall | overall outcome | - | - | {p.overall.value} | - |")
     for r in p.rules:
         req = f"{r.op} {_threshold(r.threshold, r.unit)}"
         if r.refer_below is not None:
@@ -150,6 +173,31 @@ def rules_table(p: PolicyResult) -> str:
             req += f"; referred above {_threshold(r.refer_above, r.unit)}"
         lines.append(f"| {r.rule_id} | {r.description} | {r.metric_id} | {req} | {r.outcome.value} | {r.detail} |")
     return "\n".join(lines)
+
+
+def redraft_ids(g: GuardResult, metrics: list[Metric], policy: PolicyResult) -> list[str]:
+    """The metric and rule ids the guard flagged, and only ids that are in the tables, so
+    nothing the model wrote (a made-up tag included) goes back into a prompt."""
+    known = {m.id for m in metrics} | {r.rule_id for r in policy.rules}
+    found = set(g.missing_citations)
+    for f in g.unmatched:
+        found.update(re.findall(r"\b[MR]\d+\b", f.reason))
+    return sorted(found & known, key=lambda i: (i[0], int(i[1:])))
+
+
+def draft_prompt(statement: Statement, metrics: list[Metric], policy: PolicyResult,
+                 redraft: list[str] | None = None) -> str:
+    """The user prompt: the tables (the overall outcome as a rule-table row), the period and
+    the placeholder name. A redraft adds one line of metric and rule ids, nothing else."""
+    user = (
+        f"Account: {PROMPT_ACCOUNT_NAME}\n"
+        f"Period: {statement.start} to {statement.end}\n\n"
+        f"Metrics table:\n{met.as_table(metrics)}\n\n"
+        f"Policy table:\n{rules_table(policy, overall_row=True)}\n"
+    )
+    if redraft is not None:
+        user += f"\n{REDRAFT_LABEL} {', '.join(redraft) or 'none'}\n"
+    return user
 
 
 def appendix(s: MemoState) -> str:
@@ -183,6 +231,16 @@ def ruleset_used(s: MemoState) -> dict:
         return s["ruleset"]
     v1 = cat.load_ruleset("v1")
     return {"id": v1.id, "sha256": v1.sha256, "inferred": "pre-ruleset checkpoint"}
+def _egress(s: MemoState) -> dict:
+    """Where the draft's data went. A review drafted by the version before the offline lock
+    resumes with no lock fields in its checkpoint; that version had no lock, and its model
+    name says whether the draft left the machine."""
+    if s.get("egress") is not None and s.get("offline_lock") is not None:
+        return {"offline_lock": s["offline_lock"], "destination": s["egress"],
+                "recorded": "at run start; every hosted request in the run was checked against this value"}
+    model = s.get("model") or "-"
+    return {"offline_lock": False, "destination": "offline" if model.startswith("fake:") else model,
+            "recorded": "at resume; the draft predates the offline lock"}
 
 
 def evidence_record(s: MemoState) -> dict:
@@ -193,6 +251,7 @@ def evidence_record(s: MemoState) -> dict:
                       "start": str(s["statement"].start), "end": str(s["statement"].end),
                       "transactions": len(s["statement"].transactions)},
         "model": s.get("model"),
+        "egress": _egress(s),
         "vat_stagger": s.get("vat_stagger"),
         "ruleset": ruleset_used(s),
         "metrics": [m.model_dump() for m in s["metrics"]],
@@ -208,12 +267,18 @@ def build(llm: LLM | None = None, checkpointer=None):
     llm = llm or get_llm()
 
     def load(s: MemoState) -> MemoState:
+        lock = s.get("run_offline_lock")
         path = Path(s["statement_path"])
         statement = ingest.load_csv(path)
         return {
             "statement": statement,
             "statement_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
+            # The run's one reading of firm.yaml: the caller's, or read now. Every hosted
+            # request in this run is checked against it, and the evidence records it.
+            "offline_lock": lock if lock is not None else firm.load().offline_lock,
+            "run_offline_lock": None,
+            "egress": "offline" if isinstance(llm, FakeLLM) else f"{llm.name}:{getattr(llm, 'model', '-')}",
             # A run starts clean, even on a thread that has run before.
             "redrafts": 0,
             "guard_feedback": "",
@@ -234,26 +299,19 @@ def build(llm: LLM | None = None, checkpointer=None):
         return {"policy": pol.evaluate(s["metrics"], p)}
 
     def draft(s: MemoState) -> MemoState:
-        table = met.as_table(s["metrics"])
-        user = (
-            f"Account: {s['statement'].account_name}\n"
-            f"Period: {s['statement'].start} to {s['statement'].end}\n\n"
-            f"Metrics table:\n{table}\n\n"
-            f"Policy: {s['policy'].policy_name}\nOverall policy outcome: {s['policy'].overall.value}\n"
-            f"Policy table:\n{rules_table(s['policy'])}\n"
-        )
-        if s.get("guard_feedback"):
-            user += f"\nYour previous draft was rejected by the grounding check:\n{s['guard_feedback']}\nRewrite it using only figures from the table, each with its tag.\n"
-        return {"memo": llm.complete(SYSTEM_PROMPT, user), "redrafts": s.get("redrafts", 0)}
+        g = s.get("guard")
+        ids = redraft_ids(g, s["metrics"], s["policy"]) if s.get("guard_feedback") and g else None
+        user = draft_prompt(s["statement"], s["metrics"], s["policy"], redraft=ids)
+        if isinstance(llm, HostedLLM):
+            memo = llm.complete(SYSTEM_PROMPT, user, offline_lock=s["offline_lock"])
+        else:
+            memo = llm.complete(SYSTEM_PROMPT, user)
+        return {"memo": memo, "redrafts": s.get("redrafts", 0)}
 
     def guard(s: MemoState) -> MemoState:
         g = grd.check(s["memo"], s["metrics"], s["policy"], required_headings=grd.REQUIRED_HEADINGS)
-        feedback = ""
-        if not g.grounded:
-            parts = [f"- {f.number_text}: {f.reason}" for f in g.unmatched]
-            parts += [f"- {mid} quoted without its tag" for mid in g.missing_citations]
-            feedback = "\n".join(parts)
-        return {"guard": g, "guard_feedback": feedback}
+        # The findings stay in `guard` for the reviewer; the model is told only that it failed.
+        return {"guard": g, "guard_feedback": "" if g.grounded else "redraft"}
 
     def route_after_guard(s: MemoState) -> str:
         if s["guard"].grounded or s.get("redrafts", 0) >= MAX_REDRAFTS:

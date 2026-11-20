@@ -1,0 +1,161 @@
+"""Firm configuration: firm.yaml at the case root.
+
+    offline_lock: true          # default; no hosted model, no MCP server
+    show_policy_verdict: true   # default; show the illustrative pass/refer/fail
+    paths:                      # optional; relative paths are under the case root
+      firm_rules: firm_rules.yaml
+      thresholds: indicators.yaml
+      memo_fields: memo_fields.yaml
+
+The case root is CMA_HOME, or private/cma under the working directory. A missing file
+means the defaults. A malformed file (not UTF-8, not YAML, a key given twice, an unknown
+key or a value of the wrong kind) is refused, never read as something else: a lock
+that silently falls back is no lock.
+
+The offline lock is checked before a hosted model client is created and before the MCP
+server starts, so under the lock neither gets as far as a network call.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
+
+FILE_NAME = "firm.yaml"
+FLAGS = ("offline_lock", "show_policy_verdict")
+DEFAULT_PATHS = {"firm_rules": "firm_rules.yaml", "thresholds": "indicators.yaml", "memo_fields": "memo_fields.yaml"}
+
+
+class FirmConfigError(ValueError):
+    """firm.yaml is malformed; nothing should run under a setting nobody chose."""
+
+
+class _RepeatedKey(Exception):
+    def __init__(self, key):
+        self.key = key
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """safe_load, except that a key given twice is refused: YAML would otherwise keep the
+    last value, so `offline_lock: true` then `offline_lock: false` would silently unlock."""
+
+    def construct_mapping(self, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            try:
+                hashable = key in seen
+            except TypeError:
+                raise yaml.constructor.ConstructorError(None, None, "unhashable key", key_node.start_mark) from None
+            if hashable:
+                raise _RepeatedKey(key)
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+class OfflineLockError(RuntimeError):
+    """Something that would send data off this machine was asked for under the offline lock."""
+
+
+@dataclass(frozen=True)
+class FirmConfig:
+    root: Path
+    offline_lock: bool = True
+    show_policy_verdict: bool = True
+    paths: tuple[tuple[str, str], ...] = tuple(DEFAULT_PATHS.items())
+
+    def _path(self, key: str) -> Path:
+        return self.root / dict(self.paths)[key]  # an absolute path replaces the root
+
+    @property
+    def firm_rules_path(self) -> Path:
+        return self._path("firm_rules")
+
+    @property
+    def thresholds_path(self) -> Path:
+        return self._path("thresholds")
+
+    @property
+    def memo_fields_path(self) -> Path:
+        return self._path("memo_fields")
+
+    def require_offline_off(self, what: str) -> None:
+        _refuse(self.offline_lock, what, self.root)
+
+
+def _refuse(offline_lock: bool, what: str, root: Path) -> None:
+    if offline_lock is not False:  # anything but an explicit False is the lock
+        raise OfflineLockError(
+            f"{what} refused: the offline lock is on in {root / FILE_NAME}, so no data leaves this "
+            "machine. Set offline_lock: false there to allow it."
+        )
+
+
+def refuse_if_locked(offline_lock: bool, what: str) -> None:
+    """Refuse `what` if `offline_lock`, a value already read from firm.yaml (a run's one
+    reading), is on. The same value is what the run's evidence records."""
+    _refuse(offline_lock, what, case_root())
+
+
+def require_unlocked(what: str) -> None:
+    """Refuse `what` unless firm.yaml, read now, has the offline lock off.
+
+    Read on every call, not once: a client or server made while the lock was off must
+    stop sending as soon as the firm turns it back on."""
+    load().require_offline_off(what)
+
+
+def case_root() -> Path:
+    raw = os.environ.get("CMA_HOME")
+    return Path(raw).resolve() if raw else (Path.cwd() / "private" / "cma").resolve()
+
+
+def load(root: Path | None = None) -> FirmConfig:
+    root = root or case_root()
+    path = root / FILE_NAME
+    if not path.is_file():
+        return FirmConfig(root=root)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        raise FirmConfigError(f"{path}: cannot be read as UTF-8 text ({e.__class__.__name__})") from e
+    try:
+        data = yaml.load(text, Loader=_UniqueKeyLoader)
+    except yaml.YAMLError as e:
+        raise FirmConfigError(f"{path}: not valid YAML ({e.__class__.__name__})") from e
+    except _RepeatedKey as e:
+        raise FirmConfigError(f"{path}: key {e.key!r} is given more than once") from None
+    if data is None:
+        return FirmConfig(root=root)
+    if not isinstance(data, dict):
+        raise FirmConfigError(f"{path}: not a mapping")
+
+    problems: list[str] = []
+    problems += [f"unknown key {k!r}" for k in data if k not in (*FLAGS, "paths")]
+    flags = {}
+    for key in FLAGS:
+        if key in data:
+            if isinstance(data[key], bool):
+                flags[key] = data[key]
+            else:
+                problems.append(f"{key} must be true or false")
+    paths = dict(DEFAULT_PATHS)
+    raw_paths = data.get("paths")
+    if raw_paths is None:  # absent, or `paths:` with nothing under it
+        raw_paths = {}
+    if not isinstance(raw_paths, dict):
+        problems.append("paths must be a mapping")
+        raw_paths = {}
+    for key, value in raw_paths.items():
+        if key not in DEFAULT_PATHS:
+            problems.append(f"unknown path {key!r}")
+        elif not isinstance(value, str) or not value.strip():
+            problems.append(f"paths.{key} must be a file path")
+        else:
+            paths[key] = value
+    if problems:
+        raise FirmConfigError(f"{path}: " + "; ".join(problems))
+    return FirmConfig(root=root, paths=tuple(paths.items()), **flags)

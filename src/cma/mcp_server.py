@@ -11,8 +11,16 @@ start servers with the working directory at / or ~, so there is no default), and
 number only; cell values are never echoed to the client.
 
 Descriptions: statement descriptions are text the payer chose ("IGNORE PREVIOUS
-INSTRUCTIONS..."). `transactions_for` leaves them out unless the caller asks, and then
-returns them marked as untrusted data.
+INSTRUCTIONS..."), and an MCP client is a model, so no tool ever returns one (R34).
+`transactions_for` still accepts include_descriptions, and says the text was withheld.
+
+Offline lock: the server is a way for data to reach a model, so while offline_lock is on
+in firm.yaml (the default) it refuses to start, however it is started (main(), or an
+embedding script calling `server.run()`, an async runner or an ASGI app), and every tool
+refuses before reading a file. firm.yaml is read on each start and each call; an ASGI app
+reads it again when its ASGI server starts it (failing that start-up, before the server
+listens) and on every connection, so an app made while the lock was off and served later
+refuses too.
 """
 
 from __future__ import annotations
@@ -22,9 +30,92 @@ from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 
-from . import categorise, ingest, metrics, policy
+from . import categorise, firm, ingest, metrics, policy
 
-server = MCPServer("credit-memo-agent")
+
+class LockedMCPServer(MCPServer):
+    """An MCPServer whose every way of starting checks the offline lock first."""
+
+    def run(self, *args, **kwargs):
+        firm.require_unlocked("Starting the MCP server")
+        return super().run(*args, **kwargs)
+
+    async def run_stdio_async(self, *args, **kwargs):
+        firm.require_unlocked("Starting the MCP server")
+        return await super().run_stdio_async(*args, **kwargs)
+
+    async def run_sse_async(self, *args, **kwargs):
+        firm.require_unlocked("Starting the MCP server")
+        return await super().run_sse_async(*args, **kwargs)
+
+    async def run_streamable_http_async(self, *args, **kwargs):
+        firm.require_unlocked("Starting the MCP server")
+        return await super().run_streamable_http_async(*args, **kwargs)
+
+    def sse_app(self, *args, **kwargs):
+        firm.require_unlocked("Starting the MCP server")
+        return LockedASGIApp(super().sse_app(*args, **kwargs))
+
+    def streamable_http_app(self, *args, **kwargs):
+        firm.require_unlocked("Starting the MCP server")
+        return LockedASGIApp(super().streamable_http_app(*args, **kwargs))
+
+
+def _lock_problem(what: str) -> str | None:
+    try:
+        firm.require_unlocked(what)
+    except (firm.OfflineLockError, firm.FirmConfigError) as e:
+        return str(e)
+    return None
+
+
+class LockedASGIApp:
+    """The MCP server's ASGI app, checking the offline lock each time it is used.
+
+    An app made while the lock was off can be handed to an ASGI server later. So the app
+    reads firm.yaml again when the ASGI server starts it: under the lock its start-up fails
+    (lifespan.startup.failed), and an ASGI server such as uvicorn runs that start-up before it
+    opens its listening socket, so it never listens. It also reads firm.yaml on every
+    connection, and refuses one under the lock before the MCP app sees it (HTTP 503, or a
+    WebSocket closed), for an ASGI server that skips the start-up event."""
+
+    def __init__(self, app):
+        self.app = app
+
+    def __getattr__(self, name):  # routes, state, ... of the wrapped Starlette app
+        return getattr(self.app, name)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "lifespan":
+            return await self._lifespan(scope, receive, send)
+        problem = _lock_problem("A connection to the MCP server")
+        if problem is None:
+            return await self.app(scope, receive, send)
+        if scope["type"] == "http":
+            body = problem.encode()
+            await send({"type": "http.response.start", "status": 503,
+                        "headers": [(b"content-type", b"text/plain; charset=utf-8"),
+                                    (b"content-length", str(len(body)).encode())]})
+            await send({"type": "http.response.body", "body": body})
+        elif scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1013, "reason": problem[:120]})
+
+    async def _lifespan(self, scope, receive, send):
+        message = await receive()
+        if message["type"] == "lifespan.startup":
+            problem = _lock_problem("Starting the MCP server")
+            if problem is not None:
+                await send({"type": "lifespan.startup.failed", "message": problem})
+                return
+        first = [message]
+
+        async def replay():
+            return first.pop() if first else await receive()
+
+        return await self.app(scope, replay, send)
+
+
+server = LockedMCPServer("credit-memo-agent")
 
 
 def data_dir() -> Path:
@@ -49,6 +140,8 @@ def safe_path(raw: str, suffixes: tuple[str, ...]) -> Path:
 
 
 def _statement(path: str):
+    # Every tool starts here, so none reads a file while the lock is on.
+    firm.require_unlocked("An MCP tool call")
     p = safe_path(path, (".csv",))
     try:
         return ingest.load_csv(p)
@@ -89,8 +182,8 @@ def check_policy(path: str, policy_path: str | None = None, vat_stagger: int | N
 @server.tool()
 def transactions_for(path: str, ids: list[str], include_descriptions: bool = False) -> list[dict]:
     """Return the statement lines behind a metric's evidence ids, so a reviewer can check a
-    figure. Descriptions are payer-written text; they are only included when asked for,
-    and then under `untrusted_description`."""
+    figure. Descriptions are payer-written text and are never returned, even when
+    include_descriptions is true; each row says so with description_withheld."""
     by_id = _statement(path).by_id()
     out = []
     for i in ids:
@@ -98,14 +191,16 @@ def transactions_for(path: str, ids: list[str], include_descriptions: bool = Fal
             continue
         t = by_id[i]
         row = {"id": t.id, "date": t.date.isoformat(), "amount": t.amount, "balance": t.balance,
-               "category": t.category.value if t.category else None}
-        if include_descriptions:
-            row["untrusted_description"] = t.description
+               "category": t.category.value if t.category else None, "description_withheld": True}
         out.append(row)
     return out
 
 
 def main() -> None:
+    try:
+        firm.load().require_offline_off("Starting the MCP server")
+    except (firm.OfflineLockError, firm.FirmConfigError) as e:
+        raise SystemExit(str(e)) from None
     data_dir()  # refuse to start without CMA_DATA_DIR
     server.run()
 

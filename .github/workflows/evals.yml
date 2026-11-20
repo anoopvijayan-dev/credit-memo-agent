@@ -60,6 +60,12 @@ jobs:
           curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
             | jq -r .value > "$ANTHROPIC_IDENTITY_TOKEN_FILE"
+      # The offline lock is on by default. Synthetic statements only, so turn it off on purpose here;
+      # the case root private/cma is git-ignored and exists only on the runner.
+      - name: Turn off the offline lock for synthetic data
+        run: |
+          mkdir -p private/cma
+          printf 'offline_lock: false\n' > private/cma/firm.yaml
       - name: Run evals against Claude
         run: python evals/run_evals.py --llm anthropic | tee evals-output.txt
       - name: Summary
