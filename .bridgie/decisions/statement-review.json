@@ -2570,12 +2570,12 @@
         "Write the exception into R42 instead: a repair whose check came before another save's head record was published may remove that save's entry, even though that save was told it was recorded"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "Read back before telling a save it was recorded, and have a repair re-check the log and the head record before each rename (design default; T12 builds both before its next review)",
+      "free_text": "Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Built in T12 1d16873: a save is told recorded only after reading back an intact log holding its entry; a repair re-checks the log and head before its rename and the head before its head rename.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-20T01:29:57.035Z",
+      "effect": "recorded",
       "created_at": "2026-11-20T01:17:15.316Z"
     },
     {
