@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 172,
+  "next_id": 173,
   "decisions": [
     {
       "id": "D1",
@@ -3478,6 +3478,26 @@
       "decided_at": "2026-11-20T06:56:55.014Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T06:51:08.713Z"
+    },
+    {
+      "id": "D172",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed HEAD 90c6094 against the supplied revision 21. Canonical UTF-8, UTC timestamps, hash and head checks, and first-bad-entry detection are at src/cma/case.py:176–348. Holder identity, folder aliases, steady reads, lock identity checks, and reader retries are at src/cma/case.py:399–674. Writer exclusion, fork refusal, nested-save protection, and expected-position checks are at src/cma/case.py:682–931. Repair, partial writes, publication, and take-back are at src/cma/case.py:933–1147. The CLI consumer is at src/cma/cli.py:309–338. Checked double submission, concurrent updates, empty and malformed data, Unicode, UTC, partial failure, OS access, case-folder isolation, and exit-code consumers. The log performs no currency arithmetic. The runner logs confirm the named tamper, rebuilt-chain, torn-tail, contention, duplicate-submit, and nested-append tests passed. The passing nested-append test leaves two gaps demonstrable from the code: interrupted repairs can escape without a save outcome, and interrupted read-back can bypass take-back.); major: A repair interrupted after its replacement log lands can report only the nested save's refusal. The repair never sets _line_at, so the outer error handler re-raises the nested refusal without reporting that the repair was not recorded. at src/cma/case.py:870; major: A nested refusal during read-back skips take-back even when the published head is still the save's own. The outer handler reports not confirmed and leaves the entry recorded. at src/cma/case.py:1115; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T06:58:29.181Z"
     }
   ]
 }

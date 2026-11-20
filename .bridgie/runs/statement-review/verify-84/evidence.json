@@ -1,0 +1,117 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed HEAD 90c6094 against the supplied revision 21. Canonical UTF-8, UTC timestamps, hash and head checks, and first-bad-entry detection are at src/cma/case.py:176–348. Holder identity, folder aliases, steady reads, lock identity checks, and reader retries are at src/cma/case.py:399–674. Writer exclusion, fork refusal, nested-save protection, and expected-position checks are at src/cma/case.py:682–931. Repair, partial writes, publication, and take-back are at src/cma/case.py:933–1147. The CLI consumer is at src/cma/cli.py:309–338. Checked double submission, concurrent updates, empty and malformed data, Unicode, UTC, partial failure, OS access, case-folder isolation, and exit-code consumers. The log performs no currency arithmetic. The runner logs confirm the named tamper, rebuilt-chain, torn-tail, contention, duplicate-submit, and nested-append tests passed. The passing nested-append test leaves two gaps demonstrable from the code: interrupted repairs can escape without a save outcome, and interrupted read-back can bypass take-back.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-84/invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-84/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-84/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-84/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-84/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-84/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-84/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-84/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 870,
+      "criterion": "P15",
+      "claim": "A repair interrupted after its replacement log lands can report only the nested save's refusal. The repair never sets _line_at, so the outer error handler re-raises the nested refusal without reporting that the repair was not recorded.",
+      "repro": "Start with two recorded entries and a torn third. In a regression test, wrap _fsync_dir so that at the sync immediately after the repair's log rename at line 964 it calls append on the same CaseLog and lets the nested CaseLogError escape. Call drop_torn_entry(expected=2, by='Reviewer'). The new repair line is in the log and the head still lists two entries, but the caller receives 'this save was refused' instead of SaveNotRecorded. The passing test at tests/test_case_log.py:2676 interrupts an append, which sets _line_at at line 1057."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1115,
+      "criterion": "P15",
+      "claim": "A nested refusal during read-back skips take-back even when the published head is still the save's own. The outer handler reports not confirmed and leaves the entry recorded.",
+      "repro": "Start with two entries. Wrap Path.read_bytes so that the log read immediately after publishing head count 3 calls append on the same CaseLog and lets the nested CaseLogError escape. Let all subsequent reads and writes succeed. The exception bypasses the OSError-only handler and the take-back at line 1128. The caller receives SaveNotConfirmed, and a subsequent verify sees an intact three-entry log. P15 requires restoring head count 2 and reporting the outer save as not recorded when that take-back can be made."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1360,
+      "criterion": "P15",
+      "claim": "The producer's claimed busy-case CLI contract is contradicted by its cited passing test. The command exits 4 and says the case is being saved.",
+      "repro": "Read the assertion in test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break and its PASS in contracts-4.log. The implementation returns 4 at src/cma/cli.py:337. Exit 0 applies to an intact whole log."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1213,
+      "criterion": "P15",
+      "claim": "The producer's claimed deterministic coverage of two commits on every reader retry is not proven. The cited passing test runs two threads and asserts only that none of 40 checks names a bad entry, followed by a final intact check.",
+      "repro": "Inspect the test and its PASS in specified-3.log. It neither forces appends between the head reads nor asserts a contended fallback or a contiguous recorded prefix. Proof would require a synchronized regression test that forces that schedule and a runner PASS for that named test."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 318,
+      "criterion": "P15",
+      "claim": "The producer's owner-only authorization claim exceeds the implementation. The CLI accepts any directory and relies on OS access to the supplied files. The cited private-file test covers modes at creation.",
+      "repro": "On POSIX, give a second OS user traversal access to an existing case directory and read access to copies of its valid log and head. Running cma case check on the copies as that user can return exit 0. The command checks is_dir and never compares the folder owner with the caller."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 1164,
+      "criterion": "P15",
+      "claim": "The producer's retry claim omits writer contention waits and Windows rename retries.",
+      "repro": "Trace a contended writer through src/cma/case.py:700–714 and a Windows PermissionError from os.replace through src/cma/case.py:1152–1176. These paths use their own deadlines or attempt counts and pauses, separate from READ_RETRIES."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
