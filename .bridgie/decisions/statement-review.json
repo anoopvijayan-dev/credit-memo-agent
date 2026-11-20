@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 206,
+  "next_id": 207,
   "decisions": [
     {
       "id": "D1",
@@ -4154,6 +4154,26 @@
       "decided_at": "2026-11-20T10:24:44.696Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T10:20:18.860Z"
+    },
+    {
+      "id": "D206",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed revision 22 at requirements.md:312 against checkout 83f0f9d. Canonical encoding, chain and head comparison, and first-bad-entry reporting are at src/cma/case.py:177, :285 and :1087. Holder and ordinary-reader checks, including retry and recorded-prefix behavior, are at :461, :503 and :364. Writer exclusion, fork refusal, nested-save refusal, expected-position conflict, and repair rechecks are at :762, :878, :926, :995 and :1043. Read-back and take-back are at :1244 and :1279. The runner logs show passing named tests for tampering, rebuilt chains, torn tails, duplicate submission, concurrent writers, repair failure, CLI contracts, and a fresh read after lock replacement when the initial read completes. A read-back that raises an I/O error can skip that retry. Reviewed empty and malformed inputs, Unicode, UTC, OS file permissions, per-folder isolation and CLI consumers. The change performs no currency arithmetic or migration. The CLI calls verify at src/cma/cli.py:321. The sign-off guard at src/cma/case.py:736 has no production sign-off caller in this checkout.); major: A read-back that encounters an I/O error skips the post-read lock check. If a lock was also replaced during that read, the save goes straight to take-back without the fresh read P15 requires. at src/cma/case.py:1269; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T10:26:15.293Z"
     }
   ]
 }
