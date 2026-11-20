@@ -483,7 +483,11 @@ class CaseLog:
                 # Gate and case both held: the recorded entries are final whoever holds the
                 # case, so a fault at or before them in a steady read is named now (P15).
                 check = self._steady()
-                if check is not None and check.first_bad is not None and not check.past_recorded:
+                # Only with the head read (a known recorded count) and the fault within the
+                # entries it records: an unreadable or missing head proves no recorded entry
+                # changed, so it is nothing to name from such a read.
+                if (check is not None and check.first_bad is not None and check.recorded is not None
+                        and check.first_bad <= check.recorded):
                     return check
                 continue
             except FileNotFoundError:
@@ -829,8 +833,7 @@ class CaseLog:
         try:
             # After the open and immediately before the line is written (D108): a lock
             # removed while the log was being opened stops the write.
-            self._require_lock_in_place()
-            _write_all(fd, line)
+            _write_all(fd, line, before=self._require_lock_in_place)
             os.fsync(fd)
         finally:
             os.close(fd)
@@ -861,9 +864,13 @@ def _replace(src: Path, dst: Path, before: Callable[[], None] | None = None) -> 
             time.sleep(REPLACE_PAUSE)
 
 
-def _write_all(fd: int, data: bytes) -> None:
+def _write_all(fd: int, data: bytes, before: Callable[[], None] | None = None) -> None:
+    """Write all of `data`; `before` runs immediately before every write call, so a short
+    write continued in a second call re-checks the lock too (D108)."""
     view = memoryview(data)
     while view:  # one call in practice; loop on a short write
+        if before is not None:
+            before()
         view = view[os.write(fd, view):]
 
 

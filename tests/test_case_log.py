@@ -44,7 +44,7 @@ def _crash_mid_append(log, monkeypatch, cut):
     the line has no newline and the head file was never updated."""
     real = case._write_all
 
-    def torn(fd, data):
+    def torn(fd, data, before=None):
         real(fd, data[:cut])
         raise OSError("power lost")
 
@@ -1694,7 +1694,7 @@ def test_p15_a_crash_during_the_first_append_is_still_a_torn_entry_to_drop(tmp_p
     log = case.CaseLog(tmp_path / "log.jsonl")
     real = case._write_all
 
-    def torn_line(fd, data):  # the head file is written whole; the entry's line is cut
+    def torn_line(fd, data, before=None):  # the head file is written whole; the entry's line is cut
         if data.startswith(b'{"count"'):
             return real(fd, data)
         real(fd, data[:10])
@@ -1851,7 +1851,7 @@ def test_p15_a_lock_replaced_after_the_line_stops_the_head_being_written(tmp_pat
     head_before = log.head_path.read_bytes()
     real = case._write_all
 
-    def then_replace_the_lock(fd, data):
+    def then_replace_the_lock(fd, data, before=None):
         real(fd, data)
         if not data.startswith(b'{"count"'):  # the entry's line is down: the lock goes
             log.lock_path.unlink()
@@ -1891,7 +1891,7 @@ def test_p15_a_lock_replaced_before_the_repair_rename_leaves_the_log_alone(tmp_p
     before = log.path.read_bytes()
     real = case._write_all
 
-    def then_replace_the_lock(fd, data):
+    def then_replace_the_lock(fd, data, before=None):
         real(fd, data)
         if not data.startswith(b'{"count"'):  # the repaired log is in the temporary file
             log.lock_path.unlink()
@@ -1946,3 +1946,44 @@ def test_p15_a_rename_retried_after_a_blocked_attempt_re_checks_the_lock(tmp_pat
         log._write_head(["x" * 64])
     monkeypatch.undo()
     assert log.head_path.read_bytes() == head_before and len(calls) == 1
+
+
+@pytest.mark.invariants
+def test_p15_a_short_write_continued_after_the_lock_is_lost_is_refused(tmp_path, monkeypatch):
+    # T12 review 17 / D108: a line written in two calls re-checks the lock before the second.
+    log = _log(tmp_path, 1)
+    before = len(log.path.read_bytes())
+    real_write, calls = case.os.write, []
+
+    def short_then_lose_the_lock(fd, data):
+        calls.append(len(data))
+        if len(calls) == 1 and len(data) > 10:
+            written = real_write(fd, bytes(data[:5]))
+            log.lock_path.unlink()
+            return written
+        return real_write(fd, data)
+
+    monkeypatch.setattr(case.os, "write", short_then_lose_the_lock)
+    with pytest.raises(case.CaseLocked, match="replaced"):
+        log.append("override", {}, expected=1)
+    monkeypatch.undo()
+    assert len(log.path.read_bytes()) == before + 5  # nothing after the lock was lost
+
+
+@pytest.mark.invariants
+def test_p15_with_both_locks_busy_an_unreadable_head_names_nothing(tmp_path, monkeypatch):
+    # T12 review 17 / R43: an unreadable head gives no recorded count, so a fault cannot be
+    # shown to lie within the recorded entries: nothing is named, nothing is claimed.
+    log = _log(tmp_path, 2)
+    log.head_path.write_bytes(b"not a head record\n")
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+
+    def gate_busy(self, path):
+        raise case.CaseLocked("a writer is passing the gate")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(case.CaseLog, "_shared", contextlib.contextmanager(gate_busy))
+    monkeypatch.setattr(case, "_try_shared", lambda fd: False)
+    check = case.CaseLog(log.path).verify()
+    monkeypatch.undo()
+    assert not check.checked and check.first_bad is None
