@@ -1879,14 +1879,13 @@ def test_p15_a_lock_replaced_after_the_empty_head_stops_the_first_line(tmp_path,
     # T12 review 15 / D108: the first append writes an empty head record, then its line;
     # the lock is re-checked between the two.
     log = case.CaseLog(tmp_path / "log.jsonl")
-    real = case.CaseLog._write_head
+    real = case.CaseLog._create_empty_head
 
-    def then_replace_the_lock(self, hashes, **kw):
-        real(self, hashes, **kw)
-        if not hashes:  # the empty head record is down: the lock goes
-            self.lock_path.unlink()
+    def then_replace_the_lock(self):
+        real(self)
+        self.lock_path.unlink()  # the empty head record is down: the lock goes
 
-    monkeypatch.setattr(case.CaseLog, "_write_head", then_replace_the_lock)
+    monkeypatch.setattr(case.CaseLog, "_create_empty_head", then_replace_the_lock)
     with pytest.raises(case.CaseLocked, match="replaced"):
         log.append("override", {}, expected=0)
     monkeypatch.undo()
@@ -2197,3 +2196,76 @@ def test_a_save_refused_after_its_line_says_it_was_not_recorded(tmp_path, monkey
     monkeypatch.undo()
     check = case.CaseLog(log.path).verify()
     assert check.torn and check.first_bad == 3
+
+
+@pytest.mark.invariants
+def test_a_stale_first_append_never_resets_a_head_that_records_entries(tmp_path, monkeypatch):
+    """T12 review 22 / R42: a first append working from a check that found no head record
+    creates the empty one and never renames it over a head another writer published since,
+    so no recorded save becomes a torn entry to drop."""
+    log = case.CaseLog(tmp_path / "log.jsonl")
+    real, done = case._staging_file, []
+
+    def meanwhile_another_writer_saves(target):
+        if target == log.head_path and not done:
+            done.append(None)
+            # Under lock-file interference, another writer's first save is recorded now.
+            entry, line = case.CaseLog._encode("import", {"n": 0}, case.Head(0, case.GENESIS))
+            log.path.write_bytes(line)
+            _write_head(log, [entry.hash])
+        return real(target)
+
+    monkeypatch.setattr(case, "_staging_file", meanwhile_another_writer_saves)
+    with pytest.raises(case.LogConflict):
+        log.append("override", {"late": True}, expected=0)
+    monkeypatch.undo()
+    check = case.CaseLog(log.path).verify()
+    assert check.ok and check.head.position == 1 and check.entries[0].data == {"n": 0}
+
+
+@pytest.mark.invariants
+def test_a_repair_refuses_a_log_rewritten_to_the_same_length(tmp_path, monkeypatch):
+    """T12 review 22 / R42 revision 14: the repair's re-check is of the log's bytes."""
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    real, done = case._staging_file, []
+
+    def rewrite_same_length(target):
+        if target == log.path and not done:
+            done.append(None)
+            raw = log.path.read_bytes()
+            log.path.write_bytes(raw[:-1] + (b"X" if raw[-1:] != b"X" else b"Y"))
+        return real(target)
+
+    monkeypatch.setattr(case, "_staging_file", rewrite_same_length)
+    with pytest.raises(case.LogConflict):
+        log.drop_torn_entry(expected=2, by="A. Person")
+    monkeypatch.undo()
+    assert log.verify().torn  # the rewritten log was left as it was
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("how", ["removed", "replaced"])
+def test_p15_a_gate_removed_or_replaced_during_a_save_stops_the_line(tmp_path, monkeypatch, how):
+    """T12 review 22 / R42: the per-step re-check covers both lock files; with the gate
+    gone or new, a reader could not know this writer holds the case."""
+    log = _log(tmp_path, 2)
+    real = case._utc_now
+    done = []
+
+    def gate_goes():
+        if not done:
+            done.append(None)
+            if how == "replaced":  # a new file renamed over it (made first: a new identity)
+                fresh = log.gate_path.with_name("fresh-gate")
+                fresh.write_bytes(b"")
+                os.replace(fresh, log.gate_path)
+            else:
+                log.gate_path.unlink()
+        return real()
+
+    monkeypatch.setattr(case, "_utc_now", gate_goes)
+    with pytest.raises(case.CaseLocked, match="removed or replaced"):
+        log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    assert len(_lines(log)) == 2 and log.verify().ok

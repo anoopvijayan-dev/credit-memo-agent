@@ -139,6 +139,7 @@ class LogCheck:
     in_progress: bool = False  # the case is held: `head` is the log as recorded, the rest unchecked
     recorded: int | None = field(default=None, repr=False)  # entries the head file records
     log_bytes: int = field(default=0, repr=False)  # the whole log as read, torn tail included
+    log_digest: str = field(default="", repr=False)  # sha256 of those bytes
     checked: bool = True  # False: the case is held and no steady read was had; nothing is claimed
 
     def as_recorded(self) -> LogCheck:
@@ -160,6 +161,10 @@ class LogCheck:
         """No entry is bad. While the case is held (`in_progress`) this covers only the
         recorded entries, and with `checked` False it covers nothing."""
         return self.first_bad is None and self.checked
+
+
+def _digest(raw: bytes | None) -> str:
+    return "" if raw is None else hashlib.sha256(raw).hexdigest()
 
 
 def _canonical(obj: Any) -> bytes:
@@ -297,7 +302,7 @@ def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
     def failed(first_bad: int, reason: str, torn: bool = False) -> LogCheck:
         return LogCheck(at(first_bad - 1), entries[: first_bad - 1], first_bad, reason, torn,
                         ends[first_bad - 1], recorded=None if recorded is _UNREADABLE else count,
-                        log_bytes=len(raw))
+                        log_bytes=len(raw), log_digest=_digest(raw))
 
     if recorded is _UNREADABLE:
         return failed(1, "cannot be trusted: the head file beside the log is unreadable")
@@ -310,7 +315,8 @@ def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
     if chain_bad is not None:
         return failed(chain_bad, chain_reason)
     if n == count and not tail:
-        return LogCheck(at(n), entries, intact_bytes=ends[-1], recorded=count, log_bytes=len(raw))
+        return LogCheck(at(n), entries, intact_bytes=ends[-1], recorded=count, log_bytes=len(raw),
+                        log_digest=_digest(raw))
     if n == count:
         return failed(n + 1, "is incomplete: the write did not finish (the process or power "
                              "stopped); confirm dropping it before anything else is recorded "
@@ -429,6 +435,7 @@ class CaseLog:
         self._owner: tuple[int, int] | None = None  # (process id, thread ident) of the holder
         self._lock_depth = 0
         self._lock_id: tuple[int, int] | None = None  # the lock file's identity while held
+        self._gate_id: tuple[int, int] | None = None  # the gate's identity when the case was taken
         self._pid = os.getpid()  # a CaseLog belongs to the process that opened it (R42)
         self._saving: set[tuple[int, int]] = set()  # holders with a save under way here
 
@@ -677,7 +684,11 @@ class CaseLog:
                     raise _GateBusy(f"{self.path}: another window or command is checking or "
                                     "writing to this case")
                 try:
+                    gate_id = _file_id(os.fstat(gate))
+                    if gate_id != _file_id(os.stat(self.gate_path)):
+                        raise CaseLocked(f"{self.path}: the case gate changed while it was passed")
                     self._take_case_lock(me, flags)
+                    self._gate_id = gate_id
                 finally:
                     with suppress(OSError):
                         _unlock(gate)
@@ -722,12 +733,15 @@ class CaseLog:
         """Before a write: the lock this writer holds is still the case's lock file. If the
         file was deleted or replaced, another writer could hold the new one, so nothing is
         written (P15: at most one writer holds the case)."""
+        # Both lock files (R42): the case lock this writer holds, and the gate it passed,
+        # since a reader that finds a new gate cannot know this writer holds the case.
         try:
-            in_place = self._lock_id == _file_id(os.stat(self.lock_path))
+            in_place = (self._lock_id == _file_id(os.stat(self.lock_path))
+                        and self._gate_id == _file_id(os.stat(self.gate_path)))
         except OSError:
             in_place = False
         if not in_place:
-            raise CaseLocked(f"{self.path}: the case lock file was removed or replaced while this "
+            raise CaseLocked(f"{self.path}: a case lock file was removed or replaced while this "
                              "window held the case; nothing was written")
 
     def _release_one_level(self) -> None:
@@ -736,6 +750,7 @@ class CaseLog:
         if self._lock_depth == 0:
             fd, self._lock_fd, self._owner = self._lock_fd, None, None
             lock_id, self._lock_id = self._lock_id, None
+            self._gate_id = None
             if lock_id is not None:
                 with _HELD_GUARD:
                     _HELD.pop(lock_id, None)
@@ -819,7 +834,7 @@ class CaseLog:
         # and before the head file is replaced leaves the drop entry itself unrecorded: the
         # log loads as torn at the same entry, and dropping it again repairs it.
         raw = self.path.read_bytes()
-        if len(raw) != check.log_bytes:
+        if len(raw) != check.log_bytes or _digest(raw) != check.log_digest:
             raise LogConflict(check.head.position, check.head.position + 1)
         intact = raw[: check.intact_bytes]
         entry, line = self._encode(TORN_DROPPED, {"seq": check.first_bad, "by": by}, check.head)
@@ -830,11 +845,9 @@ class CaseLog:
             # the log has not grown and the head file still records what the check read, so
             # the repair never replaces a save made since it looked (T12 review 21).
             self._require_lock_in_place()
-            try:
-                size = os.stat(self.path).st_size
-            except OSError:
-                size = -1
-            if size != check.log_bytes or _read_head(self.head_path) != recorded:
+            # The log's bytes, not only its length (revision 14): a log rewritten to the same
+            # length since the check is not the one the repair read.
+            if self._log_digest() != check.log_digest or _read_head(self.head_path) != recorded:
                 raise LogConflict(check.head.position, check.head.position + 1)
 
         fd, tmp = _staging_file(self.path)
@@ -863,6 +876,34 @@ class CaseLog:
         if entry is None:  # pragma: no cover - only if the encoder and the reader disagree
             raise CaseLogError(f"{reason}; nothing was written")
         return entry, line + b"\n"
+
+    def _log_digest(self) -> str:
+        try:
+            return _digest(self.path.read_bytes())
+        except FileNotFoundError:
+            return _digest(b"")
+        except OSError:
+            return "unreadable"
+
+    def _create_empty_head(self) -> None:
+        """The head record a first append writes before its line. It is created, never
+        renamed over: a first append working from a stale check finds a head record already
+        there and stops, so it can never reset a head that records entries (T12 review 22)."""
+        fd, tmp = _staging_file(self.head_path)
+        try:
+            try:
+                _write_all(fd, _head_bytes([]))
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            self._require_lock_in_place()
+            try:
+                os.link(tmp, self.head_path)  # fails if a head record exists
+            except FileExistsError:
+                raise LogConflict(0, 1) from None
+        finally:
+            tmp.unlink(missing_ok=True)
+        _fsync_dir(self.head_path.parent)
 
     def _write_head(self, hashes: list[str], *, was: list[str] | None = None) -> None:
         """Replace the head file in one rename, after the last entry it names is on disk.
@@ -899,11 +940,11 @@ class CaseLog:
             # The head file exists before the first line does, so a crash during the first
             # append leaves a torn entry under an empty head, and a missing head beside any
             # entry is always damage, never a crash to repair (T12 review 9).
-            self._write_head([])
+            self._create_empty_head()
         created = not self.path.exists()
         fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:
-            if os.fstat(fd).st_size != check.intact_bytes:
+            if os.fstat(fd).st_size != check.intact_bytes or self._log_digest() != check.log_digest:
                 # Something was added to the log since this save checked it: writing now would
                 # put a second entry at the same position (T12 review 20).
                 raise LogConflict(check.head.position, check.head.position + 1)
