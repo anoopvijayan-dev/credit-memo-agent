@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-140/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (Checked exact text parsing and flow limits at src/cma/ingest.py:68-84 and :138-175, Monzo arithmetic delegation at src/cma/importers/monzo.py:186-227, the M3 fallback at src/cma/metrics.py:509-517, and penny presentation at src/cma/cli.py:292 and src/cma/graph.py:172 and :226. Both statement readers let a duplicate money column erase a line value before the limit check.); major: Duplicate money columns silently replace earlier values before exact parsing. A statement can therefore carry a line amount at the refusal limit and still produce figures. The Monzo reader uses the same header handling at src/cma/importers/monzo.py:149-157. at src/cma/ingest.py:96; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-141/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:103 and :143–180 reject duplicate columns and enforce the exact line and flow limits for fresh CSV loads. src/cma/importers/monzo.py:189–230 delegates parsing and balance arithmetic to the figures layer. src/cma/metrics.py:512–517 handles an unreportable M3. The CLI and appendix show pence at src/cma/cli.py:292 and src/cma/graph.py:172, and evidence serializes the figure values at src/cma/graph.py:226. The legacy resume path at src/cma/cli.py:130–149 bypasses the import checks and reuses old figures.); major: Resuming a pending review created before the pence limit was introduced can display and export figures for a statement the current loader must refuse. Resume checks the file hash and grounds the memo against the stored metrics, then passes those same metrics to the review. at src/cma/cli.py:146; reviewer verdict fail"
     },
     {
       "id": "T06",
