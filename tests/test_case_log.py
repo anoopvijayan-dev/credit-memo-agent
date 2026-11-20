@@ -2343,3 +2343,77 @@ def test_p15_a_read_across_a_replaced_lock_file_is_taken_again(tmp_path, monkeyp
         monkeypatch.setattr(case, "_check", check_then_replace)
         check = reader.verify()
         assert calls.count("free") >= 2 and check.ok
+
+
+def _replace_file(path):
+    fresh = path.with_name("fresh-" + path.name)
+    fresh.write_bytes(b"")
+    os.replace(fresh, path)
+
+
+@pytest.mark.invariants
+def test_p15_a_busy_gate_read_across_a_replaced_case_lock_is_taken_again(tmp_path, monkeypatch):
+    """T12 review 24 / R43: with a writer paused at the gate, a reader that holds the case
+    lock shared counts its read only while that lock is still the case's lock file."""
+    log = _log(tmp_path, 2)
+    gate = os.open(log.gate_path, os.O_RDWR)
+    assert case._try_exclusive(gate)  # a writer passing the gate
+    real, calls = case._check, []
+
+    def check_then_replace(raw, recorded):
+        calls.append(None)
+        if len(calls) == 1:
+            _replace_file(log.lock_path)
+        return real(raw, recorded)
+
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    monkeypatch.setattr(case, "_check", check_then_replace)
+    try:
+        check = case.CaseLog(log.path).verify()
+    finally:
+        case._unlock(gate)
+        os.close(gate)
+    assert len(calls) >= 2 and check.ok
+
+
+@pytest.mark.invariants
+def test_p15_a_holder_read_across_a_replaced_case_lock_is_not_the_truth(tmp_path, monkeypatch):
+    """T12 review 24 / R43: a thread that holds the case reads the log as the truth only
+    while the lock files it took are still the case's."""
+    log = _log(tmp_path, 2)
+    real, calls = case._check, []
+
+    def check_then_replace(raw, recorded):
+        calls.append(None)
+        if len(calls) == 1:
+            _replace_file(log.lock_path)
+        return real(raw, recorded)
+
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    with log.writer():
+        monkeypatch.setattr(case, "_check", check_then_replace)
+        check = log.verify()
+        monkeypatch.undo()
+    assert len(calls) >= 2 and check.ok
+
+
+@pytest.mark.invariants
+def test_a_failed_read_back_takes_its_head_back_even_with_the_lock_replaced(tmp_path, monkeypatch):
+    """T12 review 24 / P15: the take-back checks only that the head record is still this
+    save's, so a replaced lock file cannot leave a refused save recorded."""
+    log = _log(tmp_path, 2)
+    prefix = log.path.read_bytes()
+    real = case.CaseLog._write_head
+
+    def then_lock_and_log_are_replaced(self, hashes, **kw):
+        real(self, hashes, **kw)
+        if len(hashes) == 3:
+            _replace_file(self.lock_path)
+            self.path.write_bytes(prefix)
+
+    monkeypatch.setattr(case.CaseLog, "_write_head", then_lock_and_log_are_replaced)
+    with pytest.raises(case.SaveNotRecorded, match=r"not recorded$"):
+        log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    check = case.CaseLog(log.path).verify()
+    assert check.ok and check.head.position == 2

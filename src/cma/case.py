@@ -411,7 +411,8 @@ def _thread_token() -> int:
 # thread) holding each. A second CaseLog on the same file in the holding thread reads as
 # the holder: its own fallback lock would be refused by its own thread, which is not
 # another writer.
-_HELD: dict[tuple[int, int], tuple[int, int]] = {}
+# Each held case lock's identity -> (holder, the gate's identity when it took the case).
+_HELD: dict[tuple[int, int], tuple[tuple[int, int], tuple[int, int] | None]] = {}
 _HELD_GUARD = threading.RLock()  # reentrant, like _state: a cleanup run by the GC cannot deadlock
 
 
@@ -445,18 +446,34 @@ class CaseLog:
         """Walk the chain from the start, stop at the first entry that does not hold, and
         compare every entry with the head file."""
         me = _holder_id()
+        # This thread holds the case (through this object or another): nothing else can
+        # write, so one read is the truth, but only while the lock files it took are still
+        # the case's. A read across a replaced one falls through to a reader's checks
+        # (T12 review 24).
         with self._state:
-            holder = self._owner == me
-        if not holder:
+            ids = (self._lock_id, self._gate_id) if self._owner == me else None
+        if ids is None:
             try:
                 lock_id = _file_id(os.stat(self.lock_path))
             except OSError:  # no lock file: nobody in this process holds it
                 lock_id = None
             if lock_id is not None:
                 with _HELD_GUARD:
-                    holder = _HELD.get(lock_id) == me
-        if holder:  # nothing else can write: one read is the truth
-            return _check(self._read_log(), _read_head(self.head_path))
+                    owner, gate_id = _HELD.get(lock_id, (None, None))
+                if owner == me:
+                    ids = (lock_id, gate_id)
+
+        def ours() -> bool:
+            try:
+                return (ids is not None and ids[0] == _file_id(os.stat(self.lock_path))
+                        and ids[1] == _file_id(os.stat(self.gate_path)))
+            except OSError:
+                return False
+
+        if ours():
+            check = _check(self._read_log(), _read_head(self.head_path))
+            if ours():
+                return check
         # Hold the gate shared, so no writer can take the case during this read; then try
         # the case lock shared. Free: one read under it is the truth. Held: the writer that
         # holds it cannot be replaced while the gate is held, so after a steady read the
@@ -527,7 +544,12 @@ class CaseLog:
                 try:
                     if _try_shared(case_fd):
                         try:
-                            return _check(self._read_log(), _read_head(self.head_path))
+                            check = _check(self._read_log(), _read_head(self.head_path))
+                            # Only while the lock held shared is still the case's lock file
+                            # (T12 review 24); otherwise a writer took the new one: look again.
+                            if _file_id(os.fstat(case_fd)) == _file_id(os.stat(self.lock_path)):
+                                return check
+                            continue
                         finally:
                             with suppress(OSError):
                                 _unlock(case_fd)
@@ -712,6 +734,8 @@ class CaseLog:
                         raise CaseLocked(f"{self.path}: the case gate changed while it was passed")
                     self._take_case_lock(me, flags)
                     self._gate_id = gate_id
+                    with _HELD_GUARD:
+                        _HELD[self._lock_id] = (me, gate_id)
                 finally:
                     with suppress(OSError):
                         _unlock(gate)
@@ -733,7 +757,7 @@ class CaseLog:
                 raise CaseLocked(f"{self.path}: the case lock file changed while it was taken")
             self._lock_fd, self._owner, self._lock_depth, self._lock_id = fd, me, 1, lock_id
             with _HELD_GUARD:
-                _HELD[lock_id] = me
+                _HELD[lock_id] = (me, None)
         except BaseException as e:
             # Whatever interrupts this (a lock error, or KeyboardInterrupt between
             # two steps) leaves no lock behind: once the descriptor is recorded
@@ -928,7 +952,8 @@ class CaseLog:
             tmp.unlink(missing_ok=True)
         _fsync_dir(self.head_path.parent)
 
-    def _write_head(self, hashes: list[str], *, was: list[str] | None = None) -> None:
+    def _write_head(self, hashes: list[str], *, was: list[str] | None = None,
+                    check_lock: bool = True) -> None:
         """Replace the head file in one rename, after the last entry it names is on disk.
         With `was`, the head file must still record exactly those entries just before the
         rename, or nothing is published."""
@@ -943,7 +968,8 @@ class CaseLog:
             # that publishes the head record, the empty first one included. The temporary
             # file is read by nobody.
             def before() -> None:
-                self._require_lock_in_place()
+                if check_lock:
+                    self._require_lock_in_place()
                 if was is not None and _read_head(self.head_path) != was:
                     raise SaveNotRecorded(f"{self.path}: the head file changed while this save was "
                                           "being recorded; the save was not recorded")
@@ -1003,7 +1029,10 @@ class CaseLog:
             # it (T12 review 23). If the head record changed meanwhile, it is left alone.
             undone = False
             with suppress(CaseLogError, OSError):
-                self._write_head(recorded, was=[*recorded, entry.hash])
+                # Its own record only (`was`), and whether or not the lock files were
+                # replaced: taking back what this save published is what leaves the entry
+                # unrecorded, so a replaced lock must not stop it (T12 review 24).
+                self._write_head(recorded, was=[*recorded, entry.hash], check_lock=False)
                 undone = True
             raise SaveNotRecorded(
                 f"{self.path}: the log changed while this save was being recorded; the save was "
