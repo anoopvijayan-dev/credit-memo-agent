@@ -60,6 +60,7 @@ from someone the applicant also pays by transfer is not revenue (round trip).
 
 from __future__ import annotations
 
+import bisect
 import functools
 import hashlib
 import os
@@ -100,6 +101,7 @@ ALL_RULE_KEYS = RULE_KEYS | MATCH_KEYS | OPTIONAL_KEYS
 # that settles a credit's line type alone (bank_code). Kept in code, reviewed like code, so
 # a table edit cannot grant the exception to payer wording.
 BANK_RETURN_CODES = frozenset({r"^UNPAID DD\b"})
+_RULE_ID = re.compile(r"[A-Za-z0-9_.\-]+")
 # A frozen table's SHA-256, pinned here. A file that validates but differs from these
 # bytes (a rule recategorised, CRLF line ends, frozen switched off) is refused, so the id
 # v1 in an evidence record always means this exact table.
@@ -387,6 +389,12 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                                 f"({', '.join(sorted(BANK_RETURN_CODES))}), alone, with no unless or requires, "
                                 "for credits (direction in or any)")
         if data.get("frozen") is False:
+            if isinstance(r.get("id"), str) and not _RULE_ID.fullmatch(r["id"]):
+                # Candidates are recorded joined by + after a colon: an id holding either
+                # would make two different candidate sets read the same (T03 review 17).
+                problems.append(f"{where}: id may use only letters, digits, _, . and -")
+            if r.get("pattern") in BANK_RETURN_CODES and r.get("bank_code") is not True:
+                problems.append(f"{where}: the bank's own returned-payment code must carry bank_code: true")
             for key in ("pattern", "unless", "requires"):
                 if isinstance(r.get(key), str) and r[key] and not _compile_problem(r[key]) and _has_group_reference(r[key]):
                     # Matches are found at every position by wrapping the pattern in a group,
@@ -433,6 +441,11 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
             problem = _compile_problem(_rule_pattern_text(r))
             if problem:
                 problems.append(f"{where}: pattern and names do not compile together ({problem})")
+    if data.get("frozen") is False:
+        flagged = {r.get("pattern") for r in rules if isinstance(r, dict) and r.get("bank_code") is True}
+        for code in sorted(BANK_RETURN_CODES - flagged):
+            problems.append(f"the bank's own returned-payment code {code} has no rule with bank_code: true "
+                            "(R4: it settles a credit's line type)")
     problems += _category_order_problems(data, rules)
     if problems:
         raise RulesetError(f"{source}: " + "; ".join(problems))
@@ -617,12 +630,18 @@ class ProfileNames:
     own_accounts: tuple[str, ...] = ()
 
 
-def _names_in(names: Sequence[str], description: str) -> bool:
-    """`description` folded (_fold)."""
+@functools.lru_cache(maxsize=256)
+def _names_regex(names: tuple[str, ...]) -> re.Pattern[str] | None:
     # A profile value of only spaces, dashes, dots or invisible characters names no one
     # (T03 review 9): it must not settle an ambiguous credit by matching everywhere.
-    names = [n for n in names if _SEPARATOR_RUN.sub("", _fold(n))]
-    return bool(names) and re.search(names_pattern(names), description) is not None
+    kept = [n for n in names if _SEPARATOR_RUN.sub("", _fold(n))]
+    return re.compile(names_pattern(kept)) if kept else None
+
+
+def _names_in(names: Sequence[str], description: str) -> bool:
+    """`description` folded (_fold). The profile's names are compiled once per case."""
+    pattern = _names_regex(tuple(names))
+    return pattern is not None and pattern.search(description) is not None
 
 
 @functools.lru_cache(maxsize=None)
@@ -709,7 +728,10 @@ def credit_matches(ruleset: Ruleset, description: str, amount: float) -> list[Ru
     match lies inside a longer match of another rule (STRIPE inside STRIPE CAPITAL, REFUND
     inside HMRC REFUND, LOAN inside DIRECTOR LOAN): those count only as the longer one."""
     desc = _fold(description)
-    matched = [(r, _spans(r, desc)) for r in ruleset.rules if rule_matches(r, desc, amount)]
+    hits = [r for r in ruleset.rules if rule_matches(r, desc, amount)]
+    if len(hits) < 2:  # nothing for a match to lie inside: no spans needed
+        return hits
+    matched = [(r, _spans(r, desc)) for r in hits]
 
     def inside_longer(rule: Rule, spans: list[tuple[int, int]]) -> bool:
         others = [o for other, ss in matched if other is not rule for o in ss]
@@ -882,18 +904,19 @@ def link_reversals(statement: Statement) -> Statement:
     """
     taken: set[str] = set()
     txns = statement.transactions
+    # Debits by (amount in pence, payee), in statement order: each returned DD looks only
+    # at the debits it could undo, latest first, not back through the whole statement.
+    debits: dict[tuple[int, str], list[int]] = {}
+    for j, o in enumerate(txns):
+        if o.amount < 0 and o.category not in (Category.RETURNED_DD, None):
+            debits.setdefault((round(-o.amount * 100), counterparty(o.description)), []).append(j)
     for i, r in enumerate(txns):
         if r.category != Category.RETURNED_DD or r.amount <= 0:
             continue
-        payee = counterparty(r.description)
-        for o in reversed(txns[:i]):
-            if (
-                o.id not in taken
-                and o.amount < 0
-                and o.category not in (Category.RETURNED_DD, None)
-                and abs(o.amount + r.amount) < 0.005
-                and counterparty(o.description) == payee
-            ):
+        candidates = debits.get((round(r.amount * 100), counterparty(r.description)), [])
+        for j in reversed(candidates[: bisect.bisect_left(candidates, i)]):
+            o = txns[j]
+            if o.id not in taken and abs(o.amount + r.amount) < 0.005:
                 r.reverses = o.id
                 taken.add(o.id)
                 break

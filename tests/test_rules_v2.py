@@ -552,6 +552,9 @@ def test_v2_is_packaged_with_an_id_and_the_hash_of_its_file(v2):
 
 
 GOOD = {"id": "card", "names": ["STRIPE"], "direction": "in", "category": "revenue_card_settlement"}
+# Every v2 table carries the bank's own returned-payment code (R4); synthetic tables too.
+BANK = {"id": "returned_dd", "pattern": r"^UNPAID DD\b", "direction": "any", "category": "returned_dd",
+        "protected": True, "stage": "line_type", "bank_code": True}
 
 
 @pytest.mark.contracts
@@ -1140,14 +1143,14 @@ def test_p_pairwise_matrix_every_two_credit_lists_combine_by_the_policy_alone(v2
 def test_only_a_line_type_cue_of_a_v2_table_may_have_no_category():
     rail = {"id": "rail", "names": ["FPS"], "direction": "in", "protected": True, "stage": "line_type"}
     name = {**GOOD, "stage": "names"}
-    validate_ruleset({"id": "v2", "frozen": False, "rules": [rail, name]}, expected_id="v2")
+    validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rail, name]}, expected_id="v2")
     with pytest.raises(RulesetError, match="missing category"):
         validate_ruleset({"id": "v2", "frozen": False,
-                          "rules": [rail, {k: v for k, v in name.items() if k != "category"}]}, expected_id="v2")
+                          "rules": [BANK, rail, {k: v for k, v in name.items() if k != "category"}]}, expected_id="v2")
     with pytest.raises(RulesetError, match="missing category"):
-        validate_ruleset({"id": "v2", "frozen": True, "rules": [rail]}, expected_id="v2")
-    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [rail, name]}, "v2", "t", "0")
-    assert rs.rules[0].category is None
+        validate_ruleset({"id": "v2", "frozen": True, "rules": [BANK, rail]}, expected_id="v2")
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rail, name]}, "v2", "t", "0")
+    assert rs.rules[1].category is None  # [0] is the bank's code
     # the cue alone never sets a category: a debit or a credit with only the rail is the default
     assert classify(_t("FPS ACME", 5.0), rs) == (C.OTHER, "v2:default")
     assert classify(_t("FPS ACME", -5.0), rs) == (C.SUPPLIER, "v2:default")
@@ -1455,7 +1458,7 @@ def test_a_longer_phrase_starting_inside_another_match_still_hides_the_words_ins
             "stage": "line_type"}
     acme = {"id": "acme", "names": ["ACME PAY", "PAY FASTER PAYMENT LTD"], "direction": "in",
             "category": "revenue_card_settlement", "stage": "names"}
-    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [rail, acme]}, "v2", "t", "0")
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rail, acme]}, "v2", "t", "0")
     assert [r.id for r in categorise.credit_matches(rs, "ACME PAY FASTER PAYMENT LTD", 100.0)] == ["acme"]
     # the rail on its own, outside any longer phrase, is still a cue
     assert [r.id for r in categorise.credit_matches(rs, "FASTER PAYMENT ACME PAY", 100.0)] == ["rail", "acme"]
@@ -1634,7 +1637,7 @@ def test_an_anchored_cue_without_the_flag_gets_no_bank_code_exception():
               "protected": True, "stage": "line_type"}
     pot = {"id": "pot", "names": ["TO SAVINGS"], "direction": "in", "category": "own_account_transfer",
            "protected": True, "stage": "line_type"}
-    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [refund, pot]}, "v2", "t", "0")
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, refund, pot], "category_order": ["returned_dd", "refund_in"]}, "v2", "t", "0")
     assert classify(_t("REFUND TO SAVINGS", 50.0), rs) == (C.OTHER, "v2:conflict:refund+pot")
 
 
@@ -1661,7 +1664,7 @@ def test_a_mixed_rule_finds_its_longest_match_at_each_start_across_pattern_and_n
             "stage": "line_type"}
     acme = {"id": "acme", "pattern": r"\bACME\b", "names": ["ACME FASTER PAYMENT LTD"], "direction": "in",
             "category": "revenue_card_settlement", "stage": "names"}
-    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [rail, acme]}, "v2", "t", "0")
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rail, acme]}, "v2", "t", "0")
     assert [r.id for r in categorise.credit_matches(rs, "ACME FASTER PAYMENT LTD", 100.0)] == ["acme"]
 
 
@@ -1687,7 +1690,7 @@ def test_the_longest_alternative_of_one_pattern_counts_as_the_longer_phrase():
             "stage": "line_type"}
     acme = {"id": "acme", "pattern": r"\bACME\b|\bACME FASTER PAYMENT LTD\b", "direction": "in",
             "category": "revenue_card_settlement", "stage": "names"}
-    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [rail, acme]}, "v2", "t", "0")
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rail, acme]}, "v2", "t", "0")
     assert [r.id for r in categorise.credit_matches(rs, "ACME FASTER PAYMENT LTD", 100.0)] == ["acme"]
     # word edges still hold for the longer end: ACME FASTER PAYMENT LTDX is not that phrase
     assert "rail" in [r.id for r in categorise.credit_matches(rs, "ACME FASTER PAYMENT LTDX", 100.0)]
@@ -1709,7 +1712,7 @@ def test_a_v2_pattern_that_can_run_across_words_is_refused_at_load(pattern):
 def test_a_v2_pattern_repeating_one_kind_of_character_is_allowed(pattern):
     rule = {"id": "narrow", "pattern": pattern, "direction": "in", "category": "revenue_card_settlement",
             "stage": "names"}
-    validate_ruleset({"id": "v2", "frozen": False, "rules": [rule]}, expected_id="v2")
+    validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")
 
 
 @pytest.mark.contracts
@@ -1721,7 +1724,7 @@ def test_a_greedy_repeat_before_an_optional_phrase_still_counts_its_longest_matc
             "stage": "line_type"}
     acme = {"id": "acme", "pattern": r"\bACME\w{0,3}(?:CO FASTER PAYMENT LTD)?\b", "direction": "in",
             "category": "revenue_card_settlement", "stage": "names"}
-    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [rail, acme]}, "v2", "t", "0")
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rail, acme]}, "v2", "t", "0")
     # greedy \w{0,3} takes CO and the optional phrase then fails: the first match is ACMECO;
     # the longest, ACMECO FASTER PAYMENT LTD, hides the rail inside it
     assert [r.id for r in categorise.credit_matches(rs, "ACMECO FASTER PAYMENT LTD", 100.0)] == ["acme"]
@@ -1754,3 +1757,26 @@ def test_a_v2_pattern_that_cannot_backtrack_is_refused_at_load(pattern):
             "stage": "names"}
     with pytest.raises(RulesetError, match="atomic group or a possessive repeat"):
         validate_ruleset({"id": "v2", "frozen": False, "rules": [rule]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_the_bank_code_cannot_be_unflagged_or_left_out_of_a_v2_table():
+    """T03 review 17 / R4: the bank's own returned-payment code is mandatory; an edit that
+    keeps its pattern without the flag, or drops the rule, is refused at load."""
+    unflagged = {**BANK}
+    del unflagged["bank_code"]
+    with pytest.raises(RulesetError, match="must carry bank_code"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [unflagged]}, expected_id="v2")
+    rail = {"id": "rail", "names": ["FPS"], "direction": "in", "protected": True, "stage": "line_type"}
+    with pytest.raises(RulesetError, match="has no rule with bank_code"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [rail]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("rule_id", ["card+gateway", "card:x", "card gateway"])
+def test_a_v2_rule_id_cannot_hold_a_separator_used_in_recorded_candidates(rule_id):
+    """T03 review 17: candidates are recorded joined by + after a colon; an id holding either
+    would make two different candidate sets read the same."""
+    rule = {**GOOD, "id": rule_id, "stage": "names"}
+    with pytest.raises(RulesetError, match="id may use only"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")
