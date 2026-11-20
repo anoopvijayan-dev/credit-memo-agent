@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 197,
+  "next_id": 198,
   "decisions": [
     {
       "id": "D1",
@@ -3974,6 +3974,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T09:33:56.072Z"
+    },
+    {
+      "id": "D197",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Applied the supplied revision 22 of R4. Mapped the maintained lists and directions to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest-match filtering, bank-code priority, cash and payment-method ambiguity, candidate provenance, and override, profile and firm-rule precedence at src/cma/categorise.py:1044–1249 and the unexplained bucket at src/cma/models.py:65. Traced the digest exemption, changed-v1 refusal, field checks and matcher builds at src/cma/categorise.py:397–632,804–826,879–907. Reviewed repeat submission and concurrent output checks at src/cma/cli.py:81–86,146–159,228–229, amount and date boundaries at src/cma/ingest.py:42–54,100–130 and src/cma/categorise.py:920–930, ruleset and MCP path scope at src/cma/categorise.py:881–883 and src/cma/mcp_server.py:34–46, and case-local inputs and evidence consumers at src/cma/categorise.py:1331–1345 and src/cma/graph.py:188–224. Runner logs confirm 830 suite passes, 208 contracts, 138 invariants and 83 dual-run cases, including list provenance, CLI evidence, idempotency, checkpoint replay and both offline evals. Repeated-value validation still skips table checks and rule-ID uniqueness checks.); major: Repeated top-level category_order values receive only the generic duplicate-key and wrong-type diagnostics. The validator never checks the categories in each supplied list. at src/cma/categorise.py:664; major: Repeated rules lists are flattened before table-wide checks. One list can supply the mandatory bank code for another list, and rules in one list can trigger false ordering and duplicate-ID errors in the other. at src/cma/categorise.py:429; major: Repeated rule IDs skip the uniqueness check for every supplied value. The check runs on the duplicate placeholder, which is never a string. at src/cma/categorise.py:554; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T09:37:36.912Z"
     }
   ]
 }
