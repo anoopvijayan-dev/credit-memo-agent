@@ -5547,12 +5547,12 @@
         "kill task"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "take over manually",
+      "free_text": "Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. T04 at the latest commit (review 43). M16 was renamed by T01 (4d0583e) from the previous release's 'Unclassified inflows' (tests/previous_release.py BASE cba9dba, the release the dual run compares) to 'Non-trading money in (share)', as R10 asks; test_m16_is_renamed_from_the_previous_releases_name pins it.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-20T20:58:40.701Z",
+      "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T20:54:42.116Z"
     }
   ]
