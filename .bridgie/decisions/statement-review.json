@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 141,
+  "next_id": 142,
   "decisions": [
     {
       "id": "D1",
@@ -2873,6 +2873,24 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T03:32:42.200Z"
+    },
+    {
+      "id": "D141",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Write D137 into R4: a v2 pattern may carry an anchor (^, $, \\A or \\Z) only on the bank's returned-payment code. In R4 also state that only a match that itself counts can set another aside inside its longer phrase (T03 review 22). In R43/P15 state that a reader's read counts only while the gate and case lock it holds are still the case's lock files; a read across a replaced one is taken again (T12 review 23). In R42 state that a save whose read-back fails takes back the head record it published when that record is still its own, leaving its entry past the recorded entries (T12 review 23). Keep everything else in revision 15.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-20T03:47:51.053Z",
+      "effect": "changes requested: Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Write D137 into R4: a v2 pattern may carry an anchor (^, $, \\A or \\Z) only on the bank's returned-payment code. In R4 also state that only a match that itself counts can set another aside inside its longer phrase (T03 review 22). In R43/P15 state that a reader's read counts only while the gate and case lock it holds are still the case's lock files; a read across a replaced one is taken again (T12 review 23). In R42 state that a save whose read-back fails takes back the head record it published when that record is still its own, leaving its entry past the recorded entries (T12 review 23). Keep everything else in revision 15.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-20T03:47:51.042Z"
     }
   ]
 }
