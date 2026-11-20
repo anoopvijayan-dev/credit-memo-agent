@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-138/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (Checked amount and flow limits at src/cma/ingest.py:56-67 and :151-157, M3 at src/cma/metrics.py:435-450, and formatting and evidence at src/cma/cli.py:292 and src/cma/graph.py:172, :226, and :265. The reversal path still computes on GBP amounts outside the figures layer. The MCP load wrapper can also drop the required flow-limit diagnostic.); major: Returned-payment matching still performs money arithmetic outside the figures layer. The categoriser multiplies a decimal GBP amount by 100 and negates the resulting debit pence to decide which lines net against debt service, VAT, PAYE or operating cash flow. The change fixes binary-float arithmetic but does not meet the figures-layer restriction. at src/cma/categorise.py:1397; major: MCP can refuse a statement because its money in reaches the limit without telling the caller which flow reached it. The wrapper sorts and truncates the loader's diagnostics to ten entries. at src/cma/mcp_server.py:57; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-139/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (Applied the supplied revision 27. Checked the import ceiling at src/cma/ingest.py:56-67, integer-pence reversal matching at src/cma/categorise.py:1393-1406, the M3 fallback at src/cma/metrics.py:442-451, and display and evidence at src/cma/cli.py:292 and src/cma/graph.py:172, :226, and :265. Import still calculates statement flow totals outside the figures layer. The CLI can omit the flow-limit reason and MCP can omit an over-limit line.); major: The statement loader computes money-in and money-out totals outside the figures layer. It reconstructs pence with binary-float multiplication at line 45 after parsing the amount as a decimal. Monzo likewise computes the two flow totals in its importer at src/cma/importers/monzo.py:203-204. at src/cma/ingest.py:151; major: The CLI can refuse an over-limit statement without saying which flow reached the limit. The loader appends the flow reason after the row errors, then StatementError exposes only the first 20 problems to cma run. at src/cma/ingest.py:34; major: MCP preserves whole-statement flow reasons but can omit the line whose amount or balance reaches the limit. It sorts and truncates all row labels together. at src/cma/mcp_server.py:63; reviewer verdict fail"
     },
     {
       "id": "T06",

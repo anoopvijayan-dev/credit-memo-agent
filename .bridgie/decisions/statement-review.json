@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 241,
+  "next_id": 242,
   "decisions": [
     {
       "id": "D1",
@@ -4841,6 +4841,26 @@
       "decided_at": "2026-11-20T15:04:37.098Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T14:59:31.396Z"
+    },
+    {
+      "id": "D241",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (Applied the supplied revision 27. Checked the import ceiling at src/cma/ingest.py:56-67, integer-pence reversal matching at src/cma/categorise.py:1393-1406, the M3 fallback at src/cma/metrics.py:442-451, and display and evidence at src/cma/cli.py:292 and src/cma/graph.py:172, :226, and :265. Import still calculates statement flow totals outside the figures layer. The CLI can omit the flow-limit reason and MCP can omit an over-limit line.); major: The statement loader computes money-in and money-out totals outside the figures layer. It reconstructs pence with binary-float multiplication at line 45 after parsing the amount as a decimal. Monzo likewise computes the two flow totals in its importer at src/cma/importers/monzo.py:203-204. at src/cma/ingest.py:151; major: The CLI can refuse an over-limit statement without saying which flow reached the limit. The loader appends the flow reason after the row errors, then StatementError exposes only the first 20 problems to cma run. at src/cma/ingest.py:34; major: MCP preserves whole-statement flow reasons but can omit the line whose amount or balance reaches the limit. It sorts and truncates all row labels together. at src/cma/mcp_server.py:63; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T15:08:52.831Z"
     }
   ]
 }
