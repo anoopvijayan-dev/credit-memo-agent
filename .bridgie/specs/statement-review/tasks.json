@@ -40,12 +40,12 @@
         "T01",
         "T02"
       ],
-      "status": "verify",
+      "status": "passed",
       "attempts": 6,
       "max_attempts": 6,
       "branch": "bridgie-task/statement-review/T03",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-125/evidence.json",
-      "escalation": "blocked after 6 attempts. Last verdict fail: R4 fail (Applied supplied revision 23. The repository copy is revision 2 at .bridgie/specs/statement-review/requirements.md:5. Verified maintained lists and directions at src/cma/rules/v2.yaml:63–406, longest-match and containment handling at src/cma/categorise.py:1153–1215, bank-code and cue precedence at src/cma/categorise.py:1264–1279, and override, profile, firm-rule and conflict provenance at src/cma/categorise.py:1283–1354. Traced CMA_RULESET selection and line evidence through src/cma/graph.py:188–223 and 250–253 and src/cma/cli.py:224–229. Reviewed duplicate keys, matcher construction and frozen-table refusal at src/cma/categorise.py:419–706, 802–872 and 989–1019. The current runner logs show both prior regression tests passed, along with the table-driven cases and CLI provenance tests. The changed frozen v1 path still misses a direction/category contradiction. Checked repeat submission, concurrent output and partial writes at src/cma/cli.py:73–85, 146–158 and 224–229, signed amounts and local-date boundaries at src/cma/ingest.py:38–59 and 98–110, and authorization, case isolation and changed consumers at src/cma/mcp_server.py:30–100 and src/cma/graph.py:188–223. Runner results show 854 full-suite, 232 contract, 138 invariant and 83 dual-run passes, including both offline evaluations, rollback, checkpoint replay and the 10,000-line categoriser fixture. Review was read-only.); major: Direction/category consistency is checked only for maintained tables. A changed v1 that still declares frozen: true can contain a contradictory rule and receive only the changed-table refusal. Revision 23 also requires the refusal to name at least one fault in the malformed table. at src/cma/categorise.py:614; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-126/evidence.json",
+      "escalation": null
     },
     {
       "id": "T04",
