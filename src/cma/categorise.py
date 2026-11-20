@@ -256,6 +256,26 @@ def _has_group_reference(pattern: str) -> bool:
     return walk(_sre_parse.parse(pattern))
 
 
+def _has_lookaround(pattern: str) -> bool:
+    """The pattern tests wording it does not match ((?=...), (?!...), (?<=...), (?<!...)):
+    an exception written into the pattern itself."""
+    def walk(sub: _sre_parse.SubPattern) -> bool:
+        for op, av in sub:
+            if str(op) in ("ASSERT", "ASSERT_NOT"):
+                return True
+            stack = [av]
+            while stack:
+                item = stack.pop()
+                if isinstance(item, _sre_parse.SubPattern):
+                    if walk(item):
+                        return True
+                elif isinstance(item, (list, tuple)):
+                    stack.extend(item)
+        return False
+
+    return walk(_sre_parse.parse(pattern))
+
+
 def _atoms(sub: _sre_parse.SubPattern):
     """The single-character elements a parsed pattern is made of, through groups,
     alternatives and repeats."""
@@ -410,6 +430,13 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                     problems.append(f"{where}: {key} is not allowed in a v2 table: an exception could "
                                     "hide another list's wording from the ambiguity check (R4); list a "
                                     "longer phrase instead")
+            if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
+                    and _has_lookaround(r["pattern"])):
+                # A lookahead or lookbehind is an exception inside the pattern: (?!.*FPS)
+                # would switch the rule off beside another list's wording, as an unless
+                # would (T03 review 21).
+                problems.append(f"{where}: pattern uses a lookahead or lookbehind, which a v2 table "
+                                "does not allow: an exception could hide another list's wording (R4)")
             if r.get("pattern") in BANK_RETURN_CODES and r.get("bank_code") is not True:
                 problems.append(f"{where}: the bank's own returned-payment code must carry bank_code: true")
             for key in ("pattern", "unless", "requires"):
@@ -757,16 +784,26 @@ def credit_matches(ruleset: Ruleset, description: str, amount: float) -> list[Ru
     matched = [(r, _spans(r, desc)) for r in hits]
 
     def inside_longer(rule: Rule, spans: list[tuple[int, int]]) -> bool:
-        # Cash wording is never hidden inside a payment-method cue's phrase: a rail with
-        # cash wording is ambiguous by R4 whatever list the rail phrase is on (review 19).
+        # Cash wording and payment-method wording never hide each other inside a longer
+        # phrase, whichever list holds it: a rail with cash wording is ambiguous by R4
+        # (reviews 19 and 21).
         others = [o for other, ss in matched if other is not rule
-                  and not (rule.category is Category.CASH_DEPOSIT and other.category is None
-                           and other.stage == "line_type") for o in ss]
+                  and not _rail_and_cash(rule, other) for o in ss]
         return bool(spans) and all(any(a <= s and e <= b and b - a > e - s for a, b in others) for s, e in spans)
 
     # The bank's own code settles the line type before the longer-phrase rule (D101): it is
     # never counted as inside another rule's longer phrase.
     return [r for r, spans in matched if r.bank_code or not inside_longer(r, spans)]
+
+
+def _is_payment_method(rule: Rule) -> bool:
+    return rule.category is None and rule.stage == "line_type"
+
+
+def _rail_and_cash(a: Rule, b: Rule) -> bool:
+    """One is cash paid-in wording and the other a payment-method cue."""
+    return ((a.category is Category.CASH_DEPOSIT and _is_payment_method(b))
+            or (b.category is Category.CASH_DEPOSIT and _is_payment_method(a)))
 
 
 @dataclass(frozen=True)

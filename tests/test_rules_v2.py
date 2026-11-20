@@ -1846,3 +1846,25 @@ def test_a_v2_rule_may_not_carry_an_exception_that_could_hide_cash_wording(key):
             "stage": "names", key: "FPS" if key == "unless" else "COUNTER"}
     with pytest.raises(RulesetError, match=f"{key} is not allowed in a v2 table"):
         categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rail, cash]}, "v2", "t", "0")
+
+
+@pytest.mark.contracts
+def test_a_rail_inside_a_longer_cash_phrase_is_not_hidden():
+    """T03 review 21 / R4: with FPS CASH DEPOSIT on the cash list, the FPS rail inside it
+    still meets the cash wording, so the credit is ambiguous, not cash."""
+    rail = {"id": "rail", "names": ["FPS"], "direction": "in", "protected": True, "stage": "line_type"}
+    cash = {"id": "cash", "names": ["FPS CASH DEPOSIT"], "direction": "in", "category": "cash_deposit",
+            "stage": "names"}
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rail, cash]}, "v2", "t", "0")
+    assert classify(_t("FPS CASH DEPOSIT", 200.0), rs) == (C.OTHER, "v2:conflict:rail+cash")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("pattern", [r"CASH DEPOSIT(?!.*FPS)", r"(?<!FPS )CASH DEPOSIT",
+                                     r"CASH(?= DEPOSIT)", r"(?<=COUNTER )CASH"])
+def test_a_v2_pattern_may_not_hide_an_exception_in_a_lookaround(pattern):
+    """T03 review 21 / R4: a lookahead or lookbehind is an exception written into the
+    pattern, and is refused as unless and requires are."""
+    cash = {"id": "cash", "pattern": pattern, "direction": "in", "category": "cash_deposit", "stage": "names"}
+    with pytest.raises(RulesetError, match="lookahead or lookbehind"):
+        categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, cash]}, "v2", "t", "0")
