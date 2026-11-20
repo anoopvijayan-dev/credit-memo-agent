@@ -1,0 +1,112 @@
+```json
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "openai",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories. src/cma/metrics.py:483 assigns credits and src/cma/metrics.py:562 returns the GBP totals and evidence. The runner confirmed the MCP payload contract.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:86 checks the penny round trip, src/cma/metrics.py:512 handles unrepresentable M3, and src/cma/graph.py:175 and src/cma/cli.py:414 show pence. The UTF-8 recovery at src/cma/ingest.py:116 can discard earlier records or misidentify the record start.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks the integer-pence difference and credit membership. src/cma/cli.py:118 exits 6 before showing figures. The runner confirmed both CLI and MCP refusal contracts, including escaped line IDs.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The fallback at src/cma/categorise.py:1311 and src/cma/categorise.py:1360 yields OTHER for unmatched credits. src/cma/models.py:66 maps OTHER to unexplained, outside the revenue categories at line 69.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:562 emits M17 and M18 separately. The partition check at line 578 includes M2 and the seven other buckets. The runner passed both P1 invariants, including large amounts.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the figures delivered by T04, src/cma/metrics.py:424 records partially counted M9 credits, lines 529–550 retain balance, overdrawn-day and outflow evidence, and lines 559–575 record the shared denominator and sum inputs. The runner passed the named P2 invariants and the committed-case dual-run evidence comparisons.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:352 and src/cma/metrics.py:483 select M2 and unexplained evidence through distinct categories. The runner passed the unmatched-credit invariant and its explicit v1 and v2 cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 116,
+      "criterion": "R2",
+      "claim": "On a CR-only Monzo export, a later invalid UTF-8 byte discards every preceding record, hiding the first row problem and any flow limit already reached.",
+      "repro": "Use CR alone between the Monzo header and records. Put a GBP amount of 10000000000000.00 on physical line 2 and an invalid UTF-8 byte in the Name on line 3. Run cma import monzo. The recovery searches only for LF, returns an empty prefix and reports invalid UTF-8 on line 1. It should report the amount on line 2 and that money in is at the limit."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 118,
+      "criterion": "R2",
+      "claim": "An invalid byte inside a multiline CSV record is attributed to its continuation line.",
+      "repro": "In a five-column statement, start a quoted description on line 2 and put byte 0xFF inside that description on line 3 before the closing quote. Run cma run on the file. The UTF-8 diagnostic identifies line 3, although the record starts on line 2. The truncated prefix can also create spurious missing-amount and missing-balance errors for that record."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 157,
+      "criterion": "R2",
+      "claim": "The CLI's oversized-field diagnostic makes an incorrect inference about the size of any amount or balance represented by the unreadable field.",
+      "repro": "Use an amount field containing 200000 zeroes followed by 1.00. Run cma run or use the same field in cma import monzo. The reader correctly refuses the field as too long, then incorrectly says that an amount that long would exceed the limit. The field represents £1.00."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 238,
+      "criterion": "R53",
+      "claim": "The review lock uses the checkpoint path as supplied, so two processes sharing the same SQLite checkpoint through a symlink can take separate locks. This is a changed-consumer finding outside the scored T04 rows.",
+      "repro": "Create reviews.sqlite and a symlink alias.sqlite to it. Start two cma run processes with the same unused --thread, one per path. Pause the first process in drafting after it checks the review ID, then start the second while that ID is still unused. Each process can pass the unused-ID check under a different lock file."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 315,
+      "criterion": "P2",
+      "claim": "The historical scratchpad probe and test counts in the producer claim are unverified for the reviewed commit. The runner verified 952 tests on the current checkout, including the named invariant, contract and dual-run cases. It did not run the scratchpad idempotency probe.",
+      "repro": "Compare the claim for ca0092c with git log and specified-3.log for the reviewed eca3af6 checkout. To verify the historical counts, run the claimed pytest commands on ca0092c. To verify the scratchpad result, supply scratchpad/probe.py and run PYTHONPATH=src python scratchpad/probe.py in a runner tier."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer's example-artifact note says the committed evidence has no evidence_note field. The reviewed example already contains it.",
+      "repro": "Run rg -n evidence_note examples/cafe_stretched.memo.evidence.json. The first match is a null evidence_note at line 2363."
+    }
+  ],
+  "verdict": "fail"
+}
+```
