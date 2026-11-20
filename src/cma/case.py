@@ -553,7 +553,11 @@ class CaseLog:
                             check = _check(self._read_log(), _read_head(self.head_path))
                             # Only while the lock held shared is still the case's lock file
                             # (T12 review 24); otherwise a writer took the new one: look again.
-                            if _file_id(os.fstat(case_fd)) == _file_id(os.stat(self.lock_path)):
+                            try:
+                                same = _file_id(os.fstat(case_fd)) == _file_id(os.stat(self.lock_path))
+                            except OSError:  # removed during the read: look again, never
+                                same = False  # fall through to an unprotected read (review 25)
+                            if same:
                                 return check
                             continue
                         finally:
@@ -958,8 +962,7 @@ class CaseLog:
             tmp.unlink(missing_ok=True)
         _fsync_dir(self.head_path.parent)
 
-    def _write_head(self, hashes: list[str], *, was: list[str] | None = None,
-                    check_lock: bool = True) -> None:
+    def _write_head(self, hashes: list[str], *, was: list[str] | None = None) -> None:
         """Replace the head file in one rename, after the last entry it names is on disk.
         With `was`, the head file must still record exactly those entries just before the
         rename, or nothing is published."""
@@ -974,8 +977,7 @@ class CaseLog:
             # that publishes the head record, the empty first one included. The temporary
             # file is read by nobody.
             def before() -> None:
-                if check_lock:
-                    self._require_lock_in_place()
+                self._require_lock_in_place()
                 if was is not None and _read_head(self.head_path) != was:
                     raise SaveNotRecorded(f"{self.path}: the head file changed while this save was "
                                           "being recorded; the save was not recorded")
@@ -1026,6 +1028,17 @@ class CaseLog:
         except CaseLocked as e:
             raise SaveNotRecorded(f"{e}; its entry was written and the save was not recorded: "
                                   "the next holder confirms dropping it") from e
+        except OSError as e:
+            # Failed before the head record's rename, the save is not recorded; after it (the
+            # folder could not be synced), the head may list it though it may not last, so
+            # it is not confirmed (T12 review 25). A raw OSError never reaches the caller.
+            published = _read_head(self.head_path)
+            if published == recorded:
+                raise SaveNotRecorded(f"{self.path}: the head record could not be written ({e}); "
+                                      "the save was not recorded") from e
+            raise SaveNotConfirmed(f"{self.path}: the head record could not be made durable ({e}), so "
+                                   "whether the save was recorded is not confirmed: check the case log "
+                                   "before anything else is saved") from e
         now = _check(self._read_log(), _read_head(self.head_path))
         held = now.entries[entry.seq - 1].hash if now.ok and len(now.entries) >= entry.seq else None
         if held != entry.hash:
@@ -1035,10 +1048,11 @@ class CaseLog:
             # it (T12 review 23). If the head record changed meanwhile, it is left alone.
             undone = False
             with suppress(CaseLogError, OSError):
-                # Its own record only (`was`), and whether or not the lock files were
-                # replaced: taking back what this save published is what leaves the entry
-                # unrecorded, so a replaced lock must not stop it (T12 review 24).
-                self._write_head(recorded, was=[*recorded, entry.hash], check_lock=False)
+                # Its own record only (`was`), and like every head rename only while both
+                # lock files are still the ones taken: under interference a take-back could
+                # otherwise replace a head another writer has since published and been told
+                # is recorded (T12 review 25). Refused, the save is not confirmed (D143).
+                self._write_head(recorded, was=[*recorded, entry.hash])
                 undone = True
             if not undone:
                 raise SaveNotConfirmed(

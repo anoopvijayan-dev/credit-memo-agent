@@ -1038,7 +1038,7 @@ def test_p15_an_entry_written_but_not_recorded_in_the_head_file_is_torn(tmp_path
     # Power lost after the line reached the disk but before the head file was replaced.
     log = _log(tmp_path, 2)
     monkeypatch.setattr(case.CaseLog, "_write_head", lambda *_a, **_k: (_ for _ in ()).throw(OSError("power lost")))
-    with pytest.raises(OSError):
+    with pytest.raises(case.SaveNotRecorded, match="power lost"):  # stopped before the head record
         log.append("override", {"n": 99}, expected=2)
     monkeypatch.undo()
     check = log.verify()
@@ -1162,7 +1162,7 @@ def test_a_crash_after_the_rename_while_dropping_leaves_a_torn_log_that_drops_ag
     log = _log(tmp_path, 2)
     _crash_mid_append(log, monkeypatch, 15)
     monkeypatch.setattr(case.CaseLog, "_write_head", lambda *_a, **_k: (_ for _ in ()).throw(OSError("power lost")))
-    with pytest.raises(OSError):
+    with pytest.raises(case.SaveNotRecorded, match="power lost"):  # stopped before the head record
         log.drop_torn_entry(expected=2, by="A. Underwriter")
     monkeypatch.undo()
     # The log bytes changed (the drop entry is on disk), the head file did not: the drop
@@ -2398,9 +2398,10 @@ def test_p15_a_holder_read_across_a_replaced_case_lock_is_not_the_truth(tmp_path
 
 
 @pytest.mark.invariants
-def test_a_failed_read_back_takes_its_head_back_even_with_the_lock_replaced(tmp_path, monkeypatch):
-    """T12 review 24 / P15: the take-back checks only that the head record is still this
-    save's, so a replaced lock file cannot leave a refused save recorded."""
+def test_a_failed_read_back_with_the_lock_replaced_is_not_confirmed(tmp_path, monkeypatch):
+    """T12 review 25 / D143: the take-back is a head rename and re-checks both lock files
+    like every other; with the lock replaced it is refused, so the save is not confirmed
+    (never told not recorded while the head still lists it)."""
     log = _log(tmp_path, 2)
     prefix = log.path.read_bytes()
     real = case.CaseLog._write_head
@@ -2412,11 +2413,54 @@ def test_a_failed_read_back_takes_its_head_back_even_with_the_lock_replaced(tmp_
             self.path.write_bytes(prefix)
 
     monkeypatch.setattr(case.CaseLog, "_write_head", then_lock_and_log_are_replaced)
-    with pytest.raises(case.SaveNotRecorded, match=r"not recorded$"):
+    with pytest.raises(case.SaveNotConfirmed, match="not confirmed"):
         log.append("override", {"n": 3}, expected=2)
-    monkeypatch.undo()
-    check = case.CaseLog(log.path).verify()
-    assert check.ok and check.head.position == 2
+
+
+@pytest.mark.invariants
+def test_a_head_record_that_cannot_be_made_durable_is_not_confirmed(tmp_path, monkeypatch):
+    """T12 review 25: a failure after the head record's rename (the folder sync) reaches the
+    caller as not confirmed, never as a raw OSError."""
+    log = _log(tmp_path, 2)
+    real, calls = case._fsync_dir, []
+
+    def sync_fails(path):
+        calls.append(path)
+        if len(calls) >= 1 and path == log.head_path.parent and log.head_path.exists() \
+                and json.loads(log.head_path.read_text())["count"] == 3:
+            raise OSError("sync failed")
+        return real(path)
+
+    monkeypatch.setattr(case, "_fsync_dir", sync_fails)
+    with pytest.raises(case.SaveNotConfirmed, match="not confirmed"):
+        log.append("override", {"n": 3}, expected=2)
+
+
+@pytest.mark.invariants
+def test_p15_a_busy_gate_read_whose_case_lock_vanishes_looks_again(tmp_path, monkeypatch):
+    """T12 review 25 / R43: the case lock removed during a busy-gate read sends the reader
+    round again, never to the unprotected read that would call a live append torn."""
+    log = _log(tmp_path, 2)
+    gate = os.open(log.gate_path, os.O_RDWR)
+    assert case._try_exclusive(gate)
+    real, calls = case._check, []
+
+    def check_then_remove(raw, recorded):
+        calls.append(None)
+        if len(calls) == 1:
+            log.lock_path.unlink()
+        return real(raw, recorded)
+
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    monkeypatch.setattr(case, "_check", check_then_remove)
+    steady = []
+    monkeypatch.setattr(case.CaseLog, "_steady", lambda self: steady.append(None))
+    try:
+        check = case.CaseLog(log.path).verify()
+    finally:
+        case._unlock(gate)
+        os.close(gate)
+    assert not steady and not check.ok and not check.checked  # no unprotected read was trusted
 
 
 @pytest.mark.invariants
@@ -2428,7 +2472,7 @@ def test_a_save_whose_take_back_fails_is_not_confirmed(tmp_path, monkeypatch):
     real = case.CaseLog._write_head
 
     def then_the_log_is_replaced_and_the_head_sticks(self, hashes, **kw):
-        if len(hashes) == 2 and kw.get("check_lock") is False:
+        if len(hashes) == 2 and kw.get("was") is not None:  # the take-back
             raise OSError("the head record cannot be renamed")
         real(self, hashes, **kw)
         if len(hashes) == 3:
