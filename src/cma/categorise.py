@@ -611,7 +611,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                 problems.append(f"{where}: direction {r['direction']!r} is not one of {list(DIRECTIONS)}")
             if isinstance(r.get("category"), str) and r["category"] not in categories:
                 problems.append(f"{where}: category {r['category']!r} is not a category")
-            if strict and vi == 0:
+            if not verified and vi == 0:  # every table but the hash-verified v1 (review 50)
                 # Direction and category must agree, in every combination of the values given
                 # (review 47): a rule that can match a credit gives a category with a money-in
                 # bucket, and a debits-only rule never gives a money-in-only category.

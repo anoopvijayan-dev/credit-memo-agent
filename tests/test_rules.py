@@ -206,7 +206,10 @@ def test_v1_hash_is_pinned_in_code():
 @pytest.mark.contracts
 @pytest.mark.parametrize("old, new", [
     ("category: revenue_card_settlement", "category: other"),  # verify-12: schema-valid, still v1
-    ("direction: in\n", "direction: any\n"),
+    # Was `direction: in` -> `any` on loan_drawdown, which since T03 review 50 the schema itself
+    # refuses (a money-in-only category on a rule that also matches debits); this edit still
+    # passes the schema and changes v1.
+    ("direction: any\n", "direction: in\n"),
 ])
 def test_a_schema_valid_change_to_frozen_v1_is_refused(packaged_table, old, new):
     text = _v1_text()

@@ -2590,3 +2590,18 @@ def test_a_merge_key_in_the_table_is_refused_and_named(monkeypatch):
         monkeypatch.undo()
         categorise.load_ruleset.cache_clear()
     assert "merge keys (<<) are not allowed" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_changed_v1_names_a_contradictory_direction_and_category(monkeypatch):
+    """T03 review 50: a changed v1 still declaring frozen gets the direction/category check."""
+    raw = categorise._table_bytes("v1")
+    edit = raw.replace(b"rules:", b"rules:\n  - {id: odd, pattern: ODD, direction: in, category: rent}", 1)
+    monkeypatch.setattr(categorise, "_table_bytes", lambda ruleset_id: edit)
+    categorise.load_ruleset.cache_clear()
+    try:
+        with pytest.raises(RulesetError, match=r"has been changed.*\(odd\): category 'rent' has no money-in bucket"):
+            categorise.load_ruleset("v1")
+    finally:
+        monkeypatch.undo()
+        categorise.load_ruleset.cache_clear()
