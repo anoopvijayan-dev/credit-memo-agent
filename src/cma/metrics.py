@@ -245,9 +245,13 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
     def total(lines) -> int:
         return sum(pence(t) for t in lines)
 
+    dangling = [t for t in txns if t.reverses and t.reverses not in by_id]
+
     def eff(t: Transaction) -> Category:
-        """A returned DD counts in the category of the debit it reverses."""
-        return by_id[t.reverses].category if t.reverses else t.category
+        """A returned DD counts in the category of the debit it reverses. One whose debit is
+        not in the statement counts as itself, and is refused after the reconciliation, so it
+        never hides an unplaced credit's report (T04 review 6)."""
+        return by_id[t.reverses].category if t.reverses in by_id else t.category
 
     def of(*cats: Category) -> list[Transaction]:
         return [t for t in txns if eff(t) in cats]
@@ -325,8 +329,17 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
         if pence(t) > 0 and t.category in NON_TRADING_IN and counterparty(t.description) in sent:
             back[counterparty(t.description)].append(t)
     offset = sum(min(total(ts), sent[cp]) for cp, ts in back.items())
-    # A derived figure (P2): the credits it counts only in part are named in its evidence note.
-    capped = sorted((t.id for cp, ts in back.items() if total(ts) > sent[cp] for t in ts), key=pos.__getitem__)
+    # A derived figure (P2): the cap is allocated to a counterparty's credits in statement
+    # order, so one credit at most counts in part, and only that one is named in the evidence
+    # note; the ones before it count in full and the ones after it not at all (T04 review 6).
+    capped: list[str] = []
+    for cp, ts in back.items():
+        left = sent[cp]
+        for t in sorted(ts, key=lambda x: pos[x.id]):
+            if 0 < left < pence(t):
+                capped.append(t.id)
+            left = max(0, left - pence(t))
+    capped.sort(key=pos.__getitem__)
     operating += [t for ts in back.values() for t in ts]
     net_operating = total(t for t in operating if not (pence(t) > 0 and t.category in NON_TRADING_IN)) + offset
     dscr: float | None = None
@@ -388,6 +401,8 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
             buckets[b].append(t)
     money_in = total(credits)
     _reconcile(credits, rev, buckets, money_in, total_revenue, total, pos)
+    if dangling:
+        raise AmountError(f"line {dangling[0].id} reverses {dangling[0].reverses}, which is not in the statement")
     if loose_debits:
         raise AmountError(f"line {loose_debits[0].id} has no category: categorise() must run before compute()")
     cash = [t for t in rev if t.category == Category.CASH_DEPOSIT]

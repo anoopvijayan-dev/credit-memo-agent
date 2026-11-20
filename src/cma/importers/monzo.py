@@ -196,9 +196,11 @@ def convert(src: Path, dst: Path, opening_balance: float | None = None) -> Impor
 
     money_in = sum(a for *_, a, _b in parsed if a > 0)
     money_out = sum(-a for *_, a, _b in parsed if a < 0)
-    if max(money_in, money_out) >= MAX_STATEMENT_PENCE:
-        raise MonzoImportError("money in or money out totals £10,000,000,000,000 or more: no figure could be "
-                               "reported to the penny")
+    reached = [name for name, flow in (("money in", money_in), ("money out", money_out))
+               if flow >= MAX_STATEMENT_PENCE]  # each named (T04 review 6)
+    if reached:
+        raise MonzoImportError(f"{' and '.join(reached)} {'total' if len(reached) > 1 else 'totals'} "
+                               "£10,000,000,000,000 or more: no figure could be reported to the penny")
     out_rows = []
     bal = opening_pence
     for d, _t, tid, desc, amount, monzo_bal in parsed:

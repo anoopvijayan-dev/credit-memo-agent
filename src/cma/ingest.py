@@ -150,9 +150,9 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
 
     money_in = sum(_pence(a) for _, _, _, _, a, _ in parsed if a is not None and a > 0)
     money_out = sum(-_pence(a) for _, _, _, _, a, _ in parsed if a is not None and a < 0)
-    if max(money_in, money_out) >= MAX_STATEMENT_PENCE:
-        problems.append("money in or money out totals £10,000,000,000,000 or more: no figure could be "
-                        "reported to the penny")
+    for name, flow in (("money in", money_in), ("money out", money_out)):  # each named (T04 review 6)
+        if flow >= MAX_STATEMENT_PENCE:
+            problems.append(f"{name} totals £10,000,000,000,000 or more: no figure could be reported to the penny")
     if problems:
         raise StatementError(path, problems)
     txns = [Transaction(id=tid, date=d, description=desc, amount=amount, balance=balance)

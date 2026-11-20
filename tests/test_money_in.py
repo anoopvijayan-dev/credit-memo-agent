@@ -420,7 +420,7 @@ def test_a_statement_whose_money_in_could_not_be_reported_is_refused_at_import(t
     f = tmp_path / "s.csv"
     f.write_text("id,date,description,amount,balance\nL1,2026-01-05,A,6000000000000.00,6000000000000.00\n"
                  "L2,2026-01-06,B,6000000000000.00,12000000000000.00\n")
-    with pytest.raises(ingest.StatementError, match="money in or money out totals"):
+    with pytest.raises(ingest.StatementError, match="money in totals"):
         ingest.load_csv(f)
 
 
@@ -491,3 +491,53 @@ def test_an_uncategorised_debit_never_hides_the_credits_reconciliation():
     s.transactions[1].category = Category.OTHER
     with pytest.raises(metrics.AmountError, match="L3 has no category"):
         metrics.compute(s)
+
+
+@pytest.mark.contracts
+def test_a_dangling_reversal_never_hides_the_credits_reconciliation():
+    """T04 review 6: a returned DD whose debit is not in the statement is refused after the
+    credits' reconciliation, never as a KeyError before it."""
+    lines = [_line("L1", "a", 12.34, Category.REVENUE_CARD), _line("L2", "b", 5.00, Category.OTHER),
+             _line("L3", "UNPAID DD", 3.00, Category.RETURNED_DD)]
+    s = Statement(account_name="x", transactions=lines)
+    s.transactions[2].reverses = "NOT-HERE"
+    s.transactions[1].category = None
+    with pytest.raises(metrics.ReconciliationError) as e:
+        metrics.compute(s)
+    assert "L2" in e.value.lines
+    s.transactions[1].category = Category.OTHER
+    with pytest.raises(metrics.AmountError, match="reverses NOT-HERE"):
+        metrics.compute(s)
+
+
+@pytest.mark.contracts
+def test_m9_names_only_the_credit_its_cap_splits():
+    """T04 review 6: with £100 sent to ACME and £60 + £60 + £60 back, the cap is allocated in
+    order: the first counts in full, the second in part, the third not at all; only the
+    second is in the evidence note."""
+    lines = [
+        Transaction(id="O1", date=date(2026, 1, 1), description="FPS DEBIT ACME LTD", amount=-100.0, balance=900.0,
+                    category=Category.SUPPLIER),
+        Transaction(id="B1", date=date(2026, 1, 2), description="FPS CREDIT ACME LTD", amount=60.0, balance=960.0,
+                    category=Category.OTHER),
+        Transaction(id="B2", date=date(2026, 1, 3), description="FPS CREDIT ACME LTD", amount=60.0, balance=1020.0,
+                    category=Category.OTHER),
+        Transaction(id="B3", date=date(2026, 1, 4), description="FPS CREDIT ACME LTD", amount=60.0, balance=1080.0,
+                    category=Category.OTHER),
+    ]
+    m = {x.id: x for x in metrics.compute(Statement(account_name="x", transactions=lines))}
+    assert m["M9"].evidence_note == ["B2"]
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("flow", ["in", "out"])
+def test_an_import_refusal_says_which_flow_reached_the_limit(tmp_path, flow):
+    from cma import ingest
+
+    sign = "" if flow == "in" else "-"
+    f = tmp_path / "s.csv"
+    f.write_text("id,date,description,amount,balance\n"
+                 f"L1,2026-01-05,A,{sign}6000000000000.00,{sign}6000000000000.00\n"
+                 f"L2,2026-01-06,B,{sign}6000000000000.00,{sign}9999999999999.99\n")
+    with pytest.raises(ingest.StatementError, match=f"money {flow} totals"):
+        ingest.load_csv(f)
