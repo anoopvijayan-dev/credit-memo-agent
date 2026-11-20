@@ -167,8 +167,9 @@ def appendix(s: MemoState) -> str:
         "| id | metric | value | method | lines |",
         "|---|---|---|---|---|",
     ]
-    lines += [f"| {m.id} | {m.name} | {m.display_exact() if m.id in met.EXACT_IDS else m.display()} | {m.method} "
-              f"| {len(m.evidence)} |" for m in s["metrics"]]
+    # Every money figure to the penny in the appendix (T04 review 4); the memo's prose keeps
+    # its own convention, checked by the guard.
+    lines += [f"| {m.id} | {m.name} | {m.display_exact()} | {m.method} | {len(m.evidence)} |" for m in s["metrics"]]
     lines += ["", rules_table(p)]
     return "\n".join(lines)
 

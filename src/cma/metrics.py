@@ -226,15 +226,15 @@ def end_of_day_balances(txns: list[Transaction]) -> dict[date, tuple[int, str]]:
 
 def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric]:
     txns = statement.transactions
-    uncategorised = [t for t in txns if t.category is None]
-    if uncategorised:
-        # A credit with no category is in no bucket: refused as the buckets not adding up,
-        # naming the difference and the lines (R3, T04 review 2); any other line, as a
-        # refusal naming it. Neither is ever reported as a model failure.
-        loose = [t for t in uncategorised if _whole_pence_exact(t.amount) and _whole_pence_exact(t.amount) > 0]
-        if loose:
-            raise ReconciliationError(sum(_whole_pence_exact(t.amount) or 0 for t in loose), [t.id for t in loose])
-        raise AmountError(f"line {uncategorised[0].id} has no category: categorise() must run before compute()")
+    # A debit with no category cannot be placed in any figure: refused, naming it. A credit
+    # with none is in no bucket, so it is left to the reconciliation below, which names it
+    # with every other line that is not in exactly one bucket and the whole difference
+    # (R3, T04 review 4).
+    loose_debits = [t for t in txns if t.category is None and not _whole_pence_exact(t.amount)]
+    loose_debits += [t for t in txns if t.category is None and (_whole_pence_exact(t.amount) or 0) <= 0
+                     and t not in loose_debits]
+    if loose_debits:
+        raise AmountError(f"line {loose_debits[0].id} has no category: categorise() must run before compute()")
     if vat_stagger is not None and vat_stagger not in VAT_STAGGERS:
         raise ValueError("vat_stagger must be 1, 2 or 3")
 

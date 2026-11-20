@@ -432,3 +432,45 @@ def test_a_figure_shown_to_the_penny_is_the_counted_pence():
 
     for value, shown in [(9999999999999.99, "£9,999,999,999,999.99"), (0.29, "£0.29"), (-1234.57, "-£1,234.57")]:
         assert models.Metric(id="M17", name="x", value=value, unit="GBP", method="m").display_exact() == shown
+
+
+@pytest.mark.contracts
+def test_uncategorised_credits_go_through_the_full_reconciliation():
+    """T04 review 4: credits with no category are named by the same reconciliation that
+    names every other unplaced line, with the whole difference."""
+    s = Statement(account_name="x", transactions=[
+        _line("L1", "a", 12.34, Category.REVENUE_CARD), _line("L2", "b", 5.00, Category.OTHER),
+        _line("L3", "c", 1.01, Category.OTHER)])
+    s.transactions[1].category = None
+    s.transactions[2].category = None
+    with pytest.raises(metrics.ReconciliationError) as e:
+        metrics.compute(s)
+    assert e.value.lines == ["L2", "L3"] and "601 pence" in str(e.value)
+
+
+@pytest.mark.dual_run
+def test_m16_under_v1_rules_counts_every_credit_the_previous_release_counted():
+    """T04 review 4: the previous release had no own-account category, so under the frozen v1
+    rules no line is one, and M16 reads the same credits it always did: every credit but
+    lending drawdowns and returned direct debits."""
+    s = Statement(account_name="x", transactions=[
+        _line("L1", "TO SAVINGS POT", 50.0, None), _line("L2", "CARD SETTLEMENT", 80.0, None),
+        _line("L3", "LOAN DRAWDOWN ACME CAPITAL", 100.0, None)])
+    s = categorise.categorise(s, load_ruleset("v1"))
+    m = {x.id: x for x in metrics.compute(s)}
+    old = [t.id for t in s.transactions if t.amount > 0 and t.category not in (Category.LOAN_DRAWDOWN, Category.RETURNED_DD)]
+    assert m["M16"].evidence == old
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("amount", ["10000000000000.00", "12.345"])
+def test_the_monzo_import_reads_money_exactly_and_refuses_what_it_cannot_carry(tmp_path, amount):
+    """T04 review 4: Monzo's amounts are read as exact pence, never a binary float; an amount
+    with more than two places, or at the statement limit, is refused at import."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance\n"
+                   f"tx_1,01/01/2026,09:00:00,Faster payment,ACME,{amount},GBP,{amount}\n")
+    with pytest.raises(monzo.MonzoImportError):
+        monzo.convert(src, tmp_path / "out.csv")

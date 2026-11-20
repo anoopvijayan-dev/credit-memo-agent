@@ -21,7 +21,7 @@ from .categorise import RulesetError, active_ruleset
 from .graph import build, evidence_record, ruleset_used, sqlite_checkpointer
 from .ingest import StatementError
 from .llm import get_llm
-from .metrics import EXACT_IDS, AmountError, ReconciliationError
+from .metrics import AmountError, ReconciliationError
 from .policy import PolicyError
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -289,8 +289,7 @@ def _print_metrics(metrics):
     t = Table(title="Metrics", show_lines=False)
     t.add_column("id"), t.add_column("metric"), t.add_column("value", justify="right"), t.add_column("evidence")
     for m in metrics:
-        t.add_row(m.id, m.name, m.display_exact() if m.id in EXACT_IDS else m.display(),
-                  f"{len(m.evidence)} txns")
+        t.add_row(m.id, m.name, m.display_exact(), f"{len(m.evidence)} txns")  # money to the penny
     console.print(t)
 
 

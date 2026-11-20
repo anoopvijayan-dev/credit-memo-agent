@@ -27,13 +27,14 @@ It reads the file locally and writes a new file. Nothing is sent anywhere.
 from __future__ import annotations
 
 import csv
-import math
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 
 from ..categorise import INVOICE_REF
+from ..ingest import MAX_STATEMENT_PENCE
 
 REQUIRED = ("Transaction ID", "Date", "Type", "Name", "Amount")
 PLAIN_MONEY = re.compile(r"^[-+]?\d+(?:\.\d{1,2})?$")
@@ -68,14 +69,25 @@ def _parse_date(raw: str) -> date:
         raise MonzoImportError(f"unrecognised date {raw!r}") from e
 
 
-def _money(raw: str | None, field: str, line: int) -> float:
+def _money(raw: str | None, field: str, line: int) -> int:
+    """The amount in whole pence, read exactly from Monzo's text, never through a binary
+    float; one the statement could not carry to the penny is refused (R2, T04 review 4)."""
     text = (raw or "").strip()
     if not PLAIN_MONEY.match(text):
         raise MonzoImportError(f"line {line}: {field} {raw!r} is not a plain amount like -12.40")
-    v = float(text)
-    if not math.isfinite(v):
-        raise MonzoImportError(f"line {line}: {field} {raw!r} is not finite")
-    return v
+    p = Decimal(text) * 100
+    if p != p.to_integral_value():
+        raise MonzoImportError(f"line {line}: {field} {raw!r} has more than two decimal places")
+    if abs(p) >= MAX_STATEMENT_PENCE:
+        raise MonzoImportError(f"line {line}: {field} {raw!r} is £10,000,000,000,000 or more; no figure "
+                               "could be reported to the penny")
+    return int(p)
+
+
+def _gbp(p: int) -> str:
+    """Whole pence written as pounds with two decimals, exactly."""
+    sign = "-" if p < 0 else ""
+    return f"{sign}{abs(p) // 100}.{abs(p) % 100:02d}"
 
 
 def references(*fields: str | None) -> str:
@@ -120,6 +132,7 @@ def describe(kind: str, name: str, amount: float, extra: str = "") -> str:
 
 
 def convert(src: Path, dst: Path, opening_balance: float | None = None) -> ImportResult:
+    opening_pence = None if opening_balance is None else _money(repr(opening_balance), "--opening-balance", 0)
     with Path(src).open(newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         header = [h.strip() for h in (reader.fieldnames or [])]
@@ -166,31 +179,40 @@ def convert(src: Path, dst: Path, opening_balance: float | None = None) -> Impor
 
     parsed.sort(key=lambda x: (x[0], x[1], x[2]))
     first = parsed[0]
-    implied = round(first[5] - first[4], 2) if first[5] is not None else None
-    if opening_balance is None:
+    # Everything below is whole pence (T04 review 4).
+    implied = first[5] - first[4] if first[5] is not None else None
+    if opening_pence is None:
         if implied is None:
             raise MonzoImportError("first row has no Balance; pass --opening-balance")
-        opening_balance = implied
+        opening_pence = implied
         source = "Monzo Balance column"
     else:
-        if implied is not None and abs(implied - opening_balance) > 0.005:
+        if implied is not None and implied != opening_pence:
             raise MonzoImportError(
-                f"--opening-balance {opening_balance:.2f} disagrees with Monzo's Balance column, "
-                f"which implies {implied:.2f}; leave --opening-balance out to use Monzo's"
+                f"--opening-balance {_gbp(opening_pence)} disagrees with Monzo's Balance column, "
+                f"which implies {_gbp(implied)}; leave --opening-balance out to use Monzo's"
             )
         source = "opening balance supplied"
 
+    money_in = sum(a for *_, a, _b in parsed if a > 0)
+    money_out = sum(-a for *_, a, _b in parsed if a < 0)
+    if max(money_in, money_out) >= MAX_STATEMENT_PENCE:
+        raise MonzoImportError("money in or money out totals £10,000,000,000,000 or more: no figure could be "
+                               "reported to the penny")
     out_rows = []
-    bal = opening_balance
+    bal = opening_pence
     for d, _t, tid, desc, amount, monzo_bal in parsed:
-        bal = round(bal + amount, 2)
-        if monzo_bal is not None and abs(monzo_bal - bal) > 0.005:
+        bal += amount
+        if abs(bal) >= MAX_STATEMENT_PENCE:
+            raise MonzoImportError(f"{tid}: the running balance reaches £10,000,000,000,000; no figure could "
+                                   "be reported to the penny")
+        if monzo_bal is not None and monzo_bal != bal:
             raise MonzoImportError(
-                f"{tid}: walked balance {bal:.2f} disagrees with Monzo's {monzo_bal:.2f}; "
+                f"{tid}: walked balance {_gbp(bal)} disagrees with Monzo's {_gbp(monzo_bal)}; "
                 "the export may be missing transactions"
             )
         out_rows.append({"id": tid, "date": d.isoformat(), "description": desc,
-                         "amount": f"{amount:.2f}", "balance": f"{bal:.2f}"})
+                         "amount": _gbp(amount), "balance": _gbp(bal)})
 
     Path(dst).parent.mkdir(parents=True, exist_ok=True)
     with Path(dst).open("w", newline="") as f:
@@ -199,6 +221,6 @@ def convert(src: Path, dst: Path, opening_balance: float | None = None) -> Impor
         w.writerows(out_rows)
     return ImportResult(
         rows=len(out_rows), start=parsed[0][0], end=parsed[-1][0],
-        opening_balance=opening_balance, closing_balance=bal,
+        opening_balance=opening_pence / 100, closing_balance=bal / 100,
         balance_source=source, skipped_non_gbp=skipped,
     )
