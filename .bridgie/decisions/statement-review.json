@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 254,
+  "next_id": 255,
   "decisions": [
     {
       "id": "D1",
@@ -5097,6 +5097,26 @@
       "decided_at": "2026-11-20T16:57:16.667Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T16:53:25.033Z"
+    },
+    {
+      "id": "D254",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:82 checks exact penny round-trips and :256 checks statement flows. src/cma/metrics.py:512 handles an unrepresentable M3. src/cma/cli.py:330 and src/cma/graph.py:172 display pennies, and src/cma/metrics.py:594 preserves whole pounds in the drafting prompt. The Monzo path at src/cma/importers/monzo.py:190 still hides a known over-limit flow when a later GBP row has an invalid date.); major: A later invalid date suppresses the exact flow-limit diagnostic for GBP records the importer has already parsed. at src/cma/importers/monzo.py:190; major: The migration reopens the policy after displaying a review whose outcome it already resolved. The new handler reports a refusal, but the decision based on the displayed figures is lost. at src/cma/graph.py:347; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T17:01:31.722Z"
     }
   ]
 }
