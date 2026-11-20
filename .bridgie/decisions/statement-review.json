@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 174,
+  "next_id": 175,
   "decisions": [
     {
       "id": "D1",
@@ -3518,6 +3518,26 @@
       "decided_at": "2026-11-20T07:07:41.233Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T07:02:22.681Z"
+    },
+    {
+      "id": "D174",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed c466717 against requirements.md:309. Canonical UTF-8, UTC timestamps, hash and head comparison, and first-bad-entry detection are at src/cma/case.py:176–348. Folder aliases, holder checks, and steady reader retries are at src/cma/case.py:399–674. Writer exclusion, fork refusal, expected-position conflict, and nested-save refusal are at src/cma/case.py:682–940. Per-step lock checks, repair, publication, and take-back are at src/cma/case.py:794–818 and :942–1198. The CLI consumer is at src/cma/cli.py:309–338. Checked double submission, concurrent updates, empty and malformed inputs, Unicode, UTC, partial failures, OS authorization, case-folder isolation, and exit-code consumers. The log performs no currency arithmetic and adds no database migration. The runner logs show the named CLI tamper, rebuilt-chain, torn-tail, contention, double-submit, and both new interruption tests passed. Those interruption tests inject after the repair flag is set or inside the read-back. A refusal can still escape immediately after the repair rename, and an interrupted take-back can report the wrong outcome.); major: A nested save refusal between the repaired-log rename and the assignment to _repair_landed escapes as the nested save's refusal. The repair has put its line in the log and has yet to publish its head, so P15 requires the repair to report that it was not recorded. at src/cma/case.py:974; major: A non-OS exception outside the CaseLogError hierarchy during take-back can make an entry that still has a published head appear to have been reported as not recorded. _write_head clears _head_renamed at entry, and the take-back handler misses the exception, so the outer handler uses the cleared flag for its answer. at src/cma/case.py:1139; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T07:09:18.619Z"
     }
   ]
 }
