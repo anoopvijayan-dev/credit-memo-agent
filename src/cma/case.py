@@ -104,6 +104,12 @@ class CaseLocked(CaseLogError):
     """Another writer holds the case."""
 
 
+class SaveNotRecorded(CaseLocked):
+    """A save stopped after its line was written: the case lock file was removed or
+    replaced, or the log or head file changed under it. The entry, if on disk, is past the
+    recorded entries, as a crash leaves it, and the next holder confirms dropping it (R42)."""
+
+
 @dataclass(frozen=True)
 class Entry:
     seq: int
@@ -132,6 +138,7 @@ class LogCheck:
     intact_bytes: int = field(default=0, repr=False)
     in_progress: bool = False  # the case is held: `head` is the log as recorded, the rest unchecked
     recorded: int | None = field(default=None, repr=False)  # entries the head file records
+    log_bytes: int = field(default=0, repr=False)  # the whole log as read, torn tail included
     checked: bool = True  # False: the case is held and no steady read was had; nothing is claimed
 
     def as_recorded(self) -> LogCheck:
@@ -289,7 +296,8 @@ def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
 
     def failed(first_bad: int, reason: str, torn: bool = False) -> LogCheck:
         return LogCheck(at(first_bad - 1), entries[: first_bad - 1], first_bad, reason, torn,
-                        ends[first_bad - 1], recorded=None if recorded is _UNREADABLE else count)
+                        ends[first_bad - 1], recorded=None if recorded is _UNREADABLE else count,
+                        log_bytes=len(raw))
 
     if recorded is _UNREADABLE:
         return failed(1, "cannot be trusted: the head file beside the log is unreadable")
@@ -302,7 +310,7 @@ def _check(raw: bytes | None, recorded: list[str] | object | None) -> LogCheck:
     if chain_bad is not None:
         return failed(chain_bad, chain_reason)
     if n == count and not tail:
-        return LogCheck(at(n), entries, intact_bytes=ends[-1], recorded=count)
+        return LogCheck(at(n), entries, intact_bytes=ends[-1], recorded=count, log_bytes=len(raw))
     if n == count:
         return failed(n + 1, "is incomplete: the write did not finish (the process or power "
                              "stopped); confirm dropping it before anything else is recorded "
@@ -810,8 +818,25 @@ class CaseLog:
         # truncated log with no record of who dropped the entry. A crash after the rename
         # and before the head file is replaced leaves the drop entry itself unrecorded: the
         # log loads as torn at the same entry, and dropping it again repairs it.
-        intact = self.path.read_bytes()[: check.intact_bytes]
+        raw = self.path.read_bytes()
+        if len(raw) != check.log_bytes:
+            raise LogConflict(check.head.position, check.head.position + 1)
+        intact = raw[: check.intact_bytes]
         entry, line = self._encode(TORN_DROPPED, {"seq": check.first_bad, "by": by}, check.head)
+        recorded = [e.hash for e in check.entries]
+
+        def unchanged() -> None:
+            # Before the rename over the log (R42, revision 13): the lock is the one taken,
+            # the log has not grown and the head file still records what the check read, so
+            # the repair never replaces a save made since it looked (T12 review 21).
+            self._require_lock_in_place()
+            try:
+                size = os.stat(self.path).st_size
+            except OSError:
+                size = -1
+            if size != check.log_bytes or _read_head(self.head_path) != recorded:
+                raise LogConflict(check.head.position, check.head.position + 1)
+
         fd, tmp = _staging_file(self.path)
         try:
             _write_all(fd, intact + line)
@@ -819,12 +844,12 @@ class CaseLog:
         finally:
             os.close(fd)
         try:
-            _replace(tmp, self.path, before=self._require_lock_in_place)  # each attempt (D108)
+            _replace(tmp, self.path, before=unchanged)  # each attempt (D108)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
         _fsync_dir(self.path.parent)
-        self._write_head([*(e.hash for e in check.entries), entry.hash])
+        self._publish(recorded, entry)
         return entry
 
     @staticmethod
@@ -839,8 +864,10 @@ class CaseLog:
             raise CaseLogError(f"{reason}; nothing was written")
         return entry, line + b"\n"
 
-    def _write_head(self, hashes: list[str]) -> None:
-        """Replace the head file in one rename, after the last entry it names is on disk."""
+    def _write_head(self, hashes: list[str], *, was: list[str] | None = None) -> None:
+        """Replace the head file in one rename, after the last entry it names is on disk.
+        With `was`, the head file must still record exactly those entries just before the
+        rename, or nothing is published."""
         fd, tmp = _staging_file(self.head_path)
         try:
             _write_all(fd, _head_bytes(hashes))
@@ -851,7 +878,12 @@ class CaseLog:
             # Before each step that changes a file a reader reads (R42, D108): the rename
             # that publishes the head record, the empty first one included. The temporary
             # file is read by nobody.
-            _replace(tmp, self.head_path, before=self._require_lock_in_place)
+            def before() -> None:
+                self._require_lock_in_place()
+                if was is not None and _read_head(self.head_path) != was:
+                    raise SaveNotRecorded(f"{self.path}: the head file changed while this save was "
+                                          "being recorded; the save was not recorded")
+            _replace(tmp, self.head_path, before=before)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
@@ -883,8 +915,26 @@ class CaseLog:
             os.close(fd)
         if created:
             _fsync_dir(self.path.parent)  # make the new file's name durable too
-        self._write_head([*(e.hash for e in check.entries), entry.hash])
+        self._publish([e.hash for e in check.entries], entry)
         return entry
+
+    def _publish(self, recorded: list[str], entry: Entry) -> None:
+        """Record `entry` after the `recorded` entries, then confirm the log as read now holds
+        it: a writer is told its save was recorded only if an intact log holds the entry at
+        its position, so a log that reads intact never lacks a save reported as recorded
+        (R42, revision 13). Stopped after the line, the save says it was not recorded."""
+        try:
+            self._write_head([*recorded, entry.hash], was=recorded)
+        except SaveNotRecorded:
+            raise
+        except CaseLocked as e:
+            raise SaveNotRecorded(f"{e}; its entry was written and the save was not recorded: "
+                                  "the next holder confirms dropping it") from e
+        now = _check(self._read_log(), _read_head(self.head_path))
+        held = now.entries[entry.seq - 1].hash if now.ok and len(now.entries) >= entry.seq else None
+        if held != entry.hash:
+            raise SaveNotRecorded(f"{self.path}: the log changed while this save was being "
+                                  "recorded; the save was not recorded")
 
 
 # On Windows a reader's open file blocks a rename over it for the moment the read takes

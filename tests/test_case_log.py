@@ -585,11 +585,11 @@ def test_p15_a_reader_during_a_slow_append_reports_it_being_saved_never_torn(tmp
     writer = case.CaseLog(log.path)
     real_head = case.CaseLog._write_head
 
-    def slow_head(self, hashes):
+    def slow_head(self, hashes, **kw):
         if self is writer:
             written.set()
             go.wait(5)
-        real_head(self, hashes)
+        real_head(self, hashes, **kw)
 
     monkeypatch.setattr(case.CaseLog, "_write_head", slow_head)
     monkeypatch.setattr(case, "READ_PAUSE", 0)
@@ -647,14 +647,23 @@ def test_p15_entries_removed_while_another_writer_appends_are_still_named(tmp_pa
     writer = case.CaseLog(log.path)
     real_head = case.CaseLog._write_head
 
-    def slow_head(self, hashes):
+    def slow_head(self, hashes, **kw):
         if self is writer:
             written.set()
             go.wait(5)
-        real_head(self, hashes)
+        real_head(self, hashes, **kw)
 
     monkeypatch.setattr(case.CaseLog, "_write_head", slow_head)
-    t = threading.Thread(target=lambda: writer.append("override", {"n": 3}, expected=3))
+    outcome = []
+
+    def save():
+        try:
+            writer.append("override", {"n": 3}, expected=3)
+            outcome.append("recorded")
+        except case.SaveNotRecorded:
+            outcome.append("not recorded")
+
+    t = threading.Thread(target=save)
     t.start()
     assert written.wait(5)
     lines = log.path.read_bytes().split(b"\n")
@@ -665,6 +674,8 @@ def test_p15_entries_removed_while_another_writer_appends_are_still_named(tmp_pa
         go.set()
         t.join(10)
     assert not check.ok and check.first_bad == 3 and not check.in_progress
+    # The log no longer holds the save intact, so the writer is not told it was recorded.
+    assert outcome == ["not recorded"]
 
 
 def test_torn_last_entry_blocks_appends_until_dropped(tmp_path, monkeypatch):
@@ -1026,7 +1037,7 @@ def test_p15_a_missing_or_unreadable_head_file_is_detected(tmp_path):
 def test_p15_an_entry_written_but_not_recorded_in_the_head_file_is_torn(tmp_path, monkeypatch):
     # Power lost after the line reached the disk but before the head file was replaced.
     log = _log(tmp_path, 2)
-    monkeypatch.setattr(case.CaseLog, "_write_head", lambda *_a: (_ for _ in ()).throw(OSError("power lost")))
+    monkeypatch.setattr(case.CaseLog, "_write_head", lambda *_a, **_k: (_ for _ in ()).throw(OSError("power lost")))
     with pytest.raises(OSError):
         log.append("override", {"n": 99}, expected=2)
     monkeypatch.undo()
@@ -1046,11 +1057,11 @@ def test_a_reader_during_an_append_does_not_report_a_torn_entry(tmp_path, monkey
     real = case.CaseLog._write_head
     seen = {}
 
-    def slow_head(self, head):
+    def slow_head(self, head, **kw):
         t = threading.Thread(target=lambda: seen.setdefault("check", reader.verify()))
         t.start()
         t.join(0.03)  # the reader runs while the head file is still behind
-        real(self, head)
+        real(self, head, **kw)
         t.join(5)
 
     monkeypatch.setattr(case.CaseLog, "_write_head", slow_head)
@@ -1092,10 +1103,10 @@ def test_a_reader_never_reports_a_live_append_as_torn_however_long_the_writer_pa
     real = case.CaseLog._write_head
     on_disk, release = threading.Event(), threading.Event()
 
-    def paused_head(self, hashes):
+    def paused_head(self, hashes, **kw):
         on_disk.set()
         release.wait(10)
-        real(self, hashes)
+        real(self, hashes, **kw)
 
     monkeypatch.setattr(case.CaseLog, "_write_head", paused_head)
     writer = threading.Thread(target=lambda: log.append("override", {"n": 99}, expected=2))
@@ -1150,7 +1161,7 @@ def test_a_lock_holder_still_sees_a_torn_entry_while_a_reader_sees_it_recorded(t
 def test_a_crash_after_the_rename_while_dropping_leaves_a_torn_log_that_drops_again(tmp_path, monkeypatch):
     log = _log(tmp_path, 2)
     _crash_mid_append(log, monkeypatch, 15)
-    monkeypatch.setattr(case.CaseLog, "_write_head", lambda *_a: (_ for _ in ()).throw(OSError("power lost")))
+    monkeypatch.setattr(case.CaseLog, "_write_head", lambda *_a, **_k: (_ for _ in ()).throw(OSError("power lost")))
     with pytest.raises(OSError):
         log.drop_torn_entry(expected=2, by="A. Underwriter")
     monkeypatch.undo()
@@ -1870,8 +1881,8 @@ def test_p15_a_lock_replaced_after_the_empty_head_stops_the_first_line(tmp_path,
     log = case.CaseLog(tmp_path / "log.jsonl")
     real = case.CaseLog._write_head
 
-    def then_replace_the_lock(self, hashes):
-        real(self, hashes)
+    def then_replace_the_lock(self, hashes, **kw):
+        real(self, hashes, **kw)
         if not hashes:  # the empty head record is down: the lock goes
             self.lock_path.unlink()
 
@@ -2098,3 +2109,91 @@ def test_a_line_added_after_the_check_stops_the_save(tmp_path, monkeypatch):
         log.append("override", {"x": 1}, expected=2)
     assert len(_lines(other)) == 3  # the stray line only; nothing of the save
     assert other.verify().first_bad == 3
+
+
+@pytest.mark.invariants
+def test_a_repair_refuses_when_the_log_grew_since_its_check(tmp_path, monkeypatch):
+    """T12 review 21 / R42: a repair publishes only the log its check read."""
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    real, done = case._staging_file, []
+
+    def grow(target):
+        if target == log.path and not done:
+            done.append(None)
+            with open(log.path, "ab") as f:
+                f.write(b"more\n")
+        return real(target)
+
+    monkeypatch.setattr(case, "_staging_file", grow)
+    with pytest.raises(case.LogConflict):
+        log.drop_torn_entry(expected=2, by="A. Person")
+    monkeypatch.undo()
+    assert log.path.read_bytes().endswith(b"more\n")  # the repair replaced nothing
+    assert not list(tmp_path.glob("*.tmp*")) and len(list(tmp_path.iterdir())) == 4
+
+
+@pytest.mark.invariants
+def test_a_repair_never_removes_a_save_recorded_after_its_check(tmp_path, monkeypatch):
+    """T12 review 21 / R42 revision 13: if another writer records the entry the repair
+    would drop (as lock-file interference can let it), the repair refuses, and the log
+    still reads intact with that save in it."""
+    log = _log(tmp_path, 2)
+    lines = _lines(log)
+    _crash_mid_append(log, monkeypatch, 10)
+    real, done = case._staging_file, []
+
+    def other_writer_records_it(target):
+        if target == log.path and not done:
+            done.append(None)
+            # Another writer, under interference, completes and records entry 3.
+            entry = log._encode("override", {"late": True}, log.verify().head)[1]
+            log.path.write_bytes(b"".join(x.encode() for x in lines) + entry)
+            _write_head(log, [json.loads(x)["hash"] for x in lines] + [json.loads(entry)["hash"]])
+        return real(target)
+
+    monkeypatch.setattr(case, "_staging_file", other_writer_records_it)
+    with pytest.raises(case.LogConflict):
+        log.drop_torn_entry(expected=2, by="A. Person")
+    monkeypatch.undo()
+    check = case.CaseLog(log.path).verify()
+    assert check.ok and check.head.position == 3 and check.entries[-1].data == {"late": True}
+
+
+@pytest.mark.invariants
+def test_a_save_is_told_recorded_only_if_the_log_holds_it(tmp_path, monkeypatch):
+    """R42 revision 13: a log that reads intact holds every save reported as recorded. A
+    repair under interference that removes the entry after its head is published leaves the
+    writer told 'not recorded'."""
+    log = _log(tmp_path, 2)
+    prefix = log.path.read_bytes()
+    real = case.CaseLog._write_head
+
+    def then_the_log_is_replaced(self, hashes, **kw):
+        real(self, hashes, **kw)
+        if len(hashes) == 3:
+            self.path.write_bytes(prefix)
+
+    monkeypatch.setattr(case.CaseLog, "_write_head", then_the_log_is_replaced)
+    with pytest.raises(case.SaveNotRecorded, match="not recorded"):
+        log.append("override", {"n": 3}, expected=2)
+
+
+@pytest.mark.invariants
+def test_a_save_refused_after_its_line_says_it_was_not_recorded(tmp_path, monkeypatch):
+    """R42 revision 13: refused after the line, the writer reports the save as not
+    recorded, and the entry is left past the recorded entries, as a crash leaves it."""
+    log = _log(tmp_path, 2)
+    real = case._write_all
+
+    def then_the_lock_goes(fd, data, before=None):
+        real(fd, data, before)
+        if data.startswith(b'{"at"') or b'"seq":3' in data:
+            log.lock_path.unlink()
+
+    monkeypatch.setattr(case, "_write_all", then_the_lock_goes)
+    with pytest.raises(case.SaveNotRecorded, match="not recorded"):
+        log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    check = case.CaseLog(log.path).verify()
+    assert check.torn and check.first_bad == 3
