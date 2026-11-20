@@ -104,6 +104,12 @@ class CaseLocked(CaseLogError):
     """Another writer holds the case."""
 
 
+class SaveNotConfirmed(CaseLocked):
+    """A save whose read-back failed and whose head record could not be taken back: it is
+    neither confirmed recorded nor left unrecorded (R42, D143). Check the case log, which
+    shows whether its entry is there, before anything else is saved."""
+
+
 class SaveNotRecorded(CaseLocked):
     """A save stopped after its line was written: the case lock file was removed or
     replaced, or the log or head file changed under it. The entry, if on disk, is past the
@@ -1034,10 +1040,13 @@ class CaseLog:
                 # unrecorded, so a replaced lock must not stop it (T12 review 24).
                 self._write_head(recorded, was=[*recorded, entry.hash], check_lock=False)
                 undone = True
-            raise SaveNotRecorded(
-                f"{self.path}: the log changed while this save was being recorded; the save was "
-                "not recorded" + ("" if undone else ", and its head record could not be taken back: "
-                                  "check the case log before anything else is saved"))
+            if not undone:
+                raise SaveNotConfirmed(
+                    f"{self.path}: the log changed while this save was being recorded, and its head "
+                    "record could not be taken back, so whether it was recorded is not confirmed: "
+                    "check the case log before anything else is saved")
+            raise SaveNotRecorded(f"{self.path}: the log changed while this save was being recorded; "
+                                  "the save was not recorded")
 
 
 # On Windows a reader's open file blocks a rename over it for the moment the read takes

@@ -2417,3 +2417,24 @@ def test_a_failed_read_back_takes_its_head_back_even_with_the_lock_replaced(tmp_
     monkeypatch.undo()
     check = case.CaseLog(log.path).verify()
     assert check.ok and check.head.position == 2
+
+
+@pytest.mark.invariants
+def test_a_save_whose_take_back_fails_is_not_confirmed(tmp_path, monkeypatch):
+    """D143 / R42: read-back failed and the head record could not be taken back: the save
+    is neither recorded nor not recorded, and the case log must be checked."""
+    log = _log(tmp_path, 2)
+    prefix = log.path.read_bytes()
+    real = case.CaseLog._write_head
+
+    def then_the_log_is_replaced_and_the_head_sticks(self, hashes, **kw):
+        if len(hashes) == 2 and kw.get("check_lock") is False:
+            raise OSError("the head record cannot be renamed")
+        real(self, hashes, **kw)
+        if len(hashes) == 3:
+            self.path.write_bytes(prefix)
+
+    monkeypatch.setattr(case.CaseLog, "_write_head", then_the_log_is_replaced_and_the_head_sticks)
+    with pytest.raises(case.SaveNotConfirmed, match="not confirmed") as e:
+        log.append("override", {"n": 3}, expected=2)
+    assert not isinstance(e.value, case.SaveNotRecorded)
