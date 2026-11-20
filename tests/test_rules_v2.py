@@ -1147,8 +1147,10 @@ def test_only_a_line_type_cue_of_a_v2_table_may_have_no_category():
     with pytest.raises(RulesetError, match="missing category"):
         validate_ruleset({"id": "v2", "frozen": False,
                           "rules": [BANK, rail, {k: v for k, v in name.items() if k != "category"}]}, expected_id="v2")
-    with pytest.raises(RulesetError, match="missing category"):
-        validate_ruleset({"id": "v2", "frozen": True, "rules": [BANK, rail]}, expected_id="v2")
+    # Since T03 review 35 a table other than the pinned v1 is a maintained table whatever its
+    # frozen flag says, so its cue may go without a category too (loading it is still refused,
+    # since no hash is pinned for it).
+    validate_ruleset({"id": "v2", "frozen": True, "rules": [BANK, rail]}, expected_id="v2")
     rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rail, name]}, "v2", "t", "0")
     assert rs.rules[1].category is None  # [0] is the bank's code
     # the cue alone never sets a category: a debit or a credit with only the rail is the default
@@ -2166,3 +2168,42 @@ def test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults(monkeypa
         monkeypatch.undo()
         categorise.load_ruleset.cache_clear()
     assert "(odd): category holds a" in str(e.value) and "(other): direction" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_key_given_twice_inside_a_field_is_named_with_the_other_faults(monkeypatch):
+    """T03 review 35: a repeated key, at any depth, keeps neither value and stops nothing."""
+    raw = categorise._table_bytes("v2")
+    edit = raw.replace(b"rules:", b"rules:\n  - {id: odd, names: {X: 1, X: 2}, direction: in, category: "
+                                  b"cash_deposit, stage: names}\n  - {id: other, names: [X], direction: "
+                                  b"sideways, category: cash_deposit, stage: names}", 1)
+    monkeypatch.setattr(categorise, "_table_bytes", lambda ruleset_id: edit)
+    categorise.load_ruleset.cache_clear()
+    try:
+        with pytest.raises(RulesetError) as e:
+            categorise.load_ruleset("v2")
+    finally:
+        monkeypatch.undo()
+        categorise.load_ruleset.cache_clear()
+    assert "(odd): names holds a repeated key" in str(e.value) and "(other): direction" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_non_v1_table_marked_frozen_is_checked_as_a_maintained_list():
+    """T03 review 35: category order is required of it like any maintained table."""
+    a = {"id": "a", "names": ["A"], "direction": "in", "category": "cash_deposit", "stage": "names"}
+    b = {"id": "b", "names": ["B"], "direction": "in", "category": "revenue_transfer", "stage": "names"}
+    with pytest.raises(RulesetError, match="category_order"):
+        validate_ruleset({"id": "v3", "frozen": True, "rules": [BANK, a, b]}, expected_id="v3")
+
+
+@pytest.mark.contracts
+def test_the_form_a_longest_match_search_uses_is_compiled_at_load(monkeypatch):
+    """T03 review 35: the pattern forced to end at a position is built when the table loads,
+    never first on a transaction."""
+    rule = {"id": "r", "pattern": "AB|ABC", "direction": "in", "category": "cash_deposit", "stage": "names"}
+    calls = []
+    real = categorise._ending_at
+    monkeypatch.setattr(categorise, "_ending_at", lambda source, rest: (calls.append(source), real(source, rest))[1])
+    categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rule]}, "v2", "t", "0")
+    assert calls

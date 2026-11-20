@@ -142,7 +142,10 @@ def test_a_repeated_key_in_the_table_is_refused(packaged_table, monkeypatch, old
     text = _v1_text()
     assert old in text
     packaged_table(text.replace(old, new, 1))
-    with pytest.raises(RulesetError, match=rf"cma/rules/v1\.yaml: not valid YAML .*duplicate key '{key}'"):
+    # Since T03 review 35 neither value is kept: the key is named, with the table's other
+    # faults, after the changed frozen table.
+    with pytest.raises(RulesetError, match=rf"cma/rules/v1\.yaml: frozen table v1 has been changed.*"
+                                           rf"{key} holds a repeated key value '{key} given twice'"):
         load_ruleset("v1")
     monkeypatch.setenv("CMA_RULESET", "v1")
     line = Transaction(id="T1", date=date(2026, 1, 5), description="CARD SETTLEMENT ACME", amount=120.0, balance=120.0)

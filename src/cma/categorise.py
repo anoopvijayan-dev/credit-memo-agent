@@ -409,14 +409,14 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
         problems.append("frozen must be true or false")
     for key in sorted(set(data) - TABLE_KEYS, key=repr):
         problems.append(f"unknown key {key!r}")
+    for key, value in data.items():  # before any early refusal, so a repeated key is named
+        for bad in _unbuilt_in(value) if key != "rules" or isinstance(value, _Unbuilt) else ():
+            problems.append(f"{key} holds a {bad!r}")
     rules = data.get("rules")
     if not isinstance(rules, list) or not rules:
         raise RulesetError(f"{source}: " + "; ".join([*problems, "no rules"]))
     categories = {c.value for c in Category}
     seen: set[str] = set()
-    for key, value in data.items():
-        for bad in _unbuilt_in(value) if key != "rules" else ():
-            problems.append(f"{key} holds a {bad!r}")
     for i, r in enumerate(rules, start=1):
         where = f"rule {i} ({r.get('id', '?') if isinstance(r, dict) and not isinstance(r.get('id'), _Unbuilt) else '?'})"
         if isinstance(r, dict):
@@ -427,7 +427,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
         if not isinstance(r, dict):
             problems.append(f"{where}: not a mapping")
             continue
-        cue_only = r.get("stage") == "line_type" and data.get("frozen") is False  # an allowance, so only v2
+        cue_only = r.get("stage") == "line_type" and strict  # every table but the pinned v1 (review 35)
         for key in sorted((CUE_ONLY_KEYS if cue_only else RULE_KEYS) - set(r)):
             problems.append(f"{where}: missing {key}")
         if not MATCH_KEYS & set(r):
@@ -570,7 +570,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
         parts: list[tuple[str, Callable[[], object]]] = []
 
         def matchers(sub: dict) -> tuple:
-            return _rule_pattern(sub, frozen), _span_matchers(sub, frozen), _longest_sources(sub, frozen)
+            return _rule_pattern(sub, frozen), _span_matchers(sub, frozen), _longest_sources_checked(sub, frozen)
 
         # The pattern and the names are each built alone, whatever is wrong with the other
         # or with the rule's exceptions, so no field's fault hides another's (review 29);
@@ -598,7 +598,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                 if not (what == "its pattern and names together"
                         and any(p.startswith(where) and "do not compile together" in p for p in problems)):
                     problems.append(f"{where}: {what} cannot be used ({e.__class__.__name__}: {e})")
-    problems += _category_order_problems(data, rules)
+    problems += _category_order_problems(data, rules, strict)
     if problems:
         raise RulesetError(f"{source}: " + "; ".join(problems))
 
@@ -623,20 +623,18 @@ def _build_matchers(r: dict, frozen: bool) -> tuple:
     position (_spans)."""
     return (_rule_pattern(r, frozen),
             _span_matchers(r, frozen),
-            _longest_sources(r, frozen),
+            _longest_sources_checked(r, frozen),
             _side_pattern(r["unless"], frozen) if "unless" in r else None,
             _side_pattern(r["requires"], frozen) if "requires" in r else None)
 
 
-def _category_order_problems(data: dict, rules: list) -> list[str]:
-    """A table that is not frozen declares the category order inside every money-in bucket
-    its credit rules reach with more than one category, so rule order never picks one."""
+def _category_order_problems(data: dict, rules: list, strict: bool = True) -> list[str]:
+    """A maintained table (every table but the pinned v1, whatever its frozen flag says,
+    review 35) declares the category order inside every money-in bucket its credit rules
+    reach with more than one category, so rule order never picks one."""
     order = data.get("category_order")
-    frozen = data.get("frozen")
-    if frozen is True:
+    if not strict:
         return ["a frozen table has no category_order"] if "category_order" in data else []
-    if frozen is not False:
-        return []
     if order is None:
         order = []
     if not isinstance(order, list) or not all(isinstance(c, str) for c in order):
@@ -718,19 +716,20 @@ class _UniqueKeyLoader(yaml.SafeLoader):
     would silently change it with nothing left for the validator to see. Refuse instead."""
 
     def construct_mapping(self, node, deep=False):
+        """A key given twice keeps neither value: it holds an unbuilt value, so validation
+        names the rule and field beside the table's other faults (T03 review 35), and a
+        second `category:` can never silently win."""
+        mapping = super().construct_mapping(node, deep=deep)
         seen: set = set()
         for key_node, _ in node.value:
             key = self.construct_object(key_node, deep=deep)
             try:
-                duplicate = key in seen
-            except TypeError:  # an unhashable key; the base class reports it
+                if key in seen:
+                    mapping[key] = _Unbuilt(f"{key} given twice", "repeated key")
+                seen.add(key)
+            except TypeError:  # an unhashable key; the base class has reported it
                 continue
-            if duplicate:
-                raise _DuplicateKey(
-                    "while constructing a mapping", node.start_mark,
-                    f"found duplicate key {key!r}", key_node.start_mark)
-            seen.add(key)
-        return super().construct_mapping(node, deep=deep)
+        return mapping
 
     def construct_object(self, node, deep=False):
         """Every node is built in full where it stands, and one that cannot be built (any
@@ -939,6 +938,16 @@ def _may_end_early(pattern: str) -> bool:
     return walk(_sre_parse.parse(pattern))
 
 
+def _longest_sources_checked(r: dict, frozen: bool) -> tuple[str | None, ...]:
+    """The longest-match sources, each compiled at load in the form a line's search uses
+    (forced to end at a position), so none is first compiled on a transaction (review 35)."""
+    sources = _longest_sources(r, frozen)
+    for source in sources:
+        if source is not None:
+            _ending_at(source, 0)
+    return sources
+
+
 def _longest_sources(r: dict, frozen: bool) -> tuple[str | None, ...]:
     """Per part of _rule_parts: the own pattern's source if it may end early. Names lists
     try their longest name first, so their first match is already the longest."""
@@ -960,6 +969,7 @@ def _widest(source: str) -> int | None:
 
 
 @functools.lru_cache(maxsize=8192)
+@functools.lru_cache(maxsize=4096)
 def _ending_at(source: str, rest: int) -> re.Pattern[str]:
     # The part, forced to end where exactly `rest` characters of the line remain: matched
     # in the whole line, so its word edges see the real text on both sides.
