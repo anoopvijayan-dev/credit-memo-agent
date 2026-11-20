@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 222,
+  "next_id": 223,
   "decisions": [
     {
       "id": "D1",
@@ -4469,6 +4469,26 @@
       "decided_at": "2026-11-20T12:37:19.009Z",
       "effect": "design approved",
       "created_at": "2026-11-20T12:37:16.805Z"
+    },
+    {
+      "id": "D222",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R1 fail (src/cma/models.py:54 maps credit categories and src/cma/metrics.py:380–389,454–464 builds the GBP totals and evidence. The float reporting boundary at src/cma/metrics.py:139–147 rejects a valid case whose individual credits are representable.); R2 fail (src/cma/metrics.py:104–122,246–247,283–285,406–412 uses integer pence for sums, balance comparisons and average monthly revenue. The CSV path at src/cma/ingest.py:47–54 loses source pennies before the figures layer receives them.); R3 fail (src/cma/metrics.py:473–483 checks amounts and evidence counts, and src/cma/cli.py:99–102 reports an escaped refusal. The runner passed the named CLI and MCP contracts. The early refusal at src/cma/metrics.py:229–236 gives an incomplete difference and line list when two kinds of unbucketed credit coexist.); P1 fail (src/cma/metrics.py:380–389,473–483 checks the eight buckets and one placement per credit, with M18 excluded. Both named invariants passed. A valid whole-penny case can still return no totals or evidence when M17 cannot round-trip through a float.); P2 fail (The runner passed the named sum, outflow and single-credit M9 note invariants in tests/test_money_in.py:90–125. src/cma/metrics.py:284–288,427–429 omits positive closing balances that M6 reads to determine its count. Monthly cells belong to T06.); major: The reporting conversion withholds all figures and evidence when individually representable credit amounts add up to an unrepresentable float total. This also fails P1. at src/cma/metrics.py:146; major: Parsing the original GBP text as float discards pennies before metrics.compute can convert it to integers. The subsequent round-trip check validates the already-rounded value. at src/cma/ingest.py:53; major: The early uncategorised-credit path reports only uncategorised credits and their sum, bypassing the full reconciliation diagnostic. at src/cma/metrics.py:236; major: The derived days-overdrawn figure omits closing-balance lines that its calculation reads. at src/cma/metrics.py:429; major: The appendix and interactive CLI can display a nonreconciling breakdown even after the GBP values pass the decimal round-trip check. Fixed-point formatting rounds the underlying binary value, while the check reads its shortest decimal representation. at src/cma/models.py:144; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T12:51:32.378Z"
     }
   ]
 }
