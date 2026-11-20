@@ -23,6 +23,12 @@ from .models import REVENUE_CATEGORIES, Category, Metric, Statement, Transaction
 VAT_STAGGERS: dict[int, tuple[int, ...]] = {1: (3, 6, 9, 12), 2: (1, 4, 7, 10), 3: (2, 5, 8, 11)}
 VAT_DD_WORKING_DAYS = 3  # HMRC collects by Direct Debit up to three working days after the due date.
 FINANCING = {Category.LOAN_REPAYMENT, Category.LOAN_DRAWDOWN, Category.OWNER_DRAWINGS}
+# Money in that is neither trading receipts, a lending drawdown nor a returned DD. Under v1
+# every such credit is OTHER; v2 names some of them (director funding, own pots, refunds,
+# HMRC, grants), and M9 and M16 treat them all as v1 treats OTHER, so naming a credit
+# never moves either figure (R10).
+NON_TRADING_IN = {Category.OTHER, Category.OWN_ACCOUNT_TRANSFER, Category.DIRECTOR_FUNDING, Category.REFUND_IN,
+                  Category.HMRC_REPAYMENT, Category.OTHER_EXPLAINED_IN}
 
 
 def _month(d: date) -> str:
@@ -181,11 +187,12 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
             sent[counterparty(t.description)] += -t.amount
     back: dict[str, list[Transaction]] = defaultdict(list)
     for t in txns:
-        if t.amount > 0 and t.category == Category.OTHER and counterparty(t.description) in sent:
+        if t.amount > 0 and t.category in NON_TRADING_IN and counterparty(t.description) in sent:
             back[counterparty(t.description)].append(t)
     offset = sum(min(sum(t.amount for t in ts), sent[cp]) for cp, ts in back.items())
     operating += [t for ts in back.values() for t in ts]
-    net_operating = round(sum(t.amount for t in operating if t.category != Category.OTHER) + offset, 2)
+    net_operating = round(sum(t.amount for t in operating if not (t.amount > 0 and t.category in NON_TRADING_IN))
+                          + offset, 2)
     dscr: float | None = None
     dscr_note = (
         "Historical cover of existing debt only: net operating cash flow after owner drawings, "
@@ -238,7 +245,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
     # Inflows nobody has explained.
     inflows = [t for t in txns if t.amount > 0 and eff(t) not in (Category.LOAN_DRAWDOWN,)
                and t.category != Category.RETURNED_DD]
-    unclassified = [t for t in inflows if t.category == Category.OTHER]
+    unclassified = [t for t in inflows if t.category in NON_TRADING_IN]
     total_in = sum(t.amount for t in inflows)
     unclassified_share = round(sum(t.amount for t in unclassified) / total_in * 100, 2) if total_in else None
 

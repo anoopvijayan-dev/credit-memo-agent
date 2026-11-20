@@ -119,9 +119,11 @@ def test_a_damaged_packaged_table_is_refused_on_load(packaged_table):
 
 def test_a_scalar_yaml_cannot_construct_is_refused_as_invalid_yaml(packaged_table):
     """PyYAML raises ValueError, not YAMLError, building the impossible date 2026-02-30
-    (verify-11); that is a damaged table, not a model failure."""
+    (verify-11); that is a damaged table, not a model failure. Since T03 review 30 the value
+    stays text, so the refusal names the rule and field it sits in."""
     packaged_table(_v1_text().replace("category: returned_dd", "category: 2026-02-30", 1))
-    with pytest.raises(RulesetError, match=r"cma/rules/v1\.yaml: not valid YAML"):
+    with pytest.raises(RulesetError, match=r"cma/rules/v1\.yaml: frozen table v1 has been changed.*"
+                                           r"\(returned_dd\): category holds a timestamp value '2026-02-30' that YAML cannot build"):
         load_ruleset("v1")
 
 
@@ -140,7 +142,10 @@ def test_a_repeated_key_in_the_table_is_refused(packaged_table, monkeypatch, old
     text = _v1_text()
     assert old in text
     packaged_table(text.replace(old, new, 1))
-    with pytest.raises(RulesetError, match=rf"cma/rules/v1\.yaml: not valid YAML .*duplicate key '{key}'"):
+    # Since T03 review 35 neither value is kept: the key is named, with the table's other
+    # faults, after the changed frozen table.
+    with pytest.raises(RulesetError, match=rf"cma/rules/v1\.yaml: frozen table v1 has been changed.*"
+                                           rf"{key} holds a repeated key value '{key} given twice'"):
         load_ruleset("v1")
     monkeypatch.setenv("CMA_RULESET", "v1")
     line = Transaction(id="T1", date=date(2026, 1, 5), description="CARD SETTLEMENT ACME", amount=120.0, balance=120.0)
@@ -201,8 +206,10 @@ def test_v1_hash_is_pinned_in_code():
 @pytest.mark.contracts
 @pytest.mark.parametrize("old, new", [
     ("category: revenue_card_settlement", "category: other"),  # verify-12: schema-valid, still v1
-    ("direction: in\n", "direction: any\n"),
-    ("frozen: true", "frozen: false"),
+    # Was `direction: in` -> `any` on loan_drawdown, which since T03 review 50 the schema itself
+    # refuses (a money-in-only category on a rule that also matches debits); this edit still
+    # passes the schema and changes v1.
+    ("direction: any\n", "direction: in\n"),
 ])
 def test_a_schema_valid_change_to_frozen_v1_is_refused(packaged_table, old, new):
     text = _v1_text()
@@ -211,6 +218,18 @@ def test_a_schema_valid_change_to_frozen_v1_is_refused(packaged_table, old, new)
     validate_ruleset(yaml.safe_load(changed), "v1")  # the schema alone accepts it
     packaged_table(changed)
     with pytest.raises(RulesetError, match=r"cma/rules/v1\.yaml: frozen table v1 has been changed"):
+        load_ruleset("v1")
+
+
+@pytest.mark.contracts
+def test_switching_v1_frozen_off_is_refused(packaged_table):
+    # A table that is not frozen must stage every rule, so v1 with frozen: false fails the
+    # schema before the pin is even checked; either way v1 cannot load.
+    changed = _v1_text().replace("frozen: true", "frozen: false", 1)
+    with pytest.raises(RulesetError, match="missing stage"):
+        validate_ruleset(yaml.safe_load(changed), "v1")
+    packaged_table(changed)
+    with pytest.raises(RulesetError):
         load_ruleset("v1")
 
 
@@ -331,11 +350,56 @@ def test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1(tmp_pat
     cfg = {"configurable": {"thread_id": "legacy"}}
     graph.invoke({"statement_path": str(csv_path)}, cfg)
     graph.invoke(Command(resume={"approved": True, "reviewer": "A. Analyst"}), cfg)
-    legacy = {k: v for k, v in graph.get_state(cfg).values.items() if k != "ruleset"}
+    state = graph.get_state(cfg).values
+    recorded = [(t.category, t.rule_id) for t in state["statement"].transactions]
+    # A checkpoint from before provenance: no ruleset in the state, no rule id on any line.
+    legacy = {k: v for k, v in state.items() if k != "ruleset"}
+    legacy["statement"] = state["statement"].model_copy(deep=True)
+    for t in legacy["statement"].transactions:
+        t.rule_id = None
     monkeypatch.setenv("CMA_RULESET", "v9")
-    assert evidence_record(legacy)["ruleset"] == {
+    record = evidence_record(legacy)
+    assert record["ruleset"] == {
         "id": "v1", "sha256": load_ruleset("v1").sha256, "inferred": "pre-ruleset checkpoint"}
     assert evidence_record({**legacy, "ruleset": None})["ruleset"]["id"] == "v1"
+    # Each line's provenance is inferred from v1 too, and equals what a fresh run records.
+    assert [(t.category, t.rule_id) for t in legacy["statement"].transactions] == [(c, None) for c, _ in recorded]
+    assert [(line["category"], line["rule_id"]) for line in record["lines"]] == \
+        [(c.value, r) for c, r in recorded]
+    assert all(r.startswith("v1:") for _, r in recorded)
+    # A line whose saved category v1 would not give keeps no rule id rather than a wrong one.
+    legacy["statement"].transactions[0].category = Category.LOAN_DRAWDOWN
+    assert evidence_record(legacy)["lines"][0]["rule_id"] is None
+
+
+@pytest.mark.contracts
+def test_a_t02_checkpoint_with_a_recorded_v1_ruleset_but_no_line_rule_ids_replays_v1(tmp_path):
+    """The release before T03 recorded the ruleset (v1 and its hash) but no rule id on any
+    line. On resume each line's rule id is replayed from that recorded table, not left
+    null; a recorded hash the installed table does not have replays nothing."""
+    from langgraph.types import Command
+
+    from cma.graph import build, evidence_record
+    from cma.llm import FakeLLM
+
+    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
+    csv_path, _ = synth.write(rows, truth, tmp_path)
+    graph = build(FakeLLM())
+    cfg = {"configurable": {"thread_id": "t02"}}
+    graph.invoke({"statement_path": str(csv_path)}, cfg)
+    graph.invoke(Command(resume={"approved": True, "reviewer": "A. Analyst"}), cfg)
+    state = graph.get_state(cfg).values
+    recorded = [(t.category.value, t.rule_id) for t in state["statement"].transactions]
+    assert any(r == "v1:card_settlement" for _, r in recorded)
+    t02 = {**state, "ruleset": {"id": "v1", "sha256": load_ruleset("v1").sha256},
+           "statement": state["statement"].model_copy(deep=True)}
+    for t in t02["statement"].transactions:
+        t.rule_id = None
+    record = evidence_record(t02)
+    assert record["ruleset"] == {"id": "v1", "sha256": load_ruleset("v1").sha256}
+    assert [(line["category"], line["rule_id"]) for line in record["lines"]] == recorded
+    stale = {**t02, "ruleset": {"id": "v1", "sha256": "0" * 64}}
+    assert all(line["rule_id"] is None for line in evidence_record(stale)["lines"])
 
 
 # --- R10: M16 keeps its id, unit and value, and its name says what it measures ------------

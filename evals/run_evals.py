@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from langgraph.types import Command
 
 from cma import synth
+from cma.categorise import active_ruleset
 from cma.graph import build
 from cma.llm import get_llm
 
@@ -76,7 +77,7 @@ def main() -> int:
             f"{r['redrafts']:<8} {truth_col:14} {r['seconds']:>5}"
         )
     grounded = sum(r["grounded"] for r in results)
-    print(f"\n{grounded}/{len(results)} memos fully grounded; model = {args.llm}")
+    print(f"\n{grounded}/{len(results)} memos fully grounded; model = {args.llm}; ruleset = {active_ruleset().id}")
     truth_ok = all(not r["truth_mismatches"] for r in results)
     fake_ok = args.llm != "fake" or grounded == len(results)
     return 0 if truth_ok and fake_ok else 1
