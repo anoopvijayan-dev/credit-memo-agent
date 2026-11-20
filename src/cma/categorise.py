@@ -381,13 +381,16 @@ def _compile_problem(pattern: str) -> str | None:
     return None
 
 
-def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> None:
+def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha256: str | None = None) -> None:
     if not isinstance(data, dict):
         raise RulesetError(f"{source}: not a mapping")
     # Every check a v2 table gets applies to every table but the pinned frozen ones (v1):
     # a table cannot skip them by calling itself frozen, and a refusal names the rule
     # (T03 review 24).
     strict = not (isinstance(data, dict) and data.get("frozen") is True and expected_id in FROZEN_SHA256)
+    # The exceptions R4 forbids are checked on every table but the pinned one as its bytes
+    # were verified (`sha256`), so a changed v1 names them too (T03 review 27).
+    verified = not strict and (sha256 is None or FROZEN_SHA256.get(expected_id) == sha256)
     problems: list[str] = []
     if "id" not in data:
         problems.append("missing id")
@@ -443,15 +446,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                 problems.append(f"{where}: bank_code is only for the bank's own returned-payment code "
                                 f"({', '.join(sorted(BANK_RETURN_CODES))}), alone, with no unless or requires, "
                                 "for credits (direction in or any)")
-        if strict:
-            if isinstance(r.get("id"), str) and not _RULE_ID.fullmatch(r["id"]):
-                # Candidates are recorded joined by + after a colon: an id holding either
-                # would make two different candidate sets read the same (T03 review 17).
-                problems.append(f"{where}: id may use only letters, digits, _, . and -")
-            if isinstance(r.get("id"), str) and r["id"] in RESERVED_RULE_IDS:
-                # These name the categoriser's own decisions in a line's provenance.
-                problems.append(f"{where}: id {r['id']!r} is reserved for the categoriser's own "
-                                "provenance")
+        if not verified:
             for key in ("unless", "requires"):
                 if key in r:
                     # An exception could switch a rule off where another list's wording sits
@@ -470,12 +465,22 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                 problems.append(f"{where}: pattern uses a lookahead or lookbehind, which a v2 table "
                                 "does not allow: an exception could hide another list's wording (R4)")
             if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
-                    and r.get("bank_code") is not True and _has_anchor(r["pattern"])):
+                    and r.get("bank_code") is not True and not _is_bank_code_text(r["pattern"])
+                    and _has_anchor(r["pattern"])):
                 # An anchor tests the whole line beside a match: CASH DEPOSIT$ misses
                 # FPS CASH DEPOSIT STRIPE, so it hides wording as an exception would. Only
                 # the bank's own code keeps its ^ (D137).
                 problems.append(f"{where}: pattern uses an anchor (^, $, \\A or \\Z), which a v2 table "
                                 "allows only on the bank's returned-payment code")
+        if strict:
+            if isinstance(r.get("id"), str) and not _RULE_ID.fullmatch(r["id"]):
+                # Candidates are recorded joined by + after a colon: an id holding either
+                # would make two different candidate sets read the same (T03 review 17).
+                problems.append(f"{where}: id may use only letters, digits, _, . and -")
+            if isinstance(r.get("id"), str) and r["id"] in RESERVED_RULE_IDS:
+                # These name the categoriser's own decisions in a line's provenance.
+                problems.append(f"{where}: id {r['id']!r} is reserved for the categoriser's own "
+                                "provenance")
             if _is_bank_code_text(r.get("pattern")) and r.get("bank_code") is not True:
                 problems.append(f"{where}: the bank's own returned-payment code must carry bank_code: true")
             for key in ("pattern", "unless", "requires"):
@@ -536,9 +541,46 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
         for code in sorted(BANK_RETURN_CODES - flagged):
             problems.append(f"the bank's own returned-payment code {code} has no rule with bank_code: true "
                             "(R4: it settles a credit's line type)")
+    # Each rule's matchers are built here too, as the loader builds them, so a pattern that
+    # compiles alone but cannot be used is named with the table's other faults, not found
+    # only once everything else passes (T03 review 27).
+    frozen = data.get("frozen") is True
+    for i, r in enumerate(rules, start=1):
+        if not isinstance(r, dict) or not _well_typed_text(r):
+            continue
+        where = f"rule {i} ({r.get('id', '?')})"
+        if any(p.startswith(where) and "compile" in p for p in problems):
+            continue  # already named as not compiling
+        try:
+            _build_matchers(r, frozen)
+        except (re.error, OverflowError, RecursionError, MemoryError, TypeError, ValueError) as e:
+            problems.append(f"{where}: its pattern cannot be used ({e.__class__.__name__}: {e})")
     problems += _category_order_problems(data, rules)
     if problems:
         raise RulesetError(f"{source}: " + "; ".join(problems))
+
+
+def _well_typed_text(r: dict) -> bool:
+    """The rule's pattern, names and exceptions have the types the loader builds from."""
+    if "pattern" not in r and "names" not in r:
+        return False
+    if "pattern" in r and not (isinstance(r["pattern"], str) and r["pattern"]):
+        return False
+    if "names" in r and not (isinstance(r["names"], list) and r["names"]
+                             and all(isinstance(n, str) and n.strip() for n in r["names"])):
+        return False
+    return all(isinstance(r[k], str) and r[k] for k in ("unless", "requires") if k in r)
+
+
+def _build_matchers(r: dict, frozen: bool) -> tuple:
+    """Every pattern a line will meet for this rule, compiled: the rule's own (made
+    mark-aware for a v2 table), its exceptions, and the form that finds its matches at every
+    position (_spans)."""
+    return (_rule_pattern(r, frozen),
+            tuple(re.compile(f"(?=({part}))") for part in _rule_parts(r, frozen)),
+            _longest_sources(r, frozen),
+            _side_pattern(r["unless"], frozen) if "unless" in r else None,
+            _side_pattern(r["requires"], frozen) if "requires" in r else None)
 
 
 def _category_order_problems(data: dict, rules: list) -> list[str]:
@@ -594,7 +636,7 @@ def _side_pattern(text: str, frozen: bool) -> re.Pattern[str]:
 
 
 def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) -> Ruleset:
-    validate_ruleset(data, expected_id, source)
+    validate_ruleset(data, expected_id, source, sha256)
     assert isinstance(data, dict)
     frozen = bool(data.get("frozen", False))
     rules = []
@@ -604,14 +646,12 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) 
         # at every position (_spans). A pattern that fails any of them refuses the table
         # by rule id, rather than failing on the first line it meets.
         try:
-            rule = Rule(r["id"], _rule_pattern(r, frozen), r["direction"],
+            pattern, spans, longest, unless, requires = _build_matchers(r, frozen)
+            rule = Rule(r["id"], pattern, r["direction"],
                         Category(r["category"]) if "category" in r else None,
                         protected=r.get("protected", False), stage=r.get("stage"),
                         bank_code=r.get("bank_code", False),
-                        span_patterns=tuple(re.compile(f"(?=({part}))") for part in _rule_parts(r, frozen)),
-                        span_longest=_longest_sources(r, frozen),
-                        unless=_side_pattern(r["unless"], frozen) if "unless" in r else None,
-                        requires=_side_pattern(r["requires"], frozen) if "requires" in r else None)
+                        span_patterns=spans, span_longest=longest, unless=unless, requires=requires)
         except (re.error, OverflowError, RecursionError) as e:
             raise RulesetError(f"{source}: rule {r['id']}: its pattern cannot be used: {e}") from e
         rules.append(rule)

@@ -1993,3 +1993,31 @@ def test_a_changed_v1_with_a_malformed_bank_code_rule_is_still_named_changed(mon
     finally:
         monkeypatch.undo()
         categorise.load_ruleset.cache_clear()
+
+
+@pytest.mark.contracts
+def test_a_changed_v1_names_the_exceptions_r4_forbids(monkeypatch):
+    """T03 review 27: only the pinned v1 as its bytes were verified skips the exception
+    checks; a changed v1 is named changed and its forbidden exceptions are named too."""
+    raw = categorise._table_bytes("v1")
+    edit = raw.replace(b"rules:", b"rules:\n  - {id: cashx, pattern: CASH, direction: in, category: cash_deposit, "
+                                  b"unless: FPS}", 1)
+    monkeypatch.setattr(categorise, "_table_bytes", lambda ruleset_id: edit)
+    categorise.load_ruleset.cache_clear()
+    try:
+        with pytest.raises(RulesetError, match=r"has been changed.*unless is not allowed"):
+            categorise.load_ruleset("v1")
+    finally:
+        monkeypatch.undo()
+        categorise.load_ruleset.cache_clear()
+
+
+@pytest.mark.contracts
+def test_a_pattern_that_compiles_alone_but_cannot_be_used_is_named_with_other_faults():
+    """T03 review 27: (?i)ACME compiles alone but not where the loader puts it; it is named
+    beside another rule's schema fault, not found only after that fault is fixed."""
+    flag = {"id": "flag", "pattern": "(?i)ACME", "direction": "in", "category": "cash_deposit", "stage": "names"}
+    bad = {"id": "bad", "names": ["X"], "direction": "sideways", "category": "cash_deposit", "stage": "names"}
+    with pytest.raises(RulesetError) as e:
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, flag, bad]}, expected_id="v2")
+    assert "rule 2 (flag): its pattern cannot be used" in str(e.value) and "rule 3 (bad)" in str(e.value)
