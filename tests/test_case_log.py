@@ -2964,32 +2964,33 @@ def test_a_custom_handler_is_held_off_until_the_take_back_is_done(tmp_path, monk
 
 
 @pytest.mark.invariants
-def test_p15_a_holders_check_reads_the_case_lock_last(tmp_path, monkeypatch):
-    """T12 review 36: a case lock replaced while the holder's gate is examined is caught, so
-    that read is not taken as the truth."""
+def test_p15_a_holders_read_counts_only_while_its_case_lock_is_the_cases(tmp_path, monkeypatch):
+    """T12 reviews 36, 37: the holder's read is the truth only while the case lock it holds
+    alone is still the case's lock file; replaced during the read, it is read again as a
+    reader would. The gate plays no part: a new gate admits no one while the case lock holds."""
     log = _log(tmp_path, 2)
-    real_stat, real_check, armed, calls = case.os.stat, case._check, [], []
-
-    def stat(p, *a, **k):  # the holder examines the gate before its read and again after
-        got = real_stat(p, *a, **k)
-        if armed and str(p).endswith(".gate"):
-            armed.append(1)
-            if len(armed) == 3:  # the check after the read
-                _replace_file(log.lock_path)
-        return got
+    real_check, calls = case._check, []
 
     def check(raw, recorded):
         calls.append(None)
+        if len(calls) == 1:
+            _replace_file(log.lock_path)
         return real_check(raw, recorded)
 
     monkeypatch.setattr(case, "READ_PAUSE", 0)
     with log.writer():
-        monkeypatch.setattr(case.os, "stat", stat)
         monkeypatch.setattr(case, "_check", check)
-        armed.append(1)
         got = log.verify()
         monkeypatch.undo()
     assert len(calls) >= 2 and got.ok
+
+    calls.clear()
+    with log.writer():
+        _replace_file(log.gate_path)  # only the gate: the holder's read still stands
+        monkeypatch.setattr(case, "_check", lambda raw, recorded: (calls.append(None), real_check(raw, recorded))[1])
+        got = log.verify()
+        monkeypatch.undo()
+    assert len(calls) == 1 and got.ok
 
 
 @pytest.mark.invariants
@@ -3023,3 +3024,31 @@ def test_any_signal_with_a_python_handler_is_held_off(tmp_path, monkeypatch):
         signal.signal(signal.SIGWINCH, old)
     monkeypatch.undo()
     assert case._read_head(log.head_path) == [json.loads(x)["hash"] for x in _lines(log)[:2]]
+
+
+
+@pytest.mark.invariants
+def test_a_held_readers_recorded_prefix_never_deep_copies_the_entries(tmp_path, monkeypatch):
+    """T12 review 37: the recorded prefix a reader reports while a save is under way is
+    measured from the entries as they are, never through dataclasses.asdict, whose deep copy
+    recurses further than the JSON encoder that accepted the data."""
+    import dataclasses
+
+    deep: list = []
+    cur = deep
+    for _ in range(300):
+        nxt: list = []
+        cur.append(nxt)
+        cur = nxt
+    log = case.CaseLog(tmp_path / "log.jsonl")
+    log.append("import", {"deep": deep}, expected=0)
+
+    def refuse(*a, **k):
+        raise RecursionError("deep copy")
+
+    monkeypatch.setattr(dataclasses, "asdict", refuse)
+    if hasattr(case, "asdict"):
+        monkeypatch.setattr(case, "asdict", refuse)
+    check = case.CaseLog(log.path).verify()
+    held = check.as_recorded()
+    assert held.recorded == 1 and held.intact_bytes == log.path.stat().st_size

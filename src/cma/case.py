@@ -59,7 +59,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NoReturn
@@ -183,8 +183,11 @@ def _canonical(obj: Any) -> bytes:
 
 
 def _line(entry: Entry) -> bytes:
-    """The exact line the writer produced for an entry that was read back intact."""
-    return _canonical(asdict(entry)) + b"\n"
+    """The exact line the writer produced for an entry that was read back intact. Its fields
+    are taken as they are, not copied deeply: dataclasses.asdict recurses through the data
+    further than the JSON encoder that already accepted it (T12 review 37)."""
+    return _canonical({"seq": entry.seq, "prev": entry.prev, "at": entry.at, "event": entry.event,
+                       "data": entry.data, "hash": entry.hash}) + b"\n"
 
 
 def entry_hash(entry: dict[str, Any]) -> str:
@@ -477,10 +480,11 @@ class CaseLog:
 
         def ours() -> bool:
             try:
-                # The gate first, the case lock last: no read follows the case lock's check
-                # (T12 review 36).
-                return (ids is not None and ids[1] == _file_id(os.stat(self.gate_path))
-                        and ids[0] == _file_id(os.stat(self.lock_path)))
+                # Only the case lock: it is what this holder holds alone, and a second writer
+                # can hold the case only through a new case lock; a gate replaced while the
+                # case lock stays this holder's admits no one (T12 review 37). One check, so
+                # no read follows another's.
+                return ids is not None and ids[0] == _file_id(os.stat(self.lock_path))
             except OSError:
                 return False
 
