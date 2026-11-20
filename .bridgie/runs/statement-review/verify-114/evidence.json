@@ -1,0 +1,109 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed 50db6d0 against revision 22 at .bridgie/specs/statement-review/requirements.md:312 in the repository's central spec. Canonical encoding, chain verification, head comparison, and first-bad-entry reporting are at src/cma/case.py:177 and src/cma/case.py:285. Holder checks, steady reads, and reader retries are at src/cma/case.py:461 and src/cma/case.py:503. Writer exclusion, fork refusal, nested-save refusal, expected-position conflicts, and repair checks are at src/cma/case.py:762, src/cma/case.py:878, src/cma/case.py:926, and src/cma/case.py:1015. Save read-back and take-back are at src/cma/case.py:1244 and src/cma/case.py:1271. Read-back detects lock replacement but skips the required retry. The production CLI calls verify at src/cma/cli.py:321. The runner logs confirm the named tamper, rebuilt-chain, torn-tail, duplicate-submit, concurrent-writer, repair, and CLI tests. Reviewed empty and malformed inputs, Unicode, UTC timestamps, OS file permissions, per-folder isolation, and CLI consumers. The change performs no currency arithmetic or migration. The sign-off guard at src/cma/case.py:736 has no production sign-off caller in this checkout.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-114/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-114/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-114/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-114/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-114/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-114/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-114/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1268,
+      "criterion": "P15",
+      "claim": "A save whose read-back crosses a replaced lock discards that read but goes straight to take-back. P15 requires a fresh read through the current gate and case lock.",
+      "repro": "Use the scenario at tests/test_case_log.py:3290. Append entry 3, replace the case-lock file during the first post-publication _check, and leave the replacement free. Count post-publication log reads and gate acquisitions. The save checks the old lock, attempts take-back, and reports not confirmed without reading through the replacement lock. The existing runner test checks the exception and message but never checks that a retry occurred."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 332,
+      "criterion": "P15",
+      "claim": "The producer claims a held case with a torn tail exits 0 with an 'appending' message. The CLI and passing contract test specify exit 4 and 'being saved'.",
+      "repro": "Read contracts-4.log for test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break, then inspect tests/test_case_log.py:1361. The test asserts exit 4 while held and exit 3 naming the incomplete entry after release."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1229,
+      "criterion": "P15",
+      "claim": "The producer's claimed deterministic rapid-append schedule is not_proven. The passing stress test does not enforce two commits on each retry, assert that any append landed during its checks, or assert the claimed in-progress result and contiguous sequence.",
+      "repro": "Compare the claim with the test at line 1214 and its PASS in specified-3.log. To prove the claimed schedule, add a test that synchronizes both commits with each reader attempt and asserts the result, then have the runner execute python -m pytest -v tests/test_case_log.py -k keep_landing."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 370,
+      "criterion": "P15",
+      "claim": "The producer's disposition claims that a held case with its head file deleted still reports entry 1. The current reader claims no entry when it cannot establish the recorded count.",
+      "repro": "Create a nonempty log, hold its case lock on another thread, delete the head file, and call verify while the writer remains held. The missing-head result at line 305 has no recorded count, so _held_result returns an unchecked, in-progress result with no first_bad."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 1,
+      "criterion": "P15",
+      "claim": "The producer cites stale suite totals and diff output for the reviewed checkout. The current runner proves 515 full-suite passes, 198 invariant passes, 13 contract passes, and 10 dual-run passes.",
+      "repro": "Compare the summaries in specified-3.log, invariants-5.log, contracts-4.log, and dual_run-7.log with the claim. Read-only git diff --stat 576e43d..HEAD -- src reports 1,499 insertions across case.py and cli.py, compared with the claimed 581."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

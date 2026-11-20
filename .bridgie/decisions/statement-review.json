@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 204,
+  "next_id": 205,
   "decisions": [
     {
       "id": "D1",
@@ -4114,6 +4114,26 @@
       "decided_at": "2026-11-20T10:14:57.066Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T10:09:31.267Z"
+    },
+    {
+      "id": "D204",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed 50db6d0 against revision 22 at .bridgie/specs/statement-review/requirements.md:312 in the repository's central spec. Canonical encoding, chain verification, head comparison, and first-bad-entry reporting are at src/cma/case.py:177 and src/cma/case.py:285. Holder checks, steady reads, and reader retries are at src/cma/case.py:461 and src/cma/case.py:503. Writer exclusion, fork refusal, nested-save refusal, expected-position conflicts, and repair checks are at src/cma/case.py:762, src/cma/case.py:878, src/cma/case.py:926, and src/cma/case.py:1015. Save read-back and take-back are at src/cma/case.py:1244 and src/cma/case.py:1271. Read-back detects lock replacement but skips the required retry. The production CLI calls verify at src/cma/cli.py:321. The runner logs confirm the named tamper, rebuilt-chain, torn-tail, duplicate-submit, concurrent-writer, repair, and CLI tests. Reviewed empty and malformed inputs, Unicode, UTC timestamps, OS file permissions, per-folder isolation, and CLI consumers. The change performs no currency arithmetic or migration. The sign-off guard at src/cma/case.py:736 has no production sign-off caller in this checkout.); major: A save whose read-back crosses a replaced lock discards that read but goes straight to take-back. P15 requires a fresh read through the current gate and case lock. at src/cma/case.py:1268; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T10:16:34.113Z"
     }
   ]
 }
