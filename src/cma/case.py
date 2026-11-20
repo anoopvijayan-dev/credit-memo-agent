@@ -1256,6 +1256,14 @@ class CaseLog:
             except CaseLocked:
                 locks_held = False
                 failure[0] = "a case lock file was removed or replaced during the read-back"
+            if not locks_held:
+                # The read is taken again, fresh, through the gate and case lock as they now
+                # are (P15, T12 review 46); only an intact log holding the entry, read so,
+                # confirms the save.
+                again = self.verify()
+                held = (again.entries[entry.seq - 1].hash
+                        if again.ok and not again.in_progress and len(again.entries) >= entry.seq else None)
+                locks_held = held == entry.hash
             confirmed = held == entry.hash and locks_held
             self._save_confirmed = confirmed
         except OSError as e:  # the read-back itself failed: named, never read as a change (D159)

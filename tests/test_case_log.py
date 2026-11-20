@@ -3287,9 +3287,10 @@ def test_p15_a_holders_retry_meeting_a_busy_gate_still_knows_its_own_case_lock(t
 
 
 @pytest.mark.invariants
-def test_a_read_back_across_a_replaced_lock_file_confirms_nothing(tmp_path, monkeypatch):
-    """T12 review 45: the read-back counts only while both lock files are still the ones
-    taken; with the case lock replaced during it, the save is not confirmed."""
+def test_a_read_back_across_a_replaced_lock_file_confirms_nothing_by_itself(tmp_path, monkeypatch):
+    """T12 reviews 45, 46: the read-back counts only while both lock files are still the
+    ones taken; with the case lock replaced during it, a fresh read through the lock files
+    as they now are decides, and an interfering writer is then holding the case."""
     log = _log(tmp_path, 2)
     real = case._check
 
@@ -3302,3 +3303,31 @@ def test_a_read_back_across_a_replaced_lock_file_confirms_nothing(tmp_path, monk
     with pytest.raises((case.SaveNotConfirmed, case.SaveNotRecorded)) as e:
         log.append("override", {"n": 3}, expected=2)
     assert "read-back" in str(e.value)
+
+
+@pytest.mark.invariants
+def test_a_read_back_across_a_replaced_lock_takes_a_fresh_read(tmp_path, monkeypatch):
+    """T12 review 46: with the case lock replaced during the read-back and nobody else
+    writing, the fresh read through the current lock files finds the entry: the save is
+    confirmed, never sent straight to the take-back."""
+    log = _log(tmp_path, 2)
+    real, done, verifies = case._check, [], []
+    real_verify = case.CaseLog.verify
+
+    def check(raw, recorded):
+        if isinstance(recorded, list) and len(recorded) == 3 and not done:
+            done.append(1)
+            _replace_file(log.lock_path)
+        return real(raw, recorded)
+
+    def verify(self):
+        verifies.append(None)
+        return real_verify(self)
+
+    monkeypatch.setattr(case, "_check", check)
+    monkeypatch.setattr(case.CaseLog, "verify", verify)
+    entry = log.append("override", {"n": 3}, expected=2)
+    monkeypatch.undo()
+    assert entry.seq == 3 and len(verifies) == 2  # the save's check, then the fresh read
+    got = case.CaseLog(log.path).verify()
+    assert got.ok and got.head.position == 3
