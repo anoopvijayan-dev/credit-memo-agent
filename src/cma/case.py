@@ -1077,7 +1077,7 @@ class CaseLog:
                 raise SaveNotRecorded(f"{self.path}: the head record could not be written ({e}); "
                                       "the save was not recorded") from e
             raise SaveNotConfirmed(f"{self.path}: the head record could not be made durable ({e}), so "
-                                   "whether the save was recorded is not confirmed: check the case log "
+                                   "whether the save is in the log is not confirmed: check the case log "
                                    "before anything else is saved") from e
         failure: str = "the log changed while this save was being recorded"
         try:
@@ -1104,10 +1104,21 @@ class CaseLog:
             except (CaseLogError, OSError) as e:
                 refused = e
             if refused is not None:
+                # One answer per report (D164): what stopped the take-back is named in the
+                # save's own words, never quoted, since a quoted refusal can say the save was
+                # or was not recorded; nor is it chained, for the same reason.
+                if isinstance(refused, OSError):
+                    why = f"{refused.__class__.__name__}: {refused.strerror or refused}"
+                elif isinstance(refused, SaveNotRecorded):
+                    why = "its head record is no longer this save's own"
+                elif isinstance(refused, CaseLocked):
+                    why = "a case lock file was removed or replaced"
+                else:
+                    why = refused.__class__.__name__
                 raise SaveNotConfirmed(
-                    f"{self.path}: {failure}, and its head record could not be taken back "
-                    f"({refused.__class__.__name__}: {refused}), so whether it was recorded is not "
-                    "confirmed: check the case log before anything else is saved") from refused
+                    f"{self.path}: {failure}, and its head record could not be taken back ({why}), so "
+                    "whether the save is in the log is not confirmed: check the case log before "
+                    "anything else is saved") from None
             raise SaveNotRecorded(f"{self.path}: {failure}; the save was not recorded")
 
 

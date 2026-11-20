@@ -2643,3 +2643,30 @@ def test_a_head_that_cannot_be_read_before_its_rename_is_not_recorded(tmp_path, 
     with pytest.raises(case.SaveNotRecorded, match="Permission denied") as e:
         log.append("override", {"n": 3}, expected=2)
     assert not isinstance(e.value, case.SaveNotConfirmed)
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("why", ["lock", "head"])
+def test_a_not_confirmed_report_never_says_recorded_or_not(tmp_path, monkeypatch, why):
+    """D164 / R42: one answer per report. The take-back's refusal is named in the save's
+    own words; nothing in the report or its causes says the save was or was not recorded,
+    or that nothing was written."""
+    log = _log(tmp_path, 2)
+    prefix = log.path.read_bytes()
+    real = case.CaseLog._write_head
+
+    def interfere(self, hashes, **kw):
+        real(self, hashes, **kw)
+        if len(hashes) == 3:
+            if why == "lock":
+                _replace_file(self.lock_path)
+            else:  # another writer's head record lands over this save's
+                _write_head(self, [*hashes[:2], "0" * 64])
+            self.path.write_bytes(prefix)
+
+    monkeypatch.setattr(case.CaseLog, "_write_head", interfere)
+    with pytest.raises(case.SaveNotConfirmed) as e:
+        log.append("override", {"n": 3}, expected=2)
+    text = _chain(e.value)
+    assert "not recorded" not in text and "was recorded" not in text and "nothing was written" not in text
+    assert ("removed or replaced" if why == "lock" else "no longer this save's own") in text
