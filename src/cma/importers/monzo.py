@@ -192,7 +192,9 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
         long_row = (unreadable.line, unreadable.row) if unreadable is not None and unreadable.row else None
         for i, r in [*raw_rows, *([long_row] if long_row else [])]:
             partial = long_row is not None and r is long_row[1]
-            if partial and not {"Currency", "Amount"} <= unreadable.readable:
+            # Its currency is needed only if the export has a Currency column; without one,
+            # every row is GBP (T04 review 38).
+            if partial and not {"Amount", *({"Currency"} & set(header))} <= unreadable.readable:
                 raise MonzoImportError(f"{src}: {unreadable}")
             # Currency, then the amount, before anything else about the row (T04 reviews 27-28):
             # a row in another currency is skipped whatever else it holds, and a GBP amount is

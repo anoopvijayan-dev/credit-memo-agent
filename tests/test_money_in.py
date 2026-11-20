@@ -1185,3 +1185,22 @@ def test_a_readable_amount_before_a_bad_byte_in_its_row_still_counts(tmp_path):
     with pytest.raises(ingest.StatementError) as e:
         ingest.load_csv(csv, today=date(2026, 6, 1))
     assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "line 3: not UTF-8" in str(e.value)
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("damage", ["bad byte", "open quote"])
+def test_monzo_counts_a_readable_amount_in_a_row_that_cannot_be_read_whole(tmp_path, damage):
+    """T04 review 38: a row that cannot be read whole lost its readable amount when the export
+    has no Currency column (every row is GBP), or when its last field is a quote never closed."""
+    from cma.importers import monzo
+
+    big = "9999999999999.99"
+    head = "Transaction ID,Date,Time,Type,Amount,Balance,Name\n"
+    first = f"tx_1,01/01/2026,09:00:00,Faster payment,{big},{big},ACME\n"
+    second = f"tx_2,02/01/2026,09:00:00,Faster payment,{big},{big},".encode()
+    tail = b"CAF\xe9\n" if damage == "bad byte" else b'"CAFE\n'
+    src = tmp_path / "m.csv"
+    src.write_bytes((head + first).encode() + second + tail)
+    with pytest.raises(monzo.MonzoImportError) as e:
+        monzo.convert(src, tmp_path / "o.csv")
+    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "line 3:" in str(e.value)

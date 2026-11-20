@@ -259,8 +259,12 @@ def read_records(text: str, cut: bool = False) -> tuple[list[str], list[tuple[in
     # start, other transactions included: refused, naming the line it starts on (T04 review 32).
     # (`cut`: the text stops at a bad byte, and read_data names the record it falls in.)
     if not cut and rows and _ends_in_quotes("".join(physical[rows[-1][0] - 1:])):
-        start, _ = rows.pop()
-        return header, rows, CsvRecordError(f"line {start}: a quoted field is not closed before the end of the file")
+        start, row = rows.pop()
+        err = CsvRecordError(f"line {start}: a quoted field is not closed before the end of the file")
+        # The fields wholly before the open one can still be read (T04 review 38).
+        cells = next(csv.reader(io.StringIO("".join(physical[start - 1:]), newline="")), [])
+        err.line, err.row, err.readable = start, row, set(header[:max(len(cells) - 1, 0)])
+        return header, rows, err
     return header, rows, None
 
 
