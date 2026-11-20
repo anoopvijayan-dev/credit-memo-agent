@@ -2091,3 +2091,37 @@ def test_a_scalar_the_loader_cannot_build_is_named_by_rule_with_the_other_faults
         monkeypatch.undo()
         categorise.load_ruleset.cache_clear()
     assert "(odd): category" in str(e.value) and "(other): direction" in str(e.value)
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("field,scalar", [("pattern", "!!int abc"), ("protected", "!!bool maybe"),
+                                          ("category", "2026-02-30"), ("names", "[!!float x]")])
+def test_a_value_yaml_cannot_build_never_loads_as_text(monkeypatch, field, scalar):
+    """T03 review 31: such a value is neither text nor a flag, so it never loads into a rule;
+    it is named by rule and field, beside the table's other faults."""
+    raw = categorise._table_bytes("v2")
+    rule = {"id": "odd", "names": "[ODD]", "direction": "in", "category": "cash_deposit", "stage": "names",
+            "protected": "false"}
+    rule[field] = scalar
+    text = ", ".join(f"{k}: {v}" for k, v in rule.items())
+    edit = raw.replace(b"rules:", ("rules:\n  - {" + text + "}\n  - {id: other, names: [X], direction: "
+                                   "sideways, category: cash_deposit, stage: names}").encode(), 1)
+    monkeypatch.setattr(categorise, "_table_bytes", lambda ruleset_id: edit)
+    categorise.load_ruleset.cache_clear()
+    try:
+        with pytest.raises(RulesetError) as e:
+            categorise.load_ruleset("v2")
+    finally:
+        monkeypatch.undo()
+        categorise.load_ruleset.cache_clear()
+    assert f"(odd): {field} holds a" in str(e.value) and "(other): direction" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_debit_only_copy_of_the_bank_code_has_its_anchor_named():
+    """T03 review 31: the bank's code settles credits; a debit-only rule with its text is not
+    the bank's code rule and gets no anchor exemption."""
+    rule = {"id": "debit", "pattern": "^UNPAID DD\\b", "direction": "out", "category": "returned_dd",
+            "stage": "line_type", "protected": True}
+    with pytest.raises(RulesetError, match=r"\(debit\): pattern uses an anchor"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")

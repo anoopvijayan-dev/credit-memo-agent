@@ -370,6 +370,7 @@ def _bank_code_shape(r: dict) -> bool:
     returned-payment rule, with no names or exceptions. Only this keeps its anchor, whatever
     other checks a table skips (T03 review 30)."""
     return (_is_bank_code_text(r.get("pattern")) and r.get("category") == Category.RETURNED_DD.value
+            and r.get("direction") in ("in", "any")  # it settles credits; a debit-only copy is not it
             and "names" not in r and "unless" not in r and "requires" not in r)
 
 
@@ -413,8 +414,16 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
         raise RulesetError(f"{source}: " + "; ".join([*problems, "no rules"]))
     categories = {c.value for c in Category}
     seen: set[str] = set()
+    for key, value in data.items():
+        for bad in _unbuilt_in(value) if key != "rules" else ():
+            problems.append(f"{key} holds a {bad!r}")
     for i, r in enumerate(rules, start=1):
-        where = f"rule {i} ({r.get('id', '?') if isinstance(r, dict) else '?'})"
+        where = f"rule {i} ({r.get('id', '?') if isinstance(r, dict) and not isinstance(r.get('id'), _Unbuilt) else '?'})"
+        if isinstance(r, dict):
+            for key, value in r.items():
+                for bad in _unbuilt_in(value):
+                    # Never loaded as text, and named by rule and field (T03 review 31).
+                    problems.append(f"{where}: {key} holds a {bad!r}")
         if not isinstance(r, dict):
             problems.append(f"{where}: not a mapping")
             continue
@@ -720,23 +729,44 @@ class _UniqueKeyLoader(yaml.SafeLoader):
         return super().construct_mapping(node, deep=deep)
 
 
-def _scalar_or_text(base):
-    """A scalar the loader cannot build (2026-02-30 read as a date, !!int x) stays the text
-    it is, so validation names the rule and field it sits in, beside the table's other
-    faults, instead of the whole load stopping at construction (T03 review 30)."""
+class _Unbuilt:
+    """A scalar the loader could not build (2026-02-30 read as a date, !!int x, !!bool x).
+    It is no string, number or flag, so no field accepts it: validation names the rule and
+    field it sits in, beside the table's other faults, and it never loads as text (T03
+    reviews 30 and 31)."""
+
+    def __init__(self, text: str, tag: str):
+        self.text, self.tag = text, tag
+
+    def __repr__(self) -> str:
+        return f"{self.tag.rsplit(':', 1)[-1]} value {self.text!r} that YAML cannot build"
+
+
+def _unbuilt_in(value: object) -> list[_Unbuilt]:
+    if isinstance(value, _Unbuilt):
+        return [value]
+    if isinstance(value, list):
+        return [b for v in value for b in _unbuilt_in(v)]
+    if isinstance(value, dict):
+        return [b for v in value.values() for b in _unbuilt_in(v)]
+    return []
+
+
+def _scalar_or_unbuilt(base):
     def construct(loader, node):
         try:
             return base(loader, node)
-        except (ValueError, TypeError, OverflowError, yaml.constructor.ConstructorError):
-            return loader.construct_scalar(node)
+        except (ValueError, TypeError, OverflowError, KeyError, yaml.constructor.ConstructorError):
+            return _Unbuilt(loader.construct_scalar(node), node.tag)
     return construct
 
 
 for _tag, _base in (("tag:yaml.org,2002:timestamp", yaml.SafeLoader.construct_yaml_timestamp),
                     ("tag:yaml.org,2002:int", yaml.SafeLoader.construct_yaml_int),
                     ("tag:yaml.org,2002:float", yaml.SafeLoader.construct_yaml_float),
+                    ("tag:yaml.org,2002:bool", yaml.SafeLoader.construct_yaml_bool),
                     ("tag:yaml.org,2002:binary", yaml.SafeLoader.construct_yaml_binary)):
-    _UniqueKeyLoader.add_constructor(_tag, _scalar_or_text(_base))
+    _UniqueKeyLoader.add_constructor(_tag, _scalar_or_unbuilt(_base))
 
 
 def _table_bytes(ruleset_id: str) -> bytes:

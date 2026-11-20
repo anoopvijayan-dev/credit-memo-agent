@@ -123,7 +123,7 @@ def test_a_scalar_yaml_cannot_construct_is_refused_as_invalid_yaml(packaged_tabl
     stays text, so the refusal names the rule and field it sits in."""
     packaged_table(_v1_text().replace("category: returned_dd", "category: 2026-02-30", 1))
     with pytest.raises(RulesetError, match=r"cma/rules/v1\.yaml: frozen table v1 has been changed.*"
-                                           r"\(returned_dd\): category '2026-02-30' is not a category"):
+                                           r"\(returned_dd\): category holds a timestamp value '2026-02-30' that YAML cannot build"):
         load_ruleset("v1")
 
 
