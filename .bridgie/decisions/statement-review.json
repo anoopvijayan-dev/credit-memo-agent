@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 142,
+  "next_id": 146,
   "decisions": [
     {
       "id": "D1",
@@ -2891,6 +2891,89 @@
       "decided_at": "2026-11-20T03:47:51.053Z",
       "effect": "changes requested: Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Write D137 into R4: a v2 pattern may carry an anchor (^, $, \\A or \\Z) only on the bank's returned-payment code. In R4 also state that only a match that itself counts can set another aside inside its longer phrase (T03 review 22). In R43/P15 state that a reader's read counts only while the gate and case lock it holds are still the case's lock files; a read across a replaced one is taken again (T12 review 23). In R42 state that a save whose read-back fails takes back the head record it published when that record is still its own, leaving its entry past the recorded entries (T12 review 23). Keep everything else in revision 15.; re-run bridgie shape statement-review",
       "created_at": "2026-11-20T03:47:51.042Z"
+    },
+    {
+      "id": "D142",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-16"
+      },
+      "context": "R4 (revision 16, D141) says only a match that itself counts can set another aside inside its longer phrase, and R4 defines a match as one rule's match at one start. The owner's 5c9a5bd settles it by rule (src/cma/categorise.py:815-839 at 2c72469): a rule that counts by any match lends every match of its own the standing to set others aside, including one that lies inside a longer phrase that counts. With FPS STRIPE CASH DEPOSIT added to the rail list and STRIPE CASH DEPOSIT to the gateway list, FPS STRIPE CASH DEPOSIT REF STRIPE matches the gateway twice. The trailing STRIPE makes the gateway count, so its STRIPE CASH DEPOSIT, set aside inside the rail phrase, still sets aside the cash wording, and the credit is a card settlement in trading receipts, though it holds a rail and cash wording, which R4 makes ambiguous. Read by match, that STRIPE CASH DEPOSIT sets nothing aside, the cash wording counts and the credit is ambiguous. Settled from the longest match down, each match rests only on longer ones, so there is one answer and nothing to repeat. No shipped verdict moves either way. T03's reviewer judges R4 by its own text, and verify-53 to verify-71's majors were all table edits.",
+      "options": [
+        "By match: a match set aside inside a longer phrase sets nothing aside, even when its rule counts by another match; settled from the longest match down; say it in R4 in the next revision (design default; T03 changes credit_matches before its review)",
+        "By rule, as 5c9a5bd builds; say in R4 that a rule that counts by any match lets all its matches set others aside (FPS STRIPE CASH DEPOSIT REF STRIPE is then a card settlement)"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T04:10:40.294Z"
+    },
+    {
+      "id": "D143",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-16"
+      },
+      "context": "R42 (revision 16, D141) has a save whose read-back fails take back the head record it published, when that record is still its own. The take-back is a head rename, so it re-checks both lock files first, and it can itself fail: the head record cannot be read or renamed, or a lock file was replaced. At f5436bb (src/cma/case.py:999-1011) the save then says it was not recorded and that its head record could not be taken back, and asks for the case log to be checked before anything else is saved. Its entry stays among the recorded entries, so the next check reads the log intact with it, though the save was told not recorded; P15 says a save refused after its line leaves its entry past the recorded entries. verify-70 failed one read with an injected error; failing two reaches this. T12's reviewer judges P15 by its own text.",
+      "options": [
+        "Not confirmed: R42 and P15 name a third answer, neither recorded nor not recorded, for a save whose take-back cannot be made; it asks for the case log to be checked, which shows whether the entry is there (design default; T12 changes one message and its exception before its review)",
+        "Not recorded, as f5436bb says; write into R42 and P15 that such a save's entry can stay among the recorded entries",
+        "Retry the take-back until it is made or the head record is no longer the save's own (a lasting error then holds the save)"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T04:10:40.305Z"
+    },
+    {
+      "id": "D144",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-16"
+      },
+      "context": "R43 and P15 (revision 16) have a reader take a read again when a lock file it holds was removed or replaced during it. A lock file replaced before the read is not one the reader holds. A writer checks the gate it passed and then takes the case lock (src/cma/case.py:704-714 at f5436bb); paused between the two, it can take the case lock after the gate is replaced, through a gate no reader holds. Its later steps refuse (R42), but the case shows as held, and a reader holding the new gate may judge a read across which the earlier holder let go, leaving an incomplete entry, and report being saved. R42 puts lock-file interference outside the single-writer guarantee, but R43 and P15 do not say what it does to a reader's report, and T12's reviewer judges P15 by its own text.",
+      "options": [
+        "State it in R43 and P15 in the next revision: beyond a read across a lock file the reader holds, lock-file interference is outside what a reader can know, and a check after it stops gives the true answer (design default; no build change)",
+        "Also have a writer re-check, once it holds the case lock, that the gate it passed is still the case's, and let the case go if not (narrower, not closed: a reader can look in that moment), and state the rest",
+        "Leave R43 and P15 as revision 16 writes them"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T04:10:40.314Z"
+    },
+    {
+      "id": "D145",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Approve the design and requirements (R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R18 R19 R20 R21 R22 R23 R24 R25 R26 R27 R28 R29 R30 R31 R32 R33 R34 R35 R36 R37 R38 R39 R40 R41 R42 R43 R44 R45 R46 R47 R48 R50 R51 R52 R53 R54 R55 R56 P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20) for 'statement-review'? Branch bridgie/statement-review from claude/busy-ride-h88y5r.",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T04:10:40.328Z"
     }
   ]
 }
