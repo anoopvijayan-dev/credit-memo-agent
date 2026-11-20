@@ -1,0 +1,70 @@
+```json
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Applied supplied revision 23. The repository copy is revision 2 (.bridgie/specs/statement-review/requirements.md:5). Mapped the maintained lists and directions at src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest-match and overlap handling at src/cma/categorise.py:1125–1198, bank-code and bucket precedence at :1234–1251, and overrides, profile candidates and firm rules at :1254–1330. Traced table selection and per-line provenance at src/cma/graph.py:188–223,250–253 and src/cma/cli.py:224–229. Reviewed exception checks, matcher construction and frozen-table refusal at src/cma/categorise.py:419–690,789–812,825–854,943–989. Revision 23 permits incomplete diagnostics for malformed tables, but the validator accepts two malformed table shapes described below. Checked repeat submission and concurrent or partial output at src/cma/cli.py:81–86,146–158,224–229, amount, date and Unicode boundaries at src/cma/ingest.py:38–57,98–110 and src/cma/categorise.py:228,1001–1009, path scope and per-statement inputs at src/cma/mcp_server.py:37–55 and src/cma/categorise.py:1412–1425, and evidence, checkpoint and MCP consumers at src/cma/graph.py:175–223 and src/cma/mcp_server.py:62–105. Runner logs establish 847 full-suite, 225 contract, 138 invariant and 83 dual-run passes, including the named table cases, CLI provenance, idempotency, rollback, checkpoint replay, timing fixture and both offline evaluations. The review was read-only.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 611,
+      "criterion": "R4",
+      "claim": "The loader accepts rules whose direction contradicts their category. It checks each value independently, so a credit rule can assign an outflow category with no money-in bucket.",
+      "repro": "In a disposable copy of the packaged v2 table, change only the rent rule's direction from out to in. In a fresh process, load v2 and classify a £100 credit described as RENT. Validation succeeds and the credit receives rent with v2:rent, even though rent has no entry in CREDIT_BUCKET at src/cma/models.py:54."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 734,
+      "criterion": "R4",
+      "claim": "An explicitly null category_order is accepted as an omitted field. Revision 23 requires refusal when a field is supplied with a value of the wrong kind.",
+      "repro": "In a disposable copy of the packaged v2 table, retain the shipped returned_dd and payment_gateways rules and set category_order: null. In a fresh process, load v2 and classify a £100 STRIPE credit. The rules reach different buckets, so no category order is required, and the loader converts the explicit null to an empty list and accepts the table. The credit is categorised as v2:payment_gateways."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README says a profile name can settle an ambiguous credit and lists profile matching ahead of ambiguity. The implementation keeps the credit unexplained and adds the profile match as a candidate.",
+      "repro": "Compare the README with the runner-passed case test_p_a_director_named_in_a_payment_reference_does_not_settle_an_ambiguous_credit. With Jane Doe in the director profile, FPS CREDIT CASH DEPOSIT REF JANE DOE remains other with v2:conflict:payment_rail+cash_paid_in+profile:director."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 1240,
+      "criterion": "R4",
+      "claim": "The producer's claim that rail plus cash is ambiguous regardless of the bucketed cue omits the bank-code priority R4 requires. The matrix explicitly excludes the bank code.",
+      "repro": "Classify a positive v2 line described as UNPAID DD FPS CASH DEPOSIT. The bank-code branch returns v2:returned_dd before the rail-plus-cash check."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1277,
+      "criterion": "R4",
+      "claim": "The claimed non-breaking-space test coverage is not proven. The runner passed the Unicode-neighbour test, whose assertions cover ordinary spaces, guillemets and an en dash.",
+      "repro": "Inspect the assertions at this line for U+00A0. To prove the claimed case, add a parameter containing U+00A0 and run python -m pytest -v tests/test_rules_v2.py -k unicode_neighbours."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "The compileall claim for src, evals and tests is not proven in full. The passing mechanical compile row covers src.",
+      "repro": "Compare the producer's command with mechanical result 2, which ran python -m compileall -q src. A passing runner row for python -m compileall -q src evals tests would prove the broader claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```
