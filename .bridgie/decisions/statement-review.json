@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 122,
+  "next_id": 123,
   "decisions": [
     {
       "id": "D1",
@@ -2498,6 +2498,26 @@
       "decided_at": "2026-11-20T00:36:46.856Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T00:31:54.941Z"
+    },
+    {
+      "id": "D122",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Judged against the supplied revision 12. The checkout's requirements.md:249 has the earlier wording. src/cma/case.py:191–324 validates canonical bytes, chain order, head count and hashes, and names the first bad or incomplete entry. Lines 428–570 implement holder, free-case and steady reads. Lines 580–592 provide the integrity guard for sign-off, whose production integration is assigned to T27. Lines 606–742 enforce lock ownership and refuse inherited writes after a fork. Lines 744–905 implement expected-position checks, repair, publication and lock rechecks. src/cma/cli.py:321–338 exposes verification. The runner logs confirm the named tamper, rebuild, torn-entry, duplicate-submit, contention, lock-replacement and CLI tests ran and passed, including both prior regressions. The review also traced boundary values, UTC timestamps, the absence of currency arithmetic, filesystem access and case separation, partial failures, CLI consumers and migration scope. Two same-case appends can still accept the same expected position through reentrancy, and an overlapping repair after lock replacement can leave an intact log after both writers appended.); major: A reentrant append on the same CaseLog can commit from the same expected position as an outer append. The writer lock admits both operations because they share a thread, and the outer append uses its cached check after the inner append commits. at src/cma/case.py:769; major: Lock replacement can let two writers append and still leave a log that verifies as intact. Repair can erase the first writer's unrecorded append before the second writer commits its own. at src/cma/case.py:858; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T00:38:30.621Z"
     }
   ]
 }
