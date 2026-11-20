@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-154/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:82 checks penny-exact float round trips, src/cma/ingest.py:256 checks flow ceilings, and src/cma/metrics.py:512 handles unrepresentable M3 results. src/cma/graph.py:175 and src/cma/cli.py:407 show pennies, while src/cma/metrics.py:591 preserves whole-pound drafting. Monzo still validates Transaction ID before currency and amount at src/cma/importers/monzo.py:186, and row-level date and balance refusals omit the source line.); major: Transaction ID validation runs before currency and amount. It can refuse a row that should be skipped or hide a flow limit reached by the row that stopped the import. at src/cma/importers/monzo.py:186; major: Monzo row refusals can omit the physical record start. A malformed date has no line label, and a walked balance refusal reports only the transaction ID. at src/cma/importers/monzo.py:202; major: An amount that reaches the per-line limit is parsed to exact pence but raises before it is included in the flow diagnostic. at src/cma/importers/monzo.py:200; major: Export uses predictable staging names and can overwrite and remove an existing sibling file during a successful export. at src/cma/cli.py:336; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-156/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:76-93 and :256 check exact pence and flow limits. src/cma/metrics.py:512-518 handles unrepresentable M3. src/cma/graph.py:175 and src/cma/cli.py:414 show pennies, while src/cma/metrics.py:591-594 preserves whole-pound drafting. The Monzo reader can bypass the required first-problem and flow diagnostics at src/cma/importers/monzo.py:153 and :210, and its opening-balance refusals at :245 and :250 omit the physical record start.); major: A missing Date cell can raise AttributeError instead of naming the first problem and the flow limit already reached. DictReader assigns None to missing trailing cells, and _parse_date calls strip on it at line 69. The handlers only catch MonzoImportError. at src/cma/importers/monzo.py:210; major: Decoding the entire export before checking any records lets a later invalid UTF-8 byte hide an earlier row refusal and its flow diagnostic. at src/cma/importers/monzo.py:153; major: Opening-balance refusals identify the first sorted record without naming its physical source line. The disagreement branch at line 250 also omits that location. at src/cma/importers/monzo.py:245; reviewer verdict fail"
     },
     {
       "id": "T06",
