@@ -1241,3 +1241,17 @@ def test_reading_a_long_record_never_changes_the_process_wide_csv_limit(tmp_path
     with pytest.raises(monzo.MonzoImportError, match="line 2: a field is too long to read"):
         monzo.convert(src, tmp_path / "o.csv")
     assert changes == []
+
+
+@pytest.mark.contracts
+def test_a_long_field_cut_by_a_bad_byte_never_makes_an_empty_amount_readable(tmp_path):
+    """T04 review 41: a bad byte cut the text inside a record whose earlier field was too long
+    to read; the columns after the cut were filled in as empty and taken as readable, so Monzo
+    refused a made-up empty Amount instead of naming the field too long to read."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_bytes(("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance\n"
+                     "tx_1,01/01/2026,09:00:00,Faster payment," + "N" * 200_000).encode() + b"\xe9,-1.00,GBP,1.00\n")
+    with pytest.raises(monzo.MonzoImportError, match=r"line 2: a field is too long to read \(Name\)"):
+        monzo.convert(src, tmp_path / "o.csv")

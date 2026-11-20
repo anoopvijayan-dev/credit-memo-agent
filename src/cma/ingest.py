@@ -274,14 +274,19 @@ def read_records(text: str, cut: bool = False) -> tuple[list[str], list[tuple[in
             # Named as too long to read, and by its column where known; its length says nothing
             # about its value, so no monetary conclusion is drawn (revision 29; T04 review 40).
             limit = csv.field_size_limit()
-            row = _read_long_record("".join(physical[line - 1:]), header) if header is not None else None
-            long_ = [h for h in (header or []) if len((row or {}).get(h) or "") > limit]
+            text_of_record = "".join(physical[line - 1:])
+            cells = _split_record(text_of_record) if header is not None else []
+            row = _read_long_record(text_of_record, header) if header is not None else None
+            long_ = [h for h, c in zip(header or [], cells, strict=False) if len(c) > limit]
             which = f" ({', '.join(long_)})" if long_ else ""
             err = CsvRecordError(f"line {line}: {TOO_LONG}{which}: longer than {limit:,} characters", too_long=True)
             if header is not None:
-                # The field too long to read is never read as a value (T04 review 37).
+                # The field too long to read is never read as a value (T04 review 37). Only the
+                # columns the record holds are readable, never one filled in as empty; and in
+                # text cut at a bad byte, its last cell may be cut too (T04 review 41).
+                present = len(cells) - (1 if cut else 0)
                 err.line, err.row = line, row
-                err.readable = {h for h in header if len((row or {}).get(h) or "") <= limit} if row else set()
+                err.readable = {h for h, c in zip(header[:max(present, 0)], cells, strict=False) if len(c) <= limit}
         else:
             err = CsvRecordError(f"line {line}: not a readable CSV record ({e})")
         if header is None:
