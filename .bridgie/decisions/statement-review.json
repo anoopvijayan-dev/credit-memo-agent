@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 118,
+  "next_id": 119,
   "decisions": [
     {
       "id": "D1",
@@ -2418,6 +2418,26 @@
       "decided_at": "2026-11-20T00:12:47.328Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T00:07:01.471Z"
+    },
+    {
+      "id": "D118",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Judged against supplied revision 12. The checkout's requirements.md:249 contains an earlier P15. src/cma/case.py:195–322 checks canonical entry bytes, chain links, recorded hashes and counts, and names the first discrepancy or incomplete entry. Lines 413–505 handle holder and reader contention, and lines 558–569 provide the sign-off integrity guard for T27. Lines 584–746 enforce writer ownership, inherited-handle refusal and expected-position conflicts. Lines 764–874 check the lock before publishing a repair or head and before each append write. The runner's specified, contracts and invariants logs confirm the named tamper, rebuilt-chain, torn-entry, duplicate-submit, contention, permission and CLI tests passed. The review also checked separate case folders, UTC timestamps, input boundaries, partial failure and CLI consumers. Currency arithmetic and data migration are outside this change. P15 fails because a shared staging filename lets a stale writer modify a published head without rechecking its lock. A recycled thread identifier can also misclassify a distinct reader as the holder.); major: A writer can modify the published head after losing its lock. Writers use the same head staging filename, so one writer can rename the inode into place while another writer still has a writable descriptor to it. The latter's unchecked staging write then changes a file readers use. at src/cma/case.py:806; major: A distinct thread with a recycled identifier is treated as the existing holder. It can report an unrecorded tail as incomplete while another thread's writer context still holds the case, and it can reenter that context through the same CaseLog. at src/cma/case.py:377; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T00:14:38.657Z"
     }
   ]
 }
