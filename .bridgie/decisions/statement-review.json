@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 195,
+  "next_id": 196,
   "decisions": [
     {
       "id": "D1",
@@ -3934,6 +3934,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T09:23:33.038Z"
+    },
+    {
+      "id": "D195",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Mapped recognition and direction to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest-match filtering, bank-code priority, cash and payment-method ambiguity, profile candidates, and override and firm-rule precedence at src/cma/categorise.py:1033–1240, with the unexplained bucket in src/cma/models.py:65. Traced the digest exemption, changed-v1 refusal, repeated keys and matcher validation at src/cma/categorise.py:397–623,794–806,869–897. Reviewed double submission, concurrent decisions and partial output failure at src/cma/cli.py:146,228–229,240–256, amount boundaries and date-only ingestion at src/cma/categorise.py:910–913 and src/cma/ingest.py:42,100,128, ruleset and MCP path scope at src/cma/categorise.py:869–873 and src/cma/mcp_server.py:37–46, and case-local inputs and changed-contract consumers at src/cma/categorise.py:1321–1336, src/cma/graph.py:188–223,250–253 and src/cma/mcp_server.py:74–104. The runner logs show table-driven provenance, CLI evidence, idempotency, historical replay and both offline evals passing. R4 fails because earlier repeated regex values, malformed alternatives and malformed repeated table values can still escape their individual diagnostics.); major: The compilation and matcher-building loop runs after the variant loop and sees only its final variant. Earlier repeated regex values can fail raw compilation or fail only when wrapped, with neither fault named. at src/cma/categorise.py:592; major: Rule field validation checks the duplicate-key placeholder instead of each supplied value. A forbidden field value can therefore disappear from the refusal. at src/cma/categorise.py:441; major: Flattening repeated rules keys discards every non-list value and erases empty lists. The validator therefore misses faults in a supplied value whenever another value provides a nonempty list. at src/cma/categorise.py:423; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T09:27:01.408Z"
     }
   ]
 }
