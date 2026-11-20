@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 223,
+  "next_id": 224,
   "decisions": [
     {
       "id": "D1",
@@ -4489,6 +4489,24 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T12:51:32.378Z"
+    },
+    {
+      "id": "D223",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended option. Write D220, and two clarifications from T04's review 3 (0c63ca4). R2: amounts and balances are read exactly from the statement text and counted in whole pence; an amount of £10,000,000,000,000 or more, or a statement whose money in or money out totals that much, is refused at import, named, since no figure could then be reported to the penny as the float the DTO carries (fifteen significant digits); below that, every figure is reported to the penny. P2 and R1/R54: M1 to M16 keep the evidence the previous release gave them (the dual run compares them unchanged), so M6 cites the line that closed each overdrawn day; the new derived figures (and monthly balance and overdrawn cells) cite every line their calculation reads. Keep everything else in revision 24.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-20T13:01:55.233Z",
+      "effect": "changes requested: Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended option. Write D220, and two clarifications from T04's review 3 (0c63ca4). R2: amounts and balances are read exactly from the statement text and counted in whole pence; an amount of £10,000,000,000,000 or more, or a statement whose money in or money out totals that much, is refused at import, named, since no figure could then be reported to the penny as the float the DTO carries (fifteen significant digits); below that, every figure is reported to the penny. P2 and R1/R54: M1 to M16 keep the evidence the previous release gave them (the dual run compares them unchanged), so M6 cites the line that closed each overdrawn day; the new derived figures (and monthly balance and overdrawn cells) cite every line their calculation reads. Keep everything else in revision 24.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-20T13:01:55.219Z"
     }
   ]
 }
