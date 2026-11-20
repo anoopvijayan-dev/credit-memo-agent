@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 187,
+  "next_id": 188,
   "decisions": [
     {
       "id": "D1",
@@ -3778,6 +3778,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T08:26:56.604Z"
+    },
+    {
+      "id": "D187",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Mapped the shipped lists to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest alternatives and phrase containment at src/cma/categorise.py:980,1002, bank-code and cash conflicts at :1088, and override, profile, firm-rule and candidate precedence at :1119,1155. Category.OTHER maps to unexplained at src/cma/models.py:65. Traced repeated and concurrent submissions through the checkpoint check at src/cma/cli.py:77,84, partial output failure and evidence consumers at :229 and src/cma/graph.py:188,221, signed GBP and date-only input at src/cma/ingest.py:100,108,127, and MCP path scope and case-local categorisation at src/cma/mcp_server.py:37,77,84 and src/cma/categorise.py:1266. The runner's full log confirms table-driven provenance, CLI evidence, idempotency, rollback, historical checkpoint replay and both offline evals. R4 fails because a repeated pattern field masks its forbidden exception, a non-v1 table can still select frozen matcher checks, and transaction-specific matcher compilation remains in the matching path.); major: Duplicate-field recovery discards the pattern values before exception validation. A changed v1 can therefore carry a forbidden exception without the refusal naming it. at src/cma/categorise.py:728; major: A non-v1 table's frozen flag still selects the frozen matcher build during validation. The stage and category-order fixes do not make matcher validation equivalent to the maintained-list path. at src/cma/categorise.py:563; major: Load-time validation compiles the forced-end regex only with a remaining length of zero. Matching still compiles a new regex for each previously unseen positive remaining length. at src/cma/categorise.py:993; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T08:31:48.256Z"
     }
   ]
 }
