@@ -2238,3 +2238,49 @@ def test_a_non_v1_table_marked_frozen_builds_its_matchers_as_a_maintained_list(m
     rule = {"id": "a", "names": ["A"], "direction": "in", "category": "cash_deposit", "stage": "names"}
     validate_ruleset({"id": "v3", "frozen": True, "rules": [BANK, rule]}, expected_id="v3")
     assert seen and not any(seen)
+
+
+
+@pytest.mark.contracts
+def test_every_value_of_a_repeated_field_is_checked_however_many(monkeypatch):
+    """T03 review 37: no cap: with names given forty times beside a repeated pattern, the
+    forbidden lookahead in the pattern's second value is still named."""
+    raw = categorise._table_bytes("v1")
+    names = "".join(f"names: [N{k}], " for k in range(40))
+    rule = "{id: cashx, " + names + "pattern: CASH, pattern: 'CASH(?!.*FPS)', direction: in, category: cash_deposit}"
+    edit = raw.replace(b"rules:", ("rules:\n  - " + rule).encode(), 1)
+    monkeypatch.setattr(categorise, "_table_bytes", lambda ruleset_id: edit)
+    categorise.load_ruleset.cache_clear()
+    try:
+        with pytest.raises(RulesetError, match=r"has been changed.*cashx\): pattern uses a lookahead"):
+            categorise.load_ruleset("v1")
+    finally:
+        monkeypatch.undo()
+        categorise.load_ruleset.cache_clear()
+
+
+@pytest.mark.contracts
+def test_each_value_of_a_repeated_pattern_is_built_as_a_matcher():
+    """T03 review 37: a repeated pattern's values are each built, so one that compiles alone
+    but cannot be used as a matcher is named."""
+    data = {"id": "v2", "frozen": False, "rules": [BANK, {
+        "id": "r", "pattern": categorise._Repeated("pattern given twice", "repeated key", ["X", "(?i)ACME"]),
+        "direction": "in", "category": "cash_deposit", "stage": "names"}]}
+    with pytest.raises(RulesetError, match=r"rule 2 \(r\): its pattern cannot be used"):
+        validate_ruleset(data, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_a_loaded_rule_keeps_its_end_forced_matchers(monkeypatch):
+    """T03 review 37: the end-forced forms live with the loaded rule, not in a shared cache
+    that can drop them, so categorising never compiles them again."""
+    rule = {"id": "r", "pattern": "AB|ABC", "direction": "in", "category": "cash_deposit", "stage": "names"}
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [BANK, rule]}, "v2", "t", "0")
+    built = rs.rules[1].span_ends
+    assert built and built[0] is not None and all(isinstance(f, re.Pattern) for f in built[0][:2])
+
+    def no_compile(*a, **k):
+        raise AssertionError("compiled while categorising")
+
+    monkeypatch.setattr(categorise.re, "compile", no_compile)
+    assert classify(_t("ZZ ABC ZZ", 10.0), rs)[0] is C.CASH_DEPOSIT

@@ -132,6 +132,10 @@ class Rule:
     # For each part: its source when an alternative or a lazy repeat could end a match
     # early, so _spans looks for the longest end (D102); None when the first match is it.
     span_longest: tuple[str | None, ...] = field(default=(), compare=False, repr=False)
+    # Per part, its end-forced forms and widest match, built with the rule at load and kept
+    # with it, so categorising never compiles (T03 reviews 35 to 37).
+    span_ends: tuple[tuple[re.Pattern[str], re.Pattern[str], int | None] | None, ...] = field(
+        default=(), compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -563,43 +567,44 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
     # compiles alone but cannot be used is named with the table's other faults, not found
     # only once everything else passes (T03 review 27).
     frozen = not strict  # only the pinned v1 builds its matchers as frozen (review 36)
-    for i, r in enumerate(rules, start=1):
-        if not isinstance(r, dict):
+    for i, rule0 in enumerate(rules, start=1):
+        if not isinstance(rule0, dict):
             continue
-        where = f"rule {i} ({r.get('id', '?')})"
-        # Each part is built when its own fields are well typed, so a malformed exception
-        # never hides a fault in the rule's own matcher, nor the other way (review 28).
-        parts: list[tuple[str, Callable[[], object]]] = []
+        where = f"rule {i} ({rule0.get('id', '?')})"
+        for r in _variants(rule0):  # every value of a repeated field (review 37)
+            # Each part is built when its own fields are well typed, so a malformed exception
+            # never hides a fault in the rule's own matcher, nor the other way (review 28).
+            parts: list[tuple[str, Callable[[], object]]] = []
 
-        def matchers(sub: dict) -> tuple:
-            return _rule_pattern(sub, frozen), _span_matchers(sub, frozen), _longest_sources_checked(sub, frozen)
+            def matchers(sub: dict) -> tuple:
+                return _rule_pattern(sub, frozen), _span_matchers(sub, frozen), _longest_sources_checked(sub, frozen)
 
-        # The pattern and the names are each built alone, whatever is wrong with the other
-        # or with the rule's exceptions, so no field's fault hides another's (review 29);
-        # then together, as the loader joins them, when both build alone.
-        own_ok = isinstance(r.get("pattern"), str) and bool(r["pattern"]) and not _compile_problem(r["pattern"])
-        names_ok = "names" in r and _well_typed_text({"names": r["names"]})
-        if own_ok:
-            parts.append(("its pattern", lambda r=r: matchers({"pattern": r["pattern"]})))
-        if names_ok:
-            parts.append(("its names", lambda r=r: matchers({"names": r["names"]})))
-        if own_ok and names_ok:
-            parts.append(("its pattern and names together",
-                          lambda r=r: matchers({"pattern": r["pattern"], "names": r["names"]})))
-        for key in ("unless", "requires"):
-            if isinstance(r.get(key), str) and r[key] and not _compile_problem(r[key]):
-                parts.append((f"its {key}", lambda r=r, key=key: _side_pattern(r[key], frozen)))
-        failed = False
-        for what, build in parts:
-            if failed and what == "its pattern and names together":
-                continue  # already named by the part that fails alone
-            try:
-                build()
-            except (re.error, OverflowError, RecursionError, MemoryError, TypeError, ValueError) as e:
-                failed = failed or what in ("its pattern", "its names")
-                if not (what == "its pattern and names together"
-                        and any(p.startswith(where) and "do not compile together" in p for p in problems)):
-                    problems.append(f"{where}: {what} cannot be used ({e.__class__.__name__}: {e})")
+            # The pattern and the names are each built alone, whatever is wrong with the other
+            # or with the rule's exceptions, so no field's fault hides another's (review 29);
+            # then together, as the loader joins them, when both build alone.
+            own_ok = isinstance(r.get("pattern"), str) and bool(r["pattern"]) and not _compile_problem(r["pattern"])
+            names_ok = "names" in r and _well_typed_text({"names": r["names"]})
+            if own_ok:
+                parts.append(("its pattern", lambda r=r: matchers({"pattern": r["pattern"]})))
+            if names_ok:
+                parts.append(("its names", lambda r=r: matchers({"names": r["names"]})))
+            if own_ok and names_ok:
+                parts.append(("its pattern and names together",
+                              lambda r=r: matchers({"pattern": r["pattern"], "names": r["names"]})))
+            for key in ("unless", "requires"):
+                if isinstance(r.get(key), str) and r[key] and not _compile_problem(r[key]):
+                    parts.append((f"its {key}", lambda r=r, key=key: _side_pattern(r[key], frozen)))
+            failed = False
+            for what, build in parts:
+                if failed and what == "its pattern and names together":
+                    continue  # already named by the part that fails alone
+                try:
+                    build()
+                except (re.error, OverflowError, RecursionError, MemoryError, TypeError, ValueError) as e:
+                    failed = failed or what in ("its pattern", "its names")
+                    if not (what == "its pattern and names together"
+                            and any(p.startswith(where) and "do not compile together" in p for p in problems)):
+                        problems.append(f"{where}: {what} cannot be used ({e.__class__.__name__}: {e})")
     problems += _category_order_problems(data, rules, strict)
     problems = list(dict.fromkeys(problems))  # a check run on each variant names a fault once
     if problems:
@@ -693,11 +698,13 @@ def ruleset_from_data(data: object, expected_id: str, source: str, sha256: str) 
         # by rule id, rather than failing on the first line it meets.
         try:
             pattern, spans, longest, unless, requires = _build_matchers(r, frozen)
+            ends = _end_forms(longest)
             rule = Rule(r["id"], pattern, r["direction"],
                         Category(r["category"]) if "category" in r else None,
                         protected=r.get("protected", False), stage=r.get("stage"),
                         bank_code=r.get("bank_code", False),
-                        span_patterns=spans, span_longest=longest, unless=unless, requires=requires)
+                        span_patterns=spans, span_longest=longest, span_ends=ends,
+                        unless=unless, requires=requires)
         except (re.error, OverflowError, RecursionError) as e:
             raise RulesetError(f"{source}: rule {r['id']}: its pattern cannot be used: {e}") from e
         rules.append(rule)
@@ -773,12 +780,15 @@ class _Repeated(_Unbuilt):
         self.values = values
 
 
-def _variants(r: dict, limit: int = 32) -> list[dict]:
-    """The rule once for each value of each field given more than once (up to `limit`)."""
+def _variants(r: dict) -> list[dict]:
+    """The rule as given, then once for each value of each field given more than once, that
+    field alone set to the value and every other repeated field left unbuilt. Linear, with
+    no cap, so every value is checked (T03 review 37): a check that reads several fields
+    meets a repeated one as unbuilt, so no exemption (the bank's code) is granted on a guess."""
     out = [r]
     for key, value in r.items():
         if isinstance(value, _Repeated):
-            out = [{**v, key: x} for v in out for x in value.values][:limit]
+            out += [{**r, key: x} for x in value.values]
     return out
 
 
@@ -964,9 +974,7 @@ def _longest_sources_checked(r: dict, frozen: bool) -> tuple[str | None, ...]:
     """The longest-match sources, each compiled at load in the form a line's search uses
     (forced to end at a position), so none is first compiled on a transaction (review 35)."""
     sources = _longest_sources(r, frozen)
-    for source in sources:
-        if source is not None:
-            _ends(source)
+    _end_forms(sources)
     return sources
 
 
@@ -990,8 +998,6 @@ def _widest(source: str) -> int | None:
     return None if widest >= _sre_parse.MAXREPEAT else widest
 
 
-@functools.lru_cache(maxsize=8192)
-@functools.cache
 def _ends(source: str) -> tuple[re.Pattern[str], re.Pattern[str]]:
     """The part forced to end at a position, in two forms built once per table at load
     (T03 review 36), never per line: ending at the line's end, and ending one character
@@ -1001,9 +1007,14 @@ def _ends(source: str) -> tuple[re.Pattern[str], re.Pattern[str]]:
     return re.compile(f"(?:{source})\\Z"), re.compile(f"(?:{source})(?=[\\s\\S]\\Z)")
 
 
-def _ends_at(source: str, description: str, start: int, end: int) -> bool:
-    """The part matches from `start` to exactly `end` of the whole line."""
-    at_line_end, before_one = _ends(source)
+def _end_forms(sources: tuple[str | None, ...]) -> tuple:
+    """Each longest-match source's two end-forced forms and its widest match."""
+    return tuple(None if s is None else (*_ends(s), _widest(s)) for s in sources)
+
+
+def _ends_at(forms: tuple[re.Pattern[str], re.Pattern[str]], description: str, start: int, end: int) -> bool:
+    """The part (as its two end-forced forms) matches from `start` to exactly `end`."""
+    at_line_end, before_one = forms
     if end == len(description):
         return at_line_end.match(description, start) is not None
     return before_one.match(description, start, end + 1) is not None
@@ -1015,15 +1026,15 @@ def _spans(rule: Rule, description: str) -> list[tuple[int, int]]:
     that matches at a start, which may be the shorter."""
     longest: dict[int, int] = {}
     parts = rule.span_patterns or (_at_every_position(rule.pattern),)
-    sources = rule.span_longest or (None,) * len(parts)
-    for part, source in zip(parts, sources, strict=True):
+    ends = rule.span_ends or _end_forms(rule.span_longest or (None,) * len(parts))
+    for part, end_forms in zip(parts, ends, strict=True):
         for m in part.finditer(description):
             start, end = m.span(1)
-            if source is not None:
-                widest = _widest(source)
+            if end_forms is not None:
+                widest = end_forms[2]
                 top = len(description) if widest is None else min(len(description), start + widest)
                 for later in range(top, end, -1):
-                    if _ends_at(source, description, start, later):
+                    if _ends_at(end_forms[:2], description, start, later):
                         end = later
                         break
             if end > start and end > longest.get(start, -1):
