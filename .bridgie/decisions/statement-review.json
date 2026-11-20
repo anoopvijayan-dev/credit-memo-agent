@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 135,
+  "next_id": 136,
   "decisions": [
     {
       "id": "D1",
@@ -2755,6 +2755,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T02:23:39.969Z"
+    },
+    {
+      "id": "D135",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Reviewed the supplied revision 14 of R4. The worktree copy at .bridgie/specs/statement-review/requirements.md:19 contains the earlier wording. Mapped the shipped lists and directions to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest matches and the bank-code priority through src/cma/categorise.py:727,749,807, credit ambiguity and candidate provenance through :818,836,884,896, and CLI evidence through src/cma/graph.py:221,250 and src/cma/cli.py:229. Runner logs confirm the per-list, precedence, CLI evidence, replay, rollback and both offline eval tests ran and passed. The review covered repeat submission, concurrent and case-local inputs, amount and Unicode boundaries, currency and date handling, partial publication, authority to settle ambiguity, and evidence consumers. Two maintained-table edits still let payment-method wording and cash wording produce trading receipts.); major: The containment exception only protects cash wording when the payment-method phrase is longer. A longer cash phrase can still suppress the payment-method cue, defeating R4's rule for the phrase on either list. at src/cma/categorise.py:762; major: The loader rejects the optional exception keys but accepts a wording-dependent exception embedded in a rule pattern. at src/cma/categorise.py:403; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T02:27:30.123Z"
     }
   ]
 }
