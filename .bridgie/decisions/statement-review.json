@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 146,
+  "next_id": 147,
   "decisions": [
     {
       "id": "D1",
@@ -2974,6 +2974,26 @@
       "decided_at": "2026-11-20T04:10:42.460Z",
       "effect": "design approved",
       "created_at": "2026-11-20T04:10:40.328Z"
+    },
+    {
+      "id": "D146",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed f5436bb against the supplied revision 16. The review checkout contains revision 2, so the supplied requirement governs this verdict. Canonical hashing, chain and head comparison, and first-bad-entry diagnostics are at src/cma/case.py:170–338. Holder, free-case, steady-read and untestable-lock handling are at src/cma/case.py:444–617. The intact-log guard for sign-off is at src/cma/case.py:619. Writer exclusion, fork refusal, nested-save refusal, expected-position conflict, write guards and publication are at src/cma/case.py:645–1011. The passing runner logs confirm the named tamper, rebuilt-chain, torn-tail, concurrency, duplicate-submit and CLI tests. Reviewed empty and malformed inputs, UTC timestamps, the absence of currency arithmetic, partial failures, OS permissions, separate case folders, migration scope and CLI consumers. The busy-gate reader and writer-holder reader can accept a read across a replaced case lock. A failed read-back can leave the refused save recorded.); major: When the gate is busy and the reader acquires the case lock shared, it returns the read without checking whether that lock still belongs to the case. at src/cma/case.py:530; major: A reader that already owns the writer lock returns its whole-log read without validating the held case lock or retrying. at src/cma/case.py:459; major: A failed read-back can report a save as unrecorded while the head still records it. The rollback reuses the normal publication method, whose lock check can reject the rollback before it checks that the head still belongs to this save. at src/cma/case.py:1006; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T04:12:17.987Z"
     }
   ]
 }
