@@ -409,3 +409,29 @@ def test_the_decision_is_applied_to_the_figures_the_reviewer_saw(tmp_path, monke
     assert r.exit_code == 0, r.output
     assert seen and all(x == {} for x in seen)  # nothing worked out again inside the graph
     assert {m["id"] for m in json.loads((tmp_path / "memo.evidence.json").read_text())["metrics"]} >= NEW_MONEY_IN
+
+
+def test_a_review_decided_while_resume_opens_it_is_never_reopened(tmp_path, monkeypatch):
+    # T04 review 25: resume wrote today's figures into the review it had read without
+    # checking it was still pending, so a decision made meanwhile was reopened.
+    from cma import cli
+    from cma.cli import _decide
+    from cma.graph import build, sqlite_checkpointer
+    from cma.llm import FakeLLM
+
+    db, _ = _pending(tmp_path)
+    _as_earlier_release(db)
+    cfg = {"configurable": {"thread_id": "case-1"}}
+    real = cli.refreshed
+
+    def decided_meanwhile(values):
+        with sqlite_checkpointer(db) as other:
+            _decide(build(FakeLLM(), checkpointer=other), cfg, {"approved": False, "reviewer": "B. Other"})
+        return real(values)
+
+    monkeypatch.setattr(cli, "refreshed", decided_meanwhile)
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C"], input="y\n\n")
+    assert r.exit_code == 5 and "already decided by B. Other" in r.output, r.output
+    with sqlite_checkpointer(db) as saver:
+        state = build(FakeLLM(), checkpointer=saver).get_state(cfg)
+    assert not state.interrupts and state.values["review"].reviewer == "B. Other"

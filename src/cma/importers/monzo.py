@@ -165,11 +165,6 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
         raise MonzoImportError(f"{src}: no transactions")
 
     has_balance = "Balance" in header
-    if opening_balance is None and not has_balance:
-        raise MonzoImportError(
-            "this export has no Balance column; pass --opening-balance (the balance just "
-            "before the first transaction, from your Monzo statement)"
-        )
 
     parsed = []
     skipped = 0
@@ -210,6 +205,19 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
         raise MonzoImportError(f"{note}{e}") from None
     if unreadable is not None:  # after the records before it are checked (T04 review 22)
         raise MonzoImportError(f"{src}: {flows_before()}{unreadable}")
+    if not parsed:
+        raise MonzoImportError(f"{src}: no GBP transactions")
+    # Money in or out at the limit is said before anything else about the export (its
+    # opening balance, say) can refuse it (T04 review 25).
+    reached = flows_at_limit([a for *_, a, _b in parsed])
+    if reached:
+        raise MonzoImportError(f"{' and '.join(reached)} {'total' if len(reached) > 1 else 'totals'} "
+                               f"{AT_LIMIT}: no figure could be reported to the penny")
+    if opening_balance is None and not has_balance:
+        raise MonzoImportError(
+            "this export has no Balance column; pass --opening-balance (the balance just "
+            "before the first transaction, from your Monzo statement)"
+        )
     parsed.sort(key=lambda x: (x[0], x[1], x[2]))
     first = parsed[0]
     # Everything below is whole pence (T04 review 4).

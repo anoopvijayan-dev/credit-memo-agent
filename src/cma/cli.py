@@ -151,7 +151,17 @@ def resume(
         if update:
             # Today's figures are written into the stored review before it is shown, so the
             # decision is applied to exactly what the reviewer saw: nothing is read again after
-            # they answer (T04 review 24). The review returns to the reviewer as it was.
+            # they answer (T04 review 24). The review returns to the reviewer as it was. It is
+            # written only if the review is still the pending one read above; a review someone
+            # decided or refreshed meanwhile is never reopened (T04 review 25).
+            now = graph.get_state(cfg)
+            if not now.interrupts or now.config["configurable"].get("checkpoint_id") != \
+                    snap.config["configurable"].get("checkpoint_id"):
+                if now.values.get("review"):
+                    _decided_elsewhere(now.values)
+                console.print(f"[red]Not resuming {thread}:[/red] the review changed while it was being opened; "
+                              "run `cma resume` again")
+                raise typer.Exit(code=2)
             graph.update_state(cfg, {**update, "refreshed_for_review": True}, as_node="guard")
             state = graph.invoke(None, cfg)
         else:
@@ -216,6 +226,8 @@ def _checkpointer(path: Path | None):
     try:
         with sqlite_checkpointer(path) as saver:
             yield saver
+    except typer.Exit:
+        raise  # a RuntimeError too: its own exit code stands (T04 review 25)
     except RuntimeError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(code=2) from e
