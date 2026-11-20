@@ -1,0 +1,62 @@
+```json
+{
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed 523c5df against the supplied revision 22. The checkout's requirements.md:249 has the older, shorter P15. Canonical byte validation, head comparison and first-bad-entry reporting are in src/cma/case.py:177–352 and reach the CLI at src/cma/cli.py:309–338. Holder recognition and post-read lock checks are at src/cma/case.py:438–625. The holder checks both open files for links and repeats the path comparisons. The ordinary reader checks gate, case lock, then gate again. The sign-off guard is at src/cma/case.py:697, with no production sign-off caller in this checkout. Writer exclusion and inherited-handle refusal are at src/cma/case.py:725–834. The save guard and expected-position check are at src/cma/case.py:887–996. Repair, publication, read-back and take-back are at src/cma/case.py:998–1241. Runner logs confirm 503 full-suite, 186 invariant and 13 contract passes, including the named tamper, rebuilt-chain, torn-tail, duplicate-submit and CLI exit-code tests. Checked concurrent updates, partial failure, empty and malformed data, Unicode, UTC, local OS permissions, case-folder isolation and CLI consumers. There is no currency arithmetic or migration in the change. An interruption after a line reaches the log can surface another save's conflict, and save callers can turn exhausted lock-check retries into a broken-log verdict.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 919,
+      "criterion": "P15",
+      "claim": "A callback's LogConflict or CaseLogBroken bypasses the outer save's failure reporting even after the outer line is written. The caller can receive a conflict for a different case while the interrupted save leaves a torn entry.",
+      "repro": "Start an append to case A. After its line is written, invoke a callback before _publish that appends to case B with a stale expected position. Let B's LogConflict escape. A propagates that conflict verbatim, with no report that A's save was not recorded. A's head still has its old count and its new line remains past that count. The existing nested-save test raises the base CaseLogError, which takes a different exception branch."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 974,
+      "criterion": "P15",
+      "claim": "Append turns an unchecked read into CaseLogBroken at entry None. Repair does the same at line 992. P15 requires no entry verdict when the retries are exhausted.",
+      "repro": "Start an append and move aside and replace its case lock during the holder's read. During each fallback read, replace the new case lock before the post-read comparison. verify() exhausts its attempts and returns checked=False with first_bad=None. append() interprets ok=False as damage and raises CaseLogBroken naming entry None. The same sequence inside drop_torn_entry() reaches line 992. require_intact() handles this same unchecked result at line 703."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 1022,
+      "criterion": "P15",
+      "claim": "A staging write or sync failure leaves a temporary file behind before rename cleanup begins. Repair staging can leave a duplicate of the case log's intact prefix. Head staging has the same cleanup gap at line 1085.",
+      "repro": "Prepare a torn entry and call drop_torn_entry(). Inject an OSError from fsync after the repair staging write succeeds. The save reports not recorded and the public log stays unchanged, but the case folder retains log.jsonl.*.tmp with the staged log. The staging cleanup test covers the success path."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's exit-code claim says a held torn tail exits 0 and prints 'appending'. The implementation and passing contract test require exit 4 and report the case as being saved.",
+      "repro": "Read the passing runner result for tests/test_case_log.py::test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break in contracts-4.log. The test invokes the CLI while another holder owns the case over a torn tail and asserts exit 4."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1229,
+      "criterion": "P15",
+      "claim": "The producer's claim that the passing stress test reproduces two commits on every retry and a held lock at fallback is not proven. The test schedules a background writer and checks for the absence of bad-entry verdicts without asserting that any reader took that path.",
+      "repro": "Compare the passing test in specified-3.log with its assertions at lines 1229–1234. All 40 checks can take other paths and satisfy them. A deterministic test that synchronizes two commits per attempt and asserts contended fallback would prove the schedule when run with python -m pytest -v -m invariants."
+    }
+  ],
+  "verdict": "fail"
+}
+```
