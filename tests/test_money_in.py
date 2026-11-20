@@ -1377,3 +1377,17 @@ def test_a_bad_byte_in_a_long_record_after_a_skipped_foreign_row_is_never_read_a
     with pytest.raises(monzo.MonzoImportError) as e:
         monzo.convert(src, tmp_path / "o.csv")
     assert "line 4: a field is too long to read (Name)" in str(e.value) and "Amount" not in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_foreign_long_record_open_to_the_end_still_refuses_the_export(tmp_path):
+    """T04 review 49: a foreign row whose too-long quoted field was never closed swallowed the
+    lines after it, and skipping it as another currency exported a truncated statement."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n"
+                   'tx_2,02/01/2026,09:00:00,Card payment,SHOP,-5.00,EUR,"' + "N" * 200_000 + "\n"
+                   "tx_3,03/01/2026,09:00:00,Faster payment,ACME,-1.00,GBP,89.00\n")
+    with pytest.raises(monzo.MonzoImportError, match=r"line 3: a field is too long to read.*not closed"):
+        monzo.convert(src, tmp_path / "o.csv")

@@ -323,6 +323,16 @@ def _read_body(text: str, header: list[str], offset: int) -> tuple[list[tuple[in
             # columns the record holds are readable, never one filled in as empty (T04 review 41).
             err.line, err.row = line + offset, _read_long_record(text[at:], header)
             err.readable = {h for h, c in zip(header[:len(cells)], cells, strict=False) if len(c) <= limit}
+            if not ended and _ends_in_quotes(text[at:]):
+                # A quoted field open to the end of the file has swallowed every line after its
+                # start: reading stops here, and no rule of the caller's may skip the record
+                # and leave those lines unread (T04 review 49).
+                err = CsvRecordError(f"{err}; a quoted field in it is not closed before the end of the file",
+                                     too_long=True)
+                err.line, err.row = line + offset, _read_long_record(text[at:], header)
+                err.readable = {h for h, c in zip(header[:max(len(cells) - 1, 0)], cells, strict=False)
+                                if len(c) <= limit}
+                return rows, err
             # Reading goes on after the record (T04 review 47).
             rest = text[at + used:] if ended else ""
             lines = len(list(io.StringIO(text[:at + used], newline="")))
