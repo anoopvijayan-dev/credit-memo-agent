@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 236,
+  "next_id": 237,
   "decisions": [
     {
       "id": "D1",
@@ -4741,6 +4741,26 @@
       "decided_at": "2026-11-20T14:22:23.721Z",
       "effect": "design approved",
       "created_at": "2026-11-20T14:22:21.257Z"
+    },
+    {
+      "id": "D236",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:56 and :151 and src/cma/importers/monzo.py:72 and :197 enforce exact CSV money and the directional limits. src/cma/metrics.py:427 handles an unrepresentable M3. src/cma/graph.py:172, src/cma/cli.py:292 and examples/cafe_stretched.memo.md:50 show penny-precision figures. The Monzo opening balance passes through a float before exact validation at src/cma/cli.py:309 and src/cma/importers/monzo.py:135.); R3 fail (src/cma/metrics.py:491 checks membership and the signed difference, and the runner confirmed the normal CLI and MCP refusal contracts. The date-minimum VAT path at src/cma/metrics.py:207 raises before the reconciliation call at :405. The year-one regression test at tests/test_money_in.py:547 starts on January 5.); major: VAT processing can still prevent the required reconciliation diagnostic. A statement beginning at the minimum supported date underflows when the VAT code subtracts one day from its start. at src/cma/metrics.py:207; major: The Monzo CLI rounds a statement-supplied opening balance through binary float before the importer checks that it is whole pence. That can silently accept an invalid source balance and use the rounded value for every reconstructed line. at src/cma/cli.py:309; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T14:26:41.631Z"
     }
   ]
 }

@@ -1,0 +1,159 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:398 maps positive lines to the eight buckets, and src/cma/metrics.py:438 and :477–487 return GBP values and evidence IDs. src/cma/graph.py:258 and src/cma/mcp_server.py:80 expose the same figures. The runner confirmed the bucket and MCP output tests.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:56 and :151 and src/cma/importers/monzo.py:72 and :197 enforce exact CSV money and the directional limits. src/cma/metrics.py:427 handles an unrepresentable M3. src/cma/graph.py:172, src/cma/cli.py:292 and examples/cafe_stretched.memo.md:50 show penny-precision figures. The Monzo opening balance passes through a float before exact validation at src/cma/cli.py:309 and src/cma/importers/monzo.py:135.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:491 checks membership and the signed difference, and the runner confirmed the normal CLI and MCP refusal contracts. The date-minimum VAT path at src/cma/metrics.py:207 raises before the reconciliation call at :405. The year-one regression test at tests/test_money_in.py:547 starts on January 5.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The v1 and v2 fallbacks at src/cma/categorise.py:1311 and :1360 assign unmatched credits to OTHER, which the figures layer uses for M25 at src/cma/metrics.py:69 and :401. The runner confirmed the unknown-payer cases in both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:491–503 checks the exact sum and the per-credit ID counts. Cash evidence is selected inside trading receipts at :410 and reported separately at :480. The runner passed the synthetic, random and large-amount checks at tests/test_money_in.py:91 and :247.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For T04 figures, src/cma/metrics.py:337–346 identifies partially counted M9 lines, and :438–489 attaches evidence to the figures. The runner passed sum and outflow evidence, the split-credit example and the fixture dual runs. The zero exact M8 path at :300, :352 and :459 follows revision 27 for M10. Monthly cells belong to T06.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:263 and :398–403 keep fallback OTHER credits out of M2 and route them to M25. The runner passed the general fallback check and both explicit unknown-payer cases at tests/test_money_in.py:136 and :147.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-134/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-134/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-134/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-134/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-134/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-134/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-134/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 207,
+      "criterion": "R3",
+      "claim": "VAT processing can still prevent the required reconciliation diagnostic. A statement beginning at the minimum supported date underflows when the VAT code subtracts one day from its start.",
+      "repro": "Use a valid balance chain with a £10.00 credit on 0001-01-01 and a £5.00 credit on 0001-02-05. In the existing CLI reconciliation contract setup, make categorisation assign the second credit no bucket and invoke cma run with --vat-stagger 2. The January quarter reaches the subtraction from date.min and raises OverflowError. The CLI reports a model failure and exits 4 instead of exiting 6 with 500 pence and the second credit's ID."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 309,
+      "criterion": "R2",
+      "claim": "The Monzo CLI rounds a statement-supplied opening balance through binary float before the importer checks that it is whole pence. That can silently accept an invalid source balance and use the rounded value for every reconstructed line.",
+      "repro": "Import a Monzo CSV with one GBP credit of 1.00 and no Balance column, passing --opening-balance 1.00000000000000001. The CLI converts that text to 1.0. The importer validates repr(1.0) and writes a closing balance of 2.00, accepting a source balance that is not a whole number of pence."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 259,
+      "criterion": "R2",
+      "claim": "The producer's above-ceiling probe demonstrates the internal DTO path only. The import entry points enforce the revision 27 limit, so the probe cannot establish acceptance of an above-limit statement.",
+      "repro": "Compare the direct pence and GBP helper assertions in this test with the runner-passed CSV and Monzo import rejection cases. A statement line containing 10000000000000.01 is refused by the import paths."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 119,
+      "criterion": "P2",
+      "claim": "The producer's unqualified compatibility claim exceeds its fixture proof. Revision 27 permits changed evidence when the previous release's arithmetic was inexact.",
+      "repro": "Compare the previous release and current code on Python 3.11 with the R54 example containing fully reversed repayments and a £9 trillion repayment. Float drift can leave an old nonzero M8 and populated M10 evidence, while exact M8 is zero and current M10 evidence is empty. The successful fixture dual run verifies the covered cases."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 229,
+      "criterion": null,
+      "claim": "The producer's repeated-compute probe is unverified by the runner. The runner's named categorisation idempotency test covers a separate claim.",
+      "repro": "Check the configured runner command list for PYTHONPATH=src python scratchpad/probe.py. To prove this test claim, supply the cited probe and have the runner execute that command, or have the runner execute a named test that compares two complete compute results on the same categorised statement."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": null,
+      "claim": "The producer's note about the committed evidence record is stale. The record already contains evidence_note and was regenerated.",
+      "repro": "Read the first metric's evidence_note at this line and compare the committed record with the pre-T04 version. The checked-in revision adds evidence_note fields and changes the review timestamp."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
