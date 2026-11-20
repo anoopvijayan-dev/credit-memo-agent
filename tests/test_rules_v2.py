@@ -1710,3 +1710,27 @@ def test_a_v2_pattern_repeating_one_kind_of_character_is_allowed(pattern):
     rule = {"id": "narrow", "pattern": pattern, "direction": "in", "category": "revenue_card_settlement",
             "stage": "names"}
     validate_ruleset({"id": "v2", "frozen": False, "rules": [rule]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_a_greedy_repeat_before_an_optional_phrase_still_counts_its_longest_match():
+    """T03 review 15: the greedy \\w* takes no text the later optional phrase needs here, but
+    in general a variable repeat can end a first match early; the scan looks for the
+    longest end whenever a pattern has a repeat of variable length."""
+    rail = {"id": "rail", "names": ["FASTER PAYMENT"], "direction": "in", "protected": True,
+            "stage": "line_type"}
+    acme = {"id": "acme", "pattern": r"\bACME\w{0,3}(?:CO FASTER PAYMENT LTD)?\b", "direction": "in",
+            "category": "revenue_card_settlement", "stage": "names"}
+    rs = categorise.ruleset_from_data({"id": "v2", "frozen": False, "rules": [rail, acme]}, "v2", "t", "0")
+    # greedy \w{0,3} takes CO and the optional phrase then fails: the first match is ACMECO;
+    # the longest, ACMECO FASTER PAYMENT LTD, hides the rail inside it
+    assert [r.id for r in categorise.credit_matches(rs, "ACMECO FASTER PAYMENT LTD", 100.0)] == ["acme"]
+
+
+@pytest.mark.contracts
+def test_the_bank_code_rule_takes_no_exceptions():
+    """T03 review 15: an unless on the bank-code rule could switch the bank's code off."""
+    bank = {"id": "returned_dd", "pattern": r"^UNPAID DD\b", "direction": "any", "category": "returned_dd",
+            "protected": True, "stage": "line_type", "bank_code": True, "unless": "SAVINGS"}
+    with pytest.raises(RulesetError, match="no unless or requires"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [bank]}, expected_id="v2")

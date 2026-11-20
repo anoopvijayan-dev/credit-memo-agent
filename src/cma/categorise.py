@@ -360,9 +360,10 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
             if not isinstance(r["bank_code"], bool):
                 problems.append(f"{where}: bank_code must be true or false")
             elif r["bank_code"] and not (r.get("stage") == "line_type" and r.get("category") == Category.RETURNED_DD.value
-                                         and r.get("pattern") in BANK_RETURN_CODES and "names" not in r):
+                                         and r.get("pattern") in BANK_RETURN_CODES and "names" not in r
+                                         and "unless" not in r and "requires" not in r):
                 problems.append(f"{where}: bank_code is only for the bank's own returned-payment code "
-                                f"({', '.join(sorted(BANK_RETURN_CODES))}), alone")
+                                f"({', '.join(sorted(BANK_RETURN_CODES))}), alone, with no unless or requires")
         if data.get("frozen") is False:
             for key in ("pattern", "unless", "requires"):
                 if isinstance(r.get(key), str) and r[key] and not _compile_problem(r[key]) and _has_group_reference(r[key]):
@@ -607,10 +608,13 @@ def _at_every_position(pattern: re.Pattern[str]) -> re.Pattern[str]:
 
 
 def _may_end_early(pattern: str) -> bool:
-    """An alternative or a lazy repeat: the first match at a start may not be the longest."""
+    """An alternative, or any repeat of variable length (greedy ones too: a greedy repeat
+    can take text a later optional part needed, T03 review 15): the first match at a start
+    may not be the longest, so the span scan looks for the longest end."""
     def walk(sub: _sre_parse.SubPattern) -> bool:
         for op, av in sub:
-            if str(op) in ("BRANCH", "MIN_REPEAT"):
+            name = str(op)
+            if name == "BRANCH" or (name in ("MAX_REPEAT", "MIN_REPEAT", "POSSESSIVE_REPEAT") and av[0] != av[1]):
                 return True
             stack = [av]
             while stack:
@@ -632,8 +636,17 @@ def _longest_sources(r: dict, frozen: bool) -> tuple[str | None, ...]:
     out: list[str | None] = []
     for part in _rule_parts(r, frozen):
         is_own = own is not None and part == (own if frozen else _mark_aware(own))
-        out.append(part if is_own and _may_end_early(part) else None)
+        # Judged on the pattern as written: the mark-aware word edge it is rewritten with
+        # has alternatives of its own, which never change where a match can end.
+        out.append(part if is_own and _may_end_early(own) else None)
     return tuple(out)
+
+
+@functools.lru_cache(maxsize=None)
+def _widest(source: str) -> int | None:
+    """The most characters the pattern can match, or None if it has no bound."""
+    widest = _sre_parse.parse(source).getwidth()[1]
+    return None if widest >= _sre_parse.MAXREPEAT else widest
 
 
 @functools.lru_cache(maxsize=8192)
@@ -654,7 +667,9 @@ def _spans(rule: Rule, description: str) -> list[tuple[int, int]]:
         for m in part.finditer(description):
             start, end = m.span(1)
             if source is not None:
-                for later in range(len(description), end, -1):
+                widest = _widest(source)
+                top = len(description) if widest is None else min(len(description), start + widest)
+                for later in range(top, end, -1):
                     if _ending_at(source, len(description) - later).match(description, start):
                         end = later
                         break
