@@ -1,0 +1,101 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed revision 23 from the task packet against checkout 43332c6, whose bundled specification is revision 2. Canonical encoding and exact-byte validation are at src/cma/case.py:177, :218 and :1087. Head comparison, torn-tail detection and first-bad-entry reporting are at :285–351. Holder checks and steady reads are at :461, :503–675 and :701–726. Writer exclusion, fork refusal, expected-position conflicts, growth checks, repair and take-back are at :762, :995, :1043, :1177 and :1294. The runner logs confirm named passes for changed, removed, reordered and rebuilt chains, torn tails, duplicate submission, concurrent writers, repair failures, UTC timestamps and malformed input. Reviewed filesystem permissions, per-folder isolation and the CLI consumer at src/cma/cli.py:321. The log performs no currency calculation and requires no migration. The holder integrity guard is at src/cma/case.py:736, with sign-off integration assigned to T27. Revision 23 excludes arbitrary interruption outcomes, including the previous review's read-back finding, but expressly retains refusal of a same-thread nested save before it writes. The per-object guard misses that case through another handle after the lock is replaced.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-120/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-120/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-120/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-120/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-120/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-120/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-120/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 937,
+      "criterion": "P15",
+      "claim": "The save guard is scoped to a CaseLog instance. A nested save through a second handle can commit on the same thread if the lock file has been replaced. Revision 23 expressly retains the nested-save refusal under that interference.",
+      "repro": "Create handles A and B for the same one-entry log. During A's append, after its integrity check and before its line write, invoke a one-shot callback from _utc_now. In the callback, replace the case lock file and call B.append with expected=1. B has an empty _saving map, acquires the new lock and can publish entry 2 before A resumes. The same-thread nested save has written bytes."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's CLI claim says a held torn tail exits 0 and prints 'appending'. The implementation and passing contract test show exit 4 and a being-saved message.",
+      "repro": "Inspect test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break in contracts-4.log and its assertion in tests/test_case_log.py:1340. It holds the case over a torn tail, invokes case check and asserts exit 4."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1214,
+      "criterion": "P15",
+      "claim": "The producer's disposition claims the passing stress test forces two commits in every read retry and holds the lock at fallback. The test uses a free-running writer and does not enforce or verify that schedule. The claimed schedule is not proven.",
+      "repro": "Read the test body and its named pass in specified-3.log. A proof would require a test that synchronizes two commits with each read attempt and verifies contention at fallback, then a named runner pass from python -m pytest -v tests/test_case_log.py for that test."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 318,
+      "criterion": "P15",
+      "claim": "The producer's owner-only authorization claim overstates the CLI check. It accepts any directory the current operating-system user can read. The runner's permissions test covers newly created files, and provides no evidence of directory ownership enforcement.",
+      "repro": "Have user A supply read access to an existing case folder and its log files, then invoke cma case check on that folder as user B. The CLI checks that the path is a directory and uses ordinary filesystem access without comparing directory ownership."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
