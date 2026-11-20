@@ -127,16 +127,19 @@ def _split_record(text: str) -> list[str]:
     return _split_record_ended(text)[0]
 
 
-def _split_record_ended(text: str) -> tuple[list[str], bool]:
+def _split_record_ended(text: str) -> tuple[list[str], bool, int]:
     """The cells of the record at the start of `text`, by the CSV reader's own rules (the
     default dialect, not strict), with no field-size limit. Used only for a record with a
     field too long for the reader, so the process-wide limit is never changed (T04 review 39).
-    Also says whether the record ended at a line end, or ran to the end of `text`."""
+    Also says whether the record ended at a line end, or ran to the end of `text`, and how
+    many characters it used, its line end (CR, LF or CRLF) included (T04 review 47)."""
     cells: list[str] = []
     cell: list[str] = []
     state = "start"
     ended = False
-    for ch in text:
+    used = len(text)
+    for k, ch in enumerate(text):
+        terminator = False
         if state == "quoted":
             if ch == '"':
                 state = "quote"
@@ -150,8 +153,7 @@ def _split_record_ended(text: str) -> tuple[list[str], bool]:
                 cells.append("".join(cell))
                 cell, state = [], "start"
             elif ch in "\r\n":
-                ended = True
-                break
+                terminator = True
             else:
                 cell.append(ch)
                 state = "field"
@@ -159,15 +161,18 @@ def _split_record_ended(text: str) -> tuple[list[str], bool]:
             cells.append("".join(cell))
             cell, state = [], "start"
         elif ch in "\r\n":
-            ended = True
-            break
+            terminator = True
         elif state == "start" and ch == '"':
             state = "quoted"
         else:
             cell.append(ch)
             state = "field"
+        if terminator:
+            ended = True
+            used = k + (2 if text[k:k + 2] == "\r\n" else 1)
+            break
     cells.append("".join(cell))
-    return cells, ended
+    return cells, ended, used
 
 
 def _read_long_record(text: str, header: list[str]) -> dict:
@@ -255,15 +260,33 @@ def read_data(data: bytes) -> tuple[list[str], list[tuple[int, dict]], CsvRecord
 def read_records(text: str) -> tuple[list[str], list[tuple[int, dict]], CsvRecordError | None]:
     """The stripped header and each record with its line in the file. Lines are counted as
     the file has them, blank lines included, so every problem names the line a person sees
-    (T04 review 20). The CSV reader stops on a field longer than it reads, or a malformed
-    record: the records before it are returned with the CsvRecordError naming its line, so
-    the caller still checks them (T04 review 22); a header it cannot read is raised."""
+    (T04 review 20). A header the reader cannot read is raised. A record with a field too
+    long for the reader is returned in the CsvRecordError with its readable cells, and
+    reading goes on after it (`rest`, `rest_err`), so a caller can skip a record its own
+    rules exclude and read on (T04 reviews 22, 36 and 47); another malformed record stops
+    reading there."""
     # The physical lines as the CSV reader sees them, to find where each record starts: a
     # record is named by its first line, never by a continuation of a multi-line field
     # (T04 review 21). Blank lines between records are skipped by the reader and counted here.
     physical = list(io.StringIO(text, newline=""))
-    # A missing trailing cell reads as "" rather than None, so no check meets a None (T04 review 29).
     reader = csv.DictReader(io.StringIO(text, newline=""), restval="")
+    try:
+        header = [h.strip() for h in (reader.fieldnames or [])]
+    except csv.Error as e:
+        if "field larger than field limit" in str(e):
+            raise CsvRecordError(f"line 1: {TOO_LONG} (header): longer than {csv.field_size_limit():,} "
+                                 "characters", too_long=True) from None
+        raise CsvRecordError(f"line 1: not a readable CSV record ({e})") from None
+    after = reader.reader.line_num
+    rows, err = _read_body("".join(physical[after:]), header, after)
+    return header, rows, err
+
+
+def _read_body(text: str, header: list[str], offset: int) -> tuple[list[tuple[int, dict]], CsvRecordError | None]:
+    """The records in `text`, which starts `offset` lines into the file, each with its line."""
+    physical = list(io.StringIO(text, newline=""))
+    # A missing trailing cell reads as "" rather than None, so no check meets a None (T04 review 29).
+    reader = csv.DictReader(io.StringIO(text, newline=""), fieldnames=header, restval="")
     rows: list[tuple[int, dict]] = []
 
     def start(after: int) -> int:
@@ -272,51 +295,45 @@ def read_records(text: str) -> tuple[list[str], list[tuple[int, dict]], CsvRecor
             line += 1
         return line
 
-    header: list[str] | None = None
-    try:
-        header = [h.strip() for h in (reader.fieldnames or [])]
-        reader.fieldnames = header
-        while True:
-            before = reader.reader.line_num  # DictReader.line_num lags on an error
-            try:
-                row = next(reader)
-            except StopIteration:
-                break
-            rows.append((start(before), row))
-    except csv.Error as e:
-        line = start(before) if "before" in locals() else 1
-        if "field larger than field limit" in str(e):
+    while True:
+        before = reader.reader.line_num  # DictReader.line_num lags on an error
+        try:
+            row = next(reader)
+        except StopIteration:
+            break
+        except csv.Error as e:
+            line = start(before)
+            if "field larger than field limit" not in str(e):
+                return rows, CsvRecordError(f"line {line + offset}: not a readable CSV record ({e})")
             # Named as too long to read, and by its column where known; its length says nothing
             # about its value, so no monetary conclusion is drawn (revision 29; T04 review 40).
             limit = csv.field_size_limit()
-            text_of_record = "".join(physical[line - 1:])
-            cells, ended = _split_record_ended(text_of_record) if header is not None else ([], True)
-            row = _read_long_record(text_of_record, header) if header is not None else None
-            long_ = [h for h, c in zip(header or [], cells, strict=False) if len(c) > limit]
+            at = len("".join(physical[:line - 1]))
+            cells, ended, used = _split_record_ended(text[at:])
+            long_ = [h for h, c in zip(header, cells, strict=False) if len(c) > limit]
             which = f" ({', '.join(long_)})" if long_ else ""
-            err = CsvRecordError(f"line {line}: {TOO_LONG}{which}: longer than {limit:,} characters", too_long=True)
-            if header is not None:
-                # The field too long to read is never read as a value (T04 review 37). Only the
-                # columns the record holds are readable, never one filled in as empty (T04
-                # review 41); a byte that is not UTF-8 no longer cuts the text (T04 review 46).
-                present = len(cells)
-                err.line, err.row = line, row
-                err.readable = {h for h, c in zip(header[:max(present, 0)], cells, strict=False) if len(c) <= limit}
-        else:
-            err = CsvRecordError(f"line {line}: not a readable CSV record ({e})")
-        if header is None:
-            raise err from None
-        return header, rows, err
+            err = CsvRecordError(f"line {line + offset}: {TOO_LONG}{which}: longer than {limit:,} characters",
+                                 too_long=True)
+            # The field too long to read is never read as a value (T04 review 37); only the
+            # columns the record holds are readable, never one filled in as empty (T04 review 41).
+            err.line, err.row = line + offset, _read_long_record(text[at:], header)
+            err.readable = {h for h, c in zip(header[:len(cells)], cells, strict=False) if len(c) <= limit}
+            # Reading goes on after the record (T04 review 47).
+            rest = text[at + used:] if ended else ""
+            lines = len(list(io.StringIO(text[:at + used], newline="")))
+            err.rest, err.rest_err = _read_body(rest, header, offset + lines)
+            return rows, err
+        rows.append((start(before) + offset, row))
     # A quoted field still open at the end of the file would hold every line after its
     # start, other transactions included: refused, naming the line it starts on (T04 review 32).
-    if rows and _ends_in_quotes("".join(physical[rows[-1][0] - 1:])):
-        start, row = rows.pop()
-        err = CsvRecordError(f"line {start}: a quoted field is not closed before the end of the file")
+    if rows and _ends_in_quotes("".join(physical[rows[-1][0] - offset - 1:])):
+        first, row = rows.pop()
+        err = CsvRecordError(f"line {first}: a quoted field is not closed before the end of the file")
         # The fields wholly before the open one can still be read (T04 review 38).
-        cells = next(csv.reader(io.StringIO("".join(physical[start - 1:]), newline="")), [])
-        err.line, err.row, err.readable = start, row, set(header[:max(len(cells) - 1, 0)])
-        return header, rows, err
-    return header, rows, None
+        cells = next(csv.reader(io.StringIO("".join(physical[first - offset - 1:]), newline="")), [])
+        err.line, err.row, err.readable = first, row, set(header[:max(len(cells) - 1, 0)])
+        return rows, err
+    return rows, None
 
 
 def load_csv(path: Path, account_name: str | None = None, today: date | None = None,

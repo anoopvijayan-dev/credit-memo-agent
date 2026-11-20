@@ -1341,3 +1341,24 @@ def test_monzo_skips_a_foreign_row_with_a_bad_byte_and_reads_on(tmp_path):
                     + b"tx_3,03/01/2026,09:00:00,Faster payment,B\xe9,-1.00,GBP,89.00\n")
     with pytest.raises(monzo.MonzoImportError, match="line 4: not UTF-8"):
         monzo.convert(src, tmp_path / "o.csv")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("ending", ["\n", "\r", "\r\n"])
+def test_monzo_skips_a_foreign_row_with_a_field_too_long_to_read_and_reads_on(tmp_path, ending):
+    """T04 review 47: a row in another currency with a field too long for the CSV reader
+    stopped reading and refused the export; reading now goes on past it."""
+    from cma.importers import monzo
+
+    head = "Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance"
+    rows = [head, "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00",
+            "tx_2,02/01/2026,09:00:00,Card payment," + "N" * 200_000 + ",-5.00,EUR,",
+            "tx_3,03/01/2026,09:00:00,Faster payment,ACME,-1.00,GBP,89.00"]
+    src = tmp_path / "m.csv"
+    src.write_text(ending.join(rows) + ending, newline="")
+    r = monzo.convert(src, tmp_path / "o.csv")
+    assert r.rows == 2 and r.skipped_non_gbp == 1
+    rows[2] = rows[2].replace("EUR", "GBP").replace("-5.00,GBP,", "-5.00,GBP,85.00")
+    src.write_text(ending.join(rows) + ending, newline="")
+    with pytest.raises(monzo.MonzoImportError, match=r"line 3: a field is too long to read \(Name\)"):
+        monzo.convert(src, tmp_path / "o.csv")
