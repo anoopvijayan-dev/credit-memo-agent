@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 183,
+  "next_id": 184,
   "decisions": [
     {
       "id": "D1",
@@ -3698,6 +3698,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T07:57:07.986Z"
+    },
+    {
+      "id": "D183",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Reviewed the supplied revision 21, which expands the older R4 text in the checkout. Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest matches, containment, bank-code precedence, rail and cash conflicts, both-stage candidates, profile and firm rules, and overrides through src/cma/categorise.py:950,972,1059,1086,1126,1237 and the unexplained bucket through src/cma/models.py:65. Checked repeated categorisation, concurrent state and case-local inputs, signed amounts, date-only input, Unicode boundaries, load failure before checkpoint creation, allowlisting, rollback and changed-contract consumers through src/cma/categorise.py:808,1237, src/cma/ingest.py:57,100, src/cma/cli.py:77,84,229, src/cma/graph.py:188,210,250 and src/cma/mcp_server.py:37,77,84. Runner logs confirm the table-driven cases, CLI provenance, checkpoint replay, idempotency, both offline evals and the 10,000-line categoriser fixture. The tested tagged-scalar cases pass, but a collection tagged !!str still aborts YAML construction and suppresses the rule and field diagnostics and independent faults required by R4.); major: The malformed-value recovery omits YAML's built-in string constructor. A collection tagged !!str raises ConstructorError before rule validation, so other faults in the table also disappear from the refusal. at src/cma/categorise.py:779; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T08:01:33.479Z"
     }
   ]
 }
