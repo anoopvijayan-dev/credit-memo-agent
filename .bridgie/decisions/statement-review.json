@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 124,
+  "next_id": 125,
   "decisions": [
     {
       "id": "D1",
@@ -2538,6 +2538,24 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T00:41:57.974Z"
+    },
+    {
+      "id": "D124",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). R42 and P15 (verify-65 / T12 review 20): write D103's repair boundary into the requirement. Under lock-file interference, the log SHALL be reported broken, never intact, when two writers were each told their save was recorded. A writer refused after its line reports its save as not recorded and leaves the entry past the recorded entries, as a crash does; when the next holder's person-confirmed drop (a repair) removes that entry, an intact log without it is within the guarantee, since no recorded save was lost. Also state in R42 that one save at a time runs per holder: a save begun inside another on the same thread is refused, and a save refuses when the log grew since its check. Keep everything else in revision 12 as it is.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-20T00:49:08.960Z",
+      "effect": "changes requested: Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). R42 and P15 (verify-65 / T12 review 20): write D103's repair boundary into the requirement. Under lock-file interference, the log SHALL be reported broken, never intact, when two writers were each told their save was recorded. A writer refused after its line reports its save as not recorded and leaves the entry past the recorded entries, as a crash does; when the next holder's person-confirmed drop (a repair) removes that entry, an intact log without it is within the guarantee, since no recorded save was lost. Also state in R42 that one save at a time runs per holder: a save begun inside another on the same thread is refused, and a save refuses when the log grew since its check. Keep everything else in revision 12 as it is.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-20T00:49:08.953Z"
     }
   ]
 }
