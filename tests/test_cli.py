@@ -324,15 +324,25 @@ def test_an_earlier_release_review_resumes_without_reopening_its_policy_file(tmp
     assert ev["policy"]["policy_sha256"] == policy.load_policy(tmp_path / "gone.yaml")["_sha256"]
 
 
-def test_an_earlier_release_review_whose_policy_figure_moved_is_drafted_again(tmp_path):
-    # T04 review 17: the stored policy result stands only while every figure a rule reads is
-    # unchanged; otherwise the review is refused, naming the figure, with nothing recorded.
+def test_an_earlier_release_review_whose_policy_figure_moved_keeps_its_outcome(tmp_path):
+    # T04 review 18: a figure a rule reads differing by a hair refused the review, though
+    # the rule's outcome is the same; it resumes, the rule re-evaluated from what it stores.
+    import json
+
+    from cma.graph import build, sqlite_checkpointer
+    from cma.llm import FakeLLM
+
     db, _ = _pending(tmp_path)
     _as_earlier_release(db, nudge="M9")
+    with sqlite_checkpointer(db) as saver:
+        stored = build(FakeLLM(), checkpointer=saver).get_state({"configurable": {"thread_id": "case-1"}}).values
     out = tmp_path / "memo.md"
     r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C", "--out", str(out)],
                       input="y\n\n")
-    assert r.exit_code == 2 and "M9" in r.output and "cma run" in r.output and not out.exists()
+    assert r.exit_code == 0, r.output
+    ev = json.loads((tmp_path / "memo.evidence.json").read_text())
+    assert ev["policy"]["overall"] == stored["policy"].overall.value
+    assert [x["outcome"] for x in ev["policy"]["rules"]] == [x.outcome.value for x in stored["policy"].rules]
 
 
 def test_resume_refuses_stored_lines_that_are_not_the_statements(tmp_path):

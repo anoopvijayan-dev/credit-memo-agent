@@ -80,6 +80,61 @@ def validate(policy: object, source: str = "policy", metric_ids: set[str] | None
         raise PolicyError(f"{source}: " + "; ".join(problems))
 
 
+class OutcomeUnknown(PolicyError):
+    """A stored policy result cannot say a rule's outcome for a changed figure."""
+
+
+def _num(v: float) -> str:
+    return str(int(v)) if float(v).is_integer() else str(v)
+
+
+def _band(r: RuleResult, v: float | None) -> tuple:
+    """What decides a rule's outcome for a value: missing, failing, or passing with which
+    referral bands it falls in."""
+    if v is None:
+        return ("missing",)
+    if not OPS[r.op](v, r.threshold):
+        return ("fail",)
+    return ("pass", r.refer_below is not None and v < r.refer_below, r.refer_above is not None and v > r.refer_above)
+
+
+def reevaluate(stored: PolicyResult, before: list[Metric], now: list[Metric]) -> PolicyResult:
+    """The stored result for figures that changed, without reopening the policy: each rule
+    keeps its operator, threshold and referral bands, so its outcome for a new value is
+    known when the value passes (with or without a referral), or fails a rule it already
+    failed (its fail action is the stored outcome). A rule whose figure is now missing, or
+    newly fails, needs its when-missing or fail action, which the stored result does not
+    hold: OutcomeUnknown (T04 review 18)."""
+    was_by, now_by = {m.id: m for m in before}, {m.id: m for m in now}
+    rules: list[RuleResult] = []
+    for r in stored.rules:
+        old, new = was_by.get(r.metric_id), now_by.get(r.metric_id)
+        if new is None:
+            raise OutcomeUnknown(f"{r.metric_id}, which rule {r.rule_id} reads, is no longer computed")
+        if old is not None and old.value == new.value:
+            rules.append(r)
+            continue
+        was, will = _band(r, old.value if old else None), _band(r, new.value)
+        if will[0] == "missing" or (will[0] == "fail" and was[0] != "fail"):
+            raise OutcomeUnknown(f"{r.metric_id}, which rule {r.rule_id} reads, now "
+                                 f"{'cannot be computed' if will[0] == 'missing' else 'fails it'}")
+        outcome = r.outcome if will[0] == "fail" else (
+            RuleOutcome.REFER if will[1] or will[2] else RuleOutcome.PASS)
+        prefix = f"{old.name} is {old.display()}; " if old is not None and old.value is not None else None
+        if was == will and prefix and r.detail.startswith(prefix):
+            req = r.detail[len(prefix):].removesuffix(".")
+        else:
+            req = f"rule requires {r.op} {_num(r.threshold)}"
+            if will[0] == "pass" and will[1]:
+                req += f", referred below {_num(r.refer_below)}"
+            if will[0] == "pass" and will[2]:
+                req += f", referred above {_num(r.refer_above)}"
+        rules.append(r.model_copy(update={"outcome": outcome, "detail": f"{new.name} is {new.display()}; {req}."}))
+    overall = (RuleOutcome.FAIL if any(r.outcome == RuleOutcome.FAIL for r in rules)
+               else RuleOutcome.REFER if any(r.outcome == RuleOutcome.REFER for r in rules) else RuleOutcome.PASS)
+    return stored.model_copy(update={"rules": rules, "overall": overall})
+
+
 def evaluate(metrics: list[Metric], policy: dict | None = None) -> PolicyResult:
     policy = policy or load_policy()
     by_id = {m.id: m for m in metrics}

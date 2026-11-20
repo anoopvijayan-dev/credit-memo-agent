@@ -223,21 +223,25 @@ def refreshed(s: MemoState) -> dict:
     memo no longer holds against them, approving it needs the grounding override, as for
     any memo that fails the check (T04 review 16).
 
-    The stored policy result is kept, and no policy file is reopened: a rule's outcome reads
-    only its figure's value, so it is the same while every figure a rule reads is unchanged.
-    If one changed, StaleReviewError: the review is drafted again by `cma run` (T04 review
-    17). Raises AmountError or ReconciliationError when today's figures cannot be computed."""
+    No policy file is reopened (T04 review 17): the stored policy result is re-evaluated
+    for the changed figures from the rules it holds (T04 review 18). Only where it cannot
+    say a rule's outcome (a figure a rule reads is now missing, or newly fails it, whose
+    action only the policy file holds) is the review refused with StaleReviewError, to be
+    drafted again by `cma run`. Raises AmountError or ReconciliationError when today's
+    figures cannot be computed."""
     fresh = met.compute(s["statement"].model_copy(deep=True), vat_stagger=s.get("vat_stagger"))
     if [m.model_dump() for m in fresh] == [m.model_dump() for m in s["metrics"]]:
         return {}
-    before, now = {m.id: m.value for m in s["metrics"]}, {m.id: m.value for m in fresh}
-    moved = sorted({r.metric_id for r in s["policy"].rules
-                    if r.metric_id not in before or r.metric_id not in now or before[r.metric_id] != now[r.metric_id]})
-    if moved:
-        raise StaleReviewError(f"this review was drafted by an earlier release, and {', '.join(moved)}, which "
-                               "the policy reads, is different today; run `cma run` on the statement again")
-    g = grd.check(s["memo"], fresh, s["policy"], required_headings=grd.REQUIRED_HEADINGS)
-    return {"metrics": fresh, "guard": g}
+    try:
+        policy = pol.reevaluate(s["policy"], s["metrics"], fresh)
+    except pol.OutcomeUnknown as e:
+        raise StaleReviewError(f"this review was drafted by an earlier release, and {e} today; "
+                               "run `cma run` on the statement again") from e
+    g = grd.check(s["memo"], fresh, policy, required_headings=grd.REQUIRED_HEADINGS)
+    update = {"metrics": fresh, "guard": g}
+    if policy != s["policy"]:
+        update["policy"] = policy
+    return update
 
 
 def guard_fields(g) -> dict:
