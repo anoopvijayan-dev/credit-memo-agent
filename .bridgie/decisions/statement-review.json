@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 192,
+  "next_id": 193,
   "decisions": [
     {
       "id": "D1",
@@ -3878,6 +3878,24 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T08:58:29.368Z"
+    },
+    {
+      "id": "D192",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Write into R43 and P15 the window D99 already states for writers, now for readers and holders: a lock-file check is a sequence of looks at the file system, so a lock file removed or replaced (renamed aside and replaced included) and finished within the check's own last look is outside what any check can know; the reader or holder checks each lock file it holds, then the first again, and a holder also checks that the files it holds still have a name (T12 523c5df), and a check after the interference stops gives the true answer (D144). In R4: only a digest that matches the pin exempts v1 data from the exception checks; a repeated rules list has the rules of every list checked; a value of a repeated field that does not compile is named (T03 4c017d4). Keep everything else in revision 21.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-20T09:03:57.964Z",
+      "effect": "changes requested: Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Write into R43 and P15 the window D99 already states for writers, now for readers and holders: a lock-file check is a sequence of looks at the file system, so a lock file removed or replaced (renamed aside and replaced included) and finished within the check's own last look is outside what any check can know; the reader or holder checks each lock file it holds, then the first again, and a holder also checks that the files it holds still have a name (T12 523c5df), and a check after the interference stops gives the true answer (D144). In R4: only a digest that matches the pin exempts v1 data from the exception checks; a repeated rules list has the rules of every list checked; a value of a repeated field that does not compile is named (T03 4c017d4). Keep everything else in revision 21.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-20T09:03:57.954Z"
     }
   ]
 }
