@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 216,
+  "next_id": 217,
   "decisions": [
     {
       "id": "D1",
@@ -4352,6 +4352,26 @@
       "decided_at": "2026-11-20T11:23:32.168Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T11:08:00.283Z"
+    },
+    {
+      "id": "D216",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Applied supplied revision 23. The repository copy is revision 2 at .bridgie/specs/statement-review/requirements.md:5. Mapped the maintained lists and directions at src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest matches, containment, bank-code precedence, ambiguity, profile candidates, and override and firm-rule precedence at src/cma/categorise.py:1105–1349. Traced table selection and per-line provenance at src/cma/graph.py:188–223,250–253 and src/cma/cli.py:224–229. Reviewed matcher construction, exception checks, duplicate keys, and frozen-table refusal at src/cma/categorise.py:419–706,798–858,964–1011. The two previous repros are covered by the new direction checks and explicit-null check, but two malformed table shapes still load. Checked repeat submission, concurrent updates and partial writes at src/cma/cli.py:73,116,146–158,224–229, amount and local-date boundaries at src/cma/ingest.py:38–59,98–110, and scope and consumer paths at src/cma/mcp_server.py:30–105 and src/cma/graph.py:188–223. Runner logs establish 852 full-suite, 230 contract, 138 invariant and 83 dual-run passes, including the named list and CLI provenance tests, rollback, checkpoint replay, the timing fixture and both offline evaluations. The review was read-only.); major: The validator rejects a money-in-only category for direction out but accepts the same contradiction for direction any, which also applies to debits. at src/cma/categorise.py:624; major: Duplicate merge keys escape duplicate-key detection because PyYAML flattens the mapping before the loader counts its keys. at src/cma/categorise.py:845; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T11:27:09.130Z"
     }
   ]
 }
