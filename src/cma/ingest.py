@@ -109,6 +109,26 @@ class CsvRecordError(ValueError):
 NOT_UTF8 = "not UTF-8 (byte {}); re-save it as 'CSV UTF-8' (Excel) and try again"
 
 
+def _ends_in_quotes(text: str) -> bool:
+    """Whether a record's text ends inside a quoted field, by the rules the CSV reader reads
+    it with (the default dialect, not strict): a quote opens a field only at its start, a
+    doubled quote inside one is a quote, and text after a closing quote joins the field
+    (T04 review 32)."""
+    state = "start"
+    for ch in text:
+        if state == "quoted":
+            state = "quote" if ch == '"' else "quoted"
+        elif state == "quote":  # just after a quote inside a quoted field
+            state = "quoted" if ch == '"' else "start" if ch in ",\r\n" else "field"
+        elif ch in ",\r\n":
+            state = "start"
+        elif state == "start" and ch == '"':
+            state = "quoted"
+        else:
+            state = "field"
+    return state == "quoted"
+
+
 def read_data(data: bytes) -> tuple[list[str], list[tuple[int, dict]], CsvRecordError | None]:
     """read_records on a file's bytes. If a byte is not UTF-8, every record before the one it
     falls in is still returned and checked, and the CsvRecordError names that record's first
@@ -127,25 +147,22 @@ def read_data(data: bytes) -> tuple[list[str], list[tuple[int, dict]], CsvRecord
     physical = list(io.StringIO(text, newline=""))
     if not physical or not physical[0].endswith(("\n", "\r")):
         raise CsvRecordError("line 1: " + NOT_UTF8.format(bad))
-    header, rows, err = read_records(text)
+    header, rows, err = read_records(text, cut=True)
     if err is not None:
         return header, rows, err  # an earlier record the reader stopped on comes first
     at_line_end = text.endswith(("\n", "\r"))
     line = len(physical) + 1  # the bad byte starts a new record
     if rows:
         start = rows[-1][0]
-        try:  # is the last record closed, or still open in a quoted field at the bad byte?
-            list(csv.reader(io.StringIO("".join(physical[start - 1:]), newline=""), strict=True))
-            still_open = False
-        except csv.Error:
-            still_open = True
-        if still_open or not at_line_end:
+        # Is the last record closed, or still open in a quoted field at the bad byte? Read as
+        # the reader reads it, so a record it accepted is never dropped (T04 review 32).
+        if _ends_in_quotes("".join(physical[start - 1:])) or not at_line_end:
             rows.pop()  # the record the bad byte falls in
             line = start
     return header, rows, CsvRecordError(f"line {line}: " + NOT_UTF8.format(bad))
 
 
-def read_records(text: str) -> tuple[list[str], list[tuple[int, dict]], CsvRecordError | None]:
+def read_records(text: str, cut: bool = False) -> tuple[list[str], list[tuple[int, dict]], CsvRecordError | None]:
     """The stripped header and each record with its line in the file. Lines are counted as
     the file has them, blank lines included, so every problem names the line a person sees
     (T04 review 20). The CSV reader stops on a field longer than it reads, or a malformed
@@ -187,6 +204,12 @@ def read_records(text: str) -> tuple[list[str], list[tuple[int, dict]], CsvRecor
         if header is None:
             raise err from None
         return header, rows, err
+    # A quoted field still open at the end of the file would hold every line after its
+    # start, other transactions included: refused, naming the line it starts on (T04 review 32).
+    # (`cut`: the text stops at a bad byte, and read_data names the record it falls in.)
+    if not cut and rows and _ends_in_quotes("".join(physical[rows[-1][0] - 1:])):
+        start, _ = rows.pop()
+        return header, rows, CsvRecordError(f"line {start}: a quoted field is not closed before the end of the file")
     return header, rows, None
 
 

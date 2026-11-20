@@ -1051,3 +1051,33 @@ def test_cma_import_monzo_prints_a_refusal_quoting_markup_as_text(tmp_path):
     r = CliRunner().invoke(app, ["import", "monzo", str(src), "--out", str(tmp_path / "o.csv")])
     flat = " ".join(r.output.split())
     assert r.exit_code == 2 and "line 2: Amount '[/red]'" in flat, r.output
+
+
+@pytest.mark.contracts
+def test_a_quoted_field_left_open_at_the_end_is_refused_not_swallowing_lines(tmp_path):
+    """T04 review 32: a quoted field never closed took every line after it, another
+    transaction included, and the Monzo import still succeeded."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_text(_MONZO_HEAD + 'tx_1,01/01/2026,09:00:00,Faster payment,"ACME,-10.00,GBP,90.00\n'
+                   "tx_2,02/01/2026,09:00:00,Faster payment,ACME,-1.00,GBP,89.00\n")
+    with pytest.raises(monzo.MonzoImportError, match="line 2: a quoted field is not closed"):
+        monzo.convert(src, tmp_path / "o.csv")
+    csv = tmp_path / "s.csv"
+    csv.write_text('id,date,description,amount,balance\nT1,2026-01-01,"A,1.00,1.00\nT2,2026-01-02,B,1.00,2.00\n')
+    with pytest.raises(ingest.StatementError, match="line 2: a quoted field is not closed"):
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+
+
+@pytest.mark.contracts
+def test_a_record_the_reader_accepts_is_kept_before_a_bad_byte(tmp_path):
+    """T04 review 32: the bad-byte recovery re-read the last record strictly and took any
+    error as an open quote, dropping a record the reader had accepted ("b"x is read as bx)."""
+    csv = tmp_path / "s.csv"
+    csv.write_bytes(b'id,date,description,amount,balance\nT1,2026-01-01,"A"x,10000000000000.00,1.00\n'
+                    b"\xe9T2,2026-01-02,CAFE,1.00,2.00\n")
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    assert "line 2: amount '10000000000000.00' is £10,000,000,000,000 or more" in str(e.value)
+    assert "line 3: not UTF-8" in str(e.value)
