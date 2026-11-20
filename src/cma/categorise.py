@@ -417,6 +417,19 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
     for key, value in data.items():  # before any early refusal, so a repeated key is named
         for bad in _unbuilt_in(value) if key != "rules" or isinstance(value, _Unbuilt) else ():
             problems.append(f"{key} holds a {bad!r}")
+    # A table-level field given more than once (id, frozen, category_order...) has the table
+    # checked once with each of its values, so every check that value calls for runs and
+    # names what it finds (T03 review 42); the repeat itself is named above.
+    repeated_top = [k for k, v in data.items() if isinstance(v, _Repeated) and k != "rules"]
+    if repeated_top:
+        for key in repeated_top:
+            values = data[key].values
+            for k, v in enumerate(values, start=1):
+                try:
+                    validate_ruleset({**data, key: v}, expected_id, source, sha256)
+                except RulesetError as e:
+                    problems.append(f"with {key} value {k} of {len(values)}: " + str(e).removeprefix(f"{source}: "))
+        raise RulesetError(f"{source}: " + "; ".join(dict.fromkeys(problems)))
     rules = data.get("rules")
     if isinstance(rules, _Repeated):
         # Each list given is still checked rule by rule (review 39), and a value that is not a
@@ -694,8 +707,12 @@ def _category_order_problems(data: dict, rules: list, strict: bool = True) -> li
     problems = [f"category_order: {c!r} is not a category" for c in order if c not in categories]
     if len(set(order)) != len(order):
         problems.append("category_order: a category is listed twice")
-    credit_cats = {r["category"] for r in rules if isinstance(r, dict) and r.get("direction") in ("in", "any")
-                   and isinstance(r.get("category"), str) and r["category"] in categories}
+    def every(value: object) -> list:  # each value given, a repeated field's included (review 42)
+        return list(value.values) if isinstance(value, _Repeated) else [value]
+
+    credit_cats = {c for r in rules if isinstance(r, dict)
+                   and any(d in ("in", "any") for d in every(r.get("direction")) if isinstance(d, str))
+                   for c in every(r.get("category")) if isinstance(c, str) and c in categories}
     by_bucket: dict[object, set[str]] = {}
     for c in credit_cats:
         by_bucket.setdefault(CREDIT_BUCKET.get(Category(c), c), set()).add(c)

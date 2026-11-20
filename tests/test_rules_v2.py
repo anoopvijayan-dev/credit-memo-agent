@@ -2395,3 +2395,36 @@ def test_each_value_of_a_repeated_rule_id_is_checked_for_uniqueness():
     b = {"id": _repeated("b", "a"), "names": ["B"], "direction": "in", "category": "cash_deposit", "stage": "names"}
     with pytest.raises(RulesetError, match=r"duplicate id 'a'"):
         validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, a, b]}, expected_id="v2")
+
+
+
+@pytest.mark.contracts
+def test_each_value_of_a_repeated_table_id_is_checked():
+    """T03 review 42: the refusal names the actual mismatched id among those given."""
+    data = {"id": _repeated("v2", "v9"), "frozen": False, "rules": [BANK]}
+    with pytest.raises(RulesetError, match=r"with id value 2 of 2: id 'v9' does not match"):
+        validate_ruleset(data, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_each_value_of_a_repeated_frozen_flag_runs_its_own_checks():
+    """T03 review 42: with frozen given as false and true, the checks each value calls for
+    both run, and their faults are named."""
+    cash = {"id": "cashx", "names": ["CASH"], "direction": "in", "category": "cash_deposit", "unless": "FPS",
+            "stage": "names"}
+    data = {"id": "v1", "frozen": _repeated(False, True), "rules": [BANK, cash]}
+    with pytest.raises(RulesetError) as e:
+        validate_ruleset(data, expected_id="v1")
+    text = str(e.value)
+    assert "with frozen value 1 of 2" in text and "with frozen value 2 of 2" in text and "unless is not allowed" in text
+
+
+@pytest.mark.contracts
+def test_a_repeated_category_still_counts_toward_the_category_order():
+    """T03 review 42: every category given on a rule counts when the order a bucket needs is
+    worked out."""
+    a = {"id": "a", "names": ["A"], "direction": "in", "category": _repeated("cash_deposit", "revenue_transfer"),
+         "stage": "names"}
+    b = {"id": "b", "names": ["B"], "direction": "in", "category": "cash_deposit", "stage": "names"}
+    with pytest.raises(RulesetError, match="category_order"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, a, b]}, expected_id="v2")
