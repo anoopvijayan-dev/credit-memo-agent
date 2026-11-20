@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 207,
+  "next_id": 208,
   "decisions": [
     {
       "id": "D1",
@@ -4174,6 +4174,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T10:26:15.293Z"
+    },
+    {
+      "id": "D207",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Applied the supplied revision 22 because the repository copy of requirements.md is revision 2. Mapped the maintained lists and directions at src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest alternatives and surviving occurrences at src/cma/categorise.py:1108–1180, bucket precedence and bank-code priority at :1198–1235, override handling at :1238–1262, and ambiguity, profile candidates and firm-rule precedence at :1294–1315. The graph applies the selected ruleset and exports line provenance at src/cma/graph.py:188–223,250–253, and the CLI writes the evidence at src/cma/cli.py:224–229. Checked digest gating, changed-v1 refusal, exception reporting and matcher builds at src/cma/categorise.py:410–670,943–973. The runner logged 845 suite, 223 contract, 138 invariant and 83 dual-run passes, with named list, CLI provenance, rollback, checkpoint replay, timing and both offline eval tests. Source inspection found that some invalid alternatives and pattern exceptions still go unnamed. Reviewed double submission and concurrent output at src/cma/cli.py:81–86,146–158,224–229, GBP and date boundaries at src/cma/ingest.py:42–57,100, partial table-load failure at src/cma/categorise.py:943–973, path scope and tenant isolation at src/cma/mcp_server.py:37–55, case-local categorisation inputs at src/cma/categorise.py:1396, and evidence and MCP consumers at src/cma/graph.py:188–223 and src/cma/mcp_server.py:90–105. Review was read-only and used the runner's test results.); major: A repeated pattern can hide that one version of the table has no bank returned-payment code. The mandatory-code check treats a code present in any alternative as present in every alternative. at src/cma/categorise.py:618; major: An exception in a parseable pattern goes unnamed if regex compilation also fails. The early compile check prevents inspection for both forbidden lookarounds and anchors. at src/cma/categorise.py:532; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T10:29:43.007Z"
     }
   ]
 }
