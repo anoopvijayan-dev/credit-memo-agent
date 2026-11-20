@@ -2544,3 +2544,45 @@ def test_a_lock_lost_after_the_whole_line_never_says_nothing_was_written(tmp_pat
     with pytest.raises(case.SaveNotRecorded) as e:
         log.append("override", {"n": 3}, expected=2)
     assert "nothing was written" not in str(e.value) and "entry was written" in str(e.value)
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("site", ["log_compare", "head_recheck", "read_back", "lock_examine", "repair_recheck"])
+def test_a_save_names_an_os_error_in_its_own_reads(tmp_path, monkeypatch, site):
+    """D159 / R42: the reads a save makes to check something name an operating-system
+    error; it is never read as a changed log or head (a conflict to reload) or as a lock
+    removed or replaced."""
+    log = _log(tmp_path, 2)
+    denied = PermissionError(13, "Permission denied")
+    if site == "repair_recheck":
+        _crash_mid_append(log, monkeypatch, 10)
+    real_head, real_stat = case._read_head, case.os.stat
+
+    def head(path, *, raise_os=False):
+        on_disk = real_head(path)
+        if raise_os and (site in ("head_recheck", "repair_recheck")
+                         or (site == "read_back" and isinstance(on_disk, list) and len(on_disk) == 3)):
+            raise denied
+        return real_head(path, raise_os=raise_os)
+
+    if site == "log_compare":
+        monkeypatch.setattr(case.CaseLog, "_log_digest", lambda self: (_ for _ in ()).throw(denied))
+    elif site == "lock_examine":
+        armed = []
+        monkeypatch.setattr(case, "_utc_now", lambda real=case._utc_now: (armed.append(1), real())[1])
+
+        def stat(p, *a, **k):
+            if armed and str(p).endswith(".lock"):
+                raise denied
+            return real_stat(p, *a, **k)
+
+        monkeypatch.setattr(case.os, "stat", stat)
+    else:
+        monkeypatch.setattr(case, "_read_head", head)
+    with pytest.raises((case.SaveNotRecorded, case.SaveNotConfirmed)) as e:
+        if site == "repair_recheck":
+            log.drop_torn_entry(expected=2, by="A. Person")
+        else:
+            log.append("override", {"n": 3}, expected=2)
+    assert "Permission denied" in str(e.value), str(e.value)
+    assert "changed since you loaded it" not in str(e.value) and "removed or replaced" not in str(e.value)

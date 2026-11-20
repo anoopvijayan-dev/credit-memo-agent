@@ -244,14 +244,18 @@ def _is_hash(value: Any) -> bool:
     return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
 
 
-def _read_head(path: Path) -> list[str] | object | None:
+def _read_head(path: Path, *, raise_os: bool = False) -> list[str] | object | None:
     """The hash of every entry the head file records, in order; None if there is no head
-    file; _UNREADABLE if it cannot be read or is not exactly what the writer produces."""
+    file; _UNREADABLE if it cannot be read or is not exactly what the writer produces.
+    With `raise_os` (a save's own re-checks, D159) an operating-system error is raised, so
+    the save names it, rather than read as a changed head."""
     try:
         raw = path.read_bytes()
     except FileNotFoundError:
         return None
     except OSError:  # a directory in its place, no permission: it cannot vouch for the log
+        if raise_os:
+            raise
         return _UNREADABLE
     try:
         if not raw.endswith(b"\n"):
@@ -795,8 +799,10 @@ class CaseLog:
         try:
             in_place = (self._lock_id == _file_id(os.stat(self.lock_path))
                         and self._gate_id == _file_id(os.stat(self.gate_path)))
-        except OSError:
+        except FileNotFoundError:
             in_place = False
+        # Any other error (the folder cannot be read) is raised as it is, and the save names
+        # it (D159): a lock that cannot be examined is not shown removed or replaced.
         if not in_place:
             raise CaseLocked(f"{self.path}: a case lock file was removed or replaced while this "
                              "window held the case; nothing was written")
@@ -918,7 +924,7 @@ class CaseLog:
             self._require_lock_in_place()
             # The log's bytes, not only its length (revision 14): a log rewritten to the same
             # length since the check is not the one the repair read.
-            if self._log_digest() != check.log_digest or _read_head(self.head_path) != recorded:
+            if self._log_digest() != check.log_digest or _read_head(self.head_path, raise_os=True) != recorded:
                 raise LogConflict(check.head.position, check.head.position + 1)
 
         fd, tmp = _staging_file(self.path)
@@ -949,12 +955,12 @@ class CaseLog:
         return entry, line + b"\n"
 
     def _log_digest(self) -> str:
+        """The log's digest for a save's re-check; an operating-system error is raised, so
+        the save names it (D159), never read as a changed log."""
         try:
             return _digest(self.path.read_bytes())
         except FileNotFoundError:
             return _digest(b"")
-        except OSError:
-            return "unreadable"
 
     def _create_empty_head(self) -> None:
         """The head record a first append writes before its line. It is created, never
@@ -992,7 +998,7 @@ class CaseLog:
             # file is read by nobody.
             def before() -> None:
                 self._require_lock_in_place()
-                if was is not None and _read_head(self.head_path) != was:
+                if was is not None and _read_head(self.head_path, raise_os=True) != was:
                     raise SaveNotRecorded(f"{self.path}: the head file changed while this save was "
                                           "being recorded; the save was not recorded")
             _replace(tmp, self.head_path, before=before)
@@ -1067,28 +1073,36 @@ class CaseLog:
             raise SaveNotConfirmed(f"{self.path}: the head record could not be made durable ({e}), so "
                                    "whether the save was recorded is not confirmed: check the case log "
                                    "before anything else is saved") from e
-        now = _check(self._read_log(), _read_head(self.head_path))
-        held = now.entries[entry.seq - 1].hash if now.ok and len(now.entries) >= entry.seq else None
+        failure: str = "the log changed while this save was being recorded"
+        try:
+            try:
+                raw = self.path.read_bytes()
+            except FileNotFoundError:
+                raw = b""
+            now = _check(raw, _read_head(self.head_path, raise_os=True))
+            held = now.entries[entry.seq - 1].hash if now.ok and len(now.entries) >= entry.seq else None
+        except OSError as e:  # the read-back itself failed: named, never read as a change (D159)
+            held, failure = None, f"the log could not be read back ({e.__class__.__name__}: {e})"
         if held != entry.hash:
             # Not told recorded, so not left recorded either (P15): the head record goes
             # back to the entries before this one, if it is still the one this save
             # published, and the entry is again past the recorded entries, as a crash leaves
             # it (T12 review 23). If the head record changed meanwhile, it is left alone.
-            undone = False
-            with suppress(CaseLogError, OSError):
+            refused: Exception | None = None
+            try:
                 # Its own record only (`was`), and like every head rename only while both
                 # lock files are still the ones taken: under interference a take-back could
                 # otherwise replace a head another writer has since published and been told
                 # is recorded (T12 review 25). Refused, the save is not confirmed (D143).
                 self._write_head(recorded, was=[*recorded, entry.hash])
-                undone = True
-            if not undone:
+            except (CaseLogError, OSError) as e:
+                refused = e
+            if refused is not None:
                 raise SaveNotConfirmed(
-                    f"{self.path}: the log changed while this save was being recorded, and its head "
-                    "record could not be taken back, so whether it was recorded is not confirmed: "
-                    "check the case log before anything else is saved")
-            raise SaveNotRecorded(f"{self.path}: the log changed while this save was being recorded; "
-                                  "the save was not recorded")
+                    f"{self.path}: {failure}, and its head record could not be taken back "
+                    f"({refused.__class__.__name__}: {refused}), so whether it was recorded is not "
+                    "confirmed: check the case log before anything else is saved") from refused
+            raise SaveNotRecorded(f"{self.path}: {failure}; the save was not recorded")
 
 
 # On Windows a reader's open file blocks a rename over it for the moment the read takes
