@@ -401,6 +401,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-20 D243 (unblock): take over manually — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. T04 at the latest commit (review 15). → task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04 [Anoop Vijayan]
 - 2026-11-20 D244 (unblock): take over manually — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. T04 at the latest commit (review 16). → task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04 [Anoop Vijayan]
 - 2026-11-20 D245 (unblock): take over manually — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. T04 at the latest commit (review 17). → task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04 [Anoop Vijayan]
+- 2026-11-20 D246 (unblock): take over manually — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. T04 at the latest commit (review 18). → task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04 [Anoop Vijayan]
 
 ## Idea
 
