@@ -8,9 +8,10 @@ missing figure means (see `when_missing` in the policy file), not this module.
 Money is added up in integer pence (R2): each amount is turned into whole pence once,
 every sum and comparison is of pence, and a figure is turned back into pounds only when
 it is reported. An amount with a fraction of a penny is refused, never rounded. Balances
-are compared in pence too. An amount, a balance or a figure of MAX_PENCE or more is refused:
-below it a figure has at most 15 significant digits, so the pounds a figure is reported in
-print as exactly the pence it was computed from, and reported buckets add up as printed.
+are compared in pence too. There is no fixed ceiling: a figure is reported in pounds only
+when that float reads back as exactly the pence it was computed from, and is otherwise
+refused (a sum figure, AmountError) or n/a with the reason (M3), so reported buckets add
+up as printed and no figure is ever a penny out.
 
 Money in (R1, R3): every credit is in exactly one bucket (models.CREDIT_BUCKET), M2 is
 trading receipts and M19-M25 the other seven buckets, and together they make M17 to the
