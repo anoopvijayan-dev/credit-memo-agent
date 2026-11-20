@@ -47,6 +47,7 @@ from ..metrics import (
 
 REQUIRED = ("Transaction ID", "Date", "Type", "Name", "Amount")
 PLAIN_MONEY = re.compile(r"^[-+]?\d+(?:\.\d{1,2})?$")
+CURRENCY_CODE = re.compile(r"^[A-Z]{3}$")
 SAFE_ID = re.compile(r"^[A-Za-z0-9_.:-]+$")
 
 
@@ -185,21 +186,28 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
 
     try:
         for i, r in raw_rows:
-            # More cells than the header has columns: an unquoted thousands separator ("1,000.00")
-            # splits an amount, so nothing in the row can be trusted (T04 review 33).
-            if None in r:
-                raise MonzoImportError(f"line {i}: more fields than the header has columns; an amount with a "
-                                       "comma in it must be quoted")
             # Currency, then the amount, before anything else about the row (T04 reviews 27-28):
             # a row in another currency is skipped whatever else it holds, and a GBP amount is
             # counted toward money in or out, even one past the line limit, before any other
             # problem with its row can stop the import without saying so.
             currency = (r.get("Currency") or "GBP").strip().upper()
             if currency and currency != "GBP":
-                skipped += 1
-                continue
+                if CURRENCY_CODE.match(currency):
+                    skipped += 1  # another currency: skipped, whatever else the row holds
+                    continue
+                # Not a currency code: the row's cells are not where the header says (an unquoted
+                # "1,000.00" shifts them), so it is refused, never skipped (T04 review 34).
+                shifted = "; the row has more fields than the header has columns, so an amount with a comma " \
+                          "in it must be quoted" if None in r else ""
+                raise MonzoImportError(f"line {i}: Currency {r.get('Currency')!r} is not a currency code{shifted}")
             amount = _money(r["Amount"], "Amount", i, limit=False)
             reading = amount
+            # More cells than the header has columns: an unquoted thousands separator ("1,000.00")
+            # splits an amount, so the row cannot be trusted. Checked after the currency and the
+            # amount, as revision 29 orders them (T04 reviews 33-34).
+            if None in r:
+                raise MonzoImportError(f"line {i}: more fields than the header has columns; an amount with a "
+                                       "comma in it must be quoted")
             if at_limit(amount):
                 raise MonzoImportError(f"line {i}: Amount {r['Amount']!r} is {AT_LIMIT}; no figure could be "
                                        "reported to the penny")

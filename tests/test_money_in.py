@@ -1100,5 +1100,25 @@ def test_monzo_refuses_a_row_with_more_cells_than_columns(tmp_path):
 
     src = tmp_path / "m.csv"
     src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,1,000.00,GBP,1000.00\n")
-    with pytest.raises(monzo.MonzoImportError, match="line 2: more fields than the header has columns"):
+    with pytest.raises(monzo.MonzoImportError, match=r"line 2: .*more fields than the header has columns"):
         monzo.convert(src, tmp_path / "o.csv")
+
+
+@pytest.mark.contracts
+def test_monzo_reads_currency_and_amount_before_the_surplus_cell_check(tmp_path):
+    """T04 review 34: the surplus-cell check ran before the currency and the amount, so a row
+    in another currency was refused instead of skipped, and a GBP amount with a trailing extra
+    cell was not counted toward money in at the limit (revision 29)."""
+    from cma.importers import monzo
+
+    big = "9999999999999.99"
+    src = tmp_path / "m.csv"
+    src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n"
+                   "tx_2,02/01/2026,09:00:00,Card payment,SHOP,-5.00,EUR,,extra\n")
+    assert monzo.convert(src, tmp_path / "o.csv").skipped_non_gbp == 1
+    src.write_text(_MONZO_HEAD + f"tx_1,01/01/2026,09:00:00,Faster payment,ACME,{big},GBP,{big}\n"
+                   f"tx_2,02/01/2026,09:00:00,Faster payment,ACME,{big},GBP,{big},extra\n")
+    with pytest.raises(monzo.MonzoImportError) as e:
+        monzo.convert(src, tmp_path / "o.csv")
+    assert "money in totals £10,000,000,000,000 or more" in str(e.value)
+    assert "line 3: more fields than the header has columns" in str(e.value)
