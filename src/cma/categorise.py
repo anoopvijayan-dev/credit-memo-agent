@@ -365,6 +365,14 @@ def _repeat_crosses_words(pattern: str) -> bool:
     return walk(parsed)
 
 
+def _bank_code_shape(r: dict) -> bool:
+    """The bank's returned-payment code as its own rule: the pinned text alone, as a
+    returned-payment rule, with no names or exceptions. Only this keeps its anchor, whatever
+    other checks a table skips (T03 review 30)."""
+    return (_is_bank_code_text(r.get("pattern")) and r.get("category") == Category.RETURNED_DD.value
+            and "names" not in r and "unless" not in r and "requires" not in r)
+
+
 def _is_bank_code_text(value: object) -> bool:
     # A malformed value (a list, a mapping) is reported by the rule's own checks, never
     # raised as a TypeError from this membership test (T03 review 25).
@@ -465,7 +473,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                 problems.append(f"{where}: pattern uses a lookahead or lookbehind, which a v2 table "
                                 "does not allow: an exception could hide another list's wording (R4)")
             if (isinstance(r.get("pattern"), str) and r["pattern"] and not _compile_problem(r["pattern"])
-                    and not _is_bank_code_text(r["pattern"]) and _has_anchor(r["pattern"])):
+                    and not _bank_code_shape(r) and _has_anchor(r["pattern"])):
                 # An anchor tests the whole line beside a match: CASH DEPOSIT$ misses
                 # FPS CASH DEPOSIT STRIPE, so it hides wording as an exception would. Only
                 # the bank's own code keeps its ^ (D137).
@@ -710,6 +718,25 @@ class _UniqueKeyLoader(yaml.SafeLoader):
                     f"found duplicate key {key!r}", key_node.start_mark)
             seen.add(key)
         return super().construct_mapping(node, deep=deep)
+
+
+def _scalar_or_text(base):
+    """A scalar the loader cannot build (2026-02-30 read as a date, !!int x) stays the text
+    it is, so validation names the rule and field it sits in, beside the table's other
+    faults, instead of the whole load stopping at construction (T03 review 30)."""
+    def construct(loader, node):
+        try:
+            return base(loader, node)
+        except (ValueError, TypeError, OverflowError, yaml.constructor.ConstructorError):
+            return loader.construct_scalar(node)
+    return construct
+
+
+for _tag, _base in (("tag:yaml.org,2002:timestamp", yaml.SafeLoader.construct_yaml_timestamp),
+                    ("tag:yaml.org,2002:int", yaml.SafeLoader.construct_yaml_int),
+                    ("tag:yaml.org,2002:float", yaml.SafeLoader.construct_yaml_float),
+                    ("tag:yaml.org,2002:binary", yaml.SafeLoader.construct_yaml_binary)):
+    _UniqueKeyLoader.add_constructor(_tag, _scalar_or_text(_base))
 
 
 def _table_bytes(ruleset_id: str) -> bytes:

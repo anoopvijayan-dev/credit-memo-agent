@@ -119,9 +119,11 @@ def test_a_damaged_packaged_table_is_refused_on_load(packaged_table):
 
 def test_a_scalar_yaml_cannot_construct_is_refused_as_invalid_yaml(packaged_table):
     """PyYAML raises ValueError, not YAMLError, building the impossible date 2026-02-30
-    (verify-11); that is a damaged table, not a model failure."""
+    (verify-11); that is a damaged table, not a model failure. Since T03 review 30 the value
+    stays text, so the refusal names the rule and field it sits in."""
     packaged_table(_v1_text().replace("category: returned_dd", "category: 2026-02-30", 1))
-    with pytest.raises(RulesetError, match=r"cma/rules/v1\.yaml: not valid YAML"):
+    with pytest.raises(RulesetError, match=r"cma/rules/v1\.yaml: frozen table v1 has been changed.*"
+                                           r"\(returned_dd\): category '2026-02-30' is not a category"):
         load_ruleset("v1")
 
 

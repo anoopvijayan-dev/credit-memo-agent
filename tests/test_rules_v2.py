@@ -2054,3 +2054,40 @@ def test_a_fault_in_another_field_never_hides_an_unusable_pattern(other):
     with pytest.raises(RulesetError) as e:
         validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, rule]}, expected_id="v2")
     assert "rule 2 (r): its pattern cannot be used" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_changed_v1_reusing_the_bank_code_text_on_another_rule_names_the_anchor(monkeypatch):
+    """T03 review 30: the anchor is excused only on the bank's code as its own returned-
+    payment rule; the same text on a cash rule in a changed v1 is named."""
+    raw = categorise._table_bytes("v1")
+    edit = raw.replace(b"rules:", b"rules:\n  - {id: cashx, pattern: '^UNPAID DD\\\\b', direction: in, "
+                                  b"category: cash_deposit}", 1)
+    monkeypatch.setattr(categorise, "_table_bytes", lambda ruleset_id: edit)
+    categorise.load_ruleset.cache_clear()
+    try:
+        with pytest.raises(RulesetError, match=r"has been changed.*cashx\): pattern uses an anchor"):
+            categorise.load_ruleset("v1")
+    finally:
+        monkeypatch.undo()
+        categorise.load_ruleset.cache_clear()
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("scalar", ["2026-02-30", "!!int abc", "!!float x"])
+def test_a_scalar_the_loader_cannot_build_is_named_by_rule_with_the_other_faults(monkeypatch, scalar):
+    """T03 review 30: a value YAML cannot construct stays text, so validation names its rule
+    and field, and the table's other faults too."""
+    raw = categorise._table_bytes("v2")
+    edit = raw.replace(b"rules:", ("rules:\n  - {id: odd, names: [ODD], direction: in, category: " + scalar
+                                   + ", stage: names}\n  - {id: other, names: [X], direction: sideways, "
+                                   "category: cash_deposit, stage: names}").encode(), 1)
+    monkeypatch.setattr(categorise, "_table_bytes", lambda ruleset_id: edit)
+    categorise.load_ruleset.cache_clear()
+    try:
+        with pytest.raises(RulesetError) as e:
+            categorise.load_ruleset("v2")
+    finally:
+        monkeypatch.undo()
+        categorise.load_ruleset.cache_clear()
+    assert "(odd): category" in str(e.value) and "(other): direction" in str(e.value)
