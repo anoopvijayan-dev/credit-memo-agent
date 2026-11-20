@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 237,
+  "next_id": 238,
   "decisions": [
     {
       "id": "D1",
@@ -4761,6 +4761,26 @@
       "decided_at": "2026-11-20T14:30:06.258Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T14:26:41.631Z"
+    },
+    {
+      "id": "D237",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R3 fail (src/cma/metrics.py:491 tests partition membership and the signed difference, and src/cma/cli.py:99 reports the failure. The runner passed the CLI and MCP refusal contracts and the minimum-date regression. The closing-balance loop at src/cma/metrics.py:232 still overflows at date.max before the partition check at :414.); major: The closing-balance loop advances one day after processing its last date. A statement ending at the maximum supported date raises OverflowError before reconciliation can name its missing credit and the difference. at src/cma/metrics.py:232; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T14:34:05.764Z"
     }
   ]
 }

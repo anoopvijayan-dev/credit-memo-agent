@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-134/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:56 and :151 and src/cma/importers/monzo.py:72 and :197 enforce exact CSV money and the directional limits. src/cma/metrics.py:427 handles an unrepresentable M3. src/cma/graph.py:172, src/cma/cli.py:292 and examples/cafe_stretched.memo.md:50 show penny-precision figures. The Monzo opening balance passes through a float before exact validation at src/cma/cli.py:309 and src/cma/importers/monzo.py:135.); R3 fail (src/cma/metrics.py:491 checks membership and the signed difference, and the runner confirmed the normal CLI and MCP refusal contracts. The date-minimum VAT path at src/cma/metrics.py:207 raises before the reconciliation call at :405. The year-one regression test at tests/test_money_in.py:547 starts on January 5.); major: VAT processing can still prevent the required reconciliation diagnostic. A statement beginning at the minimum supported date underflows when the VAT code subtracts one day from its start. at src/cma/metrics.py:207; major: The Monzo CLI rounds a statement-supplied opening balance through binary float before the importer checks that it is whole pence. That can silently accept an invalid source balance and use the rounded value for every reconstructed line. at src/cma/cli.py:309; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-135/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R3 fail (src/cma/metrics.py:491 tests partition membership and the signed difference, and src/cma/cli.py:99 reports the failure. The runner passed the CLI and MCP refusal contracts and the minimum-date regression. The closing-balance loop at src/cma/metrics.py:232 still overflows at date.max before the partition check at :414.); major: The closing-balance loop advances one day after processing its last date. A statement ending at the maximum supported date raises OverflowError before reconciliation can name its missing credit and the difference. at src/cma/metrics.py:232; reviewer verdict fail"
     },
     {
       "id": "T06",
