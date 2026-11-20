@@ -378,6 +378,10 @@ def _compile_problem(pattern: str) -> str | None:
 def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> None:
     if not isinstance(data, dict):
         raise RulesetError(f"{source}: not a mapping")
+    # Every check a v2 table gets applies to every table but the pinned frozen ones (v1):
+    # a table cannot skip them by calling itself frozen, and a refusal names the rule
+    # (T03 review 24).
+    strict = not (isinstance(data, dict) and data.get("frozen") is True and expected_id in FROZEN_SHA256)
     problems: list[str] = []
     if "id" not in data:
         problems.append("missing id")
@@ -397,7 +401,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
         if not isinstance(r, dict):
             problems.append(f"{where}: not a mapping")
             continue
-        cue_only = r.get("stage") == "line_type" and data.get("frozen") is False
+        cue_only = r.get("stage") == "line_type" and data.get("frozen") is False  # an allowance, so only v2
         for key in sorted((CUE_ONLY_KEYS if cue_only else RULE_KEYS) - set(r)):
             problems.append(f"{where}: missing {key}")
         if not MATCH_KEYS & set(r):
@@ -433,7 +437,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                 problems.append(f"{where}: bank_code is only for the bank's own returned-payment code "
                                 f"({', '.join(sorted(BANK_RETURN_CODES))}), alone, with no unless or requires, "
                                 "for credits (direction in or any)")
-        if data.get("frozen") is False:
+        if strict:
             if isinstance(r.get("id"), str) and not _RULE_ID.fullmatch(r["id"]):
                 # Candidates are recorded joined by + after a colon: an id holding either
                 # would make two different candidate sets read the same (T03 review 17).
@@ -490,7 +494,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
                                 "[A-Z ]+), which a v2 table does not allow: list the phrases as names")
         if "stage" in r and r["stage"] not in STAGES:
             problems.append(f"{where}: stage {r['stage']!r} is not one of {list(STAGES)}")
-        if data.get("frozen") is False:
+        if strict:
             # Line-type wording beats every name list, the case profile and firm rules
             # included, so it is protected and comes before any name list.
             if "stage" not in r:
@@ -520,7 +524,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules") -> N
             problem = _compile_problem(_rule_pattern_text(r))
             if problem:
                 problems.append(f"{where}: pattern and names do not compile together ({problem})")
-    if data.get("frozen") is False:
+    if strict:
         flagged = {r.get("pattern") for r in rules if isinstance(r, dict) and r.get("bank_code") is True}
         for code in sorted(BANK_RETURN_CODES - flagged):
             problems.append(f"the bank's own returned-payment code {code} has no rule with bank_code: true "

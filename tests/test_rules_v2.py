@@ -1921,3 +1921,13 @@ def test_an_occurrence_set_aside_hides_nothing_even_when_its_rule_counts_elsewhe
                                       "v2", "t", "0")
     got = classify(_t("XYZ FPS CASH DEPOSIT REF XYZ FPS", 200.0), rs)
     assert got[0] is C.OTHER and got[1].startswith("v2:conflict:") and "rail" in got[1] and "cash" in got[1]
+
+
+@pytest.mark.contracts
+def test_a_table_cannot_skip_the_v2_checks_by_calling_itself_frozen():
+    """T03 review 24 / R4: only the pinned frozen table (v1) skips the v2 checks; any other
+    table marked frozen still has a forbidden exception refused, naming the rule."""
+    cash = {"id": "cash", "names": ["CASH DEPOSIT"], "direction": "in", "category": "cash_deposit",
+            "stage": "names", "unless": "FPS"}
+    with pytest.raises(RulesetError, match=r"rule 2 \(cash\): unless is not allowed"):
+        validate_ruleset({"id": "v3", "frozen": True, "rules": [BANK, cash]}, expected_id="v3")
