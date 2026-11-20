@@ -275,6 +275,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-20 D133 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-20 D129 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). A repair publishes only the log and head its check read; a save is told recorded only once an intact log holds it (D125). → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 - 2026-11-20 D130 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). A v2 rule carries no unless or requires (D126). → task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03 [Anoop Vijayan]
+- 2026-11-20 D132 (question): Neither takes the other in: a payment-method cue with cash paid-in wording is ambiguous whichever list holds the longer phrase; say it in R4 in the next revision (design default; T03 makes one condition two-way before its review) — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Built in T03 78556a7: rail or cheque wording and cash paid-in wording never hide each other inside a longer phrase, whichever list holds it. → recorded [Anoop Vijayan]
 
 ## Idea
 
