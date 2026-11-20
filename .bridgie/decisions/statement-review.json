@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 279,
+  "next_id": 280,
   "decisions": [
     {
       "id": "D1",
@@ -5594,6 +5594,26 @@
       "decided_at": "2026-11-20T21:14:08.678Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-20T21:10:56.712Z"
+    },
+    {
+      "id": "D279",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:83 validates whole pence at the float boundary, src/cma/metrics.py:512 computes M3 in integer pence, and src/cma/graph.py:175 and src/cma/cli.py:415 table GBP to the penny. The runner confirms the oversized-header fix. The Monzo refusal at src/cma/importers/monzo.py:253 can still stop on a row whose readable currency already excluded it.); major: A row with a readable foreign currency can still refuse the export. The row loop skips it at line 208, then the unconditional unreadable-record check reports the encoding error from that same row. Revision 29 uses currency first to decide whether any other field on the row counts. at src/cma/importers/monzo.py:253; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T21:18:33.895Z"
     }
   ]
 }

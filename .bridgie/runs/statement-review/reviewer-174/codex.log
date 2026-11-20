@@ -1,0 +1,96 @@
+```json
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:481 assigns positive credits to the eight buckets and checks the partition. Lines 563–574 return M17–M26 with evidence, with M18 drawn from trading receipts. src/cma/graph.py:259 and src/cma/mcp_server.py:92 carry the figures to the existing consumers. Runner contracts-4.log confirms the MCP return contract.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:83 validates whole pence at the float boundary, src/cma/metrics.py:512 computes M3 in integer pence, and src/cma/graph.py:175 and src/cma/cli.py:415 table GBP to the penny. The runner confirms the oversized-header fix. The Monzo refusal at src/cma/importers/monzo.py:253 can still stop on a row whose readable currency already excluded it.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks both evidence membership and the signed pence difference before returning figures. src/cma/cli.py:118 exits 6 with the escaped line IDs before display or export. src/cma/mcp_server.py:98 propagates the refusal. The runner confirms both entry points.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/models.py:55 and src/cma/metrics.py:481 route those credits to M25. The runner confirms the v1 and v2 unknown-payer tests.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:481 and :578 enforce exact bucket reconciliation and unique membership. Line 495 takes M18 from M2 evidence, and line 579 excludes it from bucket reconciliation. The runner confirms both the credit-partition and large-amount invariant tests.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For T04's figures, src/cma/metrics.py:374–387 and :523–574 map sums, outflows and derived values to their evidence. Lines 422–430 identify the credit split by the M9 cap. The runner confirms the sum, outflow and M9 invariants, and dual_run-7.log confirms the exercised previous-release evidence comparisons.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 produce OTHER for unmatched credits, and src/cma/metrics.py:481–490 places them in unexplained money in without putting them in M2. The runner confirms test_p6_a_credit_no_rule_matches_is_unexplained_and_never_trading and both test_p6_an_unknown_payer_lands_in_m25 cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 253,
+      "criterion": "R2",
+      "claim": "A row with a readable foreign currency can still refuse the export. The row loop skips it at line 208, then the unconditional unreadable-record check reports the encoding error from that same row. Revision 29 uses currency first to decide whether any other field on the row counts.",
+      "repro": "Use a Monzo header `Transaction ID,Date,Type,Amount,Currency,Balance,Name`. Add `tx1,2026-01-01,Faster payment,10.00,GBP,10.00,ACME` on line 2 and `tx2,2026-01-02,Card payment,2.00,EUR,12.00,CAF` followed by byte 0xE9 and LF on line 3. Run `cma import monzo input.csv -o output.csv`. The readable EUR cell causes the row to be skipped, then the command exits 2 with the line 3 UTF-8 refusal. The currency-first rule calls for importing the GBP row and counting the EUR row as skipped."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 92,
+      "criterion": "P1",
+      "claim": "The claimed historical test counts and exact commit are unverified. The supplied runner records 977 full-suite passes and 84 dual-run passes for the reviewed worktree at 2824556, while the claim cites 878 and 83 at ca0092c. The current runner logs do confirm the named invariant, contract and security tests.",
+      "repro": "Compare the summaries in specified-3.log, contracts-4.log, invariants-5.log and dual_run-7.log with claim.json. To prove the historical counts, run the claimed full-suite and marker commands in a runner checkout pinned to ca0092c."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 318,
+      "criterion": "P2",
+      "claim": "The scratchpad proof commands are unverified. No supplied runner row executes the probe, and scratchpad/probe.py is absent from the review checkout. The named runner tests independently cover several probe scenarios, but the repeated-compute probe output is unsupported.",
+      "repro": "Check the supplied runner commands and look for scratchpad/probe.py in the checkout. To prove the quoted probe output, make the cited script available to the runner and run `PYTHONPATH=src python scratchpad/probe.py` on the claimed revision."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The claim note about the committed example is stale. The reviewed example already contains evidence_note fields and has a regenerated decision timestamp.",
+      "repro": "Read the first metric in examples/cafe_stretched.memo.evidence.json and compare its evidence_note key and the decision timestamp with the claim note and baseline diff."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```
