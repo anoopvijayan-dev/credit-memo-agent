@@ -605,3 +605,20 @@ def test_a_supplied_opening_balance_is_held_to_no_more_than_an_inferred_one(tmp_
                    "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP\n")
     r = monzo.convert(src, tmp_path / "o.csv", "10000000000000.00")
     assert r.rows == 1 and "9999999999990.00" in (tmp_path / "o.csv").read_text()
+
+
+@pytest.mark.contracts
+def test_returned_payment_matching_compares_exact_pence(monkeypatch):
+    """T04 review 11: the match between a returned DD and the debit it undoes is decided in
+    exact pence; float multiplication and a half-penny tolerance are not used."""
+    lines = [
+        Transaction(id="D1", date=date(2026, 1, 1), description="DD ACME", amount=-0.29, balance=-0.29,
+                    category=Category.SUPPLIER),
+        Transaction(id="R1", date=date(2026, 1, 2), description="UNPAID DD ACME", amount=0.29, balance=0.0,
+                    category=Category.RETURNED_DD),
+    ]
+    s = categorise.link_reversals(Statement(account_name="x", transactions=lines))
+    assert s.transactions[1].reverses == "D1"
+    near = [lines[0].model_copy(update={"amount": -0.28, "balance": -0.28}),
+            lines[1].model_copy(update={"reverses": None})]
+    assert categorise.link_reversals(Statement(account_name="x", transactions=near)).transactions[1].reverses is None

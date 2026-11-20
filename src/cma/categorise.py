@@ -72,6 +72,7 @@ import sys
 import unicodedata
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 from functools import lru_cache
 from importlib import resources
 from typing import Literal
@@ -1389,19 +1390,28 @@ def link_reversals(statement: Statement) -> Statement:
     """
     taken: set[str] = set()
     txns = statement.transactions
+
+    def pence(v: float) -> int | None:
+        """The amount in whole pence, read exactly from the decimal the float carries; no
+        binary-float arithmetic decides a match (R2, T04 review 11)."""
+        q = Decimal(repr(v)) * 100
+        return int(q) if q.is_finite() and q == q.to_integral_value() else None
+
     # Debits by (amount in pence, payee), in statement order: each returned DD looks only
     # at the debits it could undo, latest first, not back through the whole statement.
     debits: dict[tuple[int, str], list[int]] = {}
     for j, o in enumerate(txns):
-        if o.amount < 0 and o.category not in (Category.RETURNED_DD, None):
-            debits.setdefault((round(-o.amount * 100), counterparty(o.description)), []).append(j)
+        p = pence(o.amount)
+        if p is not None and p < 0 and o.category not in (Category.RETURNED_DD, None):
+            debits.setdefault((-p, counterparty(o.description)), []).append(j)
     for i, r in enumerate(txns):
-        if r.category != Category.RETURNED_DD or r.amount <= 0:
+        p = pence(r.amount)
+        if r.category != Category.RETURNED_DD or p is None or p <= 0:
             continue
-        candidates = debits.get((round(r.amount * 100), counterparty(r.description)), [])
+        candidates = debits.get((p, counterparty(r.description)), [])  # same pence, same payee
         for j in reversed(candidates[: bisect.bisect_left(candidates, i)]):
             o = txns[j]
-            if o.id not in taken and abs(o.amount + r.amount) < 0.005:
+            if o.id not in taken:
                 r.reverses = o.id
                 taken.add(o.id)
                 break
