@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 219,
+  "next_id": 220,
   "decisions": [
     {
       "id": "D1",
@@ -4412,6 +4412,24 @@
       "decided_at": "2026-11-20T11:42:58.971Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T11:38:22.230Z"
+    },
+    {
+      "id": "D219",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); this clarification is the recommended reading. Clarify P2 (and R1, R11, R16 where they cite it): a sum figure is one whose value is the total of its evidence lines' amounts. An outflow figure (debt service M8, owner drawings M11, VAT paid M12, PAYE paid M14 and every other figure the memo shows as money paid out) is reported as a positive amount, and the signed amounts of its evidence lines total the figure negated, to the penny. A derived figure (net operating cash flow M9, ratios, averages, counts) is not a sum figure: its evidence is every line its calculation reads, and P2 does not ask those lines to total it; M9 says in its evidence note which lines count only in part (a returned-transfer offset capped at what was sent). Every money-in bucket, M17, M18 and every monthly cell is a sum figure with signed evidence totalling it. Keep everything else in revision 23.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-20T12:25:54.098Z",
+      "effect": "changes requested: Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); this clarification is the recommended reading. Clarify P2 (and R1, R11, R16 where they cite it): a sum figure is one whose value is the total of its evidence lines' amounts. An outflow figure (debt service M8, owner drawings M11, VAT paid M12, PAYE paid M14 and every other figure the memo shows as money paid out) is reported as a positive amount, and the signed amounts of its evidence lines total the figure negated, to the penny. A derived figure (net operating cash flow M9, ratios, averages, counts) is not a sum figure: its evidence is every line its calculation reads, and P2 does not ask those lines to total it; M9 says in its evidence note which lines count only in part (a returned-transfer offset capped at what was sent). Every money-in bucket, M17, M18 and every monthly cell is a sum figure with signed evidence totalling it. Keep everything else in revision 23.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-20T12:25:54.083Z"
     }
   ]
 }
