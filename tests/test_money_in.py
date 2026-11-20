@@ -724,3 +724,18 @@ def test_blank_trailing_columns_are_still_accepted(tmp_path):
     csv = tmp_path / "s.csv"
     csv.write_text("id,date,description,amount,balance,,\nT1,2026-01-01,A,5.00,5.00,,\n")
     assert len(ingest.load_csv(csv, today=date(2026, 6, 1)).transactions) == 1
+
+
+@pytest.mark.contracts
+def test_an_amount_longer_than_the_csv_reader_reads_is_refused_naming_its_line(tmp_path):
+    """T04 review 19: the CSV reader stopped on a field past its size limit before any check,
+    and `cma run` reported it as a model call failure."""
+    huge = "1" + "0" * 200_000 + ".00"
+    csv = tmp_path / "s.csv"
+    csv.write_text("id,date,description,amount,balance\nT1,2026-01-01,A,5.00,5.00\n"
+                   f"T2,2026-01-02,B,{huge},5.00\n")
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    assert "line 3:" in str(e.value) and "£10,000,000,000,000 or more" in str(e.value)
+    r = CliRunner().invoke(app, ["run", str(csv), "--yes", "--reviewer", "A"])
+    assert r.exit_code != 0 and "line 3:" in r.output and "model call failed" not in r.output

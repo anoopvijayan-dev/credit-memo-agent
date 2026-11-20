@@ -42,3 +42,40 @@ def test_a_rule_whose_action_only_the_policy_holds_is_not_guessed(old, new):
     stored, m = _stored(old)
     with pytest.raises(pol.OutcomeUnknown, match="M10"):
         pol.reevaluate(stored, [m], [m.model_copy(update={"value": new})])
+
+
+def _filed(tmp_path, on_fail="refer"):
+    """A stored result from a policy file, a rule passing on 2.0 whose fail action is `on_fail`."""
+    import yaml
+
+    from cma import policy as pol
+    from cma.models import Metric
+
+    f = tmp_path / "firm.yaml"
+    f.write_text(yaml.safe_dump({"name": "firm", "rules": [
+        {"id": "R1", "description": "cover", "metric": "M10", "op": ">=", "threshold": 1.25, "on_fail": on_fail}]}))
+    m = Metric(id="M10", name="Debt service cover", value=2.0, unit="ratio", method="m", evidence=[])
+    return f, pol.evaluate([m], pol.load_policy(f)), m
+
+
+def test_a_rule_the_stored_result_cannot_settle_is_settled_by_the_same_policy(tmp_path):
+    # T04 review 19: newly failing a rule needs its fail action; the policy the result came
+    # from (checked by hash) gives it, so a historical review is not refused for it.
+    from cma import policy as pol
+
+    f, stored, m = _filed(tmp_path)
+    got = pol.reevaluate(stored, [m], [m.model_copy(update={"value": 1.0})], f)
+    assert got.rules[0].outcome.value == "refer" and got.policy_sha256 == stored.policy_sha256
+
+
+@pytest.mark.parametrize("change", ["edited", "removed"])
+def test_a_different_or_missing_policy_file_is_not_used(tmp_path, change):
+    from cma import policy as pol
+
+    f, stored, m = _filed(tmp_path)
+    if change == "edited":
+        f.write_text(f.read_text().replace("refer", "fail"))
+    else:
+        f.unlink()
+    with pytest.raises(pol.OutcomeUnknown, match="M10"):
+        pol.reevaluate(stored, [m], [m.model_copy(update={"value": 1.0})], f)

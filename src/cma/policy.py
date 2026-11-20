@@ -98,7 +98,26 @@ def _band(r: RuleResult, v: float | None) -> tuple:
     return ("pass", r.refer_below is not None and v < r.refer_below, r.refer_above is not None and v > r.refer_above)
 
 
-def reevaluate(stored: PolicyResult, before: list[Metric], now: list[Metric]) -> PolicyResult:
+def reevaluate(stored: PolicyResult, before: list[Metric], now: list[Metric],
+               policy_path: Path | None = None) -> PolicyResult:
+    """The stored result for figures that changed. Where the stored result cannot say a
+    rule's outcome, the policy (the file at `policy_path`, or the packaged default) is read
+    once and used only if it is the policy the result came from, by its hash; it is then
+    evaluated in full on today's figures. Otherwise OutcomeUnknown, naming why (T04 review
+    19). A review whose stored result settles every rule never reopens the policy."""
+    try:
+        return _from_stored(stored, before, now)
+    except OutcomeUnknown as e:
+        try:
+            policy = load_policy(policy_path)
+        except PolicyError as pe:
+            raise OutcomeUnknown(f"{e}, and the policy it came from cannot be read ({pe})") from None
+        if not stored.policy_sha256 or policy["_sha256"] != stored.policy_sha256:
+            raise OutcomeUnknown(f"{e}, and the policy file is not the one the review was drafted with") from None
+        return evaluate(now, policy)
+
+
+def _from_stored(stored: PolicyResult, before: list[Metric], now: list[Metric]) -> PolicyResult:
     """The stored result for figures that changed, without reopening the policy: each rule
     keeps its operator, threshold and referral bands, so its outcome for a new value is
     known when the value passes (with or without a referral), or fails a rule it already

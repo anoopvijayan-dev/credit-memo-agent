@@ -96,11 +96,23 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         if not path.is_file():
             raise StatementError(path, ["no such file"])
         data = path.read_bytes()
+    rows: list[dict] = []
     try:
         reader = csv.DictReader(io.StringIO(data.decode("utf-8-sig"), newline=""))  # tolerate a byte-order mark
         header = [h.strip() for h in (reader.fieldnames or [])]
         reader.fieldnames = header
-        rows = list(reader)
+        for row in reader:
+            rows.append(row)
+    except csv.Error as e:
+        # The CSV reader stops on a field longer than it reads, or a malformed record, before
+        # any check: refused here, naming the line, never reported as another failure. A field
+        # that long that is an amount or balance is past the limit (R2, T04 review 19).
+        line = len(rows) + 2 if "header" in locals() else 1
+        if "field larger than field limit" in str(e):
+            raise StatementError(path, [
+                f"line {line}: a field is longer than {csv.field_size_limit():,} characters and is not read; "
+                f"an amount or balance that long is {AT_LIMIT}"]) from None
+        raise StatementError(path, [f"line {line}: not a readable CSV record ({e})"]) from None
     except UnicodeDecodeError as e:
         raise StatementError(path, [
             f"not UTF-8 (byte {e.start}); re-save it as 'CSV UTF-8' (Excel) and try again"

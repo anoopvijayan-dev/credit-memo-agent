@@ -223,17 +223,17 @@ def refreshed(s: MemoState) -> dict:
     memo no longer holds against them, approving it needs the grounding override, as for
     any memo that fails the check (T04 review 16).
 
-    No policy file is reopened (T04 review 17): the stored policy result is re-evaluated
-    for the changed figures from the rules it holds (T04 review 18). Only where it cannot
-    say a rule's outcome (a figure a rule reads is now missing, or newly fails it, whose
-    action only the policy file holds) is the review refused with StaleReviewError, to be
-    drafted again by `cma run`. Raises AmountError or ReconciliationError when today's
+    The stored policy result is re-evaluated for the changed figures from the rules it holds
+    (T04 review 18); where it cannot say a rule's outcome, the policy is read once and used
+    only if its hash is the stored one (T04 review 19). Only if neither settles it is the
+    review refused with StaleReviewError, to be drafted again by `cma run`. Raises AmountError or ReconciliationError when today's
     figures cannot be computed."""
     fresh = met.compute(s["statement"].model_copy(deep=True), vat_stagger=s.get("vat_stagger"))
     if [m.model_dump() for m in fresh] == [m.model_dump() for m in s["metrics"]]:
         return {}
     try:
-        policy = pol.reevaluate(s["policy"], s["metrics"], fresh)
+        policy = pol.reevaluate(s["policy"], s["metrics"], fresh,
+                                Path(s["policy_path"]) if s.get("policy_path") else None)
     except pol.OutcomeUnknown as e:
         raise StaleReviewError(f"this review was drafted by an earlier release, and {e} today; "
                                "run `cma run` on the statement again") from e
