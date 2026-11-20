@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 217,
+  "next_id": 218,
   "decisions": [
     {
       "id": "D1",
@@ -4372,6 +4372,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T11:27:09.130Z"
+    },
+    {
+      "id": "D217",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed checkout 04ff28a against revision 23 supplied in the task. The checkout bundles revision 2. Canonical serialization and exact-byte validation are at src/cma/case.py:177 and :218. Chain, head and first-bad-entry checks are at :285, with the CLI consumer at src/cma/cli.py:321 and the holder integrity guard at src/cma/case.py:738. Reader locking and retries are at :505 and :703. Writer exclusion and fork refusal are at :764, expected-position conflicts at :1000 and :1030, growth checks at :1048 and :1171, and publication and take-back at :1220 and :1299. The runner logs show named passes for changed, removed, reordered and rebuilt chains, torn tails, duplicate submission, concurrent writers, partial failures, malformed inputs and UTC timestamps. The log performs no currency arithmetic, uses OS file permissions and per-folder paths, and introduces no migration. P15 fails because equal head samples can hide a publish-and-take-back during a read, and the nested-save guard can miss the same case after its folder moves.); major: A reader treats identical head contents as proof that the head did not change during the read. A publication followed by a take-back restores the same contents, so the reader can return recorded entries from a read that was not steady. at src/cma/case.py:728; major: The nested-save guard identifies the case by a resolved pathname. Moving the same case folder changes that key, and a replacement lock then lets a same-thread nested save commit. Revision 23 expressly retains refusal of the nested save under interference. at src/cma/case.py:935; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T11:28:38.517Z"
     }
   ]
 }
