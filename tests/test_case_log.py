@@ -3263,3 +3263,42 @@ def test_p15_a_holders_retry_after_a_gate_change_goes_through_the_gate(tmp_path,
         check = log.verify()
         monkeypatch.undo()
     assert gates == [log.gate_path] and check.torn and check.first_bad == 3 and not check.in_progress
+
+
+
+@pytest.mark.invariants
+def test_p15_a_holders_retry_meeting_a_busy_gate_still_knows_its_own_case_lock(tmp_path, monkeypatch):
+    """T12 review 45: after its gate changed, the holder reads again; a writer paused at the
+    new gate makes the gate busy, but the case lock held there is the holder's own, so the
+    torn entry is named, never reported as being saved."""
+    log = _log(tmp_path, 2)
+    _crash_mid_append(log, monkeypatch, 10)
+    monkeypatch.setattr(case, "READ_PAUSE", 0)
+    with log.writer():
+        _replace_file(log.gate_path)
+        gate = os.open(log.gate_path, os.O_RDWR)
+        assert case._try_exclusive(gate)  # a writer at the new gate
+        try:
+            check = log.verify()
+        finally:
+            case._unlock(gate)
+            os.close(gate)
+    assert check.torn and check.first_bad == 3 and not check.in_progress
+
+
+@pytest.mark.invariants
+def test_a_read_back_across_a_replaced_lock_file_confirms_nothing(tmp_path, monkeypatch):
+    """T12 review 45: the read-back counts only while both lock files are still the ones
+    taken; with the case lock replaced during it, the save is not confirmed."""
+    log = _log(tmp_path, 2)
+    real = case._check
+
+    def check(raw, recorded):
+        if isinstance(recorded, list) and len(recorded) == 3:
+            _replace_file(log.lock_path)
+        return real(raw, recorded)
+
+    monkeypatch.setattr(case, "_check", check)
+    with pytest.raises((case.SaveNotConfirmed, case.SaveNotRecorded)) as e:
+        log.append("override", {"n": 3}, expected=2)
+    assert "read-back" in str(e.value)

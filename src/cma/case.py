@@ -644,6 +644,14 @@ class CaseLog:
                     return self._untested()
                 finally:
                     os.close(case_fd)
+                if case_lock_ours():
+                    # The case lock found held is this thread's own (a holder reading again
+                    # after its gate changed): a writer at the gate cannot take the case from
+                    # it, so the read is the truth (T12 review 45).
+                    check = _check(self._read_log(), _read_head(self.head_path))
+                    if case_lock_ours():
+                        return check
+                    continue
                 seen_held = True
                 # Gate and case both held: the recorded entries are final whoever holds the
                 # case, so a fault at or before them in a steady read is named now (P15).
@@ -1240,7 +1248,15 @@ class CaseLog:
                 raw = b""
             now = _check(raw, _read_head(self.head_path, raise_os=True))
             held = now.entries[entry.seq - 1].hash if now.ok and len(now.entries) >= entry.seq else None
-            confirmed = held == entry.hash
+            # The read-back counts only while both lock files are still the ones taken, as any
+            # holder's read does (T12 review 45); otherwise it confirms nothing.
+            try:
+                self._require_lock_in_place()
+                locks_held = True
+            except CaseLocked:
+                locks_held = False
+                failure[0] = "a case lock file was removed or replaced during the read-back"
+            confirmed = held == entry.hash and locks_held
             self._save_confirmed = confirmed
         except OSError as e:  # the read-back itself failed: named, never read as a change (D159)
             failure[0] = f"the log could not be read back ({e.__class__.__name__}: {e})"
