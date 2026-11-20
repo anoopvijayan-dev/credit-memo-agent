@@ -1,0 +1,104 @@
+```json
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to buckets. src/cma/metrics.py:481-490 and :557-570 compute and report GBP totals with line IDs. src/cma/graph.py:305 and src/cma/mcp_server.py:96 carry the figures to the CLI and MCP. The named contract tests passed.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:81-85 and :184-196 validate accepted inputs and flow totals in pence. src/cma/metrics.py:512-517 handles an unrepresentable M3. src/cma/graph.py:172 and src/cma/cli.py:326 display pence, while src/cma/metrics.py:591-595 preserves whole pounds in the drafting table. Oversized monetary fields can still bypass an accurate import diagnostic at src/cma/ingest.py:110 and src/cma/importers/monzo.py:160.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578-588 checks credit membership independently of the signed pence difference. src/cma/cli.py:106-109 exits 6 before showing figures, and src/cma/mcp_server.py:94-96 propagates the refusal. The runner passed the named unbucketed-credit, CLI diagnostic and MCP refusal tests.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "Unmatched credits fall back to OTHER at src/cma/categorise.py:1311 and :1360. src/cma/models.py:65-68 maps OTHER to unexplained money in and excludes it from trading receipts. Both rulesets passed the unknown-payer cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:481-495 and :578-588 enforce integer-pence reconciliation and one bucket per credit ID. M18 comes from M2's cash subset and stays outside the bucket sum. The runner passed both named P1 tests at invariants-5.log:10 and :17.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the figures delivered by T04, src/cma/metrics.py:374-386 and :520-574 tie sums and outflows to their evidence, preserve the M5 and M6 citation rules, omit M10 evidence when exact debt service is zero, and cite the shared denominator for M16 and M26. src/cma/metrics.py:420-430 records partial M9 offsets by line ID. The named P2 invariants and the previous-release fixture comparisons passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 assign unmatched credits to OTHER. src/cma/metrics.py:483-488 and :568-570 put their IDs in M25, and src/cma/models.py:68 keeps them out of M2. All three named P6 cases passed at invariants-5.log:14-16.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 160,
+      "criterion": "R2",
+      "claim": "The Monzo importer raises a raw CSV parser error before it can name the line containing an over-limit GBP amount. The CLI only handles MonzoImportError.",
+      "repro": "Use a Monzo export with a normal GBP row followed by a GBP row whose Amount is 1 followed by 200,000 zeroes and .00. Run cma import monzo with that export and an output path. list(reader) raises csv.Error before _money sees the amount, and src/cma/cli.py:352 does not translate it into a refusal naming the line. The oversized-field contract test exercises the five-column loader only."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 110,
+      "criterion": "R2",
+      "claim": "An oversized CSV amount can be reported against the wrong source line because the refusal counts parsed records and ignores blank physical lines.",
+      "repro": "Use the five-column header on line 1, a valid transaction on line 2, a blank line 3 and a transaction on line 4 whose amount is 1 followed by 200,000 zeroes and .00. cma run reports line 3 because DictReader skips the blank line and len(rows) is 1. The runner's oversized-amount test has no blank line."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/policy.py",
+      "line": 137,
+      "criterion": "R53",
+      "claim": "The additive-only migration claim overstates resume compatibility. A review can be refused even when the original policy would produce the same outcome with the refreshed figures.",
+      "repro": "In the previous release, leave a review pending for a one-day v1 CARD SETTLEMENT of £9,999,999,999,999.98 with a custom rule that passes M3 above £1 and sets when_missing to pass. Move the policy file, then resume on this release. M3 becomes n/a as documented by the large-value test, but policy reevaluation requires the missing file and src/cma/graph.py:238 refuses the review. The original rule would still pass."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 82,
+      "criterion": "R2",
+      "claim": "The claim that a credit over the old ceiling is counted applies only to the internal conversion helpers. The statement loader correctly refuses that input under revision 27.",
+      "repro": "Compare the helper-only assertion in tests/test_money_in.py for £10,000,000,000,000.01 with the loader's at_limit branch. Passing the same amount in a five-column CSV to cma run stops at import before metrics.compute."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 512,
+      "criterion": "P2",
+      "claim": "The historical test counts, scratchpad results and end-to-end display probe are unsupported as stated. The current runner logs show 923 full-suite passes and 84 dual-run passes on the reviewed tree. The named invariants and contracts ran, but the runner did not execute the scratchpad command. Its quoted display output also does not identify either production renderer.",
+      "repro": "Compare specified-3.log, dual_run-7.log, contracts-4.log and invariants-5.log with claim.json. To prove the historical counts, run python -m pytest -q and python -m pytest -q -m dual_run at the claimed revision. To prove the scratchpad results, supply the script and have the runner execute PYTHONPATH=src python scratchpad/probe.py. For display, use a contract test that checks both cma run output and the written memo appendix for the same fractional-penny-denominated GBP inputs."
+    }
+  ],
+  "verdict": "fail"
+}
+```
