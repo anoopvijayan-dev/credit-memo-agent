@@ -1051,8 +1051,11 @@ class CaseLog:
         except SaveNotRecorded:
             raise
         except CaseLocked as e:
-            raise SaveNotRecorded(f"{e}; its entry was written and the save was not recorded: "
-                                  "the next holder confirms dropping it") from e
+            # Its own words: the lock check's "nothing was written" is untrue once the line
+            # is on disk (T12 review 27).
+            raise SaveNotRecorded(f"{self.path}: a case lock file was removed or replaced while this "
+                                  "save was being recorded; its entry was written and the save was not "
+                                  "recorded: the next holder confirms dropping it") from e
         except OSError as e:
             # Failed before the head record's rename, the save is not recorded; after it (the
             # folder could not be synced), the head may list it though it may not last, so

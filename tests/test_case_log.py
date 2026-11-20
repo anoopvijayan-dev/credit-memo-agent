@@ -2526,3 +2526,21 @@ def test_an_os_error_in_any_step_of_a_save_is_reported_not_recorded(tmp_path, mo
         monkeypatch.setattr(case, "_write_all", lambda *a, **k: (_ for _ in ()).throw(OSError(28, "No space left")))
     with pytest.raises(case.SaveNotRecorded, match="No space left"):
         log.append("override", {"n": 1}, expected=0 if step == "first_head" else 2)
+
+
+@pytest.mark.invariants
+def test_a_lock_lost_after_the_whole_line_never_says_nothing_was_written(tmp_path, monkeypatch):
+    """T12 review 27 / P15: once any of the line is on disk, no part of the report says
+    nothing was written."""
+    log = _log(tmp_path, 2)
+    real = case._write_all
+
+    def then_the_lock_goes(fd, data, before=None):
+        real(fd, data, before)
+        if b'"seq":3' in data:
+            log.lock_path.unlink()
+
+    monkeypatch.setattr(case, "_write_all", then_the_lock_goes)
+    with pytest.raises(case.SaveNotRecorded) as e:
+        log.append("override", {"n": 3}, expected=2)
+    assert "nothing was written" not in str(e.value) and "entry was written" in str(e.value)
