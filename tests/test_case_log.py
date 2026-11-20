@@ -2670,3 +2670,24 @@ def test_a_not_confirmed_report_never_says_recorded_or_not(tmp_path, monkeypatch
     text = _chain(e.value)
     assert "not recorded" not in text and "was recorded" not in text and "nothing was written" not in text
     assert ("removed or replaced" if why == "lock" else "no longer this save's own") in text
+
+
+@pytest.mark.invariants
+def test_a_nested_save_refused_after_the_outer_line_is_the_outer_saves_not_recorded(tmp_path, monkeypatch):
+    """T12 review 29 / P15: a save begun inside another after the outer save's line is in
+    the log (a signal handler) is refused; if that refusal goes uncaught, the outer save
+    still reports not recorded in its own words, never 'nothing was written'."""
+    log = _log(tmp_path, 2)
+    real = case.CaseLog._publish
+
+    def nested_then_publish(self, recorded, entry):
+        log.append("override", {"nested": True}, expected=3)  # refused, and not caught
+        return real(self, recorded, entry)
+
+    monkeypatch.setattr(case.CaseLog, "_publish", nested_then_publish)
+    with pytest.raises(case.SaveNotRecorded) as e:
+        log.append("override", {"n": 3}, expected=2)
+    assert "nothing was written" not in _chain(e.value) and "entry was written" in str(e.value)
+    monkeypatch.undo()
+    check = case.CaseLog(log.path).verify()
+    assert check.torn and check.first_bad == 3

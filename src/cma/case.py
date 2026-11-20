@@ -840,7 +840,7 @@ class CaseLog:
         with self._state:
             if me in self._saving:
                 raise CaseLogError(f"{self.path}: another save on this case log is under way in "
-                                   "this thread; nothing was written")
+                                   "this thread; this save was refused")
             self._saving.add(me)
         try:
             yield
@@ -854,11 +854,35 @@ class CaseLog:
         disk, a failed sync, a rename refused) reaches the caller as the save not recorded,
         naming the error, never raw. Where the head record was already published, _publish
         has answered not confirmed instead."""
+        self._line_at: int | None = None  # where this save's line starts, once it is being written
+        self._head_renamed = False
         try:
             yield
         except OSError as e:
             raise SaveNotRecorded(f"{self.path}: the save could not be completed ({e.__class__.__name__}: "
                                   f"{e}); the save was not recorded") from e
+        except (SaveNotRecorded, SaveNotConfirmed, LogConflict, CaseLogBroken):
+            raise
+        except Exception as e:
+            # Anything else that stops a save once its line has started to reach the log (a
+            # nested save refused from a signal handler, say) is still this save's report:
+            # never another operation's words, which may say nothing was written (review 29).
+            if self._line_at is None:
+                raise
+            try:
+                written = os.stat(self.path).st_size > self._line_at
+            except OSError:
+                written = True  # cannot tell: never claim nothing was written
+            if not written and not self._head_renamed:
+                raise
+            what = e.__class__.__name__
+            if self._head_renamed:
+                raise SaveNotConfirmed(f"{self.path}: the save was interrupted after its head record was "
+                                       f"published ({what}), so whether the save is in the log is not "
+                                       "confirmed: check the case log before anything else is saved") from None
+            raise SaveNotRecorded(f"{self.path}: the save was interrupted after its entry was written "
+                                  f"({what}); the save was not recorded: the next holder confirms "
+                                  "dropping it") from None
 
     def append(self, event: str, data: dict[str, Any], *, expected: int) -> Entry:
         """Append one entry if the log is intact and still at `expected` entries."""
@@ -1030,6 +1054,7 @@ class CaseLog:
                 # Something was added to the log since this save checked it: writing now would
                 # put a second entry at the same position (T12 review 20).
                 raise LogConflict(check.head.position, check.head.position + 1)
+            self._line_at = check.intact_bytes
             # After the open and immediately before the line is written (D108): a lock
             # removed while the log was being opened stops the write.
             try:
