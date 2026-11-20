@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 188,
+  "next_id": 189,
   "decisions": [
     {
       "id": "D1",
@@ -3798,6 +3798,26 @@
       "decided_at": "2026-11-20T08:41:19.034Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T08:31:48.256Z"
+    },
+    {
+      "id": "D188",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed HEAD 2861fd7 against requirements.md:309. Strict UTF-8 canonical hashing, head comparison, first-bad-entry naming and torn-tail detection are at src/cma/case.py:177–365. Holder recognition across path aliases, steady reads, retry exhaustion and the sign-off guard are at src/cma/case.py:460–686. Writer exclusion, inherited-handle refusal, nested saves and expected-position conflicts are at src/cma/case.py:690–952. Save rechecks, short writes, publication, read-back and take-back are at src/cma/case.py:954–1202. Checked duplicate submissions, concurrent updates, empty and malformed inputs, Unicode, nesting boundaries, UTC timestamps, partial failure, OS permissions, case-folder isolation and the CLI consumer at src/cma/cli.py:309–338. The diff introduces no currency arithmetic or database migration. Runner logs confirm 499 full-suite passes, 182 invariant passes and 13 contract passes, including the named CLI tamper, rebuilt-chain, torn-tail and duplicate-submit cases. The holder gate check and nested-save guard fail P15. This review used repository reads and runner logs.); major: A holder accepts a read across replacement of the gate it passed. The pre-read and post-read checks inspect only the case lock, although P15 requires both files. at src/cma/case.py:487; major: The nested-save guard checks membership and registers the save in separate operations under a reentrant lock. A same-thread signal handler between those operations can commit a nested save. at src/cma/case.py:853; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T08:42:41.397Z"
     }
   ]
 }
