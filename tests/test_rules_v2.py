@@ -2459,3 +2459,35 @@ def test_alternative_categories_on_one_rule_are_never_counted_together():
     with pytest.raises(RulesetError) as e:
         validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, alone]}, expected_id="v2")
     assert "category_order" not in str(e.value) and "category holds a repeated key" in str(e.value)
+
+
+
+@pytest.mark.contracts
+def test_values_on_different_rules_with_alternatives_still_coexist_for_the_order():
+    """T03 review 44: two rules each given alternative categories can bring different
+    categories of one bucket at once, so the order is asked for."""
+    a = {"id": "a", "names": ["A"], "direction": "in", "category": _repeated("cash_deposit", "rent"), "stage": "names"}
+    b = {"id": "b", "names": ["B"], "direction": "in", "category": _repeated("revenue_transfer", "rent"), "stage": "names"}
+    with pytest.raises(RulesetError, match="category_order: bucket"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, a, b]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_a_repeated_bank_code_pattern_with_the_codes_text_counts_as_present():
+    """T03 review 44: the mandatory bank-code check reads each value of a repeated pattern."""
+    bank = {**BANK, "pattern": _repeated(BANK["pattern"], BANK["pattern"])}
+    with pytest.raises(RulesetError) as e:
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [bank]}, expected_id="v2")
+    assert "has no rule with bank_code" not in str(e.value)
+
+
+@pytest.mark.contracts
+def test_the_bank_code_shape_is_tried_with_each_value_of_its_repeated_fields():
+    """T03 review 44: with pattern and category both repeated, the bank-code rule is not
+    called an invalid flag or a forbidden anchor only because the other field is repeated."""
+    bank = {**BANK, "pattern": _repeated(BANK["pattern"], BANK["pattern"]),
+            "category": _repeated("returned_dd", "returned_dd")}
+    with pytest.raises(RulesetError) as e:
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [bank]}, expected_id="v2")
+    text = str(e.value)
+    assert "bank_code is only for" not in text and "anchor" not in text

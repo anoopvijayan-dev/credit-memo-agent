@@ -63,6 +63,7 @@ from __future__ import annotations
 import bisect
 import functools
 import hashlib
+import itertools
 import os
 import re
 import re._compiler as _sre_compile  # to test what one parsed element of a pattern matches
@@ -369,13 +370,21 @@ def _repeat_crosses_words(pattern: str) -> bool:
     return walk(parsed)
 
 
-def _bank_code_shape(r: dict) -> bool:
+def _bank_code_shape(r: dict, *, with_stage: bool = False) -> bool:
     """The bank's returned-payment code as its own rule: the pinned text alone, as a
-    returned-payment rule, with no names or exceptions. Only this keeps its anchor, whatever
-    other checks a table skips (T03 review 30)."""
-    return (_is_bank_code_text(r.get("pattern")) and r.get("category") == Category.RETURNED_DD.value
-            and r.get("direction") in ("in", "any")  # it settles credits; a debit-only copy is not it
-            and "names" not in r and "unless" not in r and "requires" not in r)
+    returned-payment rule for credits, with no names or exceptions (and, `with_stage`, a
+    line-type cue). Only this keeps its anchor, whatever other checks a table skips (T03
+    review 30). A field given more than once is tried with each of its values, so no fault is
+    made only because another field is still a placeholder (review 44)."""
+    if "names" in r or "unless" in r or "requires" in r:
+        return False
+    for pattern, category, direction, stage in itertools.product(
+            _every(r.get("pattern")), _every(r.get("category")), _every(r.get("direction")), _every(r.get("stage"))):
+        if (_is_bank_code_text(pattern) and category == Category.RETURNED_DD.value
+                and direction in ("in", "any")  # it settles credits; a debit-only copy is not it
+                and (not with_stage or stage == "line_type")):
+            return True
+    return False
 
 
 def _is_bank_code_text(value: object) -> bool:
@@ -499,10 +508,7 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                 # code at the start of the line: allowed only there, never gained by anchoring.
                 if not isinstance(r["bank_code"], bool):
                     problems.append(f"{where}: bank_code must be true or false")
-                elif r["bank_code"] and not (r.get("stage") == "line_type" and r.get("category") == Category.RETURNED_DD.value
-                                             and _is_bank_code_text(r.get("pattern")) and "names" not in r
-                                             and "unless" not in r and "requires" not in r
-                                             and r.get("direction") in ("in", "any")):
+                elif r["bank_code"] and not _bank_code_shape(r, with_stage=True):
                     problems.append(f"{where}: bank_code is only for the bank's own returned-payment code "
                                     f"({', '.join(sorted(BANK_RETURN_CODES))}), alone, with no unless or requires, "
                                     "for credits (direction in or any)")
@@ -603,8 +609,10 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                 if problem:
                     problems.append(f"{where}: pattern and names do not compile together ({problem})")
     if strict:
-        flagged = {r["pattern"] for r in rules if isinstance(r, dict) and r.get("bank_code") is True
-                   and isinstance(r.get("pattern"), str)}  # a malformed pattern is named by its rule
+        # Every value of a repeated pattern or flag counts (review 44); a malformed one is
+        # named by its rule.
+        flagged = {p for r in rules if isinstance(r, dict) and True in _every(r.get("bank_code"))
+                   for p in _every(r.get("pattern")) if isinstance(p, str)}
         for code in sorted(BANK_RETURN_CODES - flagged):
             problems.append(f"the bank's own returned-payment code {code} has no rule with bank_code: true "
                             "(R4: it settles a credit's line type)")
@@ -701,18 +709,6 @@ def _category_order_problems(data: dict, rules: list, strict: bool = True) -> li
             out += [f"category_order value {k} of {len(order.values)}: {p}"
                     for p in _category_order_problems({**data, "category_order": v}, rules, strict)]
         return out
-    alternatives = [k for k, r in enumerate(rules) if isinstance(r, dict)
-                    and any(isinstance(r.get(f), _Repeated) for f in ("category", "direction"))]
-    if alternatives:
-        # A rule with alternative categories (or directions) has one of them at a time: each
-        # is checked as the rule's only one, beside the rules given once, so no fault is made
-        # from two alternatives counted together (review 43).
-        fixed = [r for k, r in enumerate(rules) if k not in alternatives]
-        out = _category_order_problems(data, fixed, strict)
-        for k in alternatives:
-            for variant in _variants(rules[k])[1:]:
-                out += _category_order_problems(data, [*fixed, variant], strict)
-        return list(dict.fromkeys(out))
     if not strict:
         return ["a frozen table has no category_order"] if "category_order" in data else []
     if order is None:
@@ -723,17 +719,22 @@ def _category_order_problems(data: dict, rules: list, strict: bool = True) -> li
     problems = [f"category_order: {c!r} is not a category" for c in order if c not in categories]
     if len(set(order)) != len(order):
         problems.append("category_order: a category is listed twice")
-    def every(value: object) -> list:  # each value given, a repeated field's included (review 42)
-        return list(value.values) if isinstance(value, _Repeated) else [value]
-
-    credit_cats = {c for r in rules if isinstance(r, dict)
-                   and any(d in ("in", "any") for d in every(r.get("direction")) if isinstance(d, str))
-                   for c in every(r.get("category")) if isinstance(c, str) and c in categories}
-    by_bucket: dict[object, set[str]] = {}
-    for c in credit_cats:
-        by_bucket.setdefault(CREDIT_BUCKET.get(Category(c), c), set()).add(c)
-    for bucket, cats in sorted(by_bucket.items(), key=lambda kv: str(kv[0])):
-        missing = sorted(cats - set(order)) if len(cats) > 1 else []
+    # Per credit rule, the categories it may take: one, or each value of a repeated field,
+    # which it takes one at a time. A bucket needs an order for a category only where another
+    # rule can bring a different category of that bucket at the same time: alternatives on one
+    # rule never coexist, and values on different rules always may (reviews 42 to 44).
+    per_rule = [{c for c in _every(r.get("category")) if isinstance(c, str) and c in categories}
+                for r in rules if isinstance(r, dict)
+                and any(d in ("in", "any") for d in _every(r.get("direction")) if isinstance(d, str))]
+    by_bucket: dict[object, list[set[str]]] = {}
+    for cats in per_rule:
+        for bucket in {CREDIT_BUCKET.get(Category(c), c) for c in cats}:
+            by_bucket.setdefault(bucket, []).append({c for c in cats if CREDIT_BUCKET.get(Category(c), c) == bucket})
+    for bucket, sets in sorted(by_bucket.items(), key=lambda kv: str(kv[0])):
+        needed = {c for i, mine in enumerate(sets) for c in mine
+                  if any(other - {c} for j, other in enumerate(sets) if j != i)}
+        cats = set().union(*sets)
+        missing = sorted(needed - set(order))
         if missing:
             name = getattr(bucket, "value", bucket)
             problems.append(f"category_order: bucket {name} has categories {sorted(cats)} but does not order "
