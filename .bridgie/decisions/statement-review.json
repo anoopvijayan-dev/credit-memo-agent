@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 129,
+  "next_id": 130,
   "decisions": [
     {
       "id": "D1",
@@ -2637,6 +2637,26 @@
       "decided_at": "2026-11-20T01:17:17.684Z",
       "effect": "design approved",
       "created_at": "2026-11-20T01:17:15.341Z"
+    },
+    {
+      "id": "D129",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Judged against the supplied revision 13. src/cma/case.py:191–324 checks canonical entry bytes, chain order, and recorded hashes and names the first damaged or incomplete entry. Lines 429–570 cover holder, free-case, steady and untestable-lock reads. Lines 581–593 provide the integrity guard for sign-off, whose production integration is assigned to T27. Lines 606–760 cover writer ownership, inherited handles and reentrant saves. Lines 782–886 cover expected position, repair and lock rechecks. src/cma/cli.py:321–338 exposes verification. The runner logs show the named tamper, rebuild, torn-entry, repeat-submit, lock replacement and reentrancy tests passed. Reviewed empty, malformed and Unicode inputs, UTC timestamps, the absence of currency arithmetic, partial failures, filesystem permissions, case-folder isolation, CLI consumers and migration scope. The repair path can overwrite a save whose writer was told it was recorded and can publish after the log grew since its check.); major: Lock replacement can let an append and a repair both report success at the same position and leave an intact log that has lost the acknowledged append. at src/cma/case.py:822; major: Repair publishes from a stale check when the log grows. The size check at line 874 applies only to append. at src/cma/case.py:822; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T01:18:45.885Z"
     }
   ]
 }
