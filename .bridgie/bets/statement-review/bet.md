@@ -303,6 +303,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-20 D155 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-20 D151 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Take-back re-checks both lock files and answers not confirmed when refused (D149); durability failure not confirmed; vanished case lock looks again (7c8fba2). → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 - 2026-11-20 D152 (unblock): take over manually — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Only the pinned frozen table skips the v2 checks (9042fb4). → task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03 [Anoop Vijayan]
+- 2026-11-20 D154 (question): Every step of a save after its check, as revision 18 writes R42 (design default; T12 maps the error at those four call sites to not recorded, naming it, before its review, as 7c8fba2 already does where the head record is published) — Recommended option, chosen under the owner's standing approval of 2026-11-19 (always choose the recommended approach). Built in T12 51c8b68. → recorded [Anoop Vijayan]
 
 ## Idea
 
