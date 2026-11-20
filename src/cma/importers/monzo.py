@@ -319,6 +319,11 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
                 f"line {line_of[tid]}: {tid}: walked balance {_gbp(bal)} disagrees with Monzo's {_gbp(monzo_bal)}; "
                 "the export may be missing transactions"
             )
+        # Never write a cell the statement loader could not read back (T04 review 50).
+        for name, cell in (("id", tid), ("description", desc)):
+            if len(cell) > csv.field_size_limit():
+                raise MonzoImportError(f"line {line_of[tid]}: the {name} would be {len(cell):,} characters, longer "
+                                       f"than the {csv.field_size_limit():,} a statement's CSV reader reads")
         out_rows.append({"id": tid, "date": d.isoformat(), "description": desc,
                          "amount": _gbp(amount), "balance": _gbp(bal)})
 

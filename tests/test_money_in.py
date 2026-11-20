@@ -1391,3 +1391,40 @@ def test_a_foreign_long_record_open_to_the_end_still_refuses_the_export(tmp_path
                    "tx_3,03/01/2026,09:00:00,Faster payment,ACME,-1.00,GBP,89.00\n")
     with pytest.raises(monzo.MonzoImportError, match=r"line 3: a field is too long to read.*not closed"):
         monzo.convert(src, tmp_path / "o.csv")
+
+
+@pytest.fixture
+def small_field_limit():
+    """The CSV reader's field limit lowered for one test, and restored."""
+    import csv as csv_module
+
+    old = csv_module.field_size_limit()
+    csv_module.field_size_limit(20)
+    yield 20
+    csv_module.field_size_limit(old)
+
+
+@pytest.mark.contracts
+def test_reading_on_past_many_long_records_never_recurses(tmp_path, small_field_limit):
+    """T04 review 50: reading on past each record with a field too long to read recursed once
+    per record, so enough of them exhausted the stack before any line was named."""
+    from cma.importers import monzo
+
+    rows = [f"tx_{k},02/01/2026,09:00:00,Card payment,{'N' * 30},-5.00,EUR," for k in range(1500)]
+    src = tmp_path / "m.csv"
+    src.write_text(_MONZO_HEAD + "tx_a,01/01/2026,09:00:00,Faster,ACME,-10.00,GBP,90.00\n" + "\n".join(rows) + "\n")
+    r = monzo.convert(src, tmp_path / "o.csv")
+    assert r.rows == 1 and r.skipped_non_gbp == 1500
+
+
+@pytest.mark.contracts
+def test_monzo_never_writes_a_cell_the_statement_loader_cannot_read(tmp_path, small_field_limit):
+    """T04 review 50: two cells each under the reader's limit made a description over it, so
+    the import succeeded and wrote a statement the loader refuses."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance,Notes and #tags\n"
+                   "tx_1,01/01/2026,09:00,Faster,ACMEACMEACMEACME,-10.00,GBP,90.00,INV-12345678901\n")
+    with pytest.raises(monzo.MonzoImportError, match="line 2: the description would be"):
+        monzo.convert(src, tmp_path / "o.csv")

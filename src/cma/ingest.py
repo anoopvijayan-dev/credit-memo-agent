@@ -115,6 +115,7 @@ class CsvRecordError(ValueError):
         # reading after them, if anything (T04 review 46). None: reading stopped here.
         self.rest: list[tuple[int, dict]] | None = None
         self.rest_err: CsvRecordError | None = None
+        self.next_text: tuple[str, int] | None = None  # internal: where reading goes on
 
 
 def shown(raw: str | None, limit: int = 40) -> str:
@@ -288,7 +289,21 @@ def read_records(text: str) -> tuple[list[str], list[tuple[int, dict]], CsvRecor
 
 
 def _read_body(text: str, header: list[str], offset: int) -> tuple[list[tuple[int, dict]], CsvRecordError | None]:
-    """The records in `text`, which starts `offset` lines into the file, each with its line."""
+    """The records in `text`, which starts `offset` lines into the file, each with its line.
+    Reading on past each record with a field too long to read is a loop, never recursion, so
+    no number of such records can exhaust the stack (T04 review 50)."""
+    rows, first = _read_segment(text, header, offset)
+    err = first
+    while err is not None and err.next_text is not None:
+        rest, at = err.next_text
+        err.next_text = None
+        err.rest, err.rest_err = _read_segment(rest, header, at)
+        err = err.rest_err
+    return rows, first
+
+
+def _read_segment(text: str, header: list[str], offset: int) -> tuple[list[tuple[int, dict]], CsvRecordError | None]:
+    """The records in `text` up to the first one the reader stops on."""
     physical = list(io.StringIO(text, newline=""))
     # A missing trailing cell reads as "" rather than None, so no check meets a None (T04 review 29).
     reader = csv.DictReader(io.StringIO(text, newline=""), fieldnames=header, restval="")
@@ -336,7 +351,7 @@ def _read_body(text: str, header: list[str], offset: int) -> tuple[list[tuple[in
             # Reading goes on after the record (T04 review 47).
             rest = text[at + used:] if ended else ""
             lines = len(list(io.StringIO(text[:at + used], newline="")))
-            err.rest, err.rest_err = _read_body(rest, header, offset + lines)
+            err.next_text = (rest, offset + lines)  # read on by _read_body's loop
             return rows, err
         rows.append((start(before) + offset, row))
     # A quoted field still open at the end of the file would hold every line after its
