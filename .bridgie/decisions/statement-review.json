@@ -4266,12 +4266,12 @@
         "Keep both as guarantees under lock-file interference, and put only the reader's reports and interrupted saves outside (the next review may find another read-back interleaving)"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "As revision 23 writes it: both are what the tool tries under interference, not guarantees (design default; no build change)",
+      "free_text": "Owner decision of 2026-11-20 (accept edge cases, push the analysis engine forward). Recommended option, in line with it.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-20T11:23:31.456Z",
+      "effect": "recorded",
       "created_at": "2026-11-20T11:02:29.916Z"
     },
     {

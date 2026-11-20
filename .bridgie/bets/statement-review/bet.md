@@ -364,6 +364,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-20 D213 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-20 D208 (unblock): take over manually — Owner decision of 2026-11-20, given in chat: accept these as edge cases outside the guarantee and push development forward. T12 at 43332c6, judged against the scope limit in revision 23. → task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12 [Anoop Vijayan]
 - 2026-11-20 D209 (unblock): take over manually — Owner decision of 2026-11-20, given in chat: accept these as edge cases outside the guarantee and push development forward. T03 at 3ae10cc, judged against the scope limit in revision 23. → task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03 [Anoop Vijayan]
+- 2026-11-20 D211 (question): As revision 23 writes it: both are what the tool tries under interference, not guarantees (design default; no build change) — Owner decision of 2026-11-20 (accept edge cases, push the analysis engine forward). Recommended option, in line with it. → recorded [Anoop Vijayan]
 
 ## Idea
 
