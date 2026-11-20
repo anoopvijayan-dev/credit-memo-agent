@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 224,
+  "next_id": 227,
   "decisions": [
     {
       "id": "D1",
@@ -4507,6 +4507,67 @@
       "decided_at": "2026-11-20T13:01:55.233Z",
       "effect": "changes requested: Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended option. Write D220, and two clarifications from T04's review 3 (0c63ca4). R2: amounts and balances are read exactly from the statement text and counted in whole pence; an amount of £10,000,000,000,000 or more, or a statement whose money in or money out totals that much, is refused at import, named, since no figure could then be reported to the penny as the float the DTO carries (fifteen significant digits); below that, every figure is reported to the penny. P2 and R1/R54: M1 to M16 keep the evidence the previous release gave them (the dual run compares them unchanged), so M6 cites the line that closed each overdrawn day; the new derived figures (and monthly balance and overdrawn cells) cite every line their calculation reads. Keep everything else in revision 24.; re-run bridgie shape statement-review",
       "created_at": "2026-11-20T13:01:55.219Z"
+    },
+    {
+      "id": "D224",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-25"
+      },
+      "context": "R2 (revision 25, D223) refuses at import a statement whose money in or money out totals £10,000,000,000,000 or more, so that every figure can be reported to the penny as the float the figures are handed on in. R41 (Tier 2) combines the flows of a case's accounts, so two statements each below the limit could give a combined money in that no float carries to the penny, and R2's 'every money figure to the penny' would then fail for that case. D223 speaks of a statement, so revision 25 leaves R41 as it is and puts the default in the design only (C3, C4). Multi-account cases are Tier 2, so no task built yet is affected either way.",
+      "options": [
+        "Refuse the import that would bring a case's combined money in or money out to the limit, naming the account; say it in R41 in the next revision (design default; no build change now)",
+        "Show the combined flow figures as n/a with the reason, as R41 does for balances over dates that do not overlap; say it in R41 in the next revision",
+        "Leave R41 as it is; a statement is the unit D223 meant"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T13:16:42.828Z"
+    },
+    {
+      "id": "D225",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-25"
+      },
+      "context": "P2 (revision 25, D223) has the new derived figures and the monthly balance and overdrawn-day cells cite every line their calculation reads; for a figure read from end-of-day balances, the line that set the close of every day it reads. Read that way, the month's lowest end-of-day balance cites every close in the month (up to 31 lines), as the month's average and days-overdrawn cells do, while lowest balance (M5) keeps the previous release's evidence, the one line that set it. Revision 24 had read 'every line its calculation reads' for a lowest balance as the line that set it, and verify-129 showed that a reviewer reads the phrase at its finest grain. T06, which builds the monthly summary, has not started, so neither option costs anything yet.",
+      "options": [
+        "Every close in the month, as revision 25 writes P2 and R11 (design default)",
+        "The line that set it, as M5; P2 and R11 name that cell's evidence apart in the next revision"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T13:16:42.844Z"
+    },
+    {
+      "id": "D226",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Approve the design and requirements (R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R18 R19 R20 R21 R22 R23 R24 R25 R26 R27 R28 R29 R30 R31 R32 R33 R34 R35 R36 R37 R38 R39 R40 R41 R42 R43 R44 R45 R46 R47 R48 R50 R51 R52 R53 R54 R55 R56 P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20) for 'statement-review'? Branch bridgie/statement-review from claude/busy-ride-h88y5r.",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T13:16:42.856Z"
     }
   ]
 }
