@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 209,
+  "next_id": 210,
   "decisions": [
     {
       "id": "D1",
@@ -4214,6 +4214,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-20T10:35:50.127Z"
+    },
+    {
+      "id": "D209",
+      "type": "unblock",
+      "task": "T03",
+      "raised_by": null,
+      "context": "Task T03 \"v2 rule tables as data (acquirers, gateways, marketplaces, delivery platforms, lenders and MCA providers, own pots and savings, cash paid in, cash-withdrawal wording, HMRC, refunds, explained non-trading) and the categoriser precedence with per-line rule provenance, used by cma run under CMA_RULESET=v2; test: table-driven cases per list, with each line's rule id recorded\" is blocked after 6 attempts. Last verdict fail: R4 fail (Applied the supplied revision 22. The repository copy is revision 2 (.bridgie/specs/statement-review/requirements.md:5). Mapped the shipped lists and directions at src/cma/rules/v2.yaml:63,74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest-match and overlap handling at src/cma/categorise.py:1125–1198, bank-code and bucket precedence at :1234–1251, and overrides, ambiguity candidates, profile names and firm rules at :1254–1330. Traced CMA_RULESET selection and per-line provenance through src/cma/graph.py:188–223,250–253 and src/cma/cli.py:224–229. Checked the pinned digest, changed-v1 refusal, repeated values and matcher builds at src/cma/categorise.py:429–690,829–854,960–989. The validator still misses faults when a repeated field changes whether the bank code applies to credits or when another malformed key prevents inspection of a rule mapping. Reviewed double submission, concurrent output and partial writes at src/cma/cli.py:81–86,146–158,224–229, amount, date and Unicode boundaries at src/cma/ingest.py:42–57,98–110 and src/cma/categorise.py:228,1001–1009, scope and case isolation at src/cma/mcp_server.py:37–55 and src/cma/categorise.py:1412–1425, and changed evidence and MCP consumers at src/cma/graph.py:188–223 and src/cma/mcp_server.py:90–105. Runner logs show 847 full-suite, 225 contract, 138 invariant and 83 dual-run passes, including named list, CLI provenance, idempotency, rollback, checkpoint, timing and both offline evaluation tests. Review was read-only.); major: The mandatory bank-code check counts a returned-payment rule as present in every variant even when a repeated direction makes one variant debit-only. The rule-level flag and anchor errors are reported, but the table-wide absence of a bank code for credits is omitted. at src/cma/categorise.py:632; major: An invalid mapping key can hide both a repeated field and a forbidden exception in the same rule. The base YAML constructor rejects the whole mapping before duplicate collection, leaving validation only an unbuilt rule instead of the rule's individual faults. at src/cma/categorise.py:829; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T10:39:38.993Z"
     }
   ]
 }
