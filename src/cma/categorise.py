@@ -489,7 +489,9 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
             if "protected" in r:
                 if not isinstance(r["protected"], bool):
                     problems.append(f"{where}: protected must be true or false")
-                elif r["protected"] and any(not isinstance(p, dict) or not p.get("protected") for p in rules[:i - 1]):
+                elif r["protected"] and any(not isinstance(p, dict)
+                                            or not all(x is True for x in _every(p.get("protected")))
+                                            for p in rules[:i - 1]):
                     # One ordered pass and the precedence agree only if the protected rules come first.
                     problems.append(f"{where}: a protected rule must come before every rule that is not")
             if "bank_code" in r:
@@ -570,9 +572,11 @@ def validate_ruleset(data: object, expected_id: str, source: str = "rules", sha2
                 if "stage" not in r:
                     problems.append(f"{where}: missing stage (line_type or names)")
                 elif r["stage"] == "line_type":
-                    if not r.get("protected"):
+                    # Every value given counts, here and for the earlier rules (review 43): a
+                    # repeated field is never read through its placeholder.
+                    if not all(x is True for x in _every(r.get("protected"))):
                         problems.append(f"{where}: a line_type rule must be protected")
-                    if any(isinstance(p, dict) and p.get("stage") == "names" for p in rules[:i - 1]):
+                    if any(isinstance(p, dict) and "names" in _every(p.get("stage")) for p in rules[:i - 1]):
                         problems.append(f"{where}: a line_type rule must come before every names rule")
             if vi == 0:  # once per rule, as given; each value of a repeated id counts (review 41)
                 given = r.get("id")
@@ -697,6 +701,18 @@ def _category_order_problems(data: dict, rules: list, strict: bool = True) -> li
             out += [f"category_order value {k} of {len(order.values)}: {p}"
                     for p in _category_order_problems({**data, "category_order": v}, rules, strict)]
         return out
+    alternatives = [k for k, r in enumerate(rules) if isinstance(r, dict)
+                    and any(isinstance(r.get(f), _Repeated) for f in ("category", "direction"))]
+    if alternatives:
+        # A rule with alternative categories (or directions) has one of them at a time: each
+        # is checked as the rule's only one, beside the rules given once, so no fault is made
+        # from two alternatives counted together (review 43).
+        fixed = [r for k, r in enumerate(rules) if k not in alternatives]
+        out = _category_order_problems(data, fixed, strict)
+        for k in alternatives:
+            for variant in _variants(rules[k])[1:]:
+                out += _category_order_problems(data, [*fixed, variant], strict)
+        return list(dict.fromkeys(out))
     if not strict:
         return ["a frozen table has no category_order"] if "category_order" in data else []
     if order is None:
@@ -838,6 +854,11 @@ class _Repeated(_Unbuilt):
     def __init__(self, text: str, tag: str, values: list):
         super().__init__(text, tag)
         self.values = values
+
+
+def _every(value: object) -> list:
+    """Each value given for a field: a repeated field's values, or the one value."""
+    return list(value.values) if isinstance(value, _Repeated) else [value]
 
 
 def _variants(r: dict) -> list[dict]:

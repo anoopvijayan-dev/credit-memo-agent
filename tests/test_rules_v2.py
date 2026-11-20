@@ -2428,3 +2428,34 @@ def test_a_repeated_category_still_counts_toward_the_category_order():
     b = {"id": "b", "names": ["B"], "direction": "in", "category": "cash_deposit", "stage": "names"}
     with pytest.raises(RulesetError, match="category_order"):
         validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, a, b]}, expected_id="v2")
+
+
+
+@pytest.mark.contracts
+def test_an_earlier_rule_with_a_repeated_stage_counts_each_stage_for_ordering():
+    """T03 review 43: an earlier rule given stage both line_type and names still counts as a
+    names rule for the ordering check."""
+    earlier = {"id": "e", "names": ["E"], "direction": "in", "category": "cash_deposit",
+               "stage": _repeated("line_type", "names"), "protected": True}
+    cue = {"id": "c", "names": ["C"], "direction": "in", "protected": True, "stage": "line_type"}
+    with pytest.raises(RulesetError, match=r"\(c\): a line_type rule must come before every names rule"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, earlier, cue]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_a_repeated_protected_value_that_is_false_is_still_checked():
+    """T03 review 43: protected given as true and false is not taken as true."""
+    cue = {"id": "c", "names": ["C"], "direction": "in", "protected": _repeated(True, False), "stage": "line_type"}
+    with pytest.raises(RulesetError, match=r"\(c\): a line_type rule must be protected"):
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, cue]}, expected_id="v2")
+
+
+@pytest.mark.contracts
+def test_alternative_categories_on_one_rule_are_never_counted_together():
+    """T03 review 43: a rule given two categories has one at a time, so no category order is
+    asked for that no single value would need."""
+    alone = {"id": "a", "names": ["A"], "direction": "in", "category": _repeated("cash_deposit", "revenue_transfer"),
+             "stage": "names"}
+    with pytest.raises(RulesetError) as e:
+        validate_ruleset({"id": "v2", "frozen": False, "rules": [BANK, alone]}, expected_id="v2")
+    assert "category_order" not in str(e.value) and "category holds a repeated key" in str(e.value)
