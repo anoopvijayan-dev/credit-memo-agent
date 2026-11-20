@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 120,
+  "next_id": 121,
   "decisions": [
     {
       "id": "D1",
@@ -2458,6 +2458,26 @@
       "decided_at": "2026-11-20T00:27:04.092Z",
       "effect": "task T03 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T03",
       "created_at": "2026-11-20T00:19:20.083Z"
+    },
+    {
+      "id": "D120",
+      "type": "unblock",
+      "task": "T12",
+      "raised_by": null,
+      "context": "Task T12 \"Hash-chained append-only case log: each entry hashed over the exact bytes written, single-writer lock, expected-position conflict, torn-last-entry detection naming the first bad entry, and a head file (head hash and count) compared on load; test (invariants, named p15): changed, removed and reordered entries, and a rebuilt chain that does not match the head file\" is blocked after 3 attempts. Last verdict fail: P15 fail (Judged against the supplied revision 12. The checkout at .bridgie/specs/statement-review/requirements.md:249 contains the earlier wording. src/cma/case.py:191–324 checks canonical entry bytes, hashes, chain order, recorded count and the first bad or incomplete entry. Lines 428–519 handle holder, free-case and steady reads. Lines 573–585 supply the integrity guard for sign-off, whose production integration is assigned to T27. Lines 599–713 cover ownership, fork refusal and lock identity. Lines 734–776 enforce expected position and guard repair. Lines 779–895 cover staging, publication and lock rechecks. src/cma/cli.py:308–338 exposes the reader. The passed runner logs show named tamper, rebuild, torn-entry, duplicate-submit, contention, strict JSON, file mode and CLI tests ran. The review also traced UTC timestamps, separate case paths, partial failures and CLI consumers. The busy-gate path can report an unheld case as being saved, and an interrupted acquisition can leave the case locked after writer() raises.); major: A busy gate with no case-lock file is reported as an active save. The case lock was never observed held, so this does not meet the revision 12 conditions for the busy-gate and held-case result. at src/cma/case.py:483; major: An interrupt after the case lock is registered but before writer() finishes entering leaves the case locked without a live writer context. at src/cma/case.py:665; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-20T00:28:31.334Z"
     }
   ]
 }
