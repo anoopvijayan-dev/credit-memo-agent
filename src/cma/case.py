@@ -899,12 +899,14 @@ class CaseLog:
         admits it and the outer save's check would then be stale (T12 review 20)."""
         me = _holder_id()
         token = object()
-        # One step: setdefault tests and registers together, so no signal handler can run
-        # between the two and start a save that passes the test too (review 38).
-        if self._saving.setdefault(me, token) is not token:
-            raise CaseLogError(f"{self.path}: another save on this case log is under way in "
-                               "this thread; this save was refused")
         try:
+            # One step: setdefault tests and registers together, so no signal handler can run
+            # between the two and start a save that passes the test too (review 38). Inside
+            # the region that removes it, so an interruption just after cannot leave the
+            # thread unable to save again (review 42); only this save's own token is removed.
+            if self._saving.setdefault(me, token) is not token:
+                raise CaseLogError(f"{self.path}: another save on this case log is under way in "
+                                   "this thread; this save was refused")
             yield
         finally:
             if self._saving.get(me) is token:
@@ -1152,12 +1154,19 @@ class CaseLog:
             except CaseLocked as e:
                 # Refused partway through a short write: part of the line is on disk, past
                 # the recorded entries, as a crash leaves it. The save is not recorded, and
-                # never reported as nothing written (T12 review 26).
+                # never reported as nothing written (T12 review 26). What stopped it is said
+                # in the save's own words, never chained: the refusal may be another
+                # operation's, from a signal handler, saying nothing was written (review 42).
                 if os.fstat(fd).st_size > check.intact_bytes:
-                    raise SaveNotRecorded(f"{self.path}: a case lock file was removed or replaced while "
-                                          "this save was being written; part of its entry was written "
-                                          "and the save was not recorded: the next holder confirms "
-                                          "dropping it") from e
+                    try:
+                        self._require_lock_in_place()
+                        why = f"the write was interrupted ({e.__class__.__name__})"
+                    except CaseLocked:
+                        why = "a case lock file was removed or replaced while this save was being written"
+                    except OSError as err:
+                        why = f"the case lock files could not be examined ({err.__class__.__name__})"
+                    raise SaveNotRecorded(f"{self.path}: {why}; part of its entry was written and the save "
+                                          "was not recorded: the next holder confirms dropping it") from None
                 raise
             os.fsync(fd)
         finally:

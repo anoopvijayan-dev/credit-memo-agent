@@ -2590,10 +2590,11 @@ def test_a_save_names_an_os_error_in_its_own_reads(tmp_path, monkeypatch, site):
 
 
 def _chain(e):
+    """The report as a traceback shows it: causes, and context unless suppressed (from None)."""
     seen = []
     while e is not None and e not in seen:
         seen.append(e)
-        e = e.__cause__ or e.__context__
+        e = e.__cause__ or (None if e.__suppress_context__ else e.__context__)
     return " | ".join(str(x) for x in seen)
 
 
@@ -3137,3 +3138,42 @@ def test_a_save_whose_check_judged_nothing_is_refused_as_unchecked_not_broken(tm
         else:
             log.drop_torn_entry(expected=2, by="A. Person")
     assert not isinstance(e.value, case.CaseLogBroken)
+
+
+@pytest.mark.invariants
+def test_an_unrelated_refusal_mid_write_never_speaks_for_the_save(tmp_path, monkeypatch):
+    """T12 review 42: a refusal raised during a short write by something else (a handler)
+    is not chained and not called a replaced lock; the save says it was not recorded."""
+    log = _log(tmp_path, 2)
+    real_write, calls = os.write, []
+
+    def short_then_unrelated(fd, data):
+        calls.append(None)
+        if len(calls) == 1 and len(data) > 10:
+            n = real_write(fd, bytes(data[:10]))
+            return n
+        raise case.CaseLocked("another window: nothing was written")
+
+    monkeypatch.setattr(case.os, "write", short_then_unrelated)
+    with pytest.raises(case.SaveNotRecorded, match="write was interrupted") as e:
+        log.append("override", {"n": 3}, expected=2)
+    assert "nothing was written" not in _chain(e.value) and "removed or replaced" not in str(e.value)
+
+
+@pytest.mark.invariants
+def test_an_interruption_entering_the_save_guard_leaves_no_stale_save(tmp_path, monkeypatch):
+    """T12 review 42: interrupted just after the guard registers, the thread can save again."""
+    log = _log(tmp_path, 2)
+
+    class Interrupting(dict):
+        def setdefault(self, key, value):
+            super().setdefault(key, value)
+            raise KeyboardInterrupt  # just after registering
+
+    saving = Interrupting()
+    log._saving = saving
+    with pytest.raises(KeyboardInterrupt):
+        log.append("override", {"n": 3}, expected=2)
+    assert not saving  # the guard took its own registration back
+    log._saving = {}
+    log.append("override", {"n": 3}, expected=2)
