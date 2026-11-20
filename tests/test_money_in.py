@@ -640,3 +640,57 @@ def test_returned_payment_matching_takes_its_pence_from_the_figures_layer(monkey
     assert categorise.link_reversals(st).transactions[1].reverses is None
     monkeypatch.setattr(metrics, "size_pence", lambda t: 1)  # the figures layer decides the match
     assert categorise.link_reversals(st).transactions[1].reverses == "D1"
+
+
+def _over_limit_csv(path, bad_lines: int, at_limit_line: bool = False):
+    rows = ["id,date,description,amount,balance",
+            "T1,2026-01-01,A,9999999999999.99,9999999999999.99",
+            "T2,2026-01-02,B,9999999999999.99,9999999999999.99"]
+    rows += [f"X{i},SECRET-DATE,C,1.00,1.00" for i in range(bad_lines)]
+    if at_limit_line:
+        rows.append("BIG,2026-01-03,D,10000000000000.00,1.00")
+    path.write_text("\n".join(rows) + "\n")
+    return path
+
+
+@pytest.mark.contracts
+def test_import_flow_totals_and_balance_chain_come_from_the_figures_layer(monkeypatch, tmp_path):
+    """T04 review 13: the loader and the Monzo importer do no money arithmetic of their own;
+    the flow totals, the balance chain and the walk are the figures layer's (R2)."""
+    from cma.importers import monzo
+
+    ok = tmp_path / "ok.csv"
+    ok.write_text("id,date,description,amount,balance\nT1,2026-01-01,A,5.00,5.00\nT2,2026-01-02,B,1.00,6.00\n")
+    ingest.load_csv(ok, today=date(2026, 6, 1))
+    monkeypatch.setattr(ingest, "flows_at_limit", lambda amounts: ["money out"])
+    with pytest.raises(ingest.StatementError, match="money out totals"):
+        ingest.load_csv(ok, today=date(2026, 6, 1))
+    monkeypatch.setattr(ingest, "follows", lambda *a: False)
+    with pytest.raises(ingest.StatementError, match="line 3: running balance"):
+        ingest.load_csv(ok, today=date(2026, 6, 1))
+
+    src = tmp_path / "m.csv"
+    src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance\n"
+                   "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n")
+    assert monzo.convert(src, tmp_path / "o.csv").closing_balance == 90.0
+    monkeypatch.setattr(monzo, "flows_at_limit", lambda amounts: ["money in"])
+    with pytest.raises(monzo.MonzoImportError, match="money in totals"):
+        monzo.convert(src, tmp_path / "o.csv")
+    monkeypatch.setattr(monzo, "flows_at_limit", lambda amounts: [])
+    monkeypatch.setattr(monzo, "running_balances", lambda opening, amounts: [opening + 1 for _ in amounts])
+    with pytest.raises(monzo.MonzoImportError, match="walked balance"):
+        monzo.convert(src, tmp_path / "o.csv")
+
+
+@pytest.mark.contracts
+def test_the_cli_says_which_flow_and_which_lines_reached_the_limit_however_many_lines_are_wrong(tmp_path):
+    """T04 review 13: `cma run` shows the first problems only; the flow at the limit, and every
+    line whose amount or balance is at it, are always among them."""
+    csv = _over_limit_csv(tmp_path / "big.csv", 25, at_limit_line=True)
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    shown = str(e.value)
+    assert "money in totals £10,000,000,000,000 or more" in shown
+    assert f"line {3 + 25 + 1}: amount '10000000000000.00' is £10,000,000,000,000 or more" in shown
+    r = CliRunner().invoke(app, ["run", str(csv), "--yes", "--reviewer", "A"])
+    assert r.exit_code != 0 and "money in totals" in r.output and "line 29: amount" in r.output

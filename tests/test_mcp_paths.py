@@ -72,3 +72,17 @@ def test_a_refusal_says_which_flow_reached_the_limit_however_many_lines_are_wron
     msg = str(e.value)
     assert "money in totals £10,000,000,000,000 or more" in msg and "money out" not in msg
     assert "SECRET-DATE" not in msg and "line 3" in msg
+
+
+def test_a_refusal_names_every_line_at_the_limit_however_many_lines_are_wrong(data):
+    """T04 review 13: the line whose amount reaches R2's limit is named through MCP even when
+    more than ten other lines are wrong; its value is not echoed."""
+    rows = ["id,date,description,amount,balance"]
+    rows += [f"X{i},SECRET-DATE,C,1.00,1.00" for i in range(12)]
+    rows.append("BIG,2026-01-03,D,10000000000000.00,1.00")
+    (data / "data" / "big.csv").write_text("\n".join(rows) + "\n")
+    with pytest.raises(ValueError) as e:
+        mcp_server.statement_summary("big.csv")
+    msg = str(e.value)
+    assert "£10,000,000,000,000 or more on line 14" in msg and "10000000000000.00" not in msg
+    assert "SECRET-DATE" not in msg and "and more" in msg

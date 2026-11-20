@@ -20,7 +20,18 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+from .metrics import (
+    AT_LIMIT,
+    MAX_STATEMENT_PENCE,
+    at_limit,
+    float_pence,
+    flows_at_limit,
+    follows,
+    text_pence,
+)
 from .models import Statement, Transaction
+
+__all__ = ["MAX_STATEMENT_PENCE", "StatementError", "load_csv"]
 
 REQUIRED = ("id", "date", "description", "amount", "balance")
 MAX_REPORTED = 20
@@ -30,9 +41,14 @@ class StatementError(ValueError):
     """The statement file cannot be trusted; nothing should be computed from it."""
 
     def __init__(self, path: Path, problems: list[str]):
-        self.problems = problems
-        shown = problems[:MAX_REPORTED]
-        more = f"\n  … and {len(problems) - MAX_REPORTED} more" if len(problems) > MAX_REPORTED else ""
+        # Problems with the whole statement, then every line at the limit, are always said in
+        # full; other line problems fill the rest of the space (R2, T04 review 13).
+        whole = [p for p in problems if not p.startswith("line ")]
+        limit = [p for p in problems if p.startswith("line ") and AT_LIMIT in p]
+        rest = [p for p in problems if p.startswith("line ") and AT_LIMIT not in p]
+        self.problems = whole + limit + rest
+        shown = whole + limit + rest[:max(0, MAX_REPORTED - len(whole) - len(limit))]
+        more = f"\n  … and {len(problems) - len(shown)} more" if len(problems) > len(shown) else ""
         super().__init__(f"{path}: {len(problems)} problem(s)\n  " + "\n  ".join(shown) + more)
 
 
@@ -40,17 +56,18 @@ AMOUNT = re.compile(r"^[-+]?\d+(?:\.\d{1,2})?$")
 SPLIT_COLUMNS = {"paid in", "paid out", "money in", "money out", "debit", "credit"}
 
 
-def _pence(v: float) -> int:
-    """Amounts have at most two decimals (checked), so whole pence compare exactly."""
-    return round(v * 100)
-
-
 # A statement's amounts and balances are counted to the penny, and every figure is reported
 # as the float the DTO carries. Fifteen significant digits always round-trip through a
 # float, so amounts are taken up to 13 digits of pounds and two of pence, and a statement
 # whose money in or money out could total more is refused at import, named, rather than
-# reported a penny out (R2, revision 24; T04 review 3).
-MAX_STATEMENT_PENCE = 10**15
+# reported a penny out (R2, revision 24; T04 review 3). The limit and all the arithmetic on
+# money live in the figures layer, metrics (T04 review 13).
+
+
+def _over_limit(raw: str | None) -> bool:
+    text = (raw or "").strip()
+    p = text_pence(text) if AMOUNT.match(text) else None
+    return p is not None and at_limit(p)
 
 
 def _number(raw: str | None) -> float | None:
@@ -60,11 +77,11 @@ def _number(raw: str | None) -> float | None:
     text = (raw or "").strip()
     if not AMOUNT.match(text):
         return None
-    exact = Decimal(text)
-    if abs(exact) * 100 >= MAX_STATEMENT_PENCE:
+    p = text_pence(text)
+    if p is None or at_limit(p):
         return None
-    v = float(exact)
-    return v if math.isfinite(v) and Decimal(repr(v)) == exact else None
+    v = float(Decimal(text))
+    return v if math.isfinite(v) and float_pence(v) == p else None
 
 
 def load_csv(path: Path, account_name: str | None = None, today: date | None = None) -> Statement:
@@ -119,10 +136,13 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         if d and d > today:
             problems.append(f"line {i}: date {d} is in the future")
         amount, balance = _number(r["amount"]), _number(r["balance"])
-        if amount is None:
+        for field, value, raw in (("amount", amount, r["amount"]), ("balance", balance, r["balance"])):
+            if value is None and _over_limit(raw):
+                problems.append(f"line {i}: {field} {raw!r} is {AT_LIMIT}; no figure could be reported to the penny")
+        if amount is None and not _over_limit(r["amount"]):
             problems.append(f"line {i}: amount {r['amount']!r} is not a plain number like -1150.00 "
                             "(under £10,000,000,000,000)")
-        if balance is None:
+        if balance is None and not _over_limit(r["balance"]):
             problems.append(f"line {i}: balance {r['balance']!r} is not a plain number like 2304.17 "
                             "(under £10,000,000,000,000)")
         parsed.append((i, tid, d, (r["description"] or "").strip(), amount, balance))
@@ -140,7 +160,8 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
 
     prev_balance: float | None = None
     for line, _, _, _, amount, balance in parsed:
-        if None not in (amount, balance, prev_balance) and _pence(prev_balance) + _pence(amount) != _pence(balance):
+        if None not in (amount, balance, prev_balance) and not follows(
+                float_pence(prev_balance), float_pence(amount), float_pence(balance)):
             problems.append(
                 f"line {line}: running balance {balance:.2f} does not follow from previous {prev_balance:.2f} "
                 f"{'+' if amount >= 0 else '-'} {abs(amount):.2f}"
@@ -148,11 +169,8 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         if balance is not None:
             prev_balance = balance
 
-    money_in = sum(_pence(a) for _, _, _, _, a, _ in parsed if a is not None and a > 0)
-    money_out = sum(-_pence(a) for _, _, _, _, a, _ in parsed if a is not None and a < 0)
-    for name, flow in (("money in", money_in), ("money out", money_out)):  # each named (T04 review 6)
-        if flow >= MAX_STATEMENT_PENCE:
-            problems.append(f"{name} totals £10,000,000,000,000 or more: no figure could be reported to the penny")
+    for name in flows_at_limit([float_pence(a) for _, _, _, _, a, _ in parsed if a is not None]):
+        problems.append(f"{name} totals {AT_LIMIT}: no figure could be reported to the penny")  # each named
     if problems:
         raise StatementError(path, problems)
     txns = [Transaction(id=tid, date=d, description=desc, amount=amount, balance=balance)

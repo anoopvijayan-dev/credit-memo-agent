@@ -56,11 +56,22 @@ def _statement(path: str):
         # A problem with the whole statement (money in or out reaching the limit) is said in
         # full, ahead of the line labels, never cut off by them (R2, T04 review 12); a line's
         # text stays local, only its label is given.
-        whole = [x for x in e.problems if not x.startswith("line ")]
-        lines = sorted({x.split(":", 1)[0] for x in e.problems if x.startswith("line ")})
-        said = "; ".join(whole) + ("; " if whole and lines else "")
-        raise ValueError(f"{path}: statement refused, {len(e.problems)} problem(s): {said}"
-                         f"{'on ' + ', '.join(lines[:10]) if lines else ''}; run `cma run` locally to see them") from None
+        # Every line whose amount or balance is at the limit is named too, never cut off by
+        # the ten other labels (T04 review 13).
+        problems = e.problems
+        whole = [x for x in problems if not x.startswith("line ")]
+
+        def labels(at: bool) -> list[str]:
+            got = {x.split(":", 1)[0] for x in problems if x.startswith("line ") and (metrics.AT_LIMIT in x) == at}
+            return sorted(got, key=lambda label: int(label.split()[1]))
+
+        limit = labels(True)
+        other = [x for x in labels(False) if x not in limit]
+        parts = whole + ([f"amount or balance {metrics.AT_LIMIT} on {', '.join(limit)}"] if limit else [])
+        if other:
+            parts.append(f"other problems on {', '.join(other[:10])}{' and more' if len(other) > 10 else ''}")
+        raise ValueError(f"{path}: statement refused, {len(problems)} problem(s): {'; '.join(parts)}; "
+                         "run `cma run` locally to see them") from None
 
 
 @server.tool()

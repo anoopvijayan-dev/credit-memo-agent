@@ -30,11 +30,19 @@ import csv
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
-from decimal import Decimal
 from pathlib import Path
 
 from ..categorise import INVOICE_REF
-from ..ingest import MAX_STATEMENT_PENCE
+from ..metrics import (
+    AT_LIMIT,
+    at_limit,
+    flows_at_limit,
+    opening_before,
+    pounds,
+    pounds_text,
+    running_balances,
+    text_pence,
+)
 
 REQUIRED = ("Transaction ID", "Date", "Type", "Name", "Amount")
 PLAIN_MONEY = re.compile(r"^[-+]?\d+(?:\.\d{1,2})?$")
@@ -76,19 +84,17 @@ def _money(raw: str | None, field: str, line: int, *, limit: bool = True) -> int
     at = f"line {line}: " if line else ""  # line 0: the command line, not the export
     if not PLAIN_MONEY.match(text):
         raise MonzoImportError(f"{at}{field} {raw!r} is not a plain amount like -12.40")
-    p = Decimal(text) * 100
-    if p != p.to_integral_value():
+    p = text_pence(text)  # exact, in the figures layer (R2, T04 review 13)
+    if p is None:
         raise MonzoImportError(f"{at}{field} {raw!r} has more than two decimal places")
-    if limit and abs(p) >= MAX_STATEMENT_PENCE:
-        raise MonzoImportError(f"{at}{field} {raw!r} is £10,000,000,000,000 or more; no figure "
-                               "could be reported to the penny")
-    return int(p)
+    if limit and at_limit(p):
+        raise MonzoImportError(f"{at}{field} {raw!r} is {AT_LIMIT}; no figure could be reported to the penny")
+    return p
 
 
 def _gbp(p: int) -> str:
-    """Whole pence written as pounds with two decimals, exactly."""
-    sign = "-" if p < 0 else ""
-    return f"{sign}{abs(p) // 100}.{abs(p) % 100:02d}"
+    """Whole pence written as pounds with two decimals, by the figures layer."""
+    return pounds_text(p)
 
 
 def references(*fields: str | None) -> str:
@@ -186,7 +192,7 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
     parsed.sort(key=lambda x: (x[0], x[1], x[2]))
     first = parsed[0]
     # Everything below is whole pence (T04 review 4).
-    implied = first[5] - first[4] if first[5] is not None else None
+    implied = opening_before(first[5], first[4]) if first[5] is not None else None
     if opening_pence is None:
         if implied is None:
             raise MonzoImportError("first row has no Balance; pass --opening-balance")
@@ -200,18 +206,16 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             )
         source = "opening balance supplied"
 
-    money_in = sum(a for *_, a, _b in parsed if a > 0)
-    money_out = sum(-a for *_, a, _b in parsed if a < 0)
-    reached = [name for name, flow in (("money in", money_in), ("money out", money_out))
-               if flow >= MAX_STATEMENT_PENCE]  # each named (T04 review 6)
+    # The totals and the walk are figures-layer arithmetic (R2, T04 review 13).
+    reached = flows_at_limit([a for *_, a, _b in parsed])  # each named (T04 review 6)
     if reached:
         raise MonzoImportError(f"{' and '.join(reached)} {'total' if len(reached) > 1 else 'totals'} "
-                               "£10,000,000,000,000 or more: no figure could be reported to the penny")
+                               f"{AT_LIMIT}: no figure could be reported to the penny")
     out_rows = []
     bal = opening_pence
-    for d, _t, tid, desc, amount, monzo_bal in parsed:
-        bal += amount
-        if abs(bal) >= MAX_STATEMENT_PENCE:
+    for (d, _t, tid, desc, amount, monzo_bal), bal in zip(parsed, running_balances(opening_pence, [x[4] for x in parsed]),
+                                                          strict=True):
+        if at_limit(bal):
             raise MonzoImportError(f"{tid}: the running balance reaches £10,000,000,000,000; no figure could "
                                    "be reported to the penny")
         if monzo_bal is not None and monzo_bal != bal:
@@ -229,6 +233,6 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
         w.writerows(out_rows)
     return ImportResult(
         rows=len(out_rows), start=parsed[0][0], end=parsed[-1][0],
-        opening_balance=opening_pence / 100, closing_balance=bal / 100,
+        opening_balance=pounds(opening_pence), closing_balance=pounds(bal),
         balance_source=source, skipped_non_gbp=skipped,
     )

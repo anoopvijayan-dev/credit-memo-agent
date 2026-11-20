@@ -77,6 +77,72 @@ BUCKET_METRICS: dict[Bucket, tuple[str, str, str]] = {
 NOT_IN_SHARE = {Category.LOAN_DRAWDOWN, Category.RETURNED_DD, Category.OWN_ACCOUNT_TRANSFER}
 
 
+# --- Import arithmetic ----------------------------------------------------------------
+# The loader and the importers read text and report problems; every sum, difference and
+# conversion of money they need is done here, in the figures layer (R2, T04 review 13).
+
+# A statement's amounts, balances, money in and money out are each below £10,000,000,000,000
+# (revision 25): fifteen significant digits always round-trip through a float.
+MAX_STATEMENT_PENCE = 10**15
+AT_LIMIT = "£10,000,000,000,000 or more"  # how every problem at the limit says so
+
+
+def text_pence(text: str) -> int | None:
+    """A plain decimal's whole pence, read exactly from its text; None if it is not whole pence."""
+    try:
+        p = Decimal(text.strip()) * 100
+    except InvalidOperation:
+        return None
+    return int(p) if p.is_finite() and p == p.to_integral_value() else None
+
+
+def float_pence(v: float) -> int | None:
+    """A float's whole pence, read exactly from the decimal it prints as; None if it is not whole pence."""
+    return _whole_pence_exact(v)
+
+
+def at_limit(p: int) -> bool:
+    """Whether an amount or balance in pence is at or past the import limit."""
+    return abs(p) >= MAX_STATEMENT_PENCE
+
+
+def flows_at_limit(amounts) -> list[str]:
+    """Which of money in and money out, as totals of these whole-pence amounts, reach the limit."""
+    money_in = sum(a for a in amounts if a > 0)
+    money_out = sum(-a for a in amounts if a < 0)
+    return [name for name, flow in (("money in", money_in), ("money out", money_out)) if flow >= MAX_STATEMENT_PENCE]
+
+
+def follows(previous: int, amount: int, balance: int) -> bool:
+    """Whether a running balance follows from the one before it and the line's amount."""
+    return previous + amount == balance
+
+
+def opening_before(balance: int, amount: int) -> int:
+    """The balance before a line, from the balance after it and its amount."""
+    return balance - amount
+
+
+def running_balances(opening: int, amounts) -> list[int]:
+    """The balance after each line, walked from the opening balance, in whole pence."""
+    out, bal = [], opening
+    for a in amounts:
+        bal += a
+        out.append(bal)
+    return out
+
+
+def pounds_text(p: int) -> str:
+    """Whole pence written as pounds with two decimals, exactly: -1234 is "-12.34"."""
+    sign = "-" if p < 0 else ""
+    return f"{sign}{abs(p) // 100}.{abs(p) % 100:02d}"
+
+
+def pounds(p: int) -> float:
+    """Whole pence as the float pounds a result carries, refused if not exact."""
+    return _gbp(p)
+
+
 # 10**15 pence (£10 trillion): every whole number of pence below it has at most 15
 # significant digits, which a binary float holds and prints back exactly.
 MAX_PENCE = 10**15  # bound the tests draw amounts from; figures are checked for exactness (T04 review 2)
