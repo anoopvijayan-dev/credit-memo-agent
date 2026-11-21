@@ -141,11 +141,15 @@ class Metric(BaseModel):
         """The figure to the penny when it is money, for tables that show the money-in
         buckets beside total money in, so the shown parts add up to the shown whole."""
         if self.unit == "GBP" and self.value is not None:
-            # From the decimal the float reads back as, never by rounding the binary value,
-            # so the shown pence are the counted ones (T04 review 3).
-            exact = Decimal(repr(self.value)).quantize(Decimal("0.01"))
-            return f"{'-' if exact < 0 else ''}£{abs(exact):,.2f}"
+            return money_exact(self.value)
         return self.display()
+
+
+def money_exact(v: float) -> str:
+    """Money to the penny, for tables (R2). From the decimal the float reads back as, never
+    by rounding the binary value, so the shown pence are the counted ones (T04 review 3)."""
+    exact = Decimal(repr(v)).quantize(Decimal("0.01"))
+    return f"{'-' if exact < 0 else ''}£{abs(exact):,.2f}"
 
 
 class MonthlyCell(BaseModel):
