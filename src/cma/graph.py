@@ -177,7 +177,10 @@ def _shipped_descriptions() -> dict[str, str]:
 def _shipped_rules() -> dict[str, tuple]:
     """The shipped default policy's rules, by id: description, metric, operator, threshold."""
     try:
-        return {r["id"]: (r.get("description"), r.get("metric"), r.get("op"), float(r.get("threshold")))
+        def band(v):
+            return float(v) if v is not None else None
+        return {r["id"]: (r.get("description"), r.get("metric"), r.get("op"), float(r.get("threshold")),
+                          band(r.get("refer_below")), band(r.get("refer_above")))
                 for r in pol.load_policy().get("rules", []) if isinstance(r, dict) and isinstance(r.get("id"), str)}
     except Exception:  # no shipped rule known means none is sent
         return {}
@@ -185,10 +188,14 @@ def _shipped_rules() -> dict[str, tuple]:
 
 def _is_shipped(r, shipped: dict[str, tuple]) -> bool:
     """Whether a policy result's rule is the shipped policy's own rule, whole: its id, text,
-    metric and requirement. A custom rule that reuses a shipped id is custom (T17 review 6)."""
+    metric and requirement, referral bands included. A custom rule that reuses a shipped id is
+    custom (T17 reviews 6 and 7)."""
     want = shipped.get(r.rule_id)
-    return want is not None and want == (r.description, r.metric_id, r.op,
-                                         float(r.threshold) if r.threshold is not None else None)
+
+    def num(v):
+        return float(v) if v is not None else None
+    return want is not None and want == (r.description, r.metric_id, r.op, num(r.threshold),
+                                         num(r.refer_below), num(r.refer_above))
 
 
 def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = False) -> str:

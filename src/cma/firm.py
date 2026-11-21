@@ -18,6 +18,7 @@ server starts, so under the lock neither gets as far as a network call.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import weakref
 from dataclasses import dataclass
@@ -134,13 +135,16 @@ _STAMP: dict[int, tuple] = {}  # firm.yaml as it stood when each reading was mad
 
 
 def _stamp(root: Path) -> tuple:
-    """firm.yaml's size and change time, or that it is absent: a change since a reading makes
-    that reading stale. Taken with os.stat, not a read of the file."""
+    """firm.yaml as it stands: its size, change time and a hash of its bytes, or that it is
+    absent; any change since a reading makes that reading stale, even a file of the same size
+    and time (T17 reviews 6 and 7). Its bytes are hashed, not read as a configuration."""
+    path = root / FILE_NAME
     try:
-        st = (root / FILE_NAME).stat()
+        st = path.stat()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
         return ("absent",)
-    return (st.st_size, st.st_mtime_ns)
+    return (st.st_size, st.st_mtime_ns, digest)
 
 
 def unchanged_since(reading: FirmConfig) -> bool:
@@ -150,9 +154,9 @@ def unchanged_since(reading: FirmConfig) -> bool:
 
 def take_for_run(reading: object) -> bool:
     """Whether `reading` may be a run's reading: a reading load() made, for the folder in use,
-    that has driven no run before; the same reading handed to two graphs drives one run only,
-    and the other reads firm.yaml now (T17 review 6)."""
-    if not (isinstance(reading, FirmConfig) and _here(reading)) or id(reading) in _RAN:
+    that has driven no run before (T17 review 6), while firm.yaml is unchanged since it was
+    made, so a lock turned on before the run starts is the run's lock (T17 review 7)."""
+    if not (isinstance(reading, FirmConfig) and unchanged_since(reading)) or id(reading) in _RAN:
         return False
     _RAN.add(id(reading))
     return True

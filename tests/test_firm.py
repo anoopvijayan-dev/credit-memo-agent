@@ -310,15 +310,14 @@ def test_p18_cli_refuses_hosted_model_under_lock(home, no_network, tmp_path):
 
 
 @pytest.mark.invariants
-def test_p18_cli_run_reads_firm_yaml_once_and_records_what_dispatch_used(home, no_network, sdks, monkeypatch,
-                                                                         tmp_path):
-    # The run reads firm.yaml once, at its start, and every hosted request in it is checked
-    # against that reading: a lock turned on later in the run does not change the run, and
-    # the evidence records the value the request was checked against (verify-09, R29).
+def test_p18_a_lock_turned_on_before_the_graph_starts_is_the_runs_lock(home, no_network, sdks, monkeypatch,
+                                                                        tmp_path):
+    # verify-09 kept the CLI's first reading for the whole run, so a lock turned on after the
+    # client was made and before the graph started still let the draft be sent. A reading
+    # now becomes a run's only while firm.yaml is unchanged since it (T17 review 7): the run
+    # reads firm.yaml at its start, finds the lock on, and the request is refused before it
+    # is sent; nothing leaves the machine.
     (home / "firm.yaml").write_text("offline_lock: false\n")
-    reads = []
-    real_load = firm.load
-    monkeypatch.setattr(firm, "load", lambda *a, **k: reads.append(1) or real_load(*a, **k))
     real_init = llm.AnthropicLLM.__init__
 
     def init_then_lock(self, *a, **k):
@@ -327,18 +326,11 @@ def test_p18_cli_run_reads_firm_yaml_once_and_records_what_dispatch_used(home, n
 
     monkeypatch.setattr(llm.AnthropicLLM, "__init__", init_then_lock)
     monkeypatch.setattr(llm.AnthropicLLM, "_send", lambda self, s, u: llm.FakeLLM().complete(s, u))
-    out = tmp_path / "memo.md"
     r = CliRunner().invoke(app, ["run", str(_statement(tmp_path)), "--llm", "anthropic", "--yes",
-                                 "--reviewer", "A", "--out", str(out)])
-    assert r.exit_code == 0, r.output
-    # The drafting run read firm.yaml once and kept that reading; the review step after it is
-    # a later run of the graph, which reads firm.yaml again only because it changed since
-    # (T17 review 6). Unchanged, a whole run reads it once (the test below).
-    assert len(reads) == 2
-    record = json.loads((tmp_path / "memo.evidence.json").read_text())
-    assert record["egress"]["offline_lock"] is False
-    assert record["egress"]["destination"].startswith("anthropic:")
-    assert no_network == []
+                                 "--reviewer", "A", "--out", str(tmp_path / "memo.md")])
+    assert r.exit_code == 2 and "Refused" in r.output and "offline lock" in r.output, r.output
+    assert [c for c in sdks if c[1] == "request"] == [] and no_network == []
+    assert not (tmp_path / "memo.md").exists()
 
 
 @pytest.mark.invariants
@@ -1024,3 +1016,36 @@ def test_p18_a_saved_app_reads_the_lock_when_start_up_is_asked_for(home, no_netw
 
     asyncio.run(app({"type": "lifespan"}, delayed_startup, send))
     assert sent and sent[0]["type"] == "lifespan.startup.failed" and no_network == []
+
+
+
+@pytest.mark.invariants
+def test_p18_a_firm_yaml_replaced_with_one_of_the_same_size_and_time_is_still_a_change(home, no_network, sdks):
+    """T17 review 7: a reading was judged unchanged by firm.yaml's size and time, so a file of the
+    same length put back with the same time let an obsolete unlocked reading build a client."""
+    import os
+
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    st = (home / "firm.yaml").stat()
+    before = firm.load()
+    (home / "firm.yaml").write_text("offline_lock: truee\n"[:len("offline_lock: false\n")])
+    os.utime(home / "firm.yaml", ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert (home / "firm.yaml").stat().st_size == st.st_size
+    assert not firm.unchanged_since(before)
+    with pytest.raises((firm.OfflineLockError, firm.FirmConfigError)):
+        llm.AnthropicLLM(firm_config=before)
+    assert [c for c in sdks if c[1] == "client"] == [] and no_network == []
+
+
+@pytest.mark.invariants
+def test_p5_a_custom_rule_differing_only_in_a_referral_band_is_custom(home, tmp_path):
+    """T17 review 7 / P5: the whole-rule comparison ignored referral bands."""
+    from cma import categorise, ingest, metrics, policy
+
+    st = categorise.categorise(ingest.load_csv(_statement(tmp_path), account_name="ACME LTD"))
+    ms = metrics.compute(st)
+    custom = policy.load_policy()
+    rule = custom["rules"][0]
+    custom["rules"][0] = {**rule, "refer_below": float(rule.get("refer_below") or rule["threshold"]) + 7.5}
+    user = draft_prompt(st, ms, policy.evaluate(ms, custom))
+    assert f"| {rule['id']} |" not in user and "(custom id)" in user
