@@ -27,6 +27,7 @@ from typing import Any
 
 from .. import case as caselog
 from .. import metrics, overrides, store
+from ..categorise import RulesetError
 from ..ingest import StatementError
 from ..models import Metric, MonthlyCell, format_value, money_exact
 
@@ -106,7 +107,7 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
         out.update(state="refused", refusal=f"The case log is broken at entry {e.first_bad}: {e.reason}. "
                                             "No figures are shown until it is resolved.")
         return out
-    except (store.CaseStoreError, StatementError, metrics.AmountError) as e:
+    except (store.CaseStoreError, StatementError, metrics.AmountError, RulesetError) as e:
         out.update(state="refused", refusal=f"{str(e).rstrip('.')}. No figures are shown for this case.")
         return out
     except OSError as e:

@@ -140,10 +140,18 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         path = parts.path if parts else None
-        if path == "/":
-            self._send(200, self.server.page_html(), "text/html; charset=utf-8")
-        elif path == "/api/case":
-            self._send(200, self.server.case_json(), "application/json")
+        if path in ("/", "/api/case"):
+            # The summary is computed per request; a failure no refusal foresees is answered,
+            # naming nothing the case holds, rather than dropping the connection unanswered.
+            try:
+                if path == "/":
+                    body, kind = self.server.page_html(), "text/html; charset=utf-8"
+                else:
+                    body, kind = self.server.case_json(), "application/json"
+            except Exception:
+                self._send(500, b"The case could not be shown.\n")
+                return
+            self._send(200, body, kind)
         elif path in self.server.assets:
             body, kind = self.server.assets[path]
             self._send(200, body, kind)

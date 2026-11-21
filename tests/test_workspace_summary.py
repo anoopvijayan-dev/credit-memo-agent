@@ -382,3 +382,32 @@ def test_case_figures_names_the_account_of_a_case_that_does_not_reconcile(home, 
         overrides.case_figures(folder)
     assert e.value.account == "main" and e.value.lines == ["L2"]
     assert e.value.statement.by_id()["L2"].category == Category.SUPPLIER
+
+
+# --- failures the summary meets -------------------------------------------------------------
+
+
+@pytest.mark.contracts
+def test_a_ruleset_that_cannot_load_is_a_refusal_with_no_figures(home, tmp_path, serve, monkeypatch):
+    case_id, _ = _case(tmp_path)
+    monkeypatch.setenv("CMA_RULESET", "v9")
+    srv = serve(case_id)
+    data = _api(srv)
+    assert data["state"] == "refused" and data["accounts"] == []
+    assert "CMA_RULESET" in data["refusal"]
+    page = _page(srv)
+    assert "No figures are shown" in page and "M17" not in page
+
+
+@pytest.mark.contracts
+def test_a_failure_no_refusal_foresees_is_answered_500_naming_nothing(home, tmp_path, serve, monkeypatch):
+    case_id, _ = _case(tmp_path)
+
+    def boom(*a, **k):
+        raise RuntimeError("FPS CREDIT J BLOGGS")
+
+    monkeypatch.setattr(summary, "case_summary", boom)
+    srv = serve(case_id)
+    for path in ("/", "/api/case"):
+        status, _, body = _get(srv, path)
+        assert status == 500 and body == b"The case could not be shown.\n"
