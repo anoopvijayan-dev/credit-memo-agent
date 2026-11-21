@@ -202,3 +202,20 @@ def test_a_stored_money_limit_that_is_not_whole_pence_is_not_replayed():
     stored = PolicyResult(policy_name="p", policy_sha256="", rules=[rule], overall=RuleOutcome.PASS)
     with pytest.raises(pol.OutcomeUnknown, match="not a whole number of pence"):
         pol.reevaluate(stored, [_money(2000.0)], [_money(2001.0)])
+
+
+@pytest.mark.contracts
+def test_a_fraction_of_a_penny_past_decimal_precision_is_not_whole_pence(tmp_path):
+    """T04 review 60 / R2: the whole-pence check multiplied the written limit in Decimal, which
+    rounds to 28 digits, so a fraction of a penny past them was rounded away."""
+    from cma import metrics
+    from cma import policy as pol
+
+    written = "1000." + "0" * 30 + "1"
+    assert metrics.text_pence(written) is None and metrics.text_pence("1000.00") == 100000
+    assert metrics.text_pence("1" + "0" * 40) == 10**42 and metrics.text_pence("-0.10") == -10
+    f = tmp_path / "p.yaml"
+    f.write_text("name: p\nrules:\n  - id: R1\n    description: revenue\n    metric: M2\n    op: '>='\n"
+                 f"    threshold: {written}\n    on_fail: refer\n")
+    with pytest.raises(pol.PolicyError, match="must be a whole number of pence"):
+        pol.evaluate([_money(1000.0)], pol.load_policy(f))

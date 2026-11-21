@@ -87,13 +87,34 @@ MAX_STATEMENT_PENCE = 10**15
 AT_LIMIT = "£10,000,000,000,000 or more"  # how every problem at the limit says so
 
 
+# The largest power of ten text_pence scales by: a decimal written past it (1e5000) is no
+# amount or limit anyone writes, and building the integer would take unbounded time.
+_MAX_PENCE_EXPONENT = 1000
+
+
 def text_pence(text: str) -> int | None:
-    """A plain decimal's whole pence, read exactly from its text; None if it is not whole pence."""
+    """A plain decimal's whole pence, read exactly from its text, digit by digit, never through
+    Decimal arithmetic, which rounds to its context's precision (28 digits): a limit written
+    with a fraction of a penny past the 28th digit is not whole pence (T04 review 60). None if
+    it is not whole pence."""
     try:
-        p = Decimal(text.strip()) * 100
+        d = Decimal(text.strip())
     except InvalidOperation:
         return None
-    return int(p) if p.is_finite() and p == p.to_integral_value() else None
+    if not d.is_finite():
+        return None
+    sign, digits, exponent = d.as_tuple()
+    shift = exponent + 2  # the decimal's exponent once it is counted in pence
+    if shift >= 0:
+        if shift > _MAX_PENCE_EXPONENT:
+            return None
+        p = int("".join(map(str, digits)) or "0") * 10**shift
+    else:
+        whole, fraction = digits[:shift], digits[shift:]
+        if any(fraction):
+            return None
+        p = int("".join(map(str, whole)) or "0")
+    return -p if sign else p
 
 
 def float_pence(v: float) -> int | None:

@@ -479,6 +479,7 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         kinds.append(kind)
 
     parsed: list[tuple[int, str, date | None, str, float | None, float | None]] = []
+    over_limit_amounts: list[int] = []  # readable amounts at the line limit, in pence (T04 review 60)
     seen: dict[str, int] = {}
     def check(i: int, r: dict, readable: set | None = None) -> None:
         """One record's own values, checked as it is read; i is its line in the file, blank
@@ -517,6 +518,10 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
             values[field] = _number(raw)
             if values[field] is None and _over_limit(raw):
                 add("limit", f"line {i}: {field} {shown(raw)} is {AT_LIMIT}; no figure could be reported to the penny")
+                if field == "amount":
+                    # Read, though too large to keep: it still counts toward money in or out,
+                    # whose total at the limit is a problem of its own (T04 review 60).
+                    over_limit_amounts.append(text_pence((raw or "").strip()))
             elif values[field] is None:
                 add("line", f"line {i}: {field} {shown(raw)} is not a plain number like {example} "
                                 "(under £10,000,000,000,000)")
@@ -571,7 +576,8 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         if balance is not None:
             prev_balance = balance
 
-    for name in flows_at_limit([float_pence(a) for _, _, _, _, a, _ in parsed if a is not None]):
+    for name in flows_at_limit([float_pence(a) for _, _, _, _, a, _ in parsed if a is not None]
+                               + over_limit_amounts):
         add("flow", f"{name} totals {AT_LIMIT}: no figure could be reported to the penny")  # each named
     if problems:
         raise StatementError(path, problems, kinds)

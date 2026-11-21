@@ -728,6 +728,21 @@ def test_blank_trailing_columns_are_still_accepted(tmp_path):
 
 
 @pytest.mark.contracts
+def test_a_readable_amount_at_the_line_limit_counts_toward_money_in_and_out(tmp_path):
+    """T04 review 60 / R2: an amount at the line limit was named as such but left out of money in
+    and money out, so the flow it took to the limit, a problem of its own, went unnamed."""
+    csv = tmp_path / "s.csv"
+    csv.write_text("id,date,description,amount,balance\nT1,2026-01-01,A,5.00,5.00\n"
+                   "T2,2026-01-02,B,10000000000000.00,5.00\nT3,2026-01-03,C,-10000000000000.00,5.00\n")
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    shown = str(e.value)
+    assert "line 3: amount '10000000000000.00' is £10,000,000,000,000 or more" in shown
+    assert "money in totals £10,000,000,000,000 or more" in shown
+    assert "money out totals £10,000,000,000,000 or more" in shown
+
+
+@pytest.mark.contracts
 def test_a_record_too_long_to_read_with_a_bad_byte_names_both(tmp_path):
     """T04 review 58 / R2: a record with a field too long to read and a separate cell that is not
     UTF-8 was refused as too long only; the bad byte was found and then dropped."""
