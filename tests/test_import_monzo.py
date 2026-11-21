@@ -164,3 +164,38 @@ def test_monzo_amounts_must_be_plain(tmp_path, amount):
     row[7] = amount
     with pytest.raises(monzo.MonzoImportError, match="plain amount"):
         monzo.convert(_write(tmp_path, [row]), tmp_path / "o.csv", opening_balance=0)
+
+
+@pytest.mark.parametrize("kind", ["=1+1", "+cmd", "-2+3", "@SUM(A1)", "\t=1", "\r=1", "=HYPERLINK(x)"])
+def test_formula_leading_description_is_neutralised(tmp_path, kind):
+    # R34: an unknown provider Type becomes the description's prefix; it must not start a formula.
+    out = tmp_path / "mine.csv"
+    rows = [_row("tx_001", "05/01/2026", "12:00:00", kind, "Merchant", -10.00)]
+    monzo.convert(_write(tmp_path, rows), out, opening_balance=100.00)
+    with out.open(newline="") as f:
+        cells = [r["description"] for r in csv.DictReader(f)]
+    assert cells and all(c[0] not in "=+-@\t\r" for c in cells)
+    assert "MERCHANT" in cells[0]
+    assert ingest.load_csv(out).transactions[0].description == cells[0]
+
+
+@pytest.mark.parametrize("tid", ["-2-3", "-tx", "=1+1", "+1", "@x"])
+def test_formula_leading_transaction_id_is_refused(tmp_path, tid):
+    # R34: the provider's id is kept verbatim in a CSV text cell, so one a spreadsheet would
+    # read as a formula is refused rather than written (verify-09).
+    out = tmp_path / "mine.csv"
+    rows = [_row(tid, "05/01/2026", "12:00:00", "Card payment", "Merchant", -10.00)]
+    with pytest.raises(monzo.MonzoImportError, match="Transaction ID"):
+        monzo.convert(_write(tmp_path, rows), out, opening_balance=100.00)
+    assert not out.exists()
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("tid", [".tx", ":tx", "tx_1.2:3-4"])
+def test_ids_the_previous_release_took_still_import(tmp_path, tid):
+    # R53, T17 review 2: the formula guard refuses only a leading -, which no formula-safe id
+    # needs; ids starting with . or : imported before and still do.
+    out = tmp_path / "mine.csv"
+    rows = [_row(tid, "05/01/2026", "12:00:00", "Card payment", "Merchant", -10.00)]
+    monzo.convert(_write(tmp_path, rows), out, opening_balance=100.00)
+    assert ingest.load_csv(out).transactions[0].id == tid

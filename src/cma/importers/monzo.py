@@ -48,7 +48,10 @@ from ..metrics import (
 REQUIRED = ("Transaction ID", "Date", "Type", "Name", "Amount")
 PLAIN_MONEY = re.compile(r"^[-+]?\d+(?:\.\d{1,2})?$")
 CURRENCY_CODE = re.compile(r"^[A-Z]{3}$")
-SAFE_ID = re.compile(r"^[A-Za-z0-9_.:-]+$")
+# A provider id is kept as it is and written to a CSV text cell, so it may not start with a
+# character a spreadsheet reads as a formula (=, +, -, @, tab, CR; R34). Of the characters
+# an id could always hold, only - can start one, so only a leading - is newly refused. Monzo's are tx_...
+SAFE_ID = re.compile(r"^[A-Za-z0-9_.:][A-Za-z0-9_.:-]*$")
 
 
 class MonzoImportError(ValueError):
@@ -120,6 +123,15 @@ def references(*fields: str | None) -> str:
             if ref not in found:
                 found.append(ref)
     return " ".join(found)
+
+
+FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def neutralise_formula(text: str) -> str:
+    """A text cell a spreadsheet would read as a formula gets a leading apostrophe (R34).
+    Monzo's Type is provider-written; an unknown one becomes the description's prefix."""
+    return "'" + text if text.startswith(FORMULA_START) else text
 
 
 def describe(kind: str, name: str, amount: float, extra: str = "") -> str:
@@ -257,7 +269,8 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             if not tid:
                 raise MonzoImportError(f"line {i}: empty Transaction ID")
             if not SAFE_ID.match(tid):
-                raise MonzoImportError(f"line {i}: unexpected characters in Transaction ID {tid!r}")
+                raise MonzoImportError(f"line {i}: unexpected characters in Transaction ID (it must start with a "
+                                       "letter, digit, _ . or :, then only letters, digits, _ . : -)")
             if tid in seen:
                 raise MonzoImportError(f"line {i}: duplicate Transaction ID {tid}")
             seen.add(tid)
@@ -340,7 +353,7 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
                 f"line {line_of[tid]}: {tid}: walked balance {_gbp(bal)} disagrees with Monzo's {_gbp(monzo_bal)}; "
                 "the export may be missing transactions"
             )
-        out_rows.append({"id": tid, "date": d.isoformat(), "description": desc,
+        out_rows.append({"id": tid, "date": d.isoformat(), "description": neutralise_formula(desc),
                          "amount": _gbp(amount), "balance": _gbp(bal)})
 
     Path(dst).parent.mkdir(parents=True, exist_ok=True)

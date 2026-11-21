@@ -236,6 +236,11 @@ def test_mcp_compute_metrics_carries_m17_to_m28(tmp_path, monkeypatch):
     pytest.importorskip("mcp")
     from cma import mcp_server
 
+    # MCP serves with the offline lock off only (R29); this checks what it then answers.
+    (tmp_path / "home").mkdir(exist_ok=True)
+    (tmp_path / "home" / "firm.yaml").write_text("offline_lock: false\n")
+    monkeypatch.setenv("CMA_HOME", str(tmp_path / "home"))
+
     rows, truth = synth.generate("cafe", "good", end=date(2026, 9, 30))
     synth.write(rows, truth, tmp_path / "data", stem="cafe")
     monkeypatch.setenv("CMA_DATA_DIR", str(tmp_path / "data"))
@@ -316,6 +321,11 @@ def test_cma_run_refusal_shows_a_line_id_that_looks_like_markup(tmp_path, monkey
 def test_mcp_compute_metrics_refuses_buckets_that_do_not_reconcile(tmp_path, monkeypatch):
     pytest.importorskip("mcp")
     from cma import mcp_server
+
+    # MCP serves with the offline lock off only (R29); this checks what it then answers.
+    (tmp_path / "home").mkdir(exist_ok=True)
+    (tmp_path / "home" / "firm.yaml").write_text("offline_lock: false\n")
+    monkeypatch.setenv("CMA_HOME", str(tmp_path / "home"))
 
     rows, truth = synth.generate("cafe", "good", end=date(2026, 9, 30))
     synth.write(rows, truth, tmp_path / "data", stem="cafe")
