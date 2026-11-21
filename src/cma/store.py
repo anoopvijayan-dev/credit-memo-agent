@@ -12,6 +12,9 @@ made them (0700), and every file this module writes is 0600 (inputs 0400), so a 
 statements, profile, logs and outputs never sit where another user can read them (R31).
 A root inside a git working tree that does not ignore it is refused before anything is
 made, because a case committed by mistake would publish an applicant's bank data (R31).
+A root inside a folder a known cloud-sync client uploads (OneDrive, Dropbox, Google
+Drive, iCloud Drive) is not refused, but `cma case new` warns before making the case and
+records the warning as the case log's second entry (R32).
 
 Every change to a case (its creation, a profile change, an import) is appended to the case
 log while this process holds the case (R42), after the files are in place; if the log
@@ -22,17 +25,19 @@ Messages name files by hash or account key, never by their content.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import secrets
 import shutil
 import subprocess
 import tempfile
+import warnings
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 import yaml
@@ -117,6 +122,97 @@ def check_not_in_git(root: Path) -> None:
                             f"ignore it: add {rel}/ to .gitignore, or set CMA_HOME outside the repository")
     raise CaseRootInGit(f"case root {root} is inside the git working tree {repo}, and git could not say "
                         "whether it is ignored; refused")
+
+
+# --- cloud-sync folders (R32) ----------------------------------------------------------
+
+# Windows sets these to the folder each signed-in OneDrive account syncs, whatever its name.
+ONEDRIVE_VARS = ("OneDrive", "OneDriveCommercial", "OneDriveConsumer")
+
+
+class SyncFolderWarning(UserWarning):
+    """The case root lies inside a folder a known cloud-sync client uploads (R32)."""
+
+
+@dataclass(frozen=True)
+class SyncFolder:
+    client: str         # OneDrive, Dropbox, Google Drive or iCloud Drive
+    folder: PurePath    # the synced folder that holds the path
+
+
+def _client_named(name: str, before: str | None) -> str | None:
+    """The client whose synced folder is named `name` (one path component), as each client
+    lays it out on Windows, macOS (~/Library/CloudStorage, ~/Library/Mobile Documents) and
+    Linux; `before` is the component above it. None for any other name."""
+    n = name.casefold()
+    if n == "onedrive" or n.startswith(("onedrive - ", "onedrive-")):
+        return "OneDrive"
+    if n == "dropbox" or n.startswith("dropbox-") or re.fullmatch(r"dropbox \(.+\)", n):
+        return "Dropbox"
+    if n in ("google drive", "googledrive", "my drive") or n.startswith("googledrive-"):
+        return "Google Drive"
+    if n in ("iclouddrive", "icloud drive", "com~apple~clouddocs") or (
+            n == "mobile documents" and (before or "").casefold() == "library"):
+        return "iCloud Drive"
+    return None
+
+
+def _dropbox_roots(home: Path, env: dict[str, str]) -> list[Path]:
+    """The folders Dropbox's own info file says it syncs, which may have any name."""
+    places = [home / ".dropbox" / "info.json"]
+    places += [Path(env[v]) / "Dropbox" / "info.json" for v in ("APPDATA", "LOCALAPPDATA") if env.get(v)]
+    roots = []
+    for place in places:
+        try:
+            info = json.loads(place.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue  # no file, or one we cannot read: it names nothing
+        if isinstance(info, dict):
+            roots += [Path(a["path"]) for a in info.values()
+                      if isinstance(a, dict) and isinstance(a.get("path"), str) and a["path"]]
+    return roots
+
+
+def _within(path: PurePath, root: PurePath) -> bool:
+    a = [p.casefold() for p in path.parts]
+    b = [p.casefold() for p in root.parts]
+    return len(b) > 0 and a[:len(b)] == b
+
+
+def sync_folder(path: PurePath, *, home: Path | None = None,
+                env: dict[str, str] | None = None) -> SyncFolder | None:
+    """The known cloud-sync folder that holds `path`, or None (R32). A folder is known by
+    its client's own name for it, by the OneDrive variables Windows sets, or by Dropbox's
+    info file; a symlink is followed, since the files land where it points. This is a
+    warning, not a lock: a folder synced under a name no client uses is not seen."""
+    env = dict(os.environ) if env is None else env
+    home = Path.home() if home is None else home
+    paths = [path]
+    if isinstance(path, Path):
+        with suppress(OSError, RuntimeError):
+            resolved = path.resolve()
+            if resolved != path:
+                paths.append(resolved)
+    roots = [("OneDrive", PurePath(env[v])) for v in ONEDRIVE_VARS
+             if env.get(v) and PurePath(env[v]).is_absolute()]
+    roots += [("Dropbox", r) for r in _dropbox_roots(home, env) if r.is_absolute()]
+    for p in paths:
+        for client, root in roots:
+            if _within(p, root):
+                return SyncFolder(client, type(p)(root))
+        parts = p.parts
+        for i, part in enumerate(parts):
+            client = _client_named(part, parts[i - 1] if i else None)
+            if client:
+                return SyncFolder(client, type(p)(*parts[: i + 1]))
+    return None
+
+
+def sync_warning(root: Path, found: SyncFolder) -> str:
+    return (f"the case root {root} lies inside {found.client}'s folder ({found.folder}). "
+            f"{found.client} uploads what that folder holds, so an applicant's statements and "
+            f"profile would leave this machine. Keep cases in a local folder no sync client "
+            f"manages (set CMA_HOME). This warning is recorded in the case log.")
 
 
 def _private_dir(path: Path) -> None:
@@ -344,10 +440,22 @@ def profile_names(profile: dict[str, Any]):
 # --- commands --------------------------------------------------------------------------
 
 
-def new_case(*, label: str | None = None, demo: bool = False, root: Path | None = None) -> str:
-    """Make a case folder with a random id, its profile and its first log entry."""
+def new_case(*, label: str | None = None, demo: bool = False, root: Path | None = None,
+             warn: Callable[[str], None] | None = None) -> str:
+    """Make a case folder with a random id, its profile and its first log entry.
+
+    If the case root lies inside a folder a known cloud-sync client uploads, the warning is
+    given before anything of the case is made, through `warn` (a Python SyncFolderWarning
+    when none is given), and is recorded as the case log's second entry (R32)."""
     profile = validate_profile({"label": label, "demo": demo})
     root = ensure_root(root)
+    found = sync_folder(root)
+    message = sync_warning(root, found) if found else None
+    if message:
+        if warn is None:
+            warnings.warn(message, SyncFolderWarning, stacklevel=2)
+        else:
+            warn(message)
     for _ in range(8):
         case_id = secrets.token_hex(8)
         folder = root / CASES / case_id
@@ -367,6 +475,11 @@ def new_case(*, label: str | None = None, demo: bool = False, root: Path | None 
         with log.writer():
             log.append("case_created", {"case": case_id, "demo": profile["demo"],
                                         "profile_sha256": profile_sha256(profile)}, expected=0)
+            if found:
+                log.append("sync_folder_warning", {"client": found.client,
+                                                   "sync_folder": str(found.folder),
+                                                   "case_root": str(root),
+                                                   "warning": message}, expected=1)
     except BaseException:
         shutil.rmtree(folder, ignore_errors=True)  # no half-made case is left behind
         raise
