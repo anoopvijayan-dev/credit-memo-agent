@@ -1,0 +1,50 @@
+{
+  "task": "T32",
+  "criteria": [
+    {
+      "id": "R39",
+      "tier": "adversarial",
+      "check": "src/cma/store.py:555-558 returns already=True before any temp dir or conversion when the log holds an import with the same input_sha256; store.py:594-595 re-decides holding the case and returns with save.data None, so _recorded (store.py:295-316) appends nothing. Holds for any account key and for a Monzo re-import with or without --opening-balance (sha is of the raw bytes). Proven by test_p9_importing_a_file_twice_leaves_the_same_state_and_log_head_as_once[csv,monzo] and test_p9_holds_for_generated_statements[3 archetypes], PASSED in invariants-5.log:211-215 and specified-3.log:325-333.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R40",
+      "tier": "adversarial",
+      "check": "store.py:601-606 calls _same_account (store.py:624-655) inside _recorded before any input/statement write; it reloads each imported account's statements/<account>.csv, intersects (date, signed pence) multisets over the overlapping period and refuses when more than half the new statement's overlap lines are shared, saying 'probably the same account imported twice'. Opposite-sign own-account transfers and non-overlapping periods are not matched. A refusal raises inside _recorded, so undo runs and nothing is appended. Proven by test_an_account_sharing_most_date_amount_pairs_with_an_overlapping_one_is_refused and test_an_account_that_is_not_the_same_one_is_added[body0-2], PASSED in contracts-4.log:76-79. Only caller is cli.py:572.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "P9",
+      "tier": "adversarial",
+      "check": "Tests assert every file's bytes in the case folder and the verified log head are unchanged after a second import under 'main' and another key, through the library and the CLI, for csv, monzo and three generated statements; marked invariants with p9 in the name, and the runner's invariants tier ran them (invariants-5.log:211-215).",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/store.py",
+      "line": 641,
+      "criterion": "R40",
+      "claim": "_same_account fails open. It skips any existing account whose statements/<account>.csv cannot be read or loaded, and it never compares the file with the statement_sha256 its import entry records. So if a statement file is damaged or replaced, a duplicate of that account is admitted. The producer reported this gap themselves. Other case damage, such as a hand-edited log, is outside scope elsewhere, so this is minor.",
+      "repro": "Import a.csv as main. Overwrite <case>/statements/main.csv with 'garbage'. Import a copy of a.csv's lines under new ids as --account s. The import is added instead of refused."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/store.py",
+      "line": 652,
+      "criterion": "R40",
+      "claim": "The test for 'most' uses only the new statement's lines inside the overlapping period, so a single coincident line is enough to refuse a separate account. Nothing (no override or flag) lets the underwriter add a genuinely separate account that this rule refuses. This meets R40's literal wording (1 of 1 is most) but is not stated in the design.",
+      "repro": "main covers 2026-01-01..2026-01-31 with a -15.00 fee on 2026-01-31. savings covers 2026-01-31..2026-03-31, and its 2026-01-31 line is also -15.00. Importing savings is refused as 'probably the same account imported twice'."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
