@@ -770,3 +770,124 @@ def as_table(metrics: list[Metric]) -> str:
     for m in metrics:
         lines.append(f"| {m.id} | {m.name} | {m.display()} | {m.method} |")
     return "\n".join(lines)
+
+
+# --- Drill-down (R16) -------------------------------------------------------------------
+# What the workspace shows beside a figure, a bucket or a monthly cell when the underwriter
+# selects it. Every total and every input is computed here, from the lines' whole pence, so
+# the workspace only renders (R2). Each figure is one of three kinds (P2): a sum figure's
+# lines' signed amounts total it; an outflow figure is a positive amount its lines total
+# negated; a derived figure is not a total of its lines, and shows its inputs and its method.
+
+SUM_FIGURES = EXACT_IDS  # M2, M17, M18 and the money-in buckets M19 to M25
+OUTFLOW_FIGURES = frozenset({"M8", "M11", "M12", "M14"})
+# The figures a derived figure is computed from, shown as its inputs beside its own lines.
+DERIVED_FROM: dict[str, tuple[str, ...]] = {
+    "M3": ("M2",), "M4": ("M2",), "M10": ("M9", "M11", "M8"), "M26": ("M25",), "M28": ("M9", "M11", "M8"),
+}
+# The figures read from the close of every day of the period (P2): their inputs are those closes.
+FROM_CLOSES = frozenset({"M6", "M27"})
+
+
+def figure_kind(metric_id: str) -> str:
+    """'sum', 'outflow' or 'derived', as P2 names each figure."""
+    if metric_id in SUM_FIGURES:
+        return "sum"
+    if metric_id in OUTFLOW_FIGURES:
+        return "outflow"
+    return "derived"
+
+
+def money_text(p: int) -> str:
+    """Whole pence as pounds to the penny with thousands separators: -123456 is "-£1,234.56"."""
+    return f"{'-' if p < 0 else ''}£{Decimal(abs(p)) / 100:,.2f}"
+
+
+def lines_total(statement: Statement, ids: list[str]) -> int:
+    """The signed total, in pence, of the amounts of the lines named."""
+    by_id = statement.by_id()
+    return sum(pence(by_id[i]) for i in ids)
+
+
+def daily_closes(statement: Statement, first: date | None = None, last: date | None = None
+                 ) -> list[tuple[date, int, str]]:
+    """The close of every day from `first` to `last` (the whole period by default), carried
+    over days with no lines, with the id of the line that set it: what a figure or cell read
+    from end-of-day balances reads."""
+    eod = end_of_day_balances(statement.transactions)
+    return [(d, bal, line) for d, (bal, line) in sorted(eod.items())
+            if (first is None or d >= first) and (last is None or d <= last)]
+
+
+def _share_parts(statement: Statement, metric_id: str, evidence: list[str]) -> tuple[str, int, list[str]] | None:
+    """A share's numerator, in pence, and the lines counted in it; its denominator is its
+    evidence lines' total."""
+    by_id = statement.by_id()
+    lines = [by_id[i] for i in evidence]
+    if metric_id == "M16":
+        num = [t for t in lines if t.category in NON_TRADING_IN]
+        return "Money in that is not trading receipts", sum(pence(t) for t in num), [t.id for t in num]
+    if metric_id == "M26":
+        num = [t for t in lines if t.category == Category.OTHER]
+        return "Unexplained money in", sum(pence(t) for t in num), [t.id for t in num]
+    if metric_id == "M15":
+        by_payer: dict[str, list[Transaction]] = defaultdict(list)
+        for t in lines:
+            by_payer[counterparty(t.description)].append(t)
+        if not by_payer:
+            return None
+        top = max(by_payer.values(), key=lambda ts: sum(pence(t) for t in ts))
+        return "The largest payer's customer transfers", sum(pence(t) for t in top), [t.id for t in top]
+    return None
+
+
+def derived_inputs(statement: Statement, metrics: list[Metric], metric_id: str,
+                   proposed_repayment=None) -> dict:
+    """What a derived figure is computed from, for the drill-down (R16): the figures it reads,
+    the period, a share's numerator and denominator, and, for a figure read from end-of-day
+    balances, the close of every day it reads. Values are written as text, money to the penny."""
+    by = {m.id: m for m in metrics}
+    m = by[metric_id]
+    inputs: list[dict] = []
+    closes: list[tuple[date, int, str]] | None = None
+    start, end = statement.start, statement.end
+    days = (end - start).days + 1
+    for fid in DERIVED_FROM.get(metric_id, ()):
+        f = by[fid]
+        inputs.append({"label": f.name, "figure": f.id, "display": f.display_exact()})
+    if metric_id in ("M1", "M3", "M28"):
+        inputs.append({"label": "Period", "figure": None,
+                       "display": f"{start.isoformat()} to {end.isoformat()}, {days} days"})
+    if metric_id == "M28":
+        shown = ("not given" if proposed_repayment is None
+                 else money_text(proposed_repayment_pence(proposed_repayment)))
+        inputs.append({"label": "Proposed monthly repayment (case profile)", "figure": None, "display": shown})
+    if metric_id == "M5" and m.evidence:
+        t = statement.by_id()[m.evidence[0]]
+        inputs.append({"label": f"Running balance after line {t.id}", "figure": None,
+                       "display": money_text(balance_pence(t))})
+    if metric_id in ("M15", "M16", "M26") and m.evidence:
+        parts = _share_parts(statement, metric_id, m.evidence)
+        if parts is not None:
+            label, num, num_lines = parts
+            inputs.append({"label": label, "figure": None, "display": money_text(num), "lines": num_lines})
+            inputs.append({"label": "Of which it is a share (the lines below)", "figure": None,
+                           "display": money_text(lines_total(statement, m.evidence))})
+    if metric_id in FROM_CLOSES:
+        closes = daily_closes(statement)
+    return {"inputs": inputs, "closes": _closes_out(closes)}
+
+
+def cell_inputs(statement: Statement, row: MonthRow) -> dict:
+    """A monthly balance or overdrawn-day cell's inputs: the close of every day of the month in
+    the period, with the line that set it (P2, R11)."""
+    return {"inputs": [{"label": "Days of the month in the period", "figure": None,
+                        "display": f"{row.start.isoformat()} to {row.end.isoformat()}"}],
+            "closes": _closes_out(daily_closes(statement, row.start, row.end))}
+
+
+def _closes_out(closes) -> list[dict] | None:
+    if closes is None:
+        return None
+    return [{"date": d.isoformat(), "display": money_text(bal), "overdrawn": bal < 0, "line": line}
+            for d, bal, line in closes]

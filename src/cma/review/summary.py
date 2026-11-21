@@ -98,6 +98,35 @@ def _not_reconciled(e: metrics.ReconciliationError) -> dict[str, Any]:
             "accounts": accounts, "lines": lines}
 
 
+def refusal(e: Exception) -> dict[str, Any] | None:
+    """Why a case cannot be shown, as the state and refusal (or reconciliation) the workspace
+    reports, or None for a failure no refusal foresees."""
+    if isinstance(e, metrics.ReconciliationError):  # R3: nothing is shown
+        return {"state": "not_reconciled", "reconciliation": _not_reconciled(e)}
+    if isinstance(e, caselog.CaseLocked):
+        return {"state": "refused", "refusal": "Another window or command is saving this case; reload in a moment."}
+    if isinstance(e, caselog.CaseLogBroken):
+        return {"state": "refused", "refusal": f"The case log is broken at entry {e.first_bad}: {e.reason}. "
+                                               "No figures are shown until it is resolved."}
+    if isinstance(e, (store.CaseStoreError, StatementError, metrics.AmountError, RulesetError)):
+        return {"state": "refused", "refusal": f"{str(e).rstrip('.')}. No figures are shown for this case."}
+    if isinstance(e, OSError):
+        return {"state": "refused",
+                "refusal": f"A file of the case could not be read ({e.strerror or type(e).__name__})."}
+    return None
+
+
+def load_figures(folder: Path) -> tuple[dict[str, overrides.CaseFigures] | None, dict[str, Any] | None]:
+    """Every account's figures from the figures layer, or why none can be shown (R3)."""
+    try:
+        return overrides.case_figures(folder), None
+    except Exception as e:
+        refused = refusal(e)
+        if refused is None:
+            raise
+        return None, refused
+
+
 def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
     """The case as the workspace shows it, computed afresh from its files."""
     folder = Path(folder)
@@ -108,22 +137,15 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
         out["label"], out["business_name"] = profile.get("label"), profile.get("business_name")
         out["profile"] = {key: (list(profile[key]) if key in store.LIST_FIELDS else profile[key])
                           for key in PROFILE_SHOWN}
-        figures = overrides.case_figures(folder)
-    except metrics.ReconciliationError as e:  # R3: nothing is shown
-        out.update(state="not_reconciled", reconciliation=_not_reconciled(e))
+    except Exception as e:
+        refused = refusal(e)
+        if refused is None:
+            raise
+        out.update(refused)
         return out
-    except caselog.CaseLocked:
-        out.update(state="refused", refusal="Another window or command is saving this case; reload in a moment.")
-        return out
-    except caselog.CaseLogBroken as e:
-        out.update(state="refused", refusal=f"The case log is broken at entry {e.first_bad}: {e.reason}. "
-                                            "No figures are shown until it is resolved.")
-        return out
-    except (store.CaseStoreError, StatementError, metrics.AmountError, RulesetError) as e:
-        out.update(state="refused", refusal=f"{str(e).rstrip('.')}. No figures are shown for this case.")
-        return out
-    except OSError as e:
-        out.update(state="refused", refusal=f"A file of the case could not be read ({e.strerror or type(e).__name__}).")
+    figures, refused = load_figures(folder)
+    if refused is not None:
+        out.update(refused)
         return out
     out["accounts"] = [_account(f) for f in figures.values()]
     if not out["accounts"]:
@@ -138,27 +160,43 @@ def _e(value: Any) -> str:
     return escape("" if value is None else str(value), quote=True)
 
 
-def _figure_row(f: dict[str, Any], cls: str = "") -> str:
+def _linked(text: str, href: str | None) -> str:
+    """Escaped text, as a link to its lines when the page has a token to link with (R16)."""
+    return f'<a href="{href}">{_e(text)}</a>' if href else _e(text)
+
+
+def _href(token: str | None, account: str, **target: str) -> str | None:
+    if token is None:
+        return None
+    from .drilldown import link
+
+    return link(token, account, **target)
+
+
+def _figure_row(f: dict[str, Any], cls: str = "", href: str | None = None) -> str:
     mark = ' <span class="overridden">rests on an override</span>' if f["overridden"] else ""
     attr = f' class="{cls}"' if cls else ""
-    return (f'<tr{attr}><td>{_e(f["id"])}</td><td>{_e(f["name"])}{mark}</td>'
+    return (f'<tr{attr}><td>{_linked(f["id"], href)}</td><td>{_e(f["name"])}{mark}</td>'
             f'<td class="num">{_e(f["display"])}</td><td class="num">{_e(f["lines"])}</td></tr>')
 
 
-def _account_html(a: dict[str, Any]) -> str:
+def _account_html(a: dict[str, Any], token: str | None = None) -> str:
+    acct = a["account"]
     period = f'{_e(a["period"]["start"])} to {_e(a["period"]["end"])}, ' if a["period"] else ""
     head = '<thead><tr><th>Id</th><th>Figure</th><th class="num">Value</th><th class="num">Lines</th></tr></thead>'
     mi = a["money_in"]
     rows = []
     for b in mi["buckets"]:
-        rows.append(_figure_row(b))
+        rows.append(_figure_row(b, href=_href(token, acct, figure=b["id"])))
         if b["id"] == "M2":
-            rows.append(_figure_row(mi["cash_within_trading"], "within"))
+            cash = mi["cash_within_trading"]
+            rows.append(_figure_row(cash, "within", _href(token, acct, figure=cash["id"])))
+    total = mi["total"]
     breakdown = (f'<table class="breakdown">{head}<tbody>{"".join(rows)}</tbody>'
-                 f'<tfoot>{_figure_row(mi["total"], "total")}</tfoot></table>')
+                 f'<tfoot>{_figure_row(total, "total", _href(token, acct, figure=total["id"]))}</tfoot></table>')
     figures = ('<table class="figures"><thead><tr><th>Id</th><th>Figure</th><th class="num">Value</th>'
                '<th>Method</th><th class="num">Lines</th></tr></thead><tbody>'
-               + "".join(f'<tr><td>{_e(f["id"])}</td><td>{_e(f["name"])}'
+               + "".join(f'<tr><td>{_linked(f["id"], _href(token, acct, figure=f["id"]))}</td><td>{_e(f["name"])}'
                          + (' <span class="overridden">rests on an override</span>' if f["overridden"] else "")
                          + f'</td><td class="num">{_e(f["display"])}</td><td>{_e(f["method"])}</td>'
                          f'<td class="num">{_e(f["lines"])}</td></tr>' for f in a["figures"])
@@ -170,7 +208,8 @@ def _account_html(a: dict[str, Any]) -> str:
             c = r[key]
             mark = ' <span class="overridden">*</span>' if c["overridden"] else ""
             why = f' <span class="note">{_e(c["note"])}</span>' if c["value"] is None and c["note"] else ""
-            cells.append(f'<td class="num">{_e(c["display"])}{why}{mark}</td>')
+            shown = _linked(c["display"], _href(token, acct, month=r["month"], cell=key))
+            cells.append(f'<td class="num">{shown}{why}{mark}</td>')
         part = ' <span class="part">part month</span>' if r["part_month"] else ""
         month_rows.append(f'<tr><td>{_e(r["month"])}{part}</td>{"".join(cells)}</tr>')
     monthly = ('<table class="monthly"><thead><tr><th>Month</th>'
@@ -219,8 +258,9 @@ def _profile_html(p: dict[str, Any] | None) -> str:
     return f'<section id="profile"><h2>Case profile</h2><table class="profile"><tbody>{"".join(rows)}</tbody></table></section>'
 
 
-def render(summary: dict[str, Any]) -> str:
-    """The case summary as HTML for the page's main element; every case text escaped."""
+def render(summary: dict[str, Any], token: str | None = None) -> str:
+    """The case summary as HTML for the page's main element; every case text escaped. Given
+    the page's token, each figure, bucket and monthly cell links to the lines behind it (R16)."""
     names = [x for x in (summary["business_name"], summary["label"]) if x]
     head = (f'<section id="summary-head"><p class="case-name">{_e(" — ".join(names))}</p></section>'
             if names else "")
@@ -233,4 +273,4 @@ def render(summary: dict[str, Any]) -> str:
                 f'<p>{_e(summary["refusal"])}</p></section>')
     if state == "empty":
         return head + '<section id="empty"><p>No statement has been imported into this case yet.</p></section>'
-    return head + "".join(_account_html(a) for a in summary["accounts"])
+    return head + "".join(_account_html(a, token) for a in summary["accounts"])

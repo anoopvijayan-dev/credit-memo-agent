@@ -75,6 +75,10 @@ cma case resolve-override <id> 3 --confirm --name "Pat"   # or --drop
 # free port from 8765 (--port to choose another). Each start prints a URL with a new
 # random token; a request without it, or whose Host is not 127.0.0.1 and that port, is
 # refused. The page loads only files bundled in the package. Ctrl-C stops it.
+# Every figure, money-in bucket and monthly cell on the page links to exactly the lines
+# behind it (date, description, amount, balance, category and the rule or override that
+# set it), with the lines' total for a sum (the figure negated for money paid out), or the
+# inputs and method for an average, share, ratio or count.
 cma review <id>                                   # --no-browser to only print the URL
 
 # Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
