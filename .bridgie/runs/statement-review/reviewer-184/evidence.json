@@ -1,0 +1,102 @@
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to buckets. src/cma/metrics.py:481 assigns credits and src/cma/metrics.py:561 emits M17, M18 and M19–M25 with GBP values and evidence. src/cma/cli.py:415 and src/cma/mcp_server.py:92 carry the figures to the CLI and MCP.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:77 checks exact pence on input, src/cma/metrics.py:512 checks whether M3 can be reported to the penny, and src/cma/graph.py:175 and src/cma/cli.py:415 render penny values. Monzo still reads and decodes the entire export before validating the header or first data record and parses a following CSV record before yielding the current one.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks the signed pence difference, missing and duplicate credit IDs, and non-credit lines placed in buckets. src/cma/cli.py:118 exits 6 before figures or export, and src/cma/mcp_server.py:98 propagates the reconciliation refusal. The runner passed both refusal contracts.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/models.py:55 and src/cma/metrics.py:481 route that category to M25 and exclude it from M2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:481 and :578 reconcile the eight buckets to M17 and enforce unique credit evidence. M18 is calculated separately from cash within M2 at src/cma/metrics.py:495. The runner passed both named P1 invariants, including the large-value test.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:384 and :538 use negated signed totals for outflows. src/cma/metrics.py:422 records capped M9 credit IDs, :529 cites the lowest-balance line and overdrawn closes, and :571 cites the shared denominator for M26. The runner passed the named sum, outflow and M9 invariants and the previous-release comparisons on the included cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 send unmatched credits to OTHER. src/cma/metrics.py:481 and :568 carry their IDs into M25. The runner passed the general P6 invariant and unknown-payer tests under v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 154,
+      "criterion": "R2",
+      "claim": "Monzo still consumes the export suffix before refusing the first bad record. It reads all bytes before checking the header, then src/cma/ingest.py:252 materialises all physical lines. The record iterator also asks the CSV reader for the next record at src/cma/ingest.py:359 before yielding the pending one at :414.",
+      "repro": "Use a valid Monzo header and a first GBP record with a valid amount and an empty Transaction ID. Follow it with a quoted field spanning a very large number of short physical lines. The importer reads and buffers the suffix before validating line 2. The next-record lookahead can also traverse that multiline field before line 2 reaches the validator. The refusal should report line 2 without consuming those later records."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 1500,
+      "criterion": "R2",
+      "claim": "The passing test named test_monzo_reads_nothing_past_the_first_problem does not prove its stated behavior. It counts only _Feed.__next__ calls, allows lookahead, and does not observe the initial full-file read, decoding or physical-line allocation.",
+      "repro": "Read the runner's contracts-4.log entry for this test and compare its instrumentation at tests/test_money_in.py:1488 with src/cma/importers/monzo.py:154 and src/cma/ingest.py:252. A runner test with an instrumented input stream that rejects any attempt to consume a record after line 2 would prove the claim."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 512,
+      "criterion": "R2",
+      "claim": "The producer's scratchpad proof is not reproducible from the review checkout or runner logs. The runner independently proves representative M3, reconciliation, M9 and outflow behavior through named tests, but does not establish the exact scratchpad outputs or the two-call idempotency claim.",
+      "repro": "The claimed command is PYTHONPATH=src python scratchpad/probe.py. The checkout contains no scratchpad/probe.py and no configured runner row executed it. A runner invocation of that command with the probe present, or a named invariant comparing two complete metric lists from the same statement, would establish the corresponding claim."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 115,
+      "criterion": "P2",
+      "claim": "The producer's historical suite count and unrestricted compatibility claim exceed the current proof. The runner reports 989 full-suite passes and 84 dual-run passes on the review checkout at 82758a3. The historical claim names 878 passes at ca0092c, and the dual run checks selected statements under the applicable compatibility conditions.",
+      "repro": "Compare git log -1 and the summaries in specified-3.log and dual_run-7.log with claim.json. A runner executing python -m pytest -q at ca0092c would prove the historical suite count. The current logs support the named compatibility cases."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer note about the committed example is stale. The example already contains the additive evidence_note field.",
+      "repro": "Read examples/cafe_stretched.memo.evidence.json:2363 and compare it with the claim note saying the committed example has no evidence_note key."
+    }
+  ],
+  "verdict": "fail"
+}
