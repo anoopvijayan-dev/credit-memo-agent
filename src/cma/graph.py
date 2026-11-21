@@ -31,6 +31,7 @@ from pydantic import ValidationError
 
 from . import categorise as cat
 from . import guard as grd
+from . import indicators as ind
 from . import ingest
 from . import metrics as met
 from . import policy as pol
@@ -101,6 +102,10 @@ Rules you must follow. An automatic check enforces 1-7 and rejects the draft if 
 class MemoState(TypedDict, total=False):
     statement_path: str
     policy_path: str | None
+    # The thresholds file's path (None: the packaged one) and its text as read at the start of
+    # the run, so the indicators in the evidence come from the file the run checked (R14).
+    thresholds_path: str | None
+    thresholds_text: str | None
     vat_stagger: int | None
     model: str
     statement_sha256: str
@@ -254,6 +259,25 @@ def guard_fields(g) -> dict:
             "guard_missing_citations": g.missing_citations}
 
 
+def run_thresholds(s: MemoState) -> ind.Thresholds:
+    """The thresholds the run read: the text kept in its state, or the packaged file for a run
+    that kept none (a review drafted before indicators existed)."""
+    if s.get("thresholds_text") is not None:
+        return ind.parse_thresholds(s["thresholds_text"], s.get("thresholds_path") or ind.DEFAULT_SOURCE)
+    return ind.load_thresholds()
+
+
+def _indicator_fields(s: MemoState) -> dict:
+    t = run_thresholds(s)
+    raised = ind.raise_indicators(s["statement"], t)
+    return {"thresholds": {"source": t.source, "sha256": t.sha256,
+                           "illustrative": [f"{a}.{b}" for a, b in t.fields() if t.illustrative(a, b)]},
+            "indicators": [i.model_dump(mode="json") for i in raised],
+            # R15: the lines a person has to decide, largest first, assembled from the same
+            # lines and indicators; `cma run` has one account, so no possible own-account pairs.
+            "judgement_queue": [e.model_dump(mode="json") for e in ind.judgement_queue(s["statement"], raised)]}
+
+
 def evidence_record(s: MemoState) -> dict:
     """Everything needed to audit the memo later, as plain JSON."""
     return {
@@ -272,6 +296,9 @@ def evidence_record(s: MemoState) -> dict:
         # R11: computed here from the stored lines, as the metrics were, so no new type
         # travels through the checkpoint (CHECKPOINT_TYPES is unchanged).
         "monthly_summary": [r.model_dump(mode="json") for r in met.monthly_summary(s["statement"])],
+        # R14: raised here from the stored lines, as the monthly summary is, with the thresholds
+        # file the run read; each indicator names the thresholds it fired at.
+        **_indicator_fields(s),
         "policy": s["policy"].model_dump(mode="json"),
         "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
         "redrafts": s.get("redrafts", 0),
@@ -291,8 +318,13 @@ def build(llm: LLM | None = None, checkpointer=None):
             ingest.load_csv(path)  # refuses, saying why (no such file)
             raise
         statement = ingest.load_csv(path, data=data)
+        # The thresholds file is read and checked once, here: a malformed one is refused naming
+        # its line before anything is computed, and its text is what the indicators come from.
+        tpath = s.get("thresholds_path")
+        thresholds_text, _ = ind.read_thresholds(Path(tpath) if tpath else None)
         return {
             "statement": statement,
+            "thresholds_text": thresholds_text,
             "statement_sha256": hashlib.sha256(data).hexdigest(),
             "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
             # A run starts clean, even on a thread that has run before.

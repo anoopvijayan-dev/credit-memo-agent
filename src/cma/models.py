@@ -180,6 +180,50 @@ class MonthRow(BaseModel):
     days_overdrawn: MonthlyCell
 
 
+class IndicatorThreshold(BaseModel):
+    """A threshold an indicator fired at, as the thresholds file gives it (R14)."""
+
+    key: str = Field(description="section.key in the thresholds file, e.g. single_cash_deposit.amount_at_least.")
+    value: str = Field(description="As compared: money to the penny in pounds, a share or multiple as written.")
+    unit: Literal["GBP", "pct", "times", "days", "count"]
+    illustrative: bool = Field(description="True while the threshold is still at its shipped value.")
+
+
+class Indicator(BaseModel):
+    """A risk indicator raised from the thresholds file (R14), with the lines behind it."""
+
+    id: str = Field(description="I1, I2, ... in the order the indicators are raised.")
+    kind: Literal["large_credit", "single_cash_deposit", "cash_heavy_month", "cash_round_trip", "gambling",
+                  "returned_dd", "overdrawn_run", "irregular_acquirer"]
+    thresholds: list[IndicatorThreshold]
+    evidence: list[str] = Field(description="Ids of the lines that made it fire, in statement order.")
+    reason: str = Field(description="One line saying why it fired; never a line's description.")
+    illustrative: bool = Field(description="True when a threshold that fired is still at its shipped value.")
+
+
+class QueueCandidate(BaseModel):
+    """One reading of an ambiguous credit (R4, R15): a rule it matched or a kind of case-profile
+    name, the category that sets and the money-in bucket that category maps to."""
+
+    rule_id: str = Field(description="A table rule id, or profile:director / profile:own_account.")
+    category: Category | None = Field(description="None for a payment-method cue, which gives no category.")
+    bucket: Bucket | None = Field(description="None for a payment-method cue, which gives no bucket.")
+
+
+class QueueEntry(BaseModel):
+    """A line the judgement queue lists first because a person has to decide what it is (R15)."""
+
+    line_id: str
+    amount: float = Field(description="The line's signed amount, as the statement gives it; the queue's order.")
+    reasons: list[Literal["unexplained", "ambiguous", "possible_own_account_transfer", "indicator"]]
+    indicators: list[str] = Field(default_factory=list, description="Ids of the indicators that flagged the line.")
+    indicator_kinds: list[str] = Field(default_factory=list, description="Their kinds, in the same order.")
+    candidates: list[QueueCandidate] = Field(
+        default_factory=list, description="For an ambiguous credit, each candidate and the bucket it would give.")
+    pairs_with: list[str] = Field(
+        default_factory=list, description="For a possible own-account transfer, the other lines it could pair with.")
+
+
 # How many decimals each unit is shown with. The memo copies figures as shown, and the
 # guard treats a figure written at this precision as exact (see guard._value_fits).
 DISPLAY_DECIMALS = {"GBP": 0, "pct": 1, "ratio": 2}
