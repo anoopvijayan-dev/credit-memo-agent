@@ -51,8 +51,10 @@ PERIOD_PLACEHOLDERS = frozenset({"period_start", "period_end"})
 FIELD_ID = re.compile(r"[a-z][a-z_]{0,63}")
 FIELD_KEYS = frozenset({"id", "title", "figures", "template"})
 MAP_KEYS = frozenset({"name", "fields"})
-# Judgement fields: the underwriter's, never a figure's (R24).
-JUDGEMENT_FIELDS = frozenset({"recommendation"})
+# Judgement fields: the underwriter's, never a figure's (R24), known by id or by title, so a
+# firm's map cannot fill one by giving it another id.
+JUDGEMENT_FIELDS = frozenset({"recommendation", "credit_history", "key_risks"})
+JUDGEMENT_TITLES = frozenset({"recommendation", "credit history", "key risks"})
 
 FOR_UNDERWRITER = "For the underwriter: no figure is mapped to this field; it is left empty."
 DEMO_STAMP = ("Demonstration case: this demonstrates the mechanism and is not an applicant file. "
@@ -159,7 +161,7 @@ def parse_field_map(text: str, source: str) -> FieldMap:
         if len(set(figures)) != len(figures):
             raise FieldMapError(f"{where}: a figure is listed more than once")
         template = item.get("template")
-        if figures and fid in JUDGEMENT_FIELDS:
+        if figures and (fid in JUDGEMENT_FIELDS or " ".join(title.split()).casefold() in JUDGEMENT_TITLES):
             raise FieldMapError(f"{where}: a judgement field maps no figure; it is the underwriter's (R24)")
         if not figures:
             if template is not None:
@@ -275,9 +277,18 @@ def _grounded(g: GuardResult | None) -> bool:
     return g is not None and not g.unmatched and not g.missing_citations
 
 
-def _text(p: Preview, only: str | None = None) -> str:
+def _label(key: str, for_guard: bool) -> str:
+    """How the text names an account when the case holds several. The key is an identifier
+    the tool writes (store.ACCOUNT_KEY allows digits, '-' and words such as 'one'), never a
+    figure, so the copy the guard reads has the key blanked, as the guard blanks a date or a
+    tag: every other character of the text is read (P14, R28)."""
+    return f"Account {' ' * len(key) if for_guard else key}"
+
+
+def _text(p: Preview, only: str | None = None, for_guard: bool = False) -> str:
     """The pack's memo-ready text: every account's sentences, or `only` that account's (what
-    the guard reads against that account's figures)."""
+    the guard reads against that account's figures, with `for_guard` blanking the account
+    labels the tool writes)."""
     accounts = [a for a in p.accounts if only is None or a.account == only]
     several = len(p.accounts) > 1
     out = ["# Credit memo sections", ""]
@@ -289,15 +300,20 @@ def _text(p: Preview, only: str | None = None) -> str:
             out += [f"_{FOR_UNDERWRITER}_", ""]
             continue
         for a in accounts:
-            prefix = f"Account {a.account}: " if several else ""
+            prefix = f"{_label(a.account, for_guard)}: " if several else ""
             out += [prefix + a.sentences[f.id], ""]
     if p.policy_shown:
         out += [f"## {POLICY_TITLE}", "", policy.ILLUSTRATIVE_LABEL, ""]
         for a in accounts:
             if several:
-                out += [f"### Account {a.account}", ""]
+                out += [f"### {_label(a.account, for_guard)}", ""]
             out += [*a.policy_lines, ""]
     return "\n".join(out).rstrip() + "\n"
+
+
+def guard_text(p: Preview, account: str) -> str:
+    """What the grounding guard reads for one account: that account's text, its label blanked."""
+    return _text(p, account, for_guard=True)
 
 
 def _fields(p: Preview) -> list[dict[str, Any]]:
@@ -374,7 +390,7 @@ def _build(folder: Path, case_id: str, entries) -> Preview:
                              rules["_sha256"])
     p = Preview(case_id, bool(profile.get("demo")), field_map, accounts, shown, inputs, snapshot_hash(inputs))
     for a in accounts:  # R28, P14: each account's text against its own figures and policy result
-        a.guard = guard.check(_text(p, a.account), a.metrics, a.policy)
+        a.guard = guard.check(guard_text(p, a.account), a.metrics, a.policy)
     p.text = _text(p)
     p.fields = _fields(p)
     return p

@@ -85,6 +85,10 @@ def test_packaged_field_map_is_the_replys_13_fields_with_m18_next_to_m2():
     ("fields:\n  - id: a\n    title: A\n    figures: [M2]\n", "need a template"),
     ("fields:\n  - id: a\n    title: A\n    template: 'x'\n", "needs the figures"),
     ("fields:\n  - id: recommendation\n    title: R\n    figures: [M2]\n    template: '{M2}'\n", "judgement field"),
+    ("fields:\n  - id: key_risks\n    title: K\n    figures: [M2]\n    template: '{M2}'\n", "judgement field"),
+    ("fields:\n  - id: credit_history\n    title: C\n    figures: [M2]\n    template: '{M2}'\n", "judgement field"),
+    ("fields:\n  - id: advice\n    title: Recommendation\n    figures: [M2]\n    template: '{M2}'\n", "judgement field"),
+    ("fields:\n  - id: risks\n    title: '  key   RISKS '\n    figures: [M2]\n    template: '{M2}'\n", "judgement field"),
     ("fields:\n  - id: a\n    title: A\n  - id: a\n    title: B\n", "more than once"),
     ("fields:\n  - id: a\n    title: A\n    title: B\n", "more than once"),
     ("fields:\n  - id: a\n    title: A\n    figures: [M2]\n    template: '{M2:.2f}'\n", "takes no format"),
@@ -157,11 +161,20 @@ def test_r48_demo_case_is_stamped(home, tmp_path):
 # --- P14: the text passes the grounding guard ----------------------------------------------
 
 
+def _label_blanked(held: str, read: str, key: str) -> bool:
+    """The guard's copy differs from the text only where the text names the account."""
+    return read == held.replace(f"Account {key}:", f"Account {' ' * len(key)}:").replace(
+        f"### Account {key}\n", f"### Account {' ' * len(key)}\n")
+
+
 def _assert_grounded(p):
     assert p.grounded, p.findings()
     for a in p.accounts:
-        # the account's whole text, as the pack holds it, against its figures and policy result
-        g = guard.check(pack._text(p, a.account), a.metrics, a.policy)
+        # the account's whole text, as the pack holds it but for its blanked account labels,
+        # against its figures and policy result
+        held, read = pack._text(p, a.account), pack.guard_text(p, a.account)
+        assert len(held) == len(read) and _label_blanked(held, read, a.account)
+        g = guard.check(read, a.metrics, a.policy)
         assert g.unmatched == [] and g.missing_citations == []
         assert g.numbers_checked > 0
 
@@ -201,6 +214,24 @@ def test_p14_preview_text_passes_the_guard_with_overrides_negatives_and_missing_
     _assert_grounded(p)
     assert "Account spare: " in p.text and "Account main: " in p.text  # several accounts, each named
     assert "n/a [M4]" in p.text  # a figure that cannot be computed, still with its id
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("key", ["2", "12", "hsbc-1", "acct2x", "one", "half", "2026", "1-2"])
+def test_p14_preview_text_passes_the_guard_with_account_keys_holding_digits_or_number_words(home, tmp_path, key):
+    """An account key is an identifier the tool writes, not a figure: a key such as '2',
+    'hsbc-1' or 'one' (store.ACCOUNT_KEY allows them) never makes the preview ungrounded."""
+    assert store.ACCOUNT_KEY.fullmatch(key)
+    for shown in (True, False):
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "firm.yaml").write_text(f"show_policy_verdict: {str(shown).lower()}\n", encoding="utf-8")
+        (tmp_path / f"{key}-{shown}").mkdir()
+        case_id, folder = _case(tmp_path / f"{key}-{shown}", accounts=(("main", STATEMENT), (key, OTHER)))
+        p = pack.build_preview(folder, case_id)
+        _assert_grounded(p)
+        assert f"Account {key}: " in p.text
+        if shown:
+            assert f"### Account {key}" in p.text
 
 
 @pytest.mark.invariants
