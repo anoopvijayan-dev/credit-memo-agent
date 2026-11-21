@@ -1,0 +1,27 @@
+I'll wait for the suite to finish.
+
+T22 checks out against every checklist, and I've written the claim to `/home/user/credit-memo-agent/.bridgie/runs/statement-review/hardener-53/claim.json`. Ruff, compileall and the full suite pass (2244 tests), including the three tests I added. My edits are uncommitted in the worktree.
+
+**What I added or changed:**
+- **Redirect test:** a saved form only ever sends the browser back to the workspace's own pages (`/` or `/lines`). Links to other hosts, scheme-relative paths and the static/api paths fall back to the case page (8 cases).
+- **Cache test:** using the remembered line categories gives the same result as categorising every line, for random sets of overrides on a 2,000-line statement. A list of the wrong length is refused.
+- **Rule-table test:** switching between the v1 and v2 rule tables never reuses the other table's categories.
+- **README:** a few lines under `cma review` describing the override form, confirming or dropping stale overrides, the reload-on-conflict and the recompute.
+- **`src/cma/review/server.py`:** a stale comment said no request body is ever read; it now names the write paths.
+
+**What already held, with proof in the claim:**
+- **Repeat saves:** a repeated identical override records nothing. A save from an out-of-date page is refused as a conflict and writes nothing.
+- **Access:** the four new write endpoints get the same token, Host and Origin checks as every page. Bodies are size-capped, and chunked bodies are refused.
+- **Case log:** each override, confirmation and drop is appended to it.
+- **No migration:** the stored formats are unchanged.
+
+**Timing:** each save on a 10,000-line case is asserted to return the recomputed figures, indicators and policy check in under 2 seconds. The 6.22 s and 2.75 s in the claim are whole-test times, case setup included.
+
+**Gaps left in the claim's notes:**
+1. **Cache key:** the remembered results are keyed by the statement, rule table and profile. If firm rules ever affect these figures, they must join the key.
+2. **Slow clients:** a slow client can hold one server thread for up to 30 seconds while its body is read. That's acceptable on a local-only server.
+3. **Cold load:** the first load of a 10,000-line case, before anything is cached, isn't timed. Only saves on an open case are.
+
+Alerting, a feature flag and database indexes don't apply, since this is a local tool started on demand with no database.
+
+That notification was my background watcher, which only waited on the full run that had already finished, so nothing has changed. The full suite passed (2244 tests), and the claim is at `/home/user/credit-memo-agent/.bridgie/runs/statement-review/hardener-53/claim.json`.

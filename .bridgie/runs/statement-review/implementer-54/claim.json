@@ -1,0 +1,32 @@
+{
+  "task": "T22",
+  "claims": [
+    {
+      "text": "Workspace write endpoints: POST /api/override and /api/stale (JSON or form body) and /override, /stale (page forms, 303 back to the page they came from). Each save goes through overrides.add_override / resolve_stale, so it is appended to the override log and the case log (event override, override_confirmed, override_dropped) while the case is held; the reply carries the recomputed case summary (figures marked as resting on an override, indicators, policy check) and the new case log position. Refusals (R18: category not valid for the direction; any field but a category, e.g. amount, date, balance, description, add_line, remove_line, named; missing reason/name/position/line/category; unknown line/category; malformed or wrong-type body) answer 400 and append nothing. A stale expected position answers 409 with reload=true, expected and position; another writer holding the case answers 409 locked. Stale overrides are listed in the summary (with can_confirm) and on the page with confirm/drop forms; a missing-line override can only be dropped; a non-stale one is refused. Forms offer only the categories valid for the line's direction and carry the page's case log position. Write paths keep the token, Host and Origin checks, a 16 KiB body cap (413), Content-Length required (chunked -> 411), form/JSON only (415).",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_workspace_overrides.py",
+      "proof_output": "32 passed"
+    },
+    {
+      "text": "R52 timed tests: on a 10,000-line case with the workspace open, an override saved through /api/override comes back with the recomputed figures, indicators and policy check in under 2 s (three successive saves, max asserted < 2.0 s); and a form save (POST /override -> 303 -> GET the recomputed page, with judgement queue and policy check) completes in under 2 s. Made fast by content-keyed memos in overrides.py: the parsed statement by its bytes' hash (each caller gets its own copy), each line's no-override classification and the no-override figures by (statement hash, ruleset id+hash, profile). categorise() gained an optional `unoverridden` argument (classify_lines) so lines with no override reuse their classification; overridden lines are classified afresh and the cross-line passes run every time, so P3/P4 hold.",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_workspace_overrides.py -k r52",
+      "proof_output": "2 passed, 30 deselected in 10.19s"
+    },
+    {
+      "text": "Full suite, marker tiers, ruff and compileall pass with the change.",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider; python -m pytest -q -m invariants; python -m pytest -q -m contracts; python -m pytest -q -m dual_run; ruff check src tests; python -m compileall -q src",
+      "proof_output": "2234 passed in 250.38s; invariants 906 passed, 1328 deselected; contracts 699 passed, 1535 deselected; dual_run 84 passed, 2150 deselected; All checks passed!; compile-ok"
+    }
+  ],
+  "files_changed": [
+    "src/cma/review/edit.py",
+    "src/cma/review/server.py",
+    "src/cma/review/summary.py",
+    "src/cma/review/drilldown.py",
+    "src/cma/review/static/app.css",
+    "src/cma/overrides.py",
+    "src/cma/categorise.py",
+    "tests/test_workspace_overrides.py",
+    "tests/test_workspace_summary.py"
+  ],
+  "notes": "tests/test_workspace_summary.py (T19's P8 escape test) had a fixed allow-list of HTML tags; the workspace now writes its own override forms, so form/input/select/option/button were added and the test now also asserts every form posts only to /override?token= or /stale?token= with method post. Its intent (no case text adds markup, no handlers or styles) is unchanged. categorise() gained an additive keyword `unoverridden` and a new classify_lines() helper; default behaviour is unchanged. The summary JSON gains `position` and `stale`, and queue lines gain `categories` (additive). The memo caches are in-process, bounded (8 entries each), thread-safe, and keyed by content hashes, so a changed statement, profile or rule table is never served from cache; figures with overrides are still recomputed on every request. Timings measured on this runner: about 0.07 s for the save and 0.6-0.9 s for the recomputed summary per override at 10,000 lines. Nothing was committed or marked done."
+}

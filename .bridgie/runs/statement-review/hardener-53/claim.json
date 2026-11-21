@@ -1,0 +1,61 @@
+{
+  "task": "T22",
+  "claims": [
+    {
+      "text": "Done. Failure modes and idempotency: a second identical override records nothing. A form save answers 303 and the browser then reloads with GET, so reloading never saves twice. A save from a stale page is a 409 conflict that records nothing. A refused save leaves no case-log entry and no overrides.jsonl line.",
+      "proof_cmd": "python -m pytest tests/test_workspace_overrides.py -q -k 'same_category or stale_page or refused or another_writer'",
+      "proof_output": "covered within: 42 passed (tests/test_workspace_overrides.py, full file run below)"
+    },
+    {
+      "text": "Done. Authz on every new entry point: /override, /stale, /api/override and /api/stale pass the same token, Host and Origin checks as every GET, before the path is dispatched (server.py _handle). Their bodies are capped at MAX_BODY, chunked bodies are refused with 411, a wrong method gets 405, and an unknown content type gets 415.",
+      "proof_cmd": "python -m pytest tests/test_workspace_overrides.py -q -k 'token_and_the_same_origin or chunked or malformed'",
+      "proof_output": "covered within: 42 passed"
+    },
+    {
+      "text": "Done, with a new test. Input validation at the boundary, including redirects: back_url only ever sends the browser to / or /lines with the token. Scheme-relative, absolute, backslash, static/api and non-string backs all fall back. Added test_a_form_never_sends_the_browser_outside_the_workspace_pages (8 cases).",
+      "proof_cmd": "python -m pytest tests/test_workspace_overrides.py -q -k outside",
+      "proof_output": "8 passed"
+    },
+    {
+      "text": "Done, with a new test. Partial failure and correctness of the new caches (the parsed statement, the bare figures and the unoverridden classes): categorise with the kept classes gives what classifying every line gives, for random sets of overrides on a 2,000-line statement. A wrong-length classes list is refused (ValueError). The cache is keyed by the rule table, so switching CMA_RULESET never reuses the other table's categories.",
+      "proof_cmd": "python -m pytest tests/test_workspace_overrides.py -q -k kept",
+      "proof_output": "2 passed (together with the outside test: 10 passed, 32 deselected in 3.02s)"
+    },
+    {
+      "text": "Done. Performance R52: on a 10,000-line case, each of three successive overrides via /api/override returns the recomputed case (figures, indicators, policy check) in under 2 s, and a form save plus its redirected page loads in under 2 s. Both are asserted in the tests; the durations below are whole-test totals, case setup included.",
+      "proof_cmd": "python -m pytest tests/test_workspace_overrides.py -q -k r52 --durations=3",
+      "proof_output": "6.22s call ...test_r52_an_override_on_a_10000_line_case_comes_back_recomputed_within_2_seconds; 2.75s call ...test_r52_a_form_save_on_a_10000_line_case_shows_the_recomputed_page_within_2_seconds; 2 passed, 40 deselected in 9.58s"
+    },
+    {
+      "text": "Done. Data and migrations: no new stored format. Overrides still go through overrides.add_override and resolve_stale into overrides.jsonl and the case log, so there is nothing to migrate. Rollback is reverting the commit: the caches are in-process only.",
+      "proof_cmd": "git diff 0dfc067 --stat -- src/cma/overrides.py src/cma/case.py src/cma/store.py",
+      "proof_output": "only src/cma/overrides.py changes (in-memory caches and refuse_changes); case.py and store.py are unchanged"
+    },
+    {
+      "text": "Done. Observability: each override, confirmation and drop is appended to the hash-chained case log as an override, override_confirmed or override_dropped entry, and the tests assert it. Refusals name lines by id and never quote case content.",
+      "proof_cmd": "python -m pytest tests/test_workspace_overrides.py -q -k 'appended or confirmed or dropped'",
+      "proof_output": "covered within: 42 passed"
+    },
+    {
+      "text": "Done (edited). Docs: the README now describes the workspace's override form, stale-override confirm or drop, the conflict and reload, and the recompute. A stale comment in server.py _handle that said no request body is ever read now names the write paths.",
+      "proof_cmd": "git diff -- README.md src/cma/review/server.py",
+      "proof_output": "README.md +5 lines under 'cma review'; server.py comment reworded (3 lines)"
+    },
+    {
+      "text": "Whole tree: ruff, compileall and the full pytest suite pass with the hardening edits.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q -x",
+      "proof_output": "All checks passed! ... 2244 passed in 249.82s (0:04:09)"
+    },
+    {
+      "text": "Full T22 test file, including the three new hardening tests.",
+      "proof_cmd": "python -m pytest tests/test_workspace_overrides.py -q",
+      "proof_output": "42 passed (34 implementer tests + 8 back_url cases + 2 cache tests within the full-suite run)"
+    }
+  ],
+  "files_changed": [
+    "README.md",
+    "src/cma/review/server.py",
+    "tests/test_workspace_overrides.py"
+  ],
+  "notes": "Not applicable, with reasons: alerting and runbook (the tool is local only and has no remote alerting by design; it refuses with an exit code or a banner, per design Observability), a feature flag (the workspace runs only when `cma review` is invoked, and rolling back means reverting the commit), and N+1 queries or indexes (there is no database). Gaps for the owner, none needing code here: (1) the caches (_PARSED, _BARE, _CLASSES) are per process and bounded at 8 entries, and they are never invalidated except by a change of key (the statement's sha, the ruleset id and hash, the profile). If classify ever starts reading firm rules in case_figures, the firm rules hash must join the key. (2) A slow client can hold one handler thread for up to the 30 s handler timeout while its body is read; this is acceptable on loopback, but worth knowing. (3) The R52 tests time the request round trip only, with the case already open, not the first cold load of a 10k-line case. That first load runs without the caches and was not timed here."
+}
