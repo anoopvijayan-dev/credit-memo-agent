@@ -1,0 +1,36 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Read src/cma/case.py at HEAD a17477c. Canonical exact-byte entries (_decode/_canonical :177-218) and head-file comparison naming the first bad entry (_check :285-326); torn last entry as incomplete; reader rules (_look with head-file identity, in_place checks); production consumer cli.py:465 `cma case check` (exit 3 broken / 4 being saved). The prior major (nested save on a new case passing the guard) is fixed: _one_save now mkdirs the folder before _folder_key (case.py:964-965), so outer and nested keys agree. Runner logs: specified-3.log:259-260 test_a_nested_save_after_the_case_folder_moved_is_refused and test_a_nested_save_on_a_new_case_is_refused PASSED; invariants-5.log shows test_p15_a_rebuilt_chain_that_does_not_match_the_head_file_is_detected[2..6], test_p15_loading_a_case_detects_a_tampered_log_and_names_the_first_bad_entry[change|remove|reorder|rebuild], torn-entry tests PASSED; contracts-4.log shows the case-check exit-code contract tests PASSED; 251 test_case_log.py tests PASSED, none failed or skipped.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-225/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1120,
+      "criterion": "P15",
+      "claim": "Claim 3 says that while another command holds the lock over a torn tail, `cma case check` reports the recorded log with exit 0 and 'appending'. The cited test, test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break, asserts exit 4 and 'being saved', and cli.py exits 4 when in_progress is set. The claim text contradicts its own proof; the code is correct per R43 and D75.",
+      "repro": "Read the assertions after `r = _check_cli(folder)` in that test (exit_code == 4) and cli.py case_check (`if check.in_progress: ... raise typer.Exit(code=4)`), then compare with the claim 3 text."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": null,
+      "criterion": "P15",
+      "claim": "Several proof outputs in claim.json are stale. Claim 2 quotes '396 passed', claim 1 quotes '82 passed', and claim 6's diff stat shows case.py at 559 lines, while the runner shows 1826 passed (specified), 804 invariants passed, and case.py is 1522 lines. The runner's own logs carry the proof, so nothing rests on these outputs.",
+      "repro": "wc -l src/cma/case.py (1522) and compare with claim 6. Compare the claim 1 and 2 counts with the tails of specified-3.log and invariants-5.log."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
