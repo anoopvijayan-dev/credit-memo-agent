@@ -409,9 +409,9 @@ def test_a_rename_blocked_by_a_windows_reader_is_retried_not_failed(tmp_path, mo
     src.write_bytes(b"x")
     monkeypatch.setattr(case.os, "replace", busy_twice)
     monkeypatch.setattr(case, "REPLACE_PAUSE", 0)
-    monkeypatch.setattr(case.os, "name", "nt")
+    monkeypatch.setattr(case, "_on_windows", lambda: True)
     case._replace(src, dst)
-    monkeypatch.setattr(case.os, "name", "posix")
+    monkeypatch.setattr(case, "_on_windows", lambda: False)
     assert dst.read_bytes() == b"x" and len(calls) == 3
     src.write_bytes(b"y")
     calls.clear()
@@ -1951,7 +1951,7 @@ def test_p15_a_rename_retried_after_a_blocked_attempt_re_checks_the_lock(tmp_pat
         real_replace(src, dst)
 
     monkeypatch.setattr(case.os, "replace", blocked_once)
-    monkeypatch.setattr(case.os, "name", "nt")
+    monkeypatch.setattr(case, "_on_windows", lambda: True)
     monkeypatch.setattr(case, "REPLACE_PAUSE", 0)
     with pytest.raises(case.CaseLocked, match="replaced"), log.writer():
         log._write_head(["x" * 64])

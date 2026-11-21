@@ -1421,6 +1421,13 @@ def _staging_file(target: Path) -> tuple[int, Path]:
     return fd, Path(name)
 
 
+def _on_windows() -> bool:
+    """Whether a rename a reader blocks may be retried: on Windows only. A function, so a test
+    can say so without changing os.name for the whole process, which pathlib reads (on 3.11 it
+    decides every new Path's kind by it)."""
+    return os.name == "nt"
+
+
 def _replace(src: Path, dst: Path, before: Callable[[], None] | None = None) -> None:
     """Rename `src` over `dst`, retrying a rename a Windows reader blocks for a moment;
     `before` runs immediately before every attempt (the lock re-check, D108)."""
@@ -1431,7 +1438,7 @@ def _replace(src: Path, dst: Path, before: Callable[[], None] | None = None) -> 
             os.replace(src, dst)
             return
         except PermissionError:
-            if os.name != "nt" or attempt == REPLACE_RETRIES - 1:
+            if not _on_windows() or attempt == REPLACE_RETRIES - 1:
                 raise
             time.sleep(REPLACE_PAUSE)
 
