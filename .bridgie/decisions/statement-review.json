@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 330,
+  "next_id": 331,
   "decisions": [
     {
       "id": "D1",
@@ -6606,6 +6606,26 @@
       "decided_at": "2026-11-21T10:11:55.908Z",
       "effect": "task T17 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T17",
       "created_at": "2026-11-21T08:33:07.772Z"
+    },
+    {
+      "id": "D330",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (Lock defaults on (firm.py:68); hosted clients built only on a fresh unlocked reading with max_retries=0 and a per-request HTTP hook (llm.py _require_unlocked_now, _checked_http); every request checked via HostedLLM._check, which now needs the run's own key (firm.py:203-207, graph.py:680-681, 442-443), closing verify-215 finding 1; MCP start paths, ASGI factories and LockCheckedASGI check the lock (mcp_server.py); a drafting resume's lock is kept in draft_resume_offline_lock (graph.py:456) and finalise writes only resume_offline_lock (graph.py:510-512), closing verify-215 finding 2. Gap: the 'untraced under the lock', tracer-removal and resume-reads-firm.yaml clauses live only in instance-attribute wrappers (graph.py:766), and Pregel.with_config/copy (langgraph/pregel/main.py:1000-1009) builds a copy that drops them.); P18 fail (P18 tests passed (invariants-5.log), including test_p18_a_suspended_streams_reading_allows_no_request_on_its_own_thread and the finalising-resume test. P18 validates R29 and its revision 32 scope (a run under the lock is untraced, a resume reads firm.yaml as it resumes); a run started through graph.with_config(...) leaves both unenforced (finding 1).); major: The lock handling for runs (tracing off under the lock, LangSmith tracers taken out of the run's own and inherited callbacks, a resume taking its own reading of firm.yaml and recording resume_offline_lock) is installed only by assigning invoke, stream, ainvoke and astream on the compiled graph object. LangGraph's Pregel.with_config() returns self.copy(), which builds self.__class__(**self.__dict__) (langgraph/pregel/main.py:1000-1009). The four wrappers in __dict__ are swallowed into Pregel.__init__'s **deprecated_kwargs (main.py:790) and dropped, so the copy runs the plain LangGraph methods on the same nodes. A run started through graph.with_config(...) under the offline lock is traced to LangSmith when the environment enables tracing, keeps a LangChainTracer handed in its callbacks, and, as a resume, takes no reading at resume and records no resume_offline_lock. This also fails P18. at src/cma/graph.py:766; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T10:15:35.919Z"
     }
   ]
 }

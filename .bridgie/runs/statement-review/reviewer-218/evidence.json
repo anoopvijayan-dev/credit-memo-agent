@@ -1,0 +1,49 @@
+{
+  "task": "T17",
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "Lock defaults on (firm.py:68); hosted clients built only on a fresh unlocked reading with max_retries=0 and a per-request HTTP hook (llm.py _require_unlocked_now, _checked_http); every request checked via HostedLLM._check, which now needs the run's own key (firm.py:203-207, graph.py:680-681, 442-443), closing verify-215 finding 1; MCP start paths, ASGI factories and LockCheckedASGI check the lock (mcp_server.py); a drafting resume's lock is kept in draft_resume_offline_lock (graph.py:456) and finalise writes only resume_offline_lock (graph.py:510-512), closing verify-215 finding 2. Gap: the 'untraced under the lock', tracer-removal and resume-reads-firm.yaml clauses live only in instance-attribute wrappers (graph.py:766), and Pregel.with_config/copy (langgraph/pregel/main.py:1000-1009) builds a copy that drops them.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "draft_prompt (graph.py) carries only Account: Applicant, Period, the metrics table and a rule table with the overall outcome as a row; custom rules masked unless whole-equal to the shipped rule (_is_shipped); redraft line carries only table ids (redraft_ids); guard_feedback is just 'redraft'. test_p5_* passed in invariants-5.log.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-218/invariants-5.log"
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "Runner ran and passed test_p5_no_prompt_carries_line_level_text across every archetype, profile and hallucinate setting, plus the custom-policy, custom-id, limits and CLI --policy sentinel tests (invariants-5.log). Code path matches the revision 32 and 33 scope.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-218/invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "P18 tests passed (invariants-5.log), including test_p18_a_suspended_streams_reading_allows_no_request_on_its_own_thread and the finalising-resume test. P18 validates R29 and its revision 32 scope (a run under the lock is untraced, a resume reads firm.yaml as it resumes); a run started through graph.with_config(...) leaves both unenforced (finding 1).",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-218/invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 766,
+      "criterion": "R29",
+      "claim": "The lock handling for runs (tracing off under the lock, LangSmith tracers taken out of the run's own and inherited callbacks, a resume taking its own reading of firm.yaml and recording resume_offline_lock) is installed only by assigning invoke, stream, ainvoke and astream on the compiled graph object. LangGraph's Pregel.with_config() returns self.copy(), which builds self.__class__(**self.__dict__) (langgraph/pregel/main.py:1000-1009). The four wrappers in __dict__ are swallowed into Pregel.__init__'s **deprecated_kwargs (main.py:790) and dropped, so the copy runs the plain LangGraph methods on the same nodes. A run started through graph.with_config(...) under the offline lock is traced to LangSmith when the environment enables tracing, keeps a LangChainTracer handed in its callbacks, and, as a resume, takes no reading at resume and records no resume_offline_lock. This also fails P18.",
+      "repro": "firm.yaml: offline_lock: true; LANGSMITH_TRACING=true and LANGSMITH_API_KEY set (or patch langsmith.utils.get_env_var as test_p18_the_graph_runs_untraced_under_the_lock_whatever_the_environment does). g = build(Watching()) with Watching recording langsmith.utils.tracing_is_enabled() in complete(); g.with_config(recursion_limit=50).invoke({'statement_path': p}, {'configurable': {'thread_id': 't'}}). The recorded value is True, where g.invoke(...) records False. Likewise g.with_config(tags=['x']).invoke(..., {'callbacks': [LangChainTracer(...)]}) reaches the tracer's _start_trace under the lock."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
