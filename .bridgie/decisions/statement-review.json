@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 293,
+  "next_id": 294,
   "decisions": [
     {
       "id": "D1",
@@ -5872,6 +5872,26 @@
       "decided_at": "2026-11-21T00:43:54.315Z",
       "effect": "design approved",
       "created_at": "2026-11-21T00:43:52.089Z"
+    },
+    {
+      "id": "D293",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (src/cma/firm.py:67-83 supplies the defaults and resolves configured paths. src/cma/cli.py:79-86 passes one reading into the draft and src/cma/graph.py:261-281 records the dispatch value. src/cma/mcp_server.py:37-79 gates native starts and app factories. Stale readings still authorize hosted dispatch and tracing, and the ASGI wrapper reads the lock before receiving the startup event. Revision 30 excludes sockets bound by the embedder before app startup.); R30 fail (src/cma/graph.py:215-226 builds the prompt from the placeholder, dates and tables. src/cma/metrics.py:295-299 omits evidence IDs, and src/cma/graph.py:203-212 filters redraft feedback to table IDs. The policy-table filter at src/cma/graph.py:194-199 still emits a custom rule ID copied from a statement when it matches a shipped ID.); P5 fail (invariants-5.log confirms the sentinel and hosted custom-policy redraft cases ran. They cover custom IDs outside the shipped set. src/cma/graph.py:197-208 leaves a custom sentinel that matches a shipped ID in the first prompt and eligible for redraft feedback.); P18 fail (invariants-5.log confirms native MCP bind checks, saved-app HTTP and lifespan refusals, and both SDK retryable-503 cases. src/cma/firm.py:156-162 accepts an unused reading taken before the lock changed. src/cma/graph.py:429-430 also accepts the same unlocked reading across independent graph runs.); major: An unused unlocked reading can authorize creation of a hosted client after the firm locks. The check verifies the folder and prior use but establishes no connection to the current run. at src/cma/firm.py:159; major: An unlocked reading can be reused across graphs. Each graph consumes its own reference once, and invocation registers that same object as active again. at src/cma/graph.py:429; major: Resuming on the same compiled graph can trace review data after the firm enables the lock. The resume path uses the graph's last reading, which can also come from a different invocation. at src/cma/graph.py:427; major: The saved ASGI app checks the lock before the lifespan startup event arrives. It can start the wrapped server under the lock if startup delivery is delayed. at src/cma/mcp_server.py:95; major: The custom-policy sanitizer trusts ID spelling alone when it coincides with a shipped ID. A case sentinel used as a custom rule ID survives even when the rule has a different description and meaning. at src/cma/graph.py:197; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T00:46:07.486Z"
     }
   ]
 }

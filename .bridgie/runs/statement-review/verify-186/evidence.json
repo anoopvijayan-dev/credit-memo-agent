@@ -1,0 +1,146 @@
+{
+  "task": "T17",
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "src/cma/firm.py:67-83 supplies the defaults and resolves configured paths. src/cma/cli.py:79-86 passes one reading into the draft and src/cma/graph.py:261-281 records the dispatch value. src/cma/mcp_server.py:37-79 gates native starts and app factories. Stale readings still authorize hosted dispatch and tracing, and the ASGI wrapper reads the lock before receiving the startup event. Revision 30 excludes sockets bound by the embedder before app startup.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:215-226 builds the prompt from the placeholder, dates and tables. src/cma/metrics.py:295-299 omits evidence IDs, and src/cma/graph.py:203-212 filters redraft feedback to table IDs. The policy-table filter at src/cma/graph.py:194-199 still emits a custom rule ID copied from a statement when it matches a shipped ID.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "invariants-5.log confirms the sentinel and hosted custom-policy redraft cases ran. They cover custom IDs outside the shipped set. src/cma/graph.py:197-208 leaves a custom sentinel that matches a shipped ID in the first prompt and eligible for redraft feedback.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "invariants-5.log confirms native MCP bind checks, saved-app HTTP and lifespan refusals, and both SDK retryable-503 cases. src/cma/firm.py:156-162 accepts an unused reading taken before the lock changed. src/cma/graph.py:429-430 also accepts the same unlocked reading across independent graph runs.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-186/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-186/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-186/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-186/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-186/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-186/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-186/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/firm.py",
+      "line": 159,
+      "criterion": "P18",
+      "claim": "An unused unlocked reading can authorize creation of a hosted client after the firm locks. The check verifies the folder and prior use but establishes no connection to the current run.",
+      "repro": "With a stub SDK, load an unlocked firm configuration and save the reading without constructing a client. Enable the lock, then pass the saved reading to AnthropicLLM. The SDK constructor is called. tests/test_firm.py:867 claims its reading before enabling the lock and therefore covers only the second-use refusal."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 429,
+      "criterion": "R29",
+      "claim": "An unlocked reading can be reused across graphs. Each graph consumes its own reference once, and invocation registers that same object as active again.",
+      "repro": "Run a graph with an unlocked reading and a recording hosted SDK stub. Enable the lock, build a second graph with the existing model and the same reading, and invoke it on a different review ID. The second graph reactivates the reading and sends a request. The runner's reuse test invokes the original graph twice."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 427,
+      "criterion": "R29",
+      "claim": "Resuming on the same compiled graph can trace review data after the firm enables the lock. The resume path uses the graph's last reading, which can also come from a different invocation.",
+      "repro": "Draft with the lock off, leave the review pending, enable the lock and LangSmith tracing, then resume the same graph. Use a trace spy or inspect tracing in the appendix hook. Tracing remains enabled. tests/test_firm.py:912 builds a new graph before resuming and exercises the fresh-read branch."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/mcp_server.py",
+      "line": 95,
+      "criterion": "R29",
+      "claim": "The saved ASGI app checks the lock before the lifespan startup event arrives. It can start the wrapped server under the lock if startup delivery is delayed.",
+      "repro": "Create either app while unlocked and enter its lifespan scope with a receive callback waiting to deliver lifespan.startup. Turn on the lock while receive is waiting, then deliver the startup event. The unlocked branch has already delegated to the wrapped app, which can send lifespan.startup.complete. The runner's test sets the lock before calling the app."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 197,
+      "criterion": "P5",
+      "claim": "The custom-policy sanitizer trusts ID spelling alone when it coincides with a shipped ID. A case sentinel used as a custom rule ID survives even when the rule has a different description and meaning.",
+      "repro": "Use R1 as a sentinel in a synthetic statement's transaction ID and description and in its profile notes. Supply a custom policy whose only rule uses that copied ID, a custom description and a different metric from shipped R1. Capture the hosted prompt with a stub. The custom description is masked but the rule row contains R1. The runner's custom-ID cases use IDs outside the shipped set."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 297,
+      "criterion": "R29",
+      "claim": "The claimed absence of a timing regression is not proven. The suite reports one elapsed time, and graph startup adds a configuration read even for the offline model.",
+      "repro": "Compare the claim to specified-3.log, which reports only the reviewed revision's runtime. Run python evals/run_evals.py repeatedly with the same offline fixtures and environment on the baseline and reviewed revisions to measure the difference."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 102,
+      "criterion": "R29",
+      "claim": "The claimed CLI exit code 4 on hosted call failure is not proven by the cited SDK test. That test calls the wrapper directly and checks the number of attempts.",
+      "repro": "Compare tests/test_firm.py:559-564 with the CLI exception handler. To prove the exit status, add a CLI test that invokes cma run with a stub provider returning HTTP 503 and asserts exit code 4, then run python -m pytest -q tests/test_firm.py -k cli_hosted_failure_exit_4."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
