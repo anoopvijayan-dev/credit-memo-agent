@@ -177,3 +177,30 @@ def test_library_caller_without_a_callback_still_gets_a_python_warning(tmp_path,
     _isolate(monkeypatch, tmp_path)
     with pytest.warns(store.SyncFolderWarning, match="Dropbox"):
         store.new_case(root=tmp_path / "Dropbox" / "cma")
+
+
+@pytest.mark.contracts
+def test_a_failure_recording_the_warning_leaves_no_case_behind(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    root = tmp_path / "Dropbox" / "cma"
+    real_append = case.CaseLog.append
+
+    def append(self, event, *args, **kwargs):
+        if event == "sync_folder_warning":
+            raise OSError("disk full")
+        return real_append(self, event, *args, **kwargs)
+
+    monkeypatch.setattr(case.CaseLog, "append", append)
+    with pytest.raises(OSError, match="disk full"):
+        store.new_case(root=root, warn=lambda m: None)
+    assert list((root / "cases").iterdir()) == []  # the case is removed, not left without its warning
+
+
+@pytest.mark.contracts
+def test_the_logged_warning_holds_no_case_profile(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    root = tmp_path / "OneDrive" / "cma"
+    cid = store.new_case(root=root, label="Jane Doe Cafe", warn=lambda m: None)
+    entry = case.for_case(root / "cases" / cid).entries()[-1]
+    assert set(entry.data) == {"client", "sync_folder", "case_root", "warning"}
+    assert "Jane Doe Cafe" not in json.dumps(entry.data)
