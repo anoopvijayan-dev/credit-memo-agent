@@ -1,0 +1,61 @@
+{
+  "task": "T19",
+  "claims": [
+    {
+      "text": "Security/authz: the two entry points T19 changes (/ and /api/case) sit behind the existing per-launch token, loopback Host and Origin checks, which run before any path is routed (src/cma/review/server.py _handle); the existing server tests cover the token on both paths.",
+      "proof_cmd": "python -m pytest tests/test_review_server.py -q",
+      "proof_output": "all passed (part of '88 passed in 44.27s' together with tests/test_workspace_summary.py)"
+    },
+    {
+      "text": "Security/input at the boundary (R34, P8): every case text in the rendered summary (descriptions of unreconciled lines, label, business name, refusals) is HTML-escaped; the API sends JSON with nosniff; the P8 invariant runs over 25 random statements with markup, entity, comment and token-mark pieces.",
+      "proof_cmd": "python -m pytest -q -m invariants -k p8",
+      "proof_output": "26 passed, 2052 deselected in 18.52s"
+    },
+    {
+      "text": "Failure modes (gap found and fixed): with CMA_RULESET set to an unknown ruleset, case_summary raised RulesetError uncaught and the server closed the connection with no response (probe: 'client error RemoteDisconnected Remote end closed connection without response'). RulesetError is now a refusal with no figures shown, tested.",
+      "proof_cmd": "python -m pytest tests/test_workspace_summary.py -q -k ruleset_that_cannot_load",
+      "proof_output": "passed (within 88 passed in 44.27s for test_workspace_summary.py + test_review_server.py)"
+    },
+    {
+      "text": "Failure modes: any failure no refusal foresees while computing the summary for / or /api/case is answered 500 'The case could not be shown.' naming nothing the case holds, instead of an unanswered connection; tested with an exception whose message is a description.",
+      "proof_cmd": "python -m pytest tests/test_workspace_summary.py -q -k failure_no_refusal_foresees",
+      "proof_output": "passed (within 88 passed in 44.27s)"
+    },
+    {
+      "text": "Idempotency: the summary is a read-only pure recomputation from the case files per request; it writes nothing, so repeated requests are idempotent. Reconciliation failure (R3) shows no figures for any account and reports the difference in pence and the lines; contracts tests cover single-account, debit-as-trading and multi-account cases.",
+      "proof_cmd": "python -m pytest tests/test_workspace_summary.py -q",
+      "proof_output": "39 tests, all passed (88 passed in 44.27s together with test_review_server.py)"
+    },
+    {
+      "text": "Data/migrations: not applicable. No stored format, log, evidence key or checkpoint changes; models.money_exact is a refactor of Metric.display_exact (same output); ReconciliationError gains in-memory attributes account and statement only.",
+      "proof_cmd": "git diff 2680370..HEAD --stat -- src",
+      "proof_output": "src/cma/models.py, src/cma/overrides.py, src/cma/review/server.py, src/cma/review/summary.py, src/cma/review/static/{app.css,index.html}; no store/case/ingest/evidence file touched"
+    },
+    {
+      "text": "Whole suite, lint and compile pass after the hardening commit (bb82866).",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q",
+      "proof_output": "All checks passed! / compile ok / 2080 passed in 172.42s (0:02:52)"
+    },
+    {
+      "text": "Performance (measured, gap): case_summary + render on a 10,000-line single-account statement took 2.67s on this machine, above R52's 2-second target at 10,000 lines. R52 is not one of T19's requirements (R3, P8); left to T22 (notes).",
+      "proof_cmd": "python /tmp/claude-0/sp/perf.py (scratch probe, not in repo: 10,000 random lines, case_summary then render)",
+      "proof_output": "shown 2.67s 10001"
+    },
+    {
+      "text": "Observability: not applicable for T19 by design (no remote alerting; nothing logged, request log off so the token never reaches a log). The refusal states are visible in the API's state field (shown/empty/refused/not_reconciled) and tested.",
+      "proof_cmd": "python -m pytest tests/test_workspace_summary.py -q",
+      "proof_output": "passed"
+    },
+    {
+      "text": "Operability/rollback: the change is additive behind the `cma review` command, which runs only when invoked; rollback is reinstalling the previous wheel, with no data to repair. No new dependency, config or secret.",
+      "proof_cmd": "git diff 2680370..HEAD -- pyproject.toml | wc -l",
+      "proof_output": "0"
+    }
+  ],
+  "files_changed": [
+    "src/cma/review/server.py",
+    "src/cma/review/summary.py",
+    "tests/test_workspace_summary.py"
+  ],
+  "notes": "Gaps for the owner (not built, they need design or belong to other tasks): (1) R52: the summary takes 2.67s at 10,000 lines here, over the 2s target, and both / and /api/case recompute the whole case per request (the page plus its script can compute it twice); caching by snapshot belongs with T22. (2) R3 across accounts: overrides.case_figures raises at the first account that does not reconcile, so when two accounts both fail, only the first account's difference and lines are reported; nothing is shown either way, but naming every account's lines needs case_figures to continue past the first failure. (3) The not-reconciled view lists every line involved with no paging; a categoriser bug leaving thousands of credits unbucketed would make one long table. (4) metrics.compute's plain ValueError on a malformed proposed repayment or VAT stagger now reaches the generic 500 rather than a named refusal; store validates both on write, so only a hand-edited case.yaml reaches it. Hardening commit: bb82866."
+}
