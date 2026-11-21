@@ -21,6 +21,7 @@ comes from this module alone.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,10 @@ from ..models import Metric, MonthlyCell, format_value, money_exact
 
 BREAKDOWN = ("M2", "M19", "M20", "M21", "M22", "M23", "M24", "M25")  # the money-in buckets (R1)
 TOTAL, CASH = "M17", "M18"
+# The profile fields the figures read (R5, R6, R13), shown with them so the underwriter sees
+# what made a credit director funding or an own-account transfer, and what M28 includes.
+PROFILE_SHOWN = ("directors", "shareholders", "own_accounts", "proposed_monthly_repayment")
+PROFILE_TITLES = {"directors": "Directors", "shareholders": "Shareholders", "own_accounts": "Own accounts"}
 CELLS = (("money_in", "Money in"), ("money_out", "Money out"), ("trading_receipts", "Trading receipts"),
          ("average_balance", "Average end-of-day balance"), ("lowest_balance", "Lowest end-of-day balance"),
          ("days_overdrawn", "Days overdrawn"))
@@ -96,11 +101,13 @@ def _not_reconciled(e: metrics.ReconciliationError) -> dict[str, Any]:
 def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
     """The case as the workspace shows it, computed afresh from its files."""
     folder = Path(folder)
-    out: dict[str, Any] = {"case": case_id, "label": None, "business_name": None, "state": "shown",
-                           "accounts": [], "reconciliation": None, "refusal": None}
+    out: dict[str, Any] = {"case": case_id, "label": None, "business_name": None, "profile": None,
+                           "state": "shown", "accounts": [], "reconciliation": None, "refusal": None}
     try:
         profile = store.load_profile(folder)
         out["label"], out["business_name"] = profile.get("label"), profile.get("business_name")
+        out["profile"] = {key: (list(profile[key]) if key in store.LIST_FIELDS else profile[key])
+                          for key in PROFILE_SHOWN}
         figures = overrides.case_figures(folder)
     except metrics.ReconciliationError as e:  # R3: nothing is shown
         out.update(state="not_reconciled", reconciliation=_not_reconciled(e))
@@ -195,11 +202,29 @@ def _reconciliation_html(r: dict[str, Any]) -> str:
             f'<th class="num">Amount</th><th>Category</th></tr></thead><tbody>{rows}</tbody></table></section>')
 
 
+def _profile_html(p: dict[str, Any] | None) -> str:
+    """The profile fields the figures read: each list of names (R5, R6), and the proposed
+    monthly repayment that M28 includes (R13)."""
+    if p is None:
+        return ""
+    rows = []
+    for key, title in PROFILE_TITLES.items():
+        names = p[key]
+        shown = ", ".join(_e(n) for n in names) if names else '<span class="none">none named</span>'
+        rows.append(f"<tr><th>{_e(title)}</th><td>{shown}</td></tr>")
+    repayment = p["proposed_monthly_repayment"]
+    shown = (_e(f"£{Decimal(repayment):,.2f}") if repayment is not None  # as typed, to the penny
+             else '<span class="none">No proposed monthly repayment given: M28 is n/a</span>')
+    rows.append(f"<tr><th>Proposed monthly repayment</th><td>{shown}</td></tr>")
+    return f'<section id="profile"><h2>Case profile</h2><table class="profile"><tbody>{"".join(rows)}</tbody></table></section>'
+
+
 def render(summary: dict[str, Any]) -> str:
     """The case summary as HTML for the page's main element; every case text escaped."""
     names = [x for x in (summary["business_name"], summary["label"]) if x]
     head = (f'<section id="summary-head"><p class="case-name">{_e(" — ".join(names))}</p></section>'
             if names else "")
+    head += _profile_html(summary.get("profile"))
     state = summary["state"]
     if state == "not_reconciled":
         return head + _reconciliation_html(summary["reconciliation"])
