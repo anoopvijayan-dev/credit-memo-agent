@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 332,
+  "next_id": 333,
   "decisions": [
     {
       "id": "D1",
@@ -6646,6 +6646,26 @@
       "decided_at": "2026-11-21T10:24:08.035Z",
       "effect": "task T17 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T17",
       "created_at": "2026-11-21T10:21:30.355Z"
+    },
+    {
+      "id": "D332",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (Lock defaults on (src/cma/firm.py FirmConfig offline_lock=True); hosted clients built only on an unlocked reading, max_retries=0, per-request HTTP hook (src/cma/llm.py _require_unlocked_now, _checked_http, HostedLLM._check); MCP run paths, ASGI factories and LockCheckedASGI read the lock (src/cma/mcp_server.py); evidence records offline_lock/resume locks (src/cma/graph.py _egress). verify-222's tracing_v2_enabled gap is closed for a context entered before the run starts (graph.py:598-604, 720; invariants-5.log:140-141 passed for invoke and stream). Gap: tracing is turned off only once, at the stream generator's first step (graph.py:746-757), so a caller that enters tracing_v2_enabled() or langsmith.tracing_context(enabled=True) between stream steps re-enables LangSmith tracing for the later steps of a run under the lock (finding 1).); P18 fail (P18 tests passed (invariants-5.log), including the with_config copy test and the tracing_v2 context tests. P18 validates R29's revision 32 scope that a run under the lock is untraced; a locked stream whose caller re-enters a tracing context between steps is traced (finding 1), so the property does not hold for every run under the lock.); major: Under the offline lock, the stream and astream wrappers clear tracing_v2_callback_var and enter langsmith.tracing_context(enabled=False) once, in the generator's first step (start() at graph.py:748, 720; graph.py:751). A sync or async generator runs in its caller's context, and LangGraph copies the caller's current context for each step (langgraph/pregel/_executor.py:72-79). A caller that enters tracing_v2_enabled() between two next() calls therefore sets tracing_v2_callback_var again for the later steps. _tracing_v2_is_enabled() then returns True (langchain_core/tracers/context.py:141-144), and _configure adds that tracer to each node's callback manager, since the filter left no LangChainTracer there (langchain_core/callbacks/manager.py:2483-2515). The later node runs, with the state and statement data as inputs, are exported to LangSmith. A caller's langsmith.tracing_context(enabled=True) entered mid-stream has the same effect. This fails R29's 'a run under the lock is untraced: LangSmith's own tracing is off whatever the environment says' and P18. Verdict PLAUSIBLE: found from the sources, not run, because the shell was denied. at src/cma/graph.py:748; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T10:27:17.562Z"
     }
   ]
 }
