@@ -247,3 +247,45 @@ def test_a_single_profile_name_decides_under_v1(home, tmp_path, serve, monkeypat
     # v1's protected rules come first, and v1 protects neither IWOCA nor REFUND wording on a
     # credit, so the director's name takes L8 and L9 too (C1, profile names under v1).
     assert _pounds(f["M20"]) == Decimal("1160.00")
+
+
+@pytest.mark.contracts
+def test_a_profile_edited_between_reads_is_shown_at_the_next_read(home, tmp_path, serve):
+    # The summary is computed afresh from the case's files on every read: a director added
+    # while the workspace is open moves the credit on the next read, and reading again
+    # without a change gives the same answer (no state kept between reads).
+    case_id, folder = _case(tmp_path)
+    srv = serve(case_id)
+    before = _figures(_api(srv))
+    assert _pounds(before["M20"]) == 0
+    assert _figures(_api(srv))["M20"] == before["M20"]
+    store.update_profile(folder, lambda p: {**p, "directors": ["Jane Doe"]})
+    after = _api(srv)
+    assert _pounds(_figures(after)["M20"]) == Decimal("1070.00")
+    assert after["profile"]["directors"] == ["Jane Doe"]
+
+
+@pytest.mark.contracts
+def test_a_malformed_profile_shows_no_figures_and_names_the_field(home, tmp_path, serve):
+    case_id, folder = _case(tmp_path, directors=["Jane Doe"])
+    (folder / store.PROFILE).write_text("directors: Jane Doe\n", encoding="utf-8")  # not a list
+    srv = serve(case_id)
+    summary = _api(srv)
+    assert summary["state"] == "refused" and summary["accounts"] == [] and summary["profile"] is None
+    assert "directors" in summary["refusal"]
+    status, body = _get(srv, "/")
+    assert status == 200 and "No figures are shown" in body.decode("utf-8")
+
+
+@pytest.mark.contracts
+def test_the_api_needs_the_session_token_to_read_the_profile(home, tmp_path, serve):
+    case_id, _ = _case(tmp_path, directors=["Jane Doe"])
+    srv = serve(case_id)
+    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=10)
+    try:
+        conn.request("GET", "/api/case", headers={"Host": f"127.0.0.1:{srv.port}"})
+        r = conn.getresponse()
+        body = r.read()
+    finally:
+        conn.close()
+    assert r.status in (401, 403) and b"Jane" not in body
