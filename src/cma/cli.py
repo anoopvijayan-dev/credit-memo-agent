@@ -486,6 +486,14 @@ def _case_errors():
     except FirmConfigError as e:
         console.print(f"[red]Refused.[/red] {escape(str(e))}")
         raise typer.Exit(code=2) from None
+    except OSError as e:
+        # The file system refused a step outside a save (the case root cannot be made, a
+        # file cannot be read). Said as a refusal, never a traceback; a save's own errors
+        # reach here as SaveNotRecorded or SaveNotConfirmed (R42).
+        what = e.strerror or type(e).__name__
+        where = f" ({e.filename})" if e.filename else ""
+        console.print(f"[red]Refused.[/red] {escape(what + where)}; nothing was recorded in the case.")
+        raise typer.Exit(code=2) from None
 
 
 @case_app.command("new")

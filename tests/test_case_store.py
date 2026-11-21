@@ -469,6 +469,17 @@ def test_an_account_key_with_a_trailing_newline_is_refused(home, tmp_path, accou
 
 
 @pytest.mark.contracts
+def test_a_case_root_the_file_system_refuses_is_a_refusal_not_a_traceback(tmp_path, monkeypatch):
+    blocker = tmp_path / "a-file"
+    blocker.write_text("not a folder")
+    monkeypatch.setenv("CMA_HOME", str(blocker / "cma"))  # its parent is a file
+    r = runner.invoke(app, ["case", "new"])
+    assert r.exit_code == 2, (r.output, r.exception)
+    assert "Refused." in r.output and "Traceback" not in r.output
+    assert blocker.read_text() == "not a folder"
+
+
+@pytest.mark.contracts
 def test_a_case_id_with_a_trailing_newline_is_refused(home):
     cid = store.new_case()
     with pytest.raises(store.CaseStoreError, match="16 lowercase hex"):
