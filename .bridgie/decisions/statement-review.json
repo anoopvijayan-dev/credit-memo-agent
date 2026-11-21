@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 320,
+  "next_id": 321,
   "decisions": [
     {
       "id": "D1",
@@ -6406,6 +6406,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T02:26:40.520Z"
+    },
+    {
+      "id": "D320",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (src/cma/firm.py:68 defaults the lock on, and src/cma/llm.py:79 and :104 gate hosted clients and requests. src/cma/mcp_server.py:40-120 and :167 gate startup, app factories, ASGI requests and tools. Runner logs confirm that the legacy and unchanged-file resume tests passed. A resume paused before drafting can still use a different lock for hosted dispatch than the one it read at resume, at src/cma/graph.py:404 and :496-497. Tracers inherited through the runnable context also escape filtering at src/cma/graph.py:592.); P18 fail (The runner passed the retryable-503 cases for both SDKs, both native HTTP bind cases, and the saved-app startup and refusal cases. src/cma/graph.py:496-497 now reads firm.yaml for all resumes, including legacy checkpoints. src/cma/graph.py:404 still dispatches using the original draft lock when a checkpoint resumes before a hosted draft or redraft.); major: A resumed graph can send a hosted request after its resume reading found the lock on. The wrapper stores the effective lock for finalisation, while draft uses the original lock and the hosted client falls back to another file read. This also fails P18 and can make the resume evidence disagree with dispatch. at src/cma/graph.py:404; major: The wrapper filters only explicitly passed callbacks. LangGraph merges inherited runnable callbacks afterward, leaving an inherited LangChainTracer installed during a locked run. at src/cma/graph.py:592; major: The producer's claim that every SDK HTTP request passes a lock check is false. Both installed SDKs follow redirects by default independently of max_retries, and the wrapper checks only once per complete call. at src/cma/llm.py:119; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T02:29:28.108Z"
     }
   ]
 }
