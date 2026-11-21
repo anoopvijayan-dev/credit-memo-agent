@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 315,
+  "next_id": 316,
   "decisions": [
     {
       "id": "D1",
@@ -6309,6 +6309,24 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T02:09:01.552Z"
+    },
+    {
+      "id": "D315",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "Owner decision of 2026-11-20, given in chat: accept this as an edge case outside the guarantee and push development forward. Write one scope limit under P5, keeping everything else in revision 32. T17's eleventh review failed P5 because the prompt's period line writes the statement's first and last dates, and a description can contain the same date. R30 lets every prompt carry the period and the metric and rule tables, whose values the case decides: the period's dates, each figure's value and each rule's outcome. A string of the case's descriptions or profile that coincides with one of those values as the prompt writes it is the case's figure, not line-level data, and is no sentinel for P5; otherwise P5 and R30 contradict each other, since a prompt must carry the period. P5 is about text reaching a prompt from a description or profile field, which stays a sentinel.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-21T02:09:23.531Z",
+      "effect": "changes requested: Owner decision of 2026-11-20, given in chat: accept this as an edge case outside the guarantee and push development forward. Write one scope limit under P5, keeping everything else in revision 32. T17's eleventh review failed P5 because the prompt's period line writes the statement's first and last dates, and a description can contain the same date. R30 lets every prompt carry the period and the metric and rule tables, whose values the case decides: the period's dates, each figure's value and each rule's outcome. A string of the case's descriptions or profile that coincides with one of those values as the prompt writes it is the case's figure, not line-level data, and is no sentinel for P5; otherwise P5 and R30 contradict each other, since a prompt must carry the period. P5 is about text reaching a prompt from a description or profile field, which stays a sentinel.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-21T02:09:23.512Z"
     }
   ]
 }
