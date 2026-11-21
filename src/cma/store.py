@@ -273,7 +273,7 @@ def validate_profile(raw: Any) -> dict[str, Any]:
                 raise CaseStoreError(f"{key} names someone twice")
             out[key] = names
         elif key == "vat_stagger":
-            if isinstance(value, bool) or value not in (1, 2, 3):
+            if type(value) is not int or value not in (1, 2, 3):  # not 1.0, not true
                 raise CaseStoreError("vat_stagger must be 1, 2 or 3")
             out[key] = value
         elif key == "proposed_monthly_repayment":

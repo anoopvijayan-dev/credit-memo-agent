@@ -90,6 +90,7 @@ def test_an_existing_root_open_to_others_is_made_owner_only(home):
     assert stat.S_IMODE(home.stat().st_mode) == 0o700
 
 
+@pytest.mark.contracts
 def test_case_ids_are_random_and_never_the_label(home):
     a, b = store.new_case(label="Acme Ltd"), store.new_case(label="Acme Ltd")
     assert a != b and store.CASE_ID.match(a) and "acme" not in a.lower()
@@ -219,6 +220,8 @@ def test_profile_change_is_validated_written_and_logged(home):
     ("directors: [Jane, JANE]\n", "twice"),
     ("demo: yes please\n", "true or false"),
     ("vat_stagger: 4\n", "1, 2 or 3"),
+    ("vat_stagger: 1.0\n", "1, 2 or 3"),
+    ("vat_stagger: true\n", "1, 2 or 3"),
     ("proposed_monthly_repayment: 12.345\n", "two decimals"),
     ("proposed_monthly_repayment: -5\n", "more than"),
     ("proposed_monthly_repayment: 10000000000000\n", "10,000,000,000,000"),
@@ -319,6 +322,7 @@ def test_a_refused_statement_leaves_the_case_unchanged(home, tmp_path, body):
     assert r.exit_code == 2, r.output
     assert list((folder / "inputs").iterdir()) == [] and list((folder / "statements").iterdir()) == []
     assert len(_events(folder)) == 1
+    assert not [p for p in folder.iterdir() if p.name.startswith("tmp")]  # no work folder left
 
 
 @pytest.mark.contracts
@@ -364,6 +368,7 @@ def test_an_import_into_a_broken_log_is_refused(home, tmp_path):
     assert list((folder / "statements").iterdir()) == []
 
 
+@pytest.mark.contracts
 def test_store_writes_only_under_the_case_root(home, tmp_path):
     before = sorted(p.name for p in tmp_path.iterdir())
     cid = store.new_case()
