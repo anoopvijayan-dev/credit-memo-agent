@@ -6085,12 +6085,12 @@
         "Read the lock again once the socket is bound, close it if the lock is on, and state the smaller window that leaves (one change in T17)"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "State the window in R29 and P18: a lock turned on after the runner's check and before its bind is outside them, the socket serves no request, and the next start is refused (design default; no build change)",
+      "free_text": "Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-21T01:33:23.360Z",
+      "effect": "recorded",
       "created_at": "2026-11-21T01:33:20.477Z"
     },
     {
