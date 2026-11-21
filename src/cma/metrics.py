@@ -188,7 +188,9 @@ def compare(value: float, op: str, limit: float, unit: str) -> bool:
 def pounds_text(p: int) -> str:
     """Whole pence written as pounds with two decimals, exactly: -1234 is "-12.34"."""
     sign = "-" if p < 0 else ""
-    return f"{sign}{abs(p) // 100}.{abs(p) % 100:02d}"
+    # Written by Decimal, never str() of an int, which refuses more than 4,300 digits: a
+    # balance of thousands of digits is named, not a crash (T04 review 62).
+    return f"{sign}{Decimal(abs(p) // 100)}.{abs(p) % 100:02d}"
 
 
 def pounds(p: int) -> float:

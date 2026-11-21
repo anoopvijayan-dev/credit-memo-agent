@@ -119,6 +119,13 @@ class CsvRecordError(ValueError):
         self.stops = False
 
 
+def _money_shown(p: int, limit: int = 40) -> str:
+    """Whole pence as pounds in a problem, cut to `limit` characters as a quoted cell is, so a
+    figure of thousands of digits is named, not echoed (T04 review 62)."""
+    text = pounds_text(p)
+    return text if len(text) <= limit else f"{text[:limit]}… ({len(text):,} characters)"
+
+
 def shown(raw: str | None, limit: int = 40) -> str:
     """A cell quoted in a problem, cut to `limit` characters so a huge one is not echoed."""
     text = raw or ""
@@ -575,8 +582,8 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         amount, balance = exact[line]
         if None not in (amount, balance, prev_balance) and not follows(prev_balance, amount, balance):
             add("line",
-                f"line {line}: running balance {pounds_text(balance)} does not follow from previous "
-                f"{pounds_text(prev_balance)} {'+' if amount >= 0 else '-'} {pounds_text(abs(amount))}"
+                f"line {line}: running balance {_money_shown(balance)} does not follow from previous "
+                f"{_money_shown(prev_balance)} {'+' if amount >= 0 else '-'} {_money_shown(abs(amount))}"
             )
         if balance is not None:
             prev_balance = balance

@@ -778,6 +778,36 @@ def test_a_balance_at_the_line_limit_takes_part_in_the_running_balance(tmp_path)
 
 
 @pytest.mark.contracts
+def test_a_balance_of_thousands_of_digits_that_does_not_follow_is_named(tmp_path):
+    """T04 review 62 / R2: writing a running-balance fault with a balance of thousands of digits
+    raised Python's integer-to-string limit before the line or the flows were named."""
+    huge = "9" * 5000 + ".00"
+    csv = tmp_path / "s.csv"
+    csv.write_text(f"id,date,description,amount,balance\nT1,2026-01-01,A,1.00,{huge}\nT2,2026-01-02,B,1.00,5.00\n")
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    shown = str(e.value)
+    assert "line 3: running balance 5.00 does not follow from previous 9999999999" in shown
+    assert "(5,003 characters) + 1.00" in shown and "line 2: balance" in shown
+    assert metrics.pounds_text(-(10**6000)).startswith("-1000") and len(metrics.pounds_text(10**6000)) == 6002
+
+
+@pytest.mark.contracts
+def test_monzo_walks_rows_by_the_time_their_date_cell_carries(tmp_path):
+    """T04 review 62 / R2: a Date cell holding a timestamp lost its time, so rows of one day were
+    walked by Transaction ID and a consistent export was refused."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_text("Transaction ID,Date,Type,Name,Amount,Currency,Balance\n"
+                   "tx_b,2026-01-01T15:00:00Z,Faster payment,ACME,-5.00,GBP,85.00\n"
+                   "tx_z,2026-01-01T09:00:00Z,Faster payment,ACME,-10.00,GBP,90.00\n")
+    r = monzo.convert(src, tmp_path / "o.csv")
+    assert r.opening_balance == 100.0 and r.closing_balance == 85.0
+    assert [line.split(",")[0] for line in (tmp_path / "o.csv").read_text().splitlines()[1:]] == ["tx_z", "tx_b"]
+
+
+@pytest.mark.contracts
 def test_a_record_too_long_to_read_with_a_bad_byte_names_both(tmp_path):
     """T04 review 58 / R2: a record with a field too long to read and a separate cell that is not
     UTF-8 was refused as too long only; the bad byte was found and then dropped."""

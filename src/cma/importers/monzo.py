@@ -66,17 +66,22 @@ class ImportResult:
     skipped_non_gbp: int
 
 
-def _parse_date(raw: str | None) -> date:
+def _parse_when(raw: str | None) -> tuple[date, str | None]:
+    """The row's date, and the time of day its Date cell carries, if it is a timestamp
+    ("2026-01-01T10:00:00Z"), as the wall-clock time written, so rows are walked in the order
+    they happened (T04 review 62)."""
     raw = (raw or "").strip()
     for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
         try:
-            return datetime.strptime(raw, fmt).date()
+            return datetime.strptime(raw, fmt).date(), None
         except ValueError:
             pass
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+        when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError as e:
         raise MonzoImportError(f"unrecognised date {shown(raw)}") from e
+    return when.date(), when.time().isoformat()
+
 
 
 def _money(raw: str | None, field: str, line: int, *, limit: bool = True) -> int:
@@ -251,10 +256,11 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             seen.add(tid)
             line_of[tid] = i
             try:
-                d = _parse_date(r["Date"])
+                d, written_time = _parse_when(r["Date"])
             except MonzoImportError as e:
                 raise MonzoImportError(f"line {i}: {e}") from None
-            t = (r.get("Time") or "00:00:00").strip()
+            # The Time column, or else the time the Date cell carries (T04 review 62).
+            t = (r.get("Time") or "").strip() or written_time or "00:00:00"
             bal = _money(r["Balance"], "Balance", i) if has_balance and (r.get("Balance") or "").strip() else None
             refs = references(r.get("Notes and #tags"), r.get("Description"))
             desc = describe(r.get("Type", ""), r.get("Name", ""), amount, refs)
