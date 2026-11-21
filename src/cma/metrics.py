@@ -76,6 +76,7 @@ BUCKET_METRICS: dict[Bucket, tuple[str, str, str]] = {
 }
 # Left out of the denominator M16 and M26 share: borrowing, money that only undoes a
 # payment, and the applicant's own money moving between its accounts.
+PROFILE_OWN_ACCOUNT = "profile:own_account"  # the rule a case profile's own-account name records (R6)
 NOT_IN_SHARE = {Category.LOAN_DRAWDOWN, Category.RETURNED_DD, Category.OWN_ACCOUNT_TRANSFER}
 
 
@@ -466,8 +467,17 @@ def compute(statement: Statement, vat_stagger: int | None = None, proposed_repay
     # too, for the same reason.
     reversed_ids = {t.reverses for t in txns if t.reverses}
 
+    # A line the case profile names as one of the applicant's other accounts is the
+    # applicant's own money moving, not operating cash, in either direction (R6): it is never
+    # an operating line, and never sent or sent back in the round trip below. A move to or
+    # from an own pot that the built-in table recognises keeps the treatment v1 gives the same
+    # line, so M1 to M16 do not move under v2 (R10, P7); and with no case profile no line is
+    # named, so M9 is the previous release's (R54).
+    def own_account_named(t: Transaction) -> bool:
+        return t.category == Category.OWN_ACCOUNT_TRANSFER and t.rule_id == PROFILE_OWN_ACCOUNT
+
     def operating_line(t: Transaction) -> bool:
-        if eff(t) in FINANCING:
+        if eff(t) in FINANCING or own_account_named(t):
             return False
         if pence(t) <= 0:
             return True
@@ -481,11 +491,12 @@ def compute(statement: Statement, vat_stagger: int | None = None, proposed_repay
     # them, but never by more than was sent, so the round trip can't add cash.
     sent: dict[str, int] = defaultdict(int)
     for t in txns:
-        if pence(t) < 0 and eff(t) not in FINANCING and OUTGOING_TRANSFER.search(t.description.upper()):
+        if pence(t) < 0 and operating_line(t) and OUTGOING_TRANSFER.search(t.description.upper()):
             sent[counterparty(t.description)] += -pence(t)
     back: dict[str, list[Transaction]] = defaultdict(list)
     for t in txns:
-        if pence(t) > 0 and t.category in NON_TRADING_IN and counterparty(t.description) in sent:
+        if (pence(t) > 0 and t.category in NON_TRADING_IN and not own_account_named(t)
+                and counterparty(t.description) in sent):
             back[counterparty(t.description)].append(t)
     offset = sum(min(total(ts), sent[cp]) for cp, ts in back.items())
     # A derived figure (P2): the cap is allocated to a counterparty's credits in statement

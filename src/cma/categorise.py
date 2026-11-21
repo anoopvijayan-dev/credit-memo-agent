@@ -1299,9 +1299,17 @@ def classify(
     for rule in ruleset.protected:
         if rule.category is not None and rule_matches(rule, desc, t.amount):
             return rule.category, f"{ruleset.id}:{rule.id}"
-    found = _profile(t, desc, profile)
-    if found:
-        return found
+    # The case profile is new behaviour under any ruleset (R54), so under v1 too its names
+    # are matched as rules and profile names are under v2 (whole words, separators), and a
+    # credit both kinds of name match is ambiguous, with every v1 rule it matches and both
+    # kinds as its candidates (R5, R6). A debit is never ambiguous: an own account's name
+    # decides it (R6).
+    kinds = _profile_matches(t, _fold(t.description), profile)
+    if len(kinds) > 1:
+        candidates = [r.id for r in ruleset.rules if rule_matches(r, desc, t.amount)] + [ref for _, ref in kinds]
+        return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(candidates)
+    if kinds:
+        return kinds[0]
     for rule in firm_rules:
         if rule_matches(rule, desc, t.amount):
             return rule.category, f"firm:{rule.id}"
@@ -1320,11 +1328,6 @@ def _profile_matches(t: Transaction, desc: str, profile: ProfileNames | None) ->
         if t.amount != 0 and _names_in(profile.own_accounts, desc):
             found.append((Category.OWN_ACCOUNT_TRANSFER, "profile:own_account"))
     return found
-
-
-def _profile(t: Transaction, desc: str, profile: ProfileNames | None) -> tuple[Category, str] | None:
-    found = _profile_matches(t, desc, profile)
-    return found[0] if found else None
 
 
 def _classify_credit(t: Transaction, desc: str, ruleset: Ruleset, profile: ProfileNames | None,
