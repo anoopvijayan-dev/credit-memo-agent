@@ -235,12 +235,12 @@
         "T07",
         "T13"
       ],
-      "status": "verify",
+      "status": "failed",
       "attempts": 1,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T19",
-      "evidence": null,
-      "escalation": null
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-237/evidence.json",
+      "escalation": "attempt 1 of 3 fail: R3 fail (metrics._reconcile (src/cma/metrics.py:742-752) raises ReconciliationError with the difference and the lines involved; overrides.case_figures (src/cma/overrides.py:266-279) tags it with account and statement and re-raises; summary.case_summary (src/cma/review/summary.py:98-101) returns state not_reconciled with no accounts; render() (summary.py:194-195) shows only the difference in pence and the lines. 'Nothing is shown' holds (contracts tests test_a_case_that_does_not_reconcile_shows_no_figures_and_names_difference_and_lines and test_one_account_that_does_not_reconcile_hides_every_account ran and passed in contracts-4.log). 'Report the difference and the lines involved' is incomplete: case_figures raises at the first failing account, so with two failing accounts the second account's difference and lines are never reported.); major: When more than one account of a case fails reconciliation, only the first failing account's difference and lines are reported. case_figures re-raises the first account's ReconciliationError inside its loop and never computes the remaining accounts, so R3's 'report the difference in pence and the lines involved' is incomplete for the case (the producer's note (2) admits this). at src/cma/overrides.py:266; reviewer verdict fail"
     },
     {
       "id": "T05",
