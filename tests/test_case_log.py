@@ -3421,3 +3421,23 @@ def test_a_nested_save_after_the_case_folder_moved_is_refused(tmp_path, monkeypa
     log.append("override", {"outer": True}, expected=2)
     check = log.verify()
     assert inner and check.ok and check.head.position == 3
+
+
+def test_a_nested_save_on_a_new_case_is_refused(tmp_path, monkeypatch):
+    """T12 review 50 / R42: on a case whose folder did not exist yet, the outer save was keyed by
+    its path and a save nested in it, once the writer had made the folder, by the folder's inode;
+    the keys differed and the nested save was recorded."""
+    log = case.CaseLog(tmp_path / "new" / "case" / "log.jsonl")
+    real, inner = case._utc_now, []
+
+    def nested():
+        if not inner:
+            inner.append(None)
+            with pytest.raises(case.CaseLogError, match="under way"):
+                case.CaseLog(log.path).append("override", {"inner": True}, expected=0)
+        return real()
+
+    monkeypatch.setattr(case, "_utc_now", nested)
+    log.append("import", {"outer": True}, expected=0)
+    check = log.verify()
+    assert inner and check.ok and check.head.position == 1

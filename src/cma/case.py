@@ -958,6 +958,10 @@ class CaseLog:
         # thread, shared by every CaseLog object, so a save begun inside another through a
         # second handle to the same case (another object, another spelling of the path, the
         # folder moved meanwhile) is refused too (reviews 48 and 49).
+        # The folder is made first, as the writer would make it, so the case has the same key
+        # before and after: a save on a new case keyed by its path, and one nested in it keyed
+        # by the folder's inode, would differ, and the nested save pass (T12 review 50).
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         key = (_folder_key(self.path.parent), _holder_id())
         token = object()
         try:
