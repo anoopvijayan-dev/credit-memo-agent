@@ -6699,12 +6699,12 @@
         "kill task"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "take over manually",
+      "free_text": "Owner's instruction of 2026-11-21, given in chat: continue and finish every task end to end, so T12 is no longer deferred. T12 at a17477c (review 50): a save makes the case folder before keying the nested-save guard, so a save on a new case and one nested in it share one key (test_a_nested_save_on_a_new_case_is_refused); bridgie/statement-review is merged into the task branch. Owner decision of 2026-11-21, given in chat: while the Codex reviewer is at its usage limit (until 2026-11-25 08:25), the reviewer seat runs on claude-code, the implementer's own model, so this review is not independent of the implementer.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-21T11:25:50.633Z",
+      "effect": "task T12 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T12",
       "created_at": "2026-11-21T11:20:42.837Z"
     }
   ]
