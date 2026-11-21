@@ -425,6 +425,9 @@ def _feature_events(events: list, truth: Truth, a: dict, p: dict, starts: list[d
             for d in month_days(s, 0):
                 trading(d, CASH_DEPOSIT_DESC, round(frng.uniform(250, 900), 2), Category.CASH_DEPOSIT)
         trading(mid + timedelta(days=11), CASH_DEPOSIT_DESC, 3200.0, Category.CASH_DEPOSIT)
+        # The limit itself: a deposit of exactly the limit is flagged, a penny under it is not.
+        trading(starts[-1] + timedelta(days=20), CASH_DEPOSIT_DESC, 2500.0, Category.CASH_DEPOSIT)
+        trading(starts[0] + timedelta(days=20), CASH_DEPOSIT_DESC, 2499.99, Category.CASH_DEPOSIT)
         out = starts[max(0, len(starts) // 2 - 1)] + timedelta(days=17)
         events.append((out, CASH_WITHDRAWAL_DESC, -1500.0, Category.SUPPLIER))
         trading(out + timedelta(days=2), CASH_DEPOSIT_DESC, 1450.0, Category.CASH_DEPOSIT)

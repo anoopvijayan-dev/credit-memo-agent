@@ -154,3 +154,23 @@ def test_evals_report_a_disagreement_with_feature_truth(tmp_path):
     truth.accounts[0]["buckets"][Bucket.OTHER_EXPLAINED_IN.value]["amount"] += 0.01
     found = run_evals.feature_mismatches(truth, csv_path)
     assert f"main:category:{tid}" in found and "main:indicators" in found and "reserve:M24" in found
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("archetype", synth.ARCHETYPES)
+@pytest.mark.parametrize("seed,months", [(7, 12), (11, 6), (5, 24)])
+def test_p17_a_cash_deposit_of_exactly_the_limit_is_flagged_and_a_penny_under_is_not(tmp_path, archetype,
+                                                                                    seed, months):
+    """The single-deposit limit (£2,500.00, the shipped threshold) is 'at or above' (R14, R47):
+    a generated deposit of exactly the limit is flagged, in the system and in the truth, and
+    one a penny under is not, so P17 holds at the boundary, not only well above it."""
+    _, accounts = _accounts(tmp_path, archetype, "stretched", ("cash",), seed, months)
+    main, s = accounts[0]
+    cash = {x.id: x.amount for x in s.transactions if x.category == Category.CASH_DEPOSIT}
+    at = [i for i, a in cash.items() if a == 2500.00]
+    under = [i for i, a in cash.items() if a == 2499.99]
+    assert len(at) == 1 and len(under) == 1
+    flagged = {i for x in indicators.raise_indicators(s) if x.kind == "single_cash_deposit" for i in x.evidence}
+    truth = {i for x in main["indicators"] if x["kind"] == "single_cash_deposit" for i in x["lines"]}
+    assert at[0] in flagged and at[0] in truth
+    assert under[0] not in flagged and under[0] not in truth
