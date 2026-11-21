@@ -245,6 +245,112 @@ def test_derived_figures_show_their_inputs_and_method(home, tmp_path, serve):
     assert sum(c["overdrawn"] for c in m6["closes"]) == by["M6"].value == 22
 
 
+def _months_statement() -> str:
+    """Eight whole months, Jan to Aug 2026, with trading receipts that differ month to month,
+    a VAT payment in group 1's June window and none in September's, and a returned DD."""
+    rows, bal, n = [], 0, 0
+
+    def add(day, desc, amount):
+        nonlocal bal, n
+        n += 1
+        bal += amount
+        rows.append(f"L{n},{day},{desc},{amount / 100:.2f},{bal / 100:.2f}")
+
+    for month, takings in zip(range(1, 9), (1000_00, 1100_00, 900_00, 1200_00, 1300_00, 1500_00,
+                                            1700_00, 1600_00), strict=True):
+        add(f"2026-{month:02d}-01", "CARD SETTLEMENT STRIPE", takings)
+        add(f"2026-{month:02d}-15", "DD IWOCA LTD", -100_00)
+    add("2026-05-06", "HMRC VAT", -300_00)
+    add("2026-08-10", "HMRC VAT", -250_00)
+    add("2026-08-11", "UNPAID DD HMRC VAT", 250_00)
+    add("2026-08-31", "CARD SETTLEMENT STRIPE", 1_00)
+    rows.sort(key=lambda r: r.split(",")[1])
+    return "id,date,description,amount,balance\n" + "\n".join(_rebalanced(rows)) + "\n"
+
+
+def _rebalanced(rows):
+    bal = 0
+    for r in rows:
+        i, d, desc, amount, _ = r.split(",")
+        bal += int(Decimal(amount) * 100)
+        yield f"{i},{d},{desc},{amount},{bal / 100:.2f}"
+
+
+@pytest.mark.contracts
+def test_every_derived_figure_shows_inputs_that_give_it(home, tmp_path, serve):
+    """R16: no derived figure's drill-down is without its inputs (verify-241)."""
+    for body in (RICH, _months_statement()):
+        case_id, folder = _case(tmp_path, body)
+        store.update_profile(folder, lambda p: {**p, "vat_stagger": 1})
+        srv = serve(case_id)
+        for m in overrides.case_figures(folder)["main"].metrics:
+            if metrics.figure_kind(m.id) != "derived":
+                continue
+            d = _lines(srv, figure=m.id)
+            assert d["inputs"] or d["closes"], m.id
+
+
+@pytest.mark.contracts
+def test_m4_shows_the_two_quarters_it_compares(home, tmp_path, serve):
+    case_id, folder = _case(tmp_path, _months_statement())
+    m4 = next(m for m in overrides.case_figures(folder)["main"].metrics if m.id == "M4")
+    d = _lines(serve(case_id), figure="M4")
+    first, last = d["inputs"]
+    assert "2026-01 to 2026-03" in first["label"] and "2026-06 to 2026-08" in last["label"]
+    f, la = _pence(first["display"]), _pence(last["display"])
+    assert (f, la) == (3000_00, 4801_00)
+    assert round((la - f) / f * 100, 2) == m4.value
+    assert f + la == metrics.lines_total(overrides.case_figures(folder)["main"].statement, m4.evidence)
+    assert sorted(first["lines"] + last["lines"], key=lambda i: int(i[1:])) == m4.evidence
+
+
+@pytest.mark.contracts
+def test_m4_with_too_few_whole_months_says_how_many_it_has(home, tmp_path, serve):
+    case_id, _ = _case(tmp_path)
+    d = _lines(serve(case_id), figure="M4")
+    assert d["value"] is None and d["inputs"][0]["display"] == "0 (6 needed)"
+
+
+@pytest.mark.contracts
+def test_m9_shows_its_operating_total_and_the_offset_it_nets(home, tmp_path, serve):
+    case_id, folder = _case(tmp_path)
+    m9 = next(m for m in overrides.case_figures(folder)["main"].metrics if m.id == "M9")
+    d = _lines(serve(case_id), figure="M9")
+    trading, offset, part = d["inputs"]
+    assert "L11" not in trading["lines"] and set(trading["lines"]) | {"L11"} == set(m9.evidence)
+    assert offset["lines"] == ["L11"] and _pence(offset["display"]) == 100_00
+    assert _pence(trading["display"]) + _pence(offset["display"]) == _figure_pence(m9.value)
+    assert part["label"] == "Line L11 counts" and part["display"] == "£100.00 of £250.00"
+
+
+@pytest.mark.contracts
+def test_m13_shows_the_stagger_group_and_each_quarter_judged(home, tmp_path, serve):
+    case_id, folder = _case(tmp_path, _months_statement())
+    store.update_profile(folder, lambda p: {**p, "vat_stagger": 1})
+    m13 = next(m for m in overrides.case_figures(folder)["main"].metrics if m.id == "M13")
+    d = _lines(serve(case_id), figure="M13")
+    group, *quarters = d["inputs"]
+    assert group["label"] == "VAT stagger group (case profile)" and group["display"].startswith("1 ")
+    assert [q["label"] for q in quarters] == [
+        "Quarter ended 2025-12-31: due 2026-02-07, collected by 2026-02-11",
+        "Quarter ended 2026-03-31: due 2026-05-07, collected by 2026-05-12",
+        "Quarter ended 2026-06-30: due 2026-08-07, collected by 2026-08-12"]
+    may = next(x["id"] for x in d["lines"] if x["date"] == "2026-05-06")
+    # The June quarter's payment was returned unpaid, so it did not stick.
+    assert [q["display"] for q in quarters] == ["late or missed", f"paid by line {may}", "late or missed"]
+    assert m13.value == sum(q["display"] == "late or missed" for q in quarters) == 2
+    store.update_profile(folder, lambda p: {**p, "vat_stagger": None})
+    d = _lines(serve(case_id), figure="M13")
+    assert d["inputs"] == [{"label": "VAT stagger group (case profile)", "figure": None, "display": "not given"}]
+
+
+@pytest.mark.contracts
+def test_m7_shows_its_count(home, tmp_path, serve):
+    case_id, _ = _case(tmp_path)
+    d = _lines(serve(case_id), figure="M7")
+    assert d["inputs"][0]["display"] == str(int(d["value"])) == str(len(d["lines"])) == "1"
+
+
 @pytest.mark.contracts
 def test_m9_names_the_lines_it_counts_only_in_part(home, tmp_path, serve):
     case_id, _ = _case(tmp_path)
@@ -430,3 +536,17 @@ def test_p2_a_share_s_inputs_give_the_figure(home, tmp_path, serve, seed):
         num, den = _pence(money[0]["display"]), _pence(money[-1]["display"])
         assert den == metrics.lines_total(overrides.case_figures(folder)["main"].statement, m.evidence)
         assert metrics._ratio(num, den, 2, 100) == m.value
+
+
+@pytest.mark.contracts
+def test_the_drilldown_reads_the_profile_once_with_the_figures(home, tmp_path, serve, monkeypatch):
+    """M28's proposed repayment is the one the figure was computed with: the drill-down takes
+    it from the figures, never from a second read of the profile (verify-241)."""
+    case_id, _ = _case(tmp_path)
+    srv = serve(case_id)
+    reads = []
+    real = store.load_profile
+    monkeypatch.setattr(store, "load_profile", lambda folder: reads.append(1) or real(folder))
+    d = _lines(srv, figure="M28")
+    assert len(reads) == 1
+    assert {"label": "Proposed monthly repayment (case profile)", "figure": None, "display": "£250.00"} in d["inputs"]

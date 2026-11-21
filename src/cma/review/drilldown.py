@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from .. import metrics, store
+from .. import metrics
 from ..models import MonthlyCell, format_value, money_exact
 from . import summary
 
@@ -95,8 +95,7 @@ def lines_behind(folder: Path, case_id: str, *, account: str | None = None, figu
                    total=_total(statement, m.evidence, kind), counted_in_part=list(m.evidence_note or []),
                    inputs=None, closes=None)
         if kind == "derived":
-            profile = store.load_profile(folder)
-            out.update(metrics.derived_inputs(statement, f.metrics, m.id, profile["proposed_monthly_repayment"]))
+            out.update(metrics.derived_inputs(statement, f.metrics, m.id, f.proposed_repayment, f.vat_stagger))
         return out
     row = next((r for r in f.monthly if r.month == month), None)
     if row is None or cell not in CELL_TITLES:
