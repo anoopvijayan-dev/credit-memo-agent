@@ -1,0 +1,68 @@
+{
+  "task": "T09",
+  "criteria": [
+    {
+      "id": "P19",
+      "tier": "adversarial",
+      "check": "P19, part by part. (1) M18's evidence is exactly the cash-deposit credits: src/cma/metrics.py:669-671. (2) Each deposit is in M2's evidence and M18 <= M2: CASH_DEPOSIT maps to TRADING_RECEIPTS (src/cma/models.py:58) and is in REVENUE_CATEGORIES (src/cma/models.py:69). (3) Each cash deposit at or above the limit raises single_cash_deposit with that line as its evidence (src/cma/indicators.py:281-286), and judgement_queue adds every indicator-evidence line with the indicator's id and kind (src/cma/indicators.py:449-456). (4) Production calls it: graph._indicator_fields builds the queue from the same raised indicators and the run's thresholds (src/cma/graph.py:270-278), and cma run writes it into the evidence record (src/cma/cli.py:341). Runner proof: invariants-5.log lines 10-12 and specified-3.log lines 194-196 show test_p19_cash_deposits_are_in_m2_and_every_large_one_is_queued_with_its_indicator, test_p19_holds_at_a_firm_single_deposit_limit and test_p19_the_queue_holds_every_unexplained_and_flagged_line_once_largest_first PASSED, covering 300 random cases plus every synth archetype/profile, at the shipped and a firm limit. contracts-4.log lines 39-44 show the CLI end-to-end evidence-record test PASSED. Attacks: the function is pure (statement unchanged, deterministic: contracts test); boundary 249,999/250,000/250,001 pence drawn; RulesetError caught in queue_candidates and load_ruleset raises only RulesetError (src/cma/categorise.py:988-1018); the new evidence key is additive and has no other consumer in src.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-217/invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-220/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-220/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-220/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-220/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-220/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-220/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-220/dual_run-7.log"
+    }
+  ],
+  "findings": [],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
