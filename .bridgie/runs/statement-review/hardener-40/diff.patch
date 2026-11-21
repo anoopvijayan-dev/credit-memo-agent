@@ -1,0 +1,868 @@
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index 9ea7d8f..6a5672c 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -577,6 +577,89 @@ def case_import(
+                   f"(sha256 {r.input_sha256[:12]})")
+ 
+ 
++@case_app.command("override")
++def case_override(
++    case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
++    line: str = typer.Argument(..., help="The line's id in its statement."),
++    category: str = typer.Argument(..., help="The category to give it; only one valid for the line's direction."),
++    reason: str = typer.Option(..., "--reason", prompt="Reason", help="Why the line is this category."),
++    name: str = typer.Option(..., "--name", prompt="Your name", help="Your name, as typed."),
++    account: str = typer.Option("main", "--account", help="The account key the line is in."),
++    expected: int | None = typer.Option(None, "--expected", help="The case log position you last saw."),
++):
++    """Change one line's category, with a reason and your name (R17). Only the category
++    changes (R18); the override goes to the case's override log and its case log, and the
++    figures are recomputed from the statements and the whole log."""
++    from . import overrides, store
++
++    with _case_errors():
++        folder = store.case_folder(case_id)
++        r = overrides.add_override(folder, line, category, reason=reason, name=name, account=account,
++                                   expected=expected)
++    if not r.recorded:
++        console.print(f"line {escape(line)} is already {r.old}; nothing was recorded")
++        return
++    console.print(f"override {r.seq}: line {escape(line)} {r.old} -> {r.new}")
++
++
++@case_app.command("overrides")
++def case_overrides(case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed.")):
++    """List the case's overrides: applied, stale (until confirmed or dropped; R19),
++    superseded by a later one, or dropped."""
++    from . import overrides, store
++
++    with _case_errors():
++        rows = overrides.listing(store.case_folder(case_id))
++    if not rows:
++        console.print("no overrides")
++    for o, status in rows:  # one line each, so a narrow terminal never splits a status
++        console.print(f"{o.seq}  {o.account}  line {o.line}  {o.old} -> {o.new}  "
++                      f"by {o.name} ({o.os_user}) at {o.at}  [{status}]", soft_wrap=True,
++                      markup=False)
++
++
++@case_app.command("resolve-override")
++def case_resolve_override(
++    case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
++    seq: int = typer.Argument(..., help="The stale override's number."),
++    confirm: bool = typer.Option(False, "--confirm", help="Apply it to the statement as it is now."),
++    drop: bool = typer.Option(False, "--drop", help="Never apply it."),
++    name: str = typer.Option(..., "--name", prompt="Your name", help="Your name, as typed."),
++):
++    """Confirm or drop a stale override (R19)."""
++    from . import overrides, store
++
++    if confirm == drop:
++        console.print("[red]Refused.[/red] give one of --confirm or --drop")
++        raise typer.Exit(code=2)
++    with _case_errors():
++        overrides.resolve_stale(store.case_folder(case_id), seq, "confirm" if confirm else "drop", name=name)
++    console.print(f"override {seq} {'confirmed' if confirm else 'dropped'}")
++
++
++@case_app.command("figures")
++def case_figures(case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed.")):
++    """Print the case's figures, recomputed from its statements and the whole override log;
++    a figure marked * rests on an overridden line (R17). Stale overrides are listed, not
++    applied (R19)."""
++    from . import overrides, store
++
++    with _case_errors():
++        views = overrides.case_figures(store.case_folder(case_id))
++    for account, f in views.items():
++        table = Table(title=f"Figures: account {account}")
++        for col in ("ID", "Metric", "Value", "Lines", ""):
++            table.add_column(col)
++        for m in f.metrics:
++            table.add_row(m.id, m.name, m.display_exact(), str(len(m.evidence)), "*" if m.id in f.marked else "")
++        console.print(table)
++        if f.marked:
++            console.print(f"* rests on an overridden line ({len(f.overridden)} lines overridden)")
++        for s in f.stale:
++            console.print(f"[yellow]stale override {s.seq}[/yellow]: line {escape(s.line)} -> {s.new} "
++                          f"({s.why}); not applied until confirmed or dropped")
++
++
+ @case_app.command("purge")
+ def case_purge(
+     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
+diff --git a/src/cma/overrides.py b/src/cma/overrides.py
+new file mode 100644
+index 0000000..ca6e98f
+--- /dev/null
++++ b/src/cma/overrides.py
+@@ -0,0 +1,421 @@
++"""The override log (R17, R18, R19): a person's category for one line, and what it does to
++the figures.
++
++    cases/<id>/overrides.jsonl    append-only, one JSON object per line, 0600
++
++An override changes one line's category and nothing else (R18): its record names the
++account, the line, the category the line had, the category it is given, the reason, the
++name the underwriter typed, the operating-system user, the UTC time and the hash of the
++statement file the line was read from. The category must be one the line's direction can
++take: a credit's has a money-in bucket, and a debit's is never one only money in can have.
++
++The override log is the case log's: each record is appended while this process holds the
++case (R42), and the case log entry that records it carries the record's hash. Reading the
++log checks every record against the entry that recorded it, so a record changed by hand
++is refused, naming it, and a record no entry recorded (a crash between the two writes, or
++a refused append) is a leftover that is ignored and dropped by the next append.
++
++A stale override (R19) is one whose line is not in the case's statement any more, or that
++was recorded against a statement whose hash no longer matches. It is not applied, and it
++is listed as stale until the underwriter confirms it (a line still there, its category
++still valid for its direction, recorded now against the current statement) or drops it,
++each of which is a record of its own. For each line the latest override decides; an
++earlier one is superseded.
++
++Figures are recomputed, every time, from the statements and the whole override log
++(case_figures): nothing is carried from one computation to the next, so applying overrides
++one at a time gives what a fresh computation with all of them gives (P3), and a line's id,
++date, amount, balance and description are never touched (P4). A figure or monthly cell is
++marked when it rests on an overridden line: an overridden line is among its lines, or its
++value or lines differ from what the statements give without overrides.
++
++Messages name records by number and lines by id, never by their content.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import json
++from dataclasses import dataclass, field
++from datetime import UTC, datetime
++from pathlib import Path
++from typing import Any
++
++from . import case as caselog
++from . import store
++from .categorise import _MONEY_IN_ONLY, LineOverride, active_ruleset, categorise
++from .models import CREDIT_BUCKET, Category, Metric, MonthRow, Statement, Transaction
++
++OVERRIDES = "overrides.jsonl"
++EVENTS = {"override": "override", "confirm": "override_confirmed", "drop": "override_dropped"}
++OVERRIDE_FIELDS = ("seq", "kind", "account", "line", "old", "new", "reason", "name", "os_user", "at",
++                   "statement_sha256")
++RESOLVE_FIELDS = ("seq", "kind", "of", "name", "os_user", "at", "statement_sha256")
++CELLS = ("money_in", "money_out", "trading_receipts", "average_balance", "lowest_balance", "days_overdrawn")
++LINE_FIELDS = ("amount", "date", "balance", "description", "id")  # what an override may never change (R18)
++MAX_TEXT = 1000
++
++
++def ref(seq: int) -> str:
++    """The rule id an overridden line carries: the override's own reference."""
++    return f"override:{seq}"
++
++
++def valid_categories(t: Transaction) -> frozenset[Category]:
++    """The categories a line's direction can take (R18): a credit's has a money-in bucket;
++    a debit's is never one only money in has. The categoriser's sign rule: a credit is a
++    positive amount."""
++    if t.amount > 0:
++        return frozenset(CREDIT_BUCKET)
++    return frozenset(c for c in Category if c not in _MONEY_IN_ONLY)
++
++
++def _text(value: Any, what: str) -> str:
++    if not isinstance(value, str) or not any(ch.isalnum() for ch in value):
++        raise store.CaseStoreError(f"an override needs a {what}: type one, with at least one letter or digit")
++    value = value.strip()
++    if len(value) > MAX_TEXT:
++        raise store.CaseStoreError(f"the {what} is longer than {MAX_TEXT} characters")
++    return value
++
++
++def _now() -> str:
++    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
++
++
++def _line_bytes(rec: dict[str, Any]) -> bytes:
++    return (json.dumps(rec, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
++
++
++def _sha(data: bytes) -> str:
++    return hashlib.sha256(data).hexdigest()
++
++
++# --- reading the log ---------------------------------------------------------------------
++
++
++@dataclass(frozen=True)
++class Override:
++    seq: int
++    account: str
++    line: str
++    old: str
++    new: str
++    reason: str
++    name: str
++    os_user: str
++    at: str
++    statement_sha256: str
++
++
++@dataclass(frozen=True)
++class Stale:
++    seq: int
++    account: str
++    line: str
++    new: str
++    why: str  # "line not in the case" or "statement changed"
++
++
++def _recorded_hashes(entries) -> dict[int, str]:
++    """seq -> record hash, for every record the case log recorded, in order."""
++    out: dict[int, str] = {}
++    for e in entries:
++        if e.event in EVENTS.values() and isinstance(e.data.get("seq"), int):
++            out[e.data["seq"]] = e.data.get("record_sha256")
++    return out
++
++
++def _read_records(folder: Path, entries) -> list[dict[str, Any]]:
++    """The override log as the case log recorded it: each record checked against the hash its
++    entry carries. A record no entry recorded is a leftover, left out; a recorded record that
++    is missing or changed is refused, naming it."""
++    recorded = _recorded_hashes(entries)
++    path = folder / OVERRIDES
++    raw = path.read_bytes() if path.is_file() else b""
++    by_seq: dict[int, tuple[dict[str, Any], bytes]] = {}
++    for line in raw.splitlines(keepends=True):
++        try:
++            rec = json.loads(line.decode("utf-8"))
++            seq = rec["seq"] if isinstance(rec, dict) else None
++        except (UnicodeDecodeError, ValueError, KeyError):
++            seq = None
++        if not isinstance(seq, int) or seq not in recorded:
++            continue  # not one the case log recorded: a leftover
++        if seq in by_seq:
++            raise store.CaseStoreError(f"{OVERRIDES} holds override record {seq} twice; it was changed by hand")
++        by_seq[seq] = (rec, line)
++    records = []
++    for seq, want in recorded.items():
++        got = by_seq.get(seq)
++        if got is None:
++            raise store.CaseStoreError(f"{OVERRIDES} is missing override record {seq}, which the case log "
++                                       "recorded; it was changed by hand")
++        if _sha(got[1]) != want:
++            raise store.CaseStoreError(f"{OVERRIDES}: override record {seq} is not the one the case log "
++                                       "recorded; it was changed by hand")
++        records.append(got[0])
++    return records
++
++
++# --- the case's statements ---------------------------------------------------------------
++
++
++def _accounts(entries) -> list[str]:
++    return sorted({e.data["account"] for e in entries if e.event == "import" and "account" in e.data})
++
++
++def _load(folder: Path, account: str) -> tuple[Statement, str] | None:
++    from .ingest import load_csv
++
++    path = folder / store.STATEMENTS / f"{account}.csv"
++    if not path.is_file():
++        return None
++    data = path.read_bytes()
++    return load_csv(path, account_name=account, data=data), _sha(data)
++
++
++@dataclass
++class _State:
++    """What the whole override log decides for the case's current statements."""
++
++    applied: dict[str, dict[str, LineOverride]] = field(default_factory=dict)  # account -> line -> override
++    stale: list[Stale] = field(default_factory=list)
++    overrides: dict[int, Override] = field(default_factory=dict)
++    resolved: set[int] = field(default_factory=set)  # stale ones confirmed or dropped
++    dropped: set[int] = field(default_factory=set)
++
++
++def _decide(records: list[dict[str, Any]], statements: dict[str, tuple[Statement, str] | None]) -> _State:
++    state = _State()
++    basis: dict[int, str] = {}  # seq -> the statement hash the override stands on
++    latest: dict[tuple[str, str], int] = {}
++    for rec in records:
++        if rec["kind"] == "override":
++            o = Override(**{k: rec[k] for k in OVERRIDE_FIELDS if k != "kind"})
++            state.overrides[o.seq] = o
++            basis[o.seq] = o.statement_sha256
++            latest[(o.account, o.line)] = o.seq
++        elif rec["kind"] == "confirm":
++            basis[rec["of"]] = rec["statement_sha256"]
++        elif rec["kind"] == "drop":
++            state.dropped.add(rec["of"])
++    for (account, line), seq in sorted(latest.items(), key=lambda kv: kv[1]):
++        if seq in state.dropped:
++            continue
++        o = state.overrides[seq]
++        loaded = statements.get(account)
++        t = next((t for t in loaded[0].transactions if t.id == line), None) if loaded else None
++        if t is None:
++            state.stale.append(Stale(seq, account, line, o.new, "line not in the case"))
++        elif basis[seq] != loaded[1]:
++            state.stale.append(Stale(seq, account, line, o.new, "statement changed"))
++        else:
++            state.applied.setdefault(account, {})[line] = LineOverride(Category(o.new), ref(seq))
++    return state
++
++
++# --- figures -----------------------------------------------------------------------------
++
++
++@dataclass
++class CaseFigures:
++    """One account's figures from its statement and the whole override log (R17)."""
++
++    account: str
++    statement_sha256: str
++    statement: Statement            # categorised, overrides applied
++    metrics: list[Metric]
++    monthly: list[MonthRow]
++    overridden: dict[str, str]      # line id -> the override reference it carries
++    stale: list[Stale]
++    marked: set[str]                # ids of figures that rest on an overridden line
++    marked_cells: set[tuple[str, str]]  # (YYYY-MM, cell) of monthly cells that do
++
++
++def _figures(statement: Statement, profile: dict[str, Any], applied: dict[str, LineOverride]):
++    from . import metrics
++
++    categorise(statement, active_ruleset(), overrides=applied, profile=store.profile_names(profile))
++    return (metrics.compute(statement, profile["vat_stagger"], profile["proposed_monthly_repayment"]),
++            metrics.monthly_summary(statement))
++
++
++def _rests_on(a, b, lines: set[str]) -> bool:
++    return bool(lines & set(a.evidence)) or a.value != b.value or a.evidence != b.evidence
++
++
++def case_figures(folder: Path) -> dict[str, CaseFigures]:
++    """Every account's figures, recomputed from its statement, the profile and the whole
++    override log; stale overrides listed and not applied (R17, R19)."""
++    folder = Path(folder)
++    entries = caselog.for_case(folder).entries()
++    profile = store.load_profile(folder)
++    accounts = _accounts(entries)
++    statements = {a: _load(folder, a) for a in accounts}
++    state = _decide(_read_records(folder, entries), statements)
++    out: dict[str, CaseFigures] = {}
++    for account in accounts:
++        loaded = statements[account]
++        if loaded is None:
++            continue
++        statement, sha = loaded
++        applied = state.applied.get(account, {})
++        bare = statement.model_copy(deep=True)
++        metrics, monthly = _figures(statement, profile, applied)
++        lines = set(applied)
++        marked: set[str] = set()
++        cells: set[tuple[str, str]] = set()
++        if applied:
++            base_metrics, base_monthly = _figures(bare, profile, {})
++            marked = {m.id for m, b in zip(metrics, base_metrics, strict=True) if _rests_on(m, b, lines)}
++            base_rows = {r.month: r for r in base_monthly}
++            for row in monthly:
++                base = base_rows.get(row.month)
++                for cell in CELLS:
++                    if base is None or _rests_on(getattr(row, cell), getattr(base, cell), lines):
++                        cells.add((row.month, cell))
++        out[account] = CaseFigures(account, sha, statement, metrics, monthly,
++                                   {k: v.ref for k, v in applied.items()},
++                                   [s for s in state.stale if s.account == account], marked, cells)
++    return out
++
++
++def stale_overrides(folder: Path) -> list[Stale]:
++    """Every stale override of the case, accounts with no statement included (R19)."""
++    folder = Path(folder)
++    entries = caselog.for_case(folder).entries()
++    accounts = _accounts(entries)
++    records = _read_records(folder, entries)
++    return _decide(records, {a: _load(folder, a) for a in accounts}).stale
++
++
++def listing(folder: Path) -> list[tuple[Override, str]]:
++    """Every override with what it is now: applied, stale (and why), superseded or dropped."""
++    folder = Path(folder)
++    entries = caselog.for_case(folder).entries()
++    accounts = _accounts(entries)
++    state = _decide(_read_records(folder, entries), {a: _load(folder, a) for a in accounts})
++    stale = {s.seq: s for s in state.stale}
++    applied = {v.ref for lines in state.applied.values() for v in lines.values()}
++    out = []
++    for seq, o in sorted(state.overrides.items()):
++        if ref(seq) in applied:
++            status = "applied"
++        elif seq in stale:
++            status = f"stale: {stale[seq].why}"
++        elif seq in state.dropped:
++            status = "dropped"
++        else:
++            status = "superseded"
++        out.append((o, status))
++    return out
++
++
++# --- writing -----------------------------------------------------------------------------
++
++
++@dataclass(frozen=True)
++class Added:
++    recorded: bool
++    seq: int | None
++    line: str
++    old: str
++    new: str
++
++
++def _append(folder: Path, save, records: list[dict[str, Any]], rec: dict[str, Any]) -> None:
++    """Rewrite the override log as the recorded records plus `rec` (so a leftover goes), and
++    have the case log record it with the record's hash. Put back as it was if not recorded."""
++    path = folder / OVERRIDES
++    save.undo.append(store._restorer(path))
++    line = _line_bytes(rec)
++    store._write_private(path, b"".join(_line_bytes(r) for r in records) + line)
++    save.data = {**{k: rec[k] for k in rec if k != "reason"}, "record_sha256": _sha(line)}
++
++
++def _check_position(head, expected: int | None) -> None:
++    if expected is not None and head != expected:
++        raise caselog.LogConflict(expected, head)
++
++
++def add_override(folder: Path, line: str, category: str, *, reason: str, name: str,
++                 account: str = "main", expected: int | None = None, **changes: Any) -> Added:
++    """Give one line a category, with a reason and the typed name (R17). Anything but a
++    category is refused (R18): `changes` exists only so that a request to change a line's
++    amount, date, balance or description is refused, naming it, instead of ignored. The
++    same category the line has now changes nothing and records nothing. `expected`, when
++    given, is the case log position the caller last saw; a stale one is a LogConflict."""
++    folder = Path(folder)
++    if changes:
++        which = ", ".join(sorted(changes))
++        raise store.CaseStoreError(f"an override changes a line's category only, never its {which}; "
++                                   "nothing was recorded")
++    if not isinstance(line, str) or not line:
++        raise store.CaseStoreError("an override names a line by its id")
++    try:
++        new = Category(category)
++    except ValueError:
++        raise store.CaseStoreError(f"{category!r} is not a category; use one of "
++                                   f"{', '.join(c.value for c in Category)}") from None
++    reason = _text(reason, "reason")
++    name = _text(name, "name")
++    with store._recorded(folder, EVENTS["override"]) as save:
++        _check_position(len(save.entries), expected)
++        accounts = _accounts(save.entries)
++        statements = {a: _load(folder, a) for a in accounts}
++        records = _read_records(folder, save.entries)
++        loaded = statements.get(account)
++        if loaded is None:
++            raise store.CaseStoreError(f"no account {account} in this case")
++        state = _decide(records, statements)
++        profile = store.load_profile(folder)
++        _figures(loaded[0], profile, state.applied.get(account, {}))
++        t = next((t for t in loaded[0].transactions if t.id == line), None)
++        if t is None:
++            raise store.CaseStoreError(f"no line {line} in account {account}")
++        if new not in valid_categories(t):
++            direction = "credit" if t.amount > 0 else "debit"
++            raise store.CaseStoreError(f"{new.value} is not valid for a {direction}; line {line} is a {direction}")
++        old = t.category.value
++        if new.value == old:
++            return Added(False, None, line, old, old)
++        seq = len(records) + 1
++        rec = {"seq": seq, "kind": "override", "account": account, "line": line, "old": old, "new": new.value,
++               "reason": reason, "name": name, "os_user": store._os_user(), "at": _now(),
++               "statement_sha256": loaded[1]}
++        _append(folder, save, records, rec)
++    return Added(True, seq, line, old, new.value)
++
++
++def resolve_stale(folder: Path, seq: int, action: str, *, name: str, expected: int | None = None) -> None:
++    """Confirm or drop a stale override (R19). Confirming records it against the current
++    statement, and needs its line still there with its category still valid for the line's
++    direction; an override whose line is gone can only be dropped."""
++    folder = Path(folder)
++    if action not in ("confirm", "drop"):
++        raise store.CaseStoreError("a stale override is confirmed or dropped")
++    name = _text(name, "name")
++    with store._recorded(folder, EVENTS[action]) as save:
++        _check_position(len(save.entries), expected)
++        accounts = _accounts(save.entries)
++        statements = {a: _load(folder, a) for a in accounts}
++        records = _read_records(folder, save.entries)
++        stale = {s.seq: s for s in _decide(records, statements).stale}
++        if seq not in stale:
++            raise store.CaseStoreError(f"override {seq} is not stale; only a stale override is confirmed or dropped")
++        s = stale[seq]
++        loaded = statements.get(s.account)
++        sha = loaded[1] if loaded else ""
++        if action == "confirm":
++            if s.why == "line not in the case":
++                raise store.CaseStoreError(f"override {seq}'s line {s.line} is not in the case; it can only be "
++                                           "dropped")
++            t = next(t for t in loaded[0].transactions if t.id == s.line)
++            if Category(s.new) not in valid_categories(t):
++                raise store.CaseStoreError(f"override {seq}'s category is not valid for line {s.line}'s direction "
++                                           "now; it can only be dropped")
++        rec = {"seq": len(records) + 1, "kind": action, "of": seq, "name": name, "os_user": store._os_user(),
++               "at": _now(), "statement_sha256": sha}
++        _append(folder, save, records, rec)
++
+diff --git a/tests/test_overrides.py b/tests/test_overrides.py
+new file mode 100644
+index 0000000..e7dfb32
+--- /dev/null
++++ b/tests/test_overrides.py
+@@ -0,0 +1,341 @@
++"""The override log (overrides.jsonl) and its application (R17, R18, R19; P3, P4).
++
++An override changes one line's category, and nothing else; it carries a reason, the
++typed name, the operating-system user and the UTC time, and is appended both to the
++case's override log and to its case log. An override on a line that is not in the case,
++or recorded against a statement whose hash has changed, is held as stale until the
++underwriter confirms or drops it. Figures are recomputed from the statements and the
++whole override log, and each figure that rests on an overridden line is marked."""
++
++import json
++import random
++from datetime import datetime
++from pathlib import Path
++
++import pytest
++from typer.testing import CliRunner
++
++from cma import case, overrides, store
++from cma.cli import app
++from cma.models import Category
++
++runner = CliRunner()
++EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "cafe_stretched.csv"
++SMALL = ("id,date,description,amount,balance\n"
++         "L1,2026-01-05,CARD SETTLEMENT STRIPE,500.00,1500.00\n"
++         "L2,2026-01-06,FPS CREDIT J BLOGGS,300.00,1800.00\n"
++         "L3,2026-01-07,DD COUNCIL,-100.00,1700.00\n"
++         "L4,2026-02-02,FPS CREDIT ACME LTD,250.00,1950.00\n")
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    monkeypatch.delenv("CMA_RULESET", raising=False)
++    return root
++
++
++def _case(tmp_path, body: str | None = None) -> Path:
++    case_id = store.new_case(label="t16")
++    folder = store.case_folder(case_id)
++    src = tmp_path / "statement.csv"
++    if body is None:
++        src.write_bytes(EXAMPLE.read_bytes())
++    else:
++        src.write_text(body)
++    store.import_file(folder, src, "csv")
++    return folder
++
++
++def _snapshot(view) -> dict:
++    """Everything a computation hands on, as plain data, for comparing two computations."""
++    return {acc: {"metrics": [m.model_dump(mode="json") for m in f.metrics],
++                  "monthly": [r.model_dump(mode="json") for r in f.monthly],
++                  "lines": [(t.id, t.category.value, t.rule_id) for t in f.statement.transactions],
++                  "marked": sorted(f.marked), "marked_cells": sorted(f.marked_cells),
++                  "overridden": sorted(f.overridden), "stale": [s.seq for s in f.stale]}
++            for acc, f in view.items()}
++
++
++def _lines(view) -> set:
++    return {(t.id, t.date.isoformat(), t.amount, t.balance, t.description)
++            for f in view.values() for t in f.statement.transactions}
++
++
++def _random_overrides(statement, rng: random.Random, n: int) -> list[tuple[str, Category]]:
++    picks = []
++    for t in rng.sample(statement.transactions, n):
++        picks.append((t.id, rng.choice(sorted(overrides.valid_categories(t), key=lambda c: c.value))))
++    return picks
++
++
++# --- P3 ---------------------------------------------------------------------------------
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("seed", [1, 2, 3])
++def test_p3_one_at_a_time_equals_fresh_computation_with_all(home, tmp_path, seed):
++    folder = _case(tmp_path)
++    rng = random.Random(seed)
++    base = overrides.case_figures(folder)
++    picks = _random_overrides(base["main"].statement, rng, 12)
++    picks += [(picks[0][0], rng.choice(sorted(overrides.valid_categories(
++        next(t for t in base["main"].statement.transactions if t.id == picks[0][0])), key=lambda c: c.value)))]
++    stepwise = None
++    for line, cat in picks:
++        overrides.add_override(folder, line, cat.value, reason=f"seen on the paying-in slip {seed}",
++                               name="Pat Underwriter")
++        stepwise = overrides.case_figures(folder)  # recomputed after each one
++    fresh = overrides.case_figures(folder)
++    assert _snapshot(stepwise) == _snapshot(fresh)
++    # A fresh computation with every override applied at once, outside the case store.
++    from cma import metrics
++    from cma.categorise import LineOverride, categorise
++    from cma.ingest import load_csv
++
++    final = {}
++    for line, cat in picks:
++        final[line] = cat
++    st = load_csv(folder / "statements" / "main.csv", account_name="main")
++    # A pick equal to the line's category at the time records nothing (an identical
++    # override changes nothing), so only the recorded ones are applied here.
++    assert set(fresh["main"].overridden) <= set(final)
++    applied = {k: LineOverride(final[k], ref) for k, ref in fresh["main"].overridden.items()}
++    profile = store.load_profile(folder)
++    categorise(st, overrides=applied, profile=store.profile_names(profile))
++    got = {t.id: t.category for t in fresh["main"].statement.transactions}
++    for k, v in final.items():
++        assert got[k] == v
++    want = metrics.compute(st, profile["vat_stagger"], profile["proposed_monthly_repayment"])
++    assert [m.model_dump() for m in want] == [m.model_dump() for m in fresh["main"].metrics]
++
++
++@pytest.mark.invariants
++def test_p3_computing_twice_gives_identical_results(home, tmp_path):
++    folder = _case(tmp_path)
++    t = overrides.case_figures(folder)["main"].statement.transactions
++    overrides.add_override(folder, t[0].id, "other", reason="not takings", name="Pat")
++    assert _snapshot(overrides.case_figures(folder)) == _snapshot(overrides.case_figures(folder))
++
++
++# --- P4 ---------------------------------------------------------------------------------
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("seed", [7, 8])
++def test_p4_overrides_never_change_a_lines_id_date_amount_balance_or_description(home, tmp_path, seed):
++    folder = _case(tmp_path)
++    before = _lines(overrides.case_figures(folder))
++    statement_bytes = (folder / "statements" / "main.csv").read_bytes()
++    rng = random.Random(seed)
++    for line, cat in _random_overrides(overrides.case_figures(folder)["main"].statement, rng, 15):
++        overrides.add_override(folder, line, cat.value, reason="reason", name="Pat")
++    after = overrides.case_figures(folder)
++    assert _lines(after) == before
++    assert (folder / "statements" / "main.csv").read_bytes() == statement_bytes
++    assert len(after["main"].overridden) > 0
++
++
++@pytest.mark.invariants
++def test_p4_a_request_to_change_anything_but_the_category_is_refused(home, tmp_path):
++    folder = _case(tmp_path, SMALL)
++    for bad in ({"amount": "1.00"}, {"date": "2026-01-01"}, {"balance": "0"}, {"description": "X"}):
++        with pytest.raises(store.CaseStoreError, match="category only"):
++            overrides.add_override(folder, "L1", "other", reason="r", name="Pat", **bad)
++    assert not (folder / overrides.OVERRIDES).exists()
++    assert _lines(overrides.case_figures(folder)) == _lines(overrides.case_figures(folder))
++
++
++# --- R18: categories only, valid for the direction -------------------------------------
++
++
++@pytest.mark.contracts
++def test_category_must_be_valid_for_the_lines_direction(home, tmp_path):
++    folder = _case(tmp_path, SMALL)
++    with pytest.raises(store.CaseStoreError, match="not valid for a debit"):
++        overrides.add_override(folder, "L3", "revenue_transfer", reason="r", name="Pat")
++    with pytest.raises(store.CaseStoreError, match="not valid for a credit"):
++        overrides.add_override(folder, "L1", "payroll", reason="r", name="Pat")
++    with pytest.raises(store.CaseStoreError, match="not a category"):
++        overrides.add_override(folder, "L1", "takings", reason="r", name="Pat")
++    with pytest.raises(store.CaseStoreError, match="no line L9"):
++        overrides.add_override(folder, "L9", "other", reason="r", name="Pat")
++    with pytest.raises(store.CaseStoreError, match="reason"):
++        overrides.add_override(folder, "L1", "other", reason="  ", name="Pat")
++    with pytest.raises(store.CaseStoreError, match="name"):
++        overrides.add_override(folder, "L1", "other", reason="r", name="")
++    assert not (folder / overrides.OVERRIDES).exists()
++    assert [e.event for e in case.for_case(folder).entries()] == ["case_created", "import"]
++
++
++@pytest.mark.contracts
++def test_an_override_records_line_old_new_reason_name_user_and_utc_time(home, tmp_path):
++    folder = _case(tmp_path, SMALL)
++    r = overrides.add_override(folder, "L2", "director_funding", reason="director's own transfer",
++                               name="Pat Underwriter")
++    assert r.recorded and r.seq == 1
++    rec = json.loads((folder / overrides.OVERRIDES).read_text().splitlines()[0])
++    assert rec["kind"] == "override" and rec["line"] == "L2" and rec["account"] == "main"
++    assert rec["old"] == "other" and rec["new"] == "director_funding"
++    assert rec["reason"] == "director's own transfer" and rec["name"] == "Pat Underwriter"
++    assert rec["os_user"] == store._os_user()
++    assert rec["at"].endswith("Z") and datetime.fromisoformat(rec["at"].replace("Z", "+00:00")).tzinfo
++    assert len(rec["statement_sha256"]) == 64
++    entry = case.for_case(folder).entries()[-1]
++    assert entry.event == "override" and entry.data["seq"] == 1 and entry.data["new"] == "director_funding"
++    assert (folder / overrides.OVERRIDES).stat().st_mode & 0o777 == 0o600
++    view = overrides.case_figures(folder)["main"]
++    assert next(t for t in view.statement.transactions if t.id == "L2").category is Category.DIRECTOR_FUNDING
++    assert view.overridden == {"L2": "override:1"}
++    assert next(t for t in view.statement.transactions if t.id == "L2").rule_id == "override:1"
++
++
++@pytest.mark.contracts
++def test_an_identical_override_changes_nothing(home, tmp_path):
++    folder = _case(tmp_path, SMALL)
++    r = overrides.add_override(folder, "L2", "other", reason="already other", name="Pat")
++    assert not r.recorded
++    assert not (folder / overrides.OVERRIDES).exists()
++
++
++@pytest.mark.contracts
++def test_a_stale_expected_log_position_is_a_conflict(home, tmp_path):
++    folder = _case(tmp_path, SMALL)
++    with pytest.raises(case.LogConflict):
++        overrides.add_override(folder, "L2", "director_funding", reason="r", name="Pat", expected=1)
++    overrides.add_override(folder, "L2", "director_funding", reason="r", name="Pat", expected=2)
++
++
++# --- R17: figures marked when they rest on an overridden line --------------------------
++
++
++@pytest.mark.contracts
++def test_figures_that_rest_on_an_overridden_line_are_marked(home, tmp_path):
++    folder = _case(tmp_path, SMALL)
++    assert overrides.case_figures(folder)["main"].marked == set()
++    overrides.add_override(folder, "L2", "revenue_transfer", reason="invoice 17", name="Pat")
++    f = overrides.case_figures(folder)["main"]
++    by_id = {m.id: m for m in f.metrics}
++    assert "L2" in by_id["M2"].evidence and "M2" in f.marked and "M17" in f.marked
++    assert "M25" in f.marked  # left unexplained money in: its value moved
++    for mid in f.marked:
++        assert mid in by_id
++    untouched = [m.id for m in f.metrics if m.id not in f.marked]
++    assert untouched and all("L2" not in by_id[m].evidence for m in untouched)
++    assert ("2026-01", "trading_receipts") in f.marked_cells
++    assert ("2026-02", "trading_receipts") not in f.marked_cells
++
++
++# --- R19: stale overrides --------------------------------------------------------------
++
++
++def _replace_statement(folder: Path, body: str) -> None:
++    p = folder / "statements" / "main.csv"
++    p.chmod(0o600)
++    p.write_text(body)
++
++
++@pytest.mark.contracts
++def test_an_override_on_a_changed_statement_is_stale_until_confirmed(home, tmp_path):
++    folder = _case(tmp_path, SMALL)
++    overrides.add_override(folder, "L2", "director_funding", reason="r", name="Pat")
++    _replace_statement(folder, SMALL.replace("J BLOGGS", "J BLOGGS LTD"))
++    f = overrides.case_figures(folder)["main"]
++    assert [s.seq for s in f.stale] == [1] and f.stale[0].why == "statement changed"
++    assert f.overridden == {} and f.marked == set()
++    assert next(t for t in f.statement.transactions if t.id == "L2").category is Category.OTHER
++    overrides.resolve_stale(folder, 1, "confirm", name="Pat")
++    f = overrides.case_figures(folder)["main"]
++    assert f.stale == [] and f.overridden == {"L2": "override:1"}
++    assert [e.event for e in case.for_case(folder).entries()][-1] == "override_confirmed"
++
++
++@pytest.mark.contracts
++def test_an_override_on_a_missing_line_is_stale_and_can_only_be_dropped(home, tmp_path):
++    folder = _case(tmp_path, SMALL)
++    overrides.add_override(folder, "L4", "revenue_transfer", reason="r", name="Pat")
++    _replace_statement(folder, "\n".join(SMALL.splitlines()[:4]) + "\n")
++    f = overrides.case_figures(folder)["main"]
++    assert [(s.seq, s.why) for s in f.stale] == [(1, "line not in the case")]
++    with pytest.raises(store.CaseStoreError, match="drop"):
++        overrides.resolve_stale(folder, 1, "confirm", name="Pat")
++    overrides.resolve_stale(folder, 1, "drop", name="Pat")
++    assert overrides.case_figures(folder)["main"].stale == []
++    with pytest.raises(store.CaseStoreError, match="not stale"):
++        overrides.resolve_stale(folder, 1, "drop", name="Pat")
++
++
++@pytest.mark.contracts
++def test_an_applied_override_is_not_stale_and_cannot_be_dropped_as_one(home, tmp_path):
++    folder = _case(tmp_path, SMALL)
++    overrides.add_override(folder, "L2", "director_funding", reason="r", name="Pat")
++    with pytest.raises(store.CaseStoreError, match="not stale"):
++        overrides.resolve_stale(folder, 1, "drop", name="Pat")
++
++
++# --- the override log is the case log's ------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_a_hand_edited_override_log_is_refused(home, tmp_path):
++    folder = _case(tmp_path, SMALL)
++    overrides.add_override(folder, "L2", "director_funding", reason="r", name="Pat")
++    p = folder / overrides.OVERRIDES
++    p.write_text(p.read_text().replace("director_funding", "revenue_transfer"))
++    with pytest.raises(store.CaseStoreError, match="record 1"):
++        overrides.case_figures(folder)
++
++
++@pytest.mark.contracts
++def test_a_record_the_case_log_never_recorded_is_a_leftover_and_ignored(home, tmp_path):
++    folder = _case(tmp_path, SMALL)
++    overrides.add_override(folder, "L2", "director_funding", reason="r", name="Pat")
++    p = folder / overrides.OVERRIDES
++    good = p.read_text()
++    rec = json.loads(good.splitlines()[0]) | {"seq": 2, "line": "L1", "new": "other", "old": "revenue_card_settlement"}
++    p.write_text(good + json.dumps(rec) + "\n")
++    assert overrides.case_figures(folder)["main"].overridden == {"L2": "override:1"}
++    overrides.add_override(folder, "L4", "revenue_transfer", reason="r", name="Pat")
++    lines = p.read_text().splitlines()
++    assert [json.loads(x)["line"] for x in lines] == ["L2", "L4"]
++
++
++@pytest.mark.contracts
++def test_a_refused_case_log_append_leaves_no_override_record(home, tmp_path, monkeypatch):
++    folder = _case(tmp_path, SMALL)
++
++    def refuse(*a, **k):
++        raise case.LogConflict(2, 3)
++
++    monkeypatch.setattr(case.CaseLog, "append", refuse)
++    with pytest.raises(case.LogConflict):
++        overrides.add_override(folder, "L2", "director_funding", reason="r", name="Pat")
++    assert not (folder / overrides.OVERRIDES).exists()
++
++
++# --- CLI -------------------------------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_cli_override_list_figures_and_resolve(home, tmp_path):
++    folder = _case(tmp_path, SMALL)
++    cid = folder.name
++    r = runner.invoke(app, ["case", "override", cid, "L2", "director_funding", "--reason", "loan from Jo",
++                            "--name", "Pat"])
++    assert r.exit_code == 0, r.output
++    assert "override 1" in r.output
++    r = runner.invoke(app, ["case", "override", cid, "L3", "revenue_transfer", "--reason", "x", "--name", "Pat"])
++    assert r.exit_code == 2 and "not valid for a debit" in r.output
++    r = runner.invoke(app, ["case", "overrides", cid])
++    assert r.exit_code == 0 and "L2" in r.output and "applied" in r.output
++    r = runner.invoke(app, ["case", "figures", cid])
++    assert r.exit_code == 0 and "M20" in r.output and "*" in r.output
++    _replace_statement(folder, SMALL.replace("J BLOGGS", "J BLOGGS LTD"))
++    r = runner.invoke(app, ["case", "overrides", cid])
++    assert "stale" in r.output and "statement changed" in r.output
++    r = runner.invoke(app, ["case", "figures", cid])
++    assert r.exit_code == 0 and "stale" in r.output
++    r = runner.invoke(app, ["case", "resolve-override", cid, "1", "--drop", "--name", "Pat"])
++    assert r.exit_code == 0, r.output
++    assert overrides.case_figures(folder)["main"].stale == []

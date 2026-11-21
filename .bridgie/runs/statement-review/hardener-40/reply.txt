@@ -1,0 +1,75 @@
+I walked every checklist line for T16, and the one change I made is to the README. The full suite passed (1949 tests), as did ruff and the override tests (7 invariants, 12 contracts). Nothing in the override code needed fixing.
+
+- **README:** it now documents `cma case override`, `overrides`, `figures` and `resolve-override`. Committed as af647b7.
+- **Probe on 10,000 lines with 20 overrides:** recomputing the figures takes 1.14 s and adding one override takes 0.72 s. This is my own script, not a configured runner tier, so the claim below doesn't count it as runner proof.
+- **Gaps for the owner** (in `notes` below):
+  - Frozen dataclasses are not immutable, so P4 rests on the copy step.
+  - The design's CLI list doesn't name these commands yet.
+  - The case log entry carries the typed name.
+  - Override text could carry terminal escape codes.
+  - The workspace's expected-position check belongs to T22.
+
+```json
+{
+  "task": "T16",
+  "claims": [
+    {
+      "text": "Failure modes / idempotency: an override that gives a line the category it already has records nothing. Confirming or dropping an override that is not stale (or was already resolved) is refused. A stale expected log position is a LogConflict.",
+      "proof_cmd": "python -m pytest -q tests/test_overrides.py -k 'identical or not_stale or stale_expected or missing_line'",
+      "proof_output": "all selected passed (part of 19 passed in tests/test_overrides.py)"
+    },
+    {
+      "text": "Partial failure is repairable. If the case log refuses the append, the override log is restored as it was. A record the case log never recorded (crash between the two writes) is ignored and dropped by the next append. A record changed by hand is refused, naming its number.",
+      "proof_cmd": "python -m pytest -q tests/test_overrides.py -k 'refused_case_log_append or leftover or hand_edited'",
+      "proof_output": "3 passed"
+    },
+    {
+      "text": "P3 (invariants): applying overrides one at a time gives what a fresh computation with all of them gives, and computing twice gives identical results.",
+      "proof_cmd": "python -m pytest -q -m invariants tests/test_overrides.py",
+      "proof_output": "7 passed, 12 deselected in 6.47s"
+    },
+    {
+      "text": "P4 / R18 (invariants, contracts): an override never changes a line's id, date, amount, balance or description, or the statement file. A request to change anything but the category is refused. The category must be valid for the line's direction. Reason and name are required.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_overrides.py",
+      "proof_output": "12 passed, 7 deselected in 1.78s"
+    },
+    {
+      "text": "Data / migration: additive only. overrides.jsonl is a new 0600 file in the case folder. No existing format, figure or checkpoint changes. The full suite (P7 and dual-run included) is unchanged.",
+      "proof_cmd": "python -m pytest -q -x",
+      "proof_output": "1949 passed in 145.88s (0:02:25)"
+    },
+    {
+      "text": "Security / input validation: account keys are only resolved from accounts the case log imported, so --account cannot reach a path outside statements/. Reason and name are bounded at 1000 characters and need a letter or digit. CLI output escapes line ids or prints with markup off. The new code passes static checks.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src",
+      "proof_output": "All checks passed! (compileall exit 0)"
+    },
+    {
+      "text": "Observability: every override, confirm and drop is a case log entry (override, override_confirmed, override_dropped) carrying seq, line, old/new, name, os_user, UTC time, statement hash and the record's sha256. The free-text reason stays out of the case log.",
+      "proof_cmd": "python -m pytest -q tests/test_overrides.py -k 'records_line_old_new'",
+      "proof_output": "1 passed"
+    },
+    {
+      "text": "R17 marking: a figure or monthly cell that rests on an overridden line is marked, and untouched figures are not.",
+      "proof_cmd": "python -m pytest -q tests/test_overrides.py -k 'rest_on_an_overridden_line'",
+      "proof_output": "1 passed"
+    },
+    {
+      "text": "R19 stale overrides: an override on a changed statement or a missing line is stale, not applied, and listed until confirmed (only if its line is still there) or dropped.",
+      "proof_cmd": "python -m pytest -q tests/test_overrides.py -k 'stale'",
+      "proof_output": "all selected passed"
+    },
+    {
+      "text": "Operability / rollback: the new CLI commands run nothing unless invoked. An older package ignores overrides.jsonl. Removing the commands needs no data repair. The CLI round trip covers override, overrides, figures and resolve-override.",
+      "proof_cmd": "python -m pytest -q tests/test_overrides.py -k cli",
+      "proof_output": "1 passed"
+    },
+    {
+      "text": "Docs: README documents the four new commands.",
+      "proof_cmd": "git show --stat af647b7",
+      "proof_output": "README.md | 11 +++++++++++ (T16 hardener: document the override commands in the README)"
+    }
+  ],
+  "files_changed": ["README.md"],
+  "notes": "Not applicable: N+1 queries and indexes (no database); pagination (CLI only, the workspace pages per R52); feature flag (new opt-in commands); new dependencies (none). Performance (probe outside the runner tiers): on 10,000 lines with 20 overrides, case_figures took 1.14s and add_override 0.72s. case_figures categorises twice per account (with and without overrides) to mark figures, so it costs up to 2x categorisation; T22's timed recompute (R52) should include it. Gaps for the owner: (1) LineOverride and Override are frozen dataclasses but not immutable copies, so P4 rests on case_figures deep-copying the statement before the bare computation. Tests cover it, but a future caller could reuse a categorised Statement. (2) The design's Interfaces CLI list does not yet name `cma case override/overrides/figures/resolve-override`; it describes overrides as a workspace action. A design note is needed, which the hardener does not write. (3) The case log entry carries the typed name and OS user. Observability says event log lines carry no names; whether the case log counts as such a line is for the owner. (4) Reason and name are not stripped of control characters, so ANSI escapes typed by the underwriter would reach `cma case overrides` output; markup is off, so there is no Rich injection. (5) No authz beyond the case root's owner-only permissions (R31), as for every other case command. The workspace token (R33) and the expected-position check over HTTP belong to T22."
+}
+```

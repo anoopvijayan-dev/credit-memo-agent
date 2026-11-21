@@ -1,0 +1,61 @@
+I've built T16, the override log. The P3 and P4 tests pass, and so does the full suite, though I ran that just before a one-line lint fix and only reran the related tests afterwards. The changes are not committed.
+
+**What it does**
+- **Recording an override:** each one goes to `overrides.jsonl` in the case folder, readable only by the owner. It holds the account, the line, the old and new category, the reason, the typed name, the OS user, the UTC time and the hash of the statement file. It is written while holding the case, with a case log entry that carries the record's hash.
+- **What is refused:**
+  - a category not valid for the line's direction: a credit's must have a money-in bucket, a debit's must not be a money-in-only one;
+  - a line that isn't in the case, an unknown category, or an empty reason or name;
+  - any attempt to change a line's amount, date, balance or description;
+  - a stale expected log position, which is a conflict.
+  If the case log refuses the entry, the record is taken back. An override to the category the line already has records nothing.
+- **Tampering:** a record edited by hand is refused, naming it. A record the case log never recorded is ignored as a leftover and dropped by the next write.
+- **Stale overrides:** an override whose line is gone, or whose statement hash has changed, is not applied. It is listed as stale until confirmed or dropped. Confirming re-records it against the current statement, and is refused when the line is gone, so that kind can only be dropped. For each line the latest override decides.
+- **Figures:** they are recomputed every time from the statements, the profile and the whole override log. Each figure and monthly cell that rests on an overridden line is marked.
+- **CLI:** `cma case override`, `cma case overrides`, `cma case resolve-override --confirm|--drop` and `cma case figures`. The last prints `*` beside marked figures and lists stale overrides.
+
+**Choices I made that a reviewer may question**
+- A figure is marked if an overridden line is among its lines, or if its value or lines differ from the same calculation with no overrides. So unexplained money in (M25) is marked when a credit leaves it, even though that line is no longer in its evidence.
+- The case log entry carries every field except the reason. The reason stays in `overrides.jsonl`, tied to the entry by the record's hash.
+
+**Not covered**
+- Figures are computed per account, each statement on its own. Combining a case's accounts is R41, which is Tier 2.
+- Indicators and the policy check are not recomputed here. That is left to T22's workspace, which can build on this.
+
+Files are in the worktree:
+- `src/cma/overrides.py` (new)
+- `src/cma/cli.py`
+- `tests/test_overrides.py` (new)
+
+```json
+{
+  "task": "T16",
+  "claims": [
+    {
+      "text": "P3: computing a case's figures twice gives identical results, and the figures after applying overrides one at a time (recomputed after each) equal a fresh computation with every override applied at once, including a fresh categorise+metrics.compute outside the case store (three random seeds on examples/cafe_stretched.csv, 13 overrides each, one line overridden twice).",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider -m invariants -k p3 tests/test_overrides.py",
+      "proof_output": "4 passed (test_p3_one_at_a_time_equals_fresh_computation_with_all[1,2,3], test_p3_computing_twice_gives_identical_results)"
+    },
+    {
+      "text": "P4: the set of (id, date, amount, balance, description) across the case's lines is the same before and after overrides are applied, the statement file's bytes are unchanged, and a request to change a line's amount, date, balance or description is refused with nothing recorded (R18).",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider -m invariants -k p4 tests/test_overrides.py",
+      "proof_output": "3 passed (test_p4_overrides_never_change_..._description[7,8], test_p4_a_request_to_change_anything_but_the_category_is_refused)"
+    },
+    {
+      "text": "Override log contract: overrides.jsonl (0600) records seq, account, line, old and new category, reason, typed name, OS user, UTC time and the statement's sha256; each is appended under the case lock with a case-log entry carrying the record's hash; categories must be valid for the line's direction (credit: has a money-in bucket; debit: not money-in-only); a missing line, empty reason or name, unknown category, stale expected log position (LogConflict) or refused case-log append records nothing; an identical override records nothing; a hand-edited record is refused naming it, and a record the case log never recorded is ignored as a leftover. Stale overrides (line gone, or statement hash changed) are not applied and are listed until confirmed (only when the line is still there) or dropped. Figures/monthly cells resting on an overridden line are marked. CLI: cma case override / overrides / resolve-override / figures.",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_overrides.py tests/test_case_store.py tests/test_cli.py",
+      "proof_output": "103 passed in 20.25s"
+    },
+    {
+      "text": "Lint and the full suite pass.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q -p no:cacheprovider",
+      "proof_output": "All checks passed! ... 1949 passed in 131.10s"
+    }
+  ],
+  "files_changed": [
+    "src/cma/overrides.py",
+    "src/cma/cli.py",
+    "tests/test_overrides.py"
+  ],
+  "notes": "Design choices: (1) For each (account, line) the latest override decides; earlier ones are 'superseded'; a dropped latest override leaves the line to the rules. (2) An override's basis is the statement file's sha256 at record time, or at its latest confirm; a confirm is refused when the line is gone or the category is no longer valid for its direction. (3) A figure or monthly cell is marked when an applied override's line is in its evidence OR its value/evidence differs from the same computation with no overrides (so M25 is marked when a credit leaves unexplained money in). (4) The case-log entry carries every record field except the reason, plus the record's sha256; the reason lives in overrides.jsonl, bound by that hash. (5) Figures are per account (each account's statement computed on its own, with the case profile); combining accounts is R41 (Tier 2) and not built here. Indicators and the policy check are recomputed by T22's workspace from case_figures; this task recomputes metrics M1-M28 and the monthly summary. The full-suite run was taken just before a one-line ruff fix (an unused loop variable) in overrides.py; ruff and the 103 related tests were rerun after it."
+}
+```
