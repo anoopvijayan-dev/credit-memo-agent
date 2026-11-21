@@ -355,7 +355,8 @@ def test_p18_evidence_records_offline_mode(home, tmp_path):
     r = CliRunner().invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A", "--out", str(out)])
     assert r.exit_code == 0, r.output
     record = json.loads((tmp_path / "memo.evidence.json").read_text())
-    assert record["egress"] == {"offline_lock": True, "destination": "offline", "recorded": AT_RUN_START}
+    assert record["egress"] == {"offline_lock": True, "destination": "offline", "recorded": AT_RUN_START,
+                                "resume_offline_lock": True}  # the review's resume (T17 review 10)
 
 
 def test_evidence_records_lock_off_with_offline_model(home, tmp_path):
@@ -364,7 +365,8 @@ def test_evidence_records_lock_off_with_offline_model(home, tmp_path):
     r = CliRunner().invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A", "--out", str(out)])
     assert r.exit_code == 0, r.output
     record = json.loads((tmp_path / "memo.evidence.json").read_text())
-    assert record["egress"] == {"offline_lock": False, "destination": "offline", "recorded": AT_RUN_START}
+    assert record["egress"] == {"offline_lock": False, "destination": "offline", "recorded": AT_RUN_START,
+                                "resume_offline_lock": False}  # the review's resume (T17 review 10)
 
 
 @pytest.mark.parametrize("model, destination", [("fake:offline-template", "offline"),
@@ -1142,3 +1144,61 @@ def test_p18_a_tracer_handed_in_is_taken_out_under_the_lock(home, no_network, mo
     build(llm.FakeLLM()).invoke({"statement_path": str(_statement(tmp_path))},
                                 {"configurable": {"thread_id": "t"}, "callbacks": callbacks})
     assert seen == [] and no_network == []
+
+
+
+@pytest.mark.invariants
+def test_p18_a_separate_graph_run_inside_another_takes_its_own_lock(home, no_network, monkeypatch, tmp_path):
+    """T17 review 10 / R29: a separate graph invoked during another graph's unlocked run took the
+    outer run's decision, skipping its own lock and the removal of a tracer handed to it."""
+    from langchain_core.tracers.langchain import LangChainTracer
+
+    seen = []
+    monkeypatch.setattr(LangChainTracer, "_start_trace", lambda self, run: seen.append(run), raising=False)
+    monkeypatch.setattr(LangChainTracer, "_persist_run", lambda self, run: seen.append(run), raising=False)
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    inner_done = []
+
+    class Outer(llm.FakeLLM):
+        def complete(self, system, user, **k):
+            if not inner_done:
+                (home / "firm.yaml").write_text("offline_lock: true\n")
+                tracer = LangChainTracer(client=types.SimpleNamespace())
+                build(llm.FakeLLM()).invoke({"statement_path": str(_statement(tmp_path))},
+                                            {"configurable": {"thread_id": "inner"}, "callbacks": [tracer]})
+                inner_done.append(1)
+            return super().complete(system, user)
+
+    build(Outer()).invoke({"statement_path": str(_statement(tmp_path))}, {"configurable": {"thread_id": "outer"}})
+    assert inner_done and seen == [] and no_network == []
+
+
+@pytest.mark.invariants
+def test_p18_evidence_records_the_lock_in_force_when_the_review_was_resumed(home, no_network, tmp_path):
+    """T17 review 10 / R29: a review drafted with the lock off and resumed after the firm locked
+    recorded only the draft's lock; the resume's lock is recorded beside it."""
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
+
+    saver = InMemorySaver()
+    cfg = {"configurable": {"thread_id": "t"}}
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    build(llm.FakeLLM(), checkpointer=saver).invoke({"statement_path": str(_statement(tmp_path))}, cfg)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    final = build(llm.FakeLLM(), checkpointer=saver).invoke(Command(resume={"approved": True, "reviewer": "A"}), cfg)
+    egress = evidence_record({**final, "ruleset": None})["egress"]
+    assert egress["offline_lock"] is False and egress["resume_offline_lock"] is True
+
+
+@pytest.mark.invariants
+def test_p5_a_custom_rules_limits_never_reach_the_prompt(home, tmp_path):
+    """T17 review 10 / P5: a custom rule's threshold, a number that can come from the case, reached
+    the prompt in its requirement and detail cells."""
+    from cma import categorise, ingest, metrics, policy
+
+    st = categorise.categorise(ingest.load_csv(_statement(tmp_path), account_name="ACME LTD"))
+    ms = metrics.compute(st)
+    custom = policy.load_policy()
+    custom["rules"][0] = {**custom["rules"][0], "threshold": 424242.0}
+    user = draft_prompt(st, ms, policy.evaluate(ms, custom))
+    assert "424242" not in user and "424,242" not in user and "(custom requirement)" in user

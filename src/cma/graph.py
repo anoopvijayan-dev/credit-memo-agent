@@ -127,6 +127,7 @@ class MemoState(TypedDict, total=False):
     model: str
     run_offline_lock: bool | None  # never read: an input before T17 review 3, kept so old checkpoints load
     offline_lock: bool
+    resume_offline_lock: bool | None  # the lock in force when the review was resumed (T17 review 10)
     egress: str
     statement_sha256: str
     statement: Statement
@@ -217,9 +218,12 @@ def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = F
         if r.refer_above is not None:
             req += f"; referred above {_threshold(r.refer_above, r.unit)}"
         rule_id, description = r.rule_id, r.description
+        detail = r.detail
         if for_prompt and not _is_shipped(r, shipped):
-            rule_id, description = "(custom id)", "(custom rule)"
-        lines.append(f"| {rule_id} | {description} | {r.metric_id} | {req} | {r.outcome.value} | {r.detail} |")
+            # A custom rule's limits and detail are its own text too, and a number in them could
+            # come from the case: only its metric and outcome are sent (T17 review 10).
+            rule_id, description, req, detail = "(custom id)", "(custom rule)", "(custom requirement)", "-"
+        lines.append(f"| {rule_id} | {description} | {r.metric_id} | {req} | {r.outcome.value} | {detail} |")
     return "\n".join(lines)
 
 
@@ -286,8 +290,13 @@ def _egress(s: MemoState) -> dict:
     resumes with no lock fields in its checkpoint; that version had no lock, and its model
     name says whether the draft left the machine."""
     if s.get("egress") is not None and s.get("offline_lock") is not None:
-        return {"offline_lock": s["offline_lock"], "destination": s["egress"],
-                "recorded": "at run start; every hosted request in the run was checked against this value"}
+        out = {"offline_lock": s["offline_lock"], "destination": s["egress"],
+               "recorded": "at run start; every hosted request in the run was checked against this value"}
+        if s.get("resume_offline_lock") is not None:
+            # The lock in force when the review was resumed and finalised, which may differ
+            # from the draft's (T17 review 10). An added field; the others are unchanged.
+            out["resume_offline_lock"] = s["resume_offline_lock"]
+        return out
     model = s.get("model") or "-"
     return {"offline_lock": False, "destination": "offline" if model.startswith("fake:") else model,
             "recorded": "at resume; the draft predates the offline lock"}
@@ -399,7 +408,7 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
                 return {"review": ReviewDecision(**decision)}
             payload = {**payload, "error": problem}
 
-    def finalise(s: MemoState) -> MemoState:
+    def finalise(s: MemoState, config: RunnableConfig) -> MemoState:
         r, g = s["review"], s["guard"]
         if g.grounded:
             grounding = "passed"
@@ -415,7 +424,9 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
             + f"\nGrounding check: {grounding} ({g.numbers_checked} numbers checked,"
             f" {len(g.unmatched)} unmatched, {len(g.missing_citations)} missing citations)."
         )
-        return {"final_memo": s["memo"] + stamp + "\n\n" + appendix(s)}
+        resumed = ((config or {}).get("configurable") or {}).get(_RESUME_KEY)
+        return {"final_memo": s["memo"] + stamp + "\n\n" + appendix(s),
+                "resume_offline_lock": resumed}
 
     g = StateGraph(MemoState)
     for name, fn in [
@@ -465,6 +476,7 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
 
 
 _READING_KEY = "__cma_reading"  # LangGraph never saves a configurable key that starts with "__"
+_RESUME_KEY = "__cma_resume_lock"
 
 
 def _without_network_tracers(callbacks):
@@ -501,7 +513,7 @@ def _read_or_locked() -> firm.FirmConfig | None:
 
 # Set while a run started through one of the wrappers below is going: LangGraph's invoke
 # runs through its own stream, which must not take a second reading of firm.yaml.
-_IN_RUN: ContextVar[bool | None] = ContextVar("cma_in_run", default=None)
+_IN_RUN: ContextVar[tuple | None] = ContextVar("cma_in_run", default=None)
 
 
 def _untraced_under_lock(graph, run_reading) -> None:
@@ -525,13 +537,22 @@ def _untraced_under_lock(graph, run_reading) -> None:
         since they run to the end before returning: a stream suspended between items marks
         nothing, so no other run started meanwhile takes its decision (T17 review 8)."""
         outer = _IN_RUN.get()
-        if outer is not None:
-            return outer, None, a, k
-        reading, locked = run_reading(a[0] if a else k.get("input"), config_of(a, k))
-        if reading is not None or locked:
+        if outer is not None and outer[0] == id(graph):
+            # Only this graph's own nested call (invoke's stream) keeps the run's decision; a
+            # separate graph run inside it takes its own reading and its own tracer filtering
+            # (T17 review 10).
+            return outer[1], None, a, k
+        graph_input = a[0] if a else k.get("input")
+        reading, locked = run_reading(graph_input, config_of(a, k))
+        resumed = graph_input is None or isinstance(graph_input, Command)
+        if reading is not None or locked or resumed:
             config = dict(config_of(a, k) or {})
             if reading is not None:
                 config["configurable"] = {**(config.get("configurable") or {}), _READING_KEY: reading}
+            if resumed:
+                # The lock in force for this resume, which the evidence records beside the
+                # draft's (T17 review 10).
+                config["configurable"] = {**(config.get("configurable") or {}), _RESUME_KEY: locked}
             if locked:
                 # A LangSmith tracer handed in with the run's callbacks would send the run off
                 # the machine whatever the environment says: under the lock it is taken out
@@ -543,7 +564,7 @@ def _untraced_under_lock(graph, run_reading) -> None:
                 a = (a[0], config, *a[2:])
             if reading is not None:
                 firm.begin_run(reading)
-        return locked, ((_IN_RUN.set(locked) if mark else None), reading), a, k
+        return locked, ((_IN_RUN.set((id(graph), locked)) if mark else None), reading), a, k
 
     def end(token) -> None:
         if token is not None:
