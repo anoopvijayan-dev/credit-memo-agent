@@ -71,6 +71,12 @@ cma case overrides <id>                           # applied, stale, superseded o
 cma case figures <id>
 cma case resolve-override <id> 3 --confirm --name "Pat"   # or --drop
 
+# Open the review workspace for a case: a page served on 127.0.0.1 only, from the next
+# free port from 8765 (--port to choose another). Each start prints a URL with a new
+# random token; a request without it, or whose Host is not 127.0.0.1 and that port, is
+# refused. The page loads only files bundled in the package. Ctrl-C stops it.
+cma review <id>                                   # --no-browser to only print the URL
+
 # Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
 # first entry that was changed, removed, reordered or left half written.
 cma case check private/cma/cases/<id>
