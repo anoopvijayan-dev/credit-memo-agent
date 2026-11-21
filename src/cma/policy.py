@@ -48,6 +48,9 @@ def _written_float(loader, node):
 
 
 _PolicyLoader.add_constructor("tag:yaml.org,2002:float", _written_float)
+# A policy as loaded can be written back out (a caller copying it, say), each number as it
+# was written (T17 review 21, with T04 review 59's written numbers).
+yaml.SafeDumper.add_representer(_Written, lambda dumper, v: dumper.represent_scalar("tag:yaml.org,2002:float", v.text))
 
 
 def load_policy(path: Path | None = None) -> dict:
@@ -236,6 +239,7 @@ def evaluate(metrics: list[Metric], policy: dict | None = None) -> PolicyResult:
                 rule_id=rule["id"], description=rule["description"], metric_id=m.id,
                 outcome=outcome, detail=detail, op=rule["op"], threshold=float(rule["threshold"]),
                 refer_below=rule.get("refer_below"), refer_above=rule.get("refer_above"), unit=m.unit,
+                on_fail=str(rule.get("on_fail", "")), when_missing=str(rule.get("when_missing", "refer")),
             )
         )
     if any(r.outcome == RuleOutcome.FAIL for r in results):

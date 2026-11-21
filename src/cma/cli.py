@@ -23,9 +23,10 @@ from rich.markdown import Markdown
 from rich.markup import escape
 from rich.table import Table
 
+from . import firm, synth
 from . import guard as grd
-from . import synth
 from .categorise import RulesetError, active_ruleset
+from .firm import FirmConfigError, OfflineLockError
 from .graph import (
     StaleReviewError,
     build,
@@ -98,12 +99,14 @@ def run(
         # checkpoint would leave the review id taken, so a corrected retry could not reuse it.
         active_ruleset()
         load_thresholds(thresholds)  # a malformed file is refused naming its line (R14)
-    except (RulesetError, ThresholdsError) as e:
+        firm_config = firm.load()  # the run's one reading of firm.yaml
+        model = get_llm(llm, firm_config=firm_config)  # under the lock a hosted model is refused here
+    except (RulesetError, ThresholdsError, OfflineLockError, FirmConfigError) as e:
         console.print(f"[red]Refused.[/red] {escape(str(e))}")
         raise typer.Exit(code=2) from e
     thread_id = thread or str(uuid.uuid4())
     with _checkpointer(checkpoint_db) as saver:
-        graph = build(get_llm(llm), checkpointer=saver)
+        graph = build(model, checkpointer=saver, firm_config=firm_config)
         cfg = {"configurable": {"thread_id": thread_id}}
         # The id check and the first write are one step under the review lock, so two runs
         # never both start the same review id (T04 review 27).
@@ -117,7 +120,10 @@ def run(
                      "thresholds_path": str(thresholds) if thresholds else None, "vat_stagger": vat_stagger},
                     cfg,
                 )
-            except (StatementError, PolicyError, RulesetError, ThresholdsError, AmountError) as e:
+            except (StatementError, PolicyError, RulesetError, ThresholdsError, AmountError,
+                    FirmConfigError, OfflineLockError) as e:
+                # OfflineLockError here: a hosted request refused before it was sent, so a
+                # refusal, not a model failure.
                 console.print(f"[red]Refused.[/red] {escape(str(e))}")
                 raise typer.Exit(code=2) from e
             except ReconciliationError as e:  # R3: no figures for a case whose buckets do not add up
