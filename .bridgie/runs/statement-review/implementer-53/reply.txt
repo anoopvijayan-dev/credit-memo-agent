@@ -1,0 +1,32 @@
+Waiting on the full-suite run; I'll write the claim once it reports.
+
+T21 is built: the workspace now shows a policy-check panel for each account, and it disappears when `show_policy_verdict` is off. The full suite passes (2184 tests), along with ruff, compileall and the offline evals.
+
+**What the page does**
+- **Setting on (and by default):** each account gets its own panel. Its first line is the illustrative label. Below that it shows the overall outcome and each rule's id, description, outcome and sentence, from `policy.evaluate` on that account's current figures. It always uses the packaged policy, never a firm file, and rule sentences quote money to the whole pound. After an override, the panel shows the outcome for the recomputed figures.
+- **Setting off:** the page has no panel, no outcome word and no rule result, only a note that the check is not shown. `/api/case` carries `policy_check: {shown: false}` and nothing else about the policy.
+- **Recommendation:** an empty field on the page in every state, and `recommendation: null` in the API.
+- **Bad packaged policy:** if the packaged policy file fails to load, the case is refused with no figures shown, like the other refusals.
+
+**Tests:** the new file is `tests/test_workspace_policy_check.py`.
+- The P20 tests (marked `invariants`) check the page under the default, on and off, for one-account and two-account cases, plus the API with the setting off.
+- The other tests check the API's policy data, the override case, the label's wording and a case with no figures.
+- My first version of the blank field was a `<div>`. That broke the existing P8 tests, which only allow certain tags, so it is now a `<p>`.
+
+**Not built here:** R56 also asks that the evidence record that the check was hidden. That belongs to the pack task (T25). The label is a single constant, `policy.ILLUSTRATIVE_LABEL`, with no digits, so the pack tasks can reuse it.
+
+Changed files: `src/cma/policy.py`, `src/cma/review/summary.py`, `src/cma/review/static/app.css`, and the new test file. The claim is written to the run directory; the same content follows.
+
+```json
+{
+  "task": "T21",
+  "claims": [
+    {"text": "P20 on the workspace HTML under both settings: with show_policy_verdict on (and by default) every policy-check panel holds the illustrative label, shows the overall outcome and every rule's id, description and detail exactly as policy.evaluate gives them on each account's current figures (one and two accounts), and the recommendation field is empty; with it off the page holds no policy-check panel, no outcome word, no rule description, sentence or rule-id cell, and the recommendation field is still empty; the API holds policy_check {shown: false} and no rule result when off.", "proof_cmd": "python -m pytest -q -m invariants tests/test_workspace_policy_check.py", "proof_output": "7 passed, 5 deselected in 6.23s"},
+    {"text": "Contracts: the API gives each account's policy check (policy name, hash, overall, rules) with the label and recommendation null; after an override the panel and API show the outcome on the recomputed figures; the label has no digits and says the underwriter decides; a case with no figures shows no policy check.", "proof_cmd": "python -m pytest -q tests/test_workspace_policy_check.py", "proof_output": "12 passed in 7.06s"},
+    {"text": "Existing workspace tests (summary, indicators, server, drill-down), including P8's tag whitelist, still pass with the panel and the recommendation field on the page.", "proof_cmd": "python -m pytest -q -m \"invariants or contracts\" tests/test_workspace_policy_check.py tests/test_workspace_summary.py tests/test_workspace_indicators.py tests/test_review_server.py tests/test_drilldown.py", "proof_output": "173 passed in 91.83s (0:01:31)"},
+    {"text": "Full suite, lint, compile and offline evals pass.", "proof_cmd": "python -m pytest -q -p no:cacheprovider; ruff check src tests && python -m compileall -q src && echo ok; python evals/run_evals.py | tail -1", "proof_output": "2184 passed in 214.43s (0:03:34); All checks passed! ok; 9/9 memos fully grounded; model = fake; ruleset = v1"}
+  ],
+  "files_changed": ["src/cma/policy.py", "src/cma/review/summary.py", "src/cma/review/static/app.css", "tests/test_workspace_policy_check.py"],
+  "notes": "The illustrative label is one constant, policy.ILLUSTRATIVE_LABEL (no digits), for the pack tasks (T24-T26) to reuse. case_summary reads firm.yaml once per request; with show_policy_verdict on it loads the packaged policy only (never a firm file) and evaluates it per account through policy.evaluate on overrides.case_figures' metrics, so the panel follows overrides; a malformed packaged policy (PolicyError) is a refusal with no figures. Each account's panel is its own section.policy-check with the label as its first line, rule sentences quoting money to the whole pound as policy.evaluate writes them (R2). With the setting off, the page shows only a note that the check is not shown, and the API data carries no outcome or rule result. The recommendation is a blank field (data-field=recommendation) in every rendered state, and recommendation: null in the API. Recording in the evidence that the check was hidden (R56's second clause) belongs to the pack (T25) and is not built here."
+}
+```

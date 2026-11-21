@@ -1,0 +1,29 @@
+I went through every checklist line for T21. All of them are now done (with proof), not applicable (with a reason), or a gap for the owner. The P20 tests pass with the setting on, off and at its default. I also added two tests for failure and rollback, and they pass. The full suite passes: 2186 tests.
+
+What I added (commit b5e9e8c, `tests/test_workspace_policy_check.py`):
+- **Policy file broken:** if the packaged policy can't be loaded, the case view gives a refusal that names the file. It doesn't return a server error, and it shows no outcome.
+- **Setting off:** with `show_policy_verdict` off, the policy file is never read. So the rollback works even when the policy file itself is broken.
+
+Gaps for the owner:
+1. If the packaged policy can't load while the setting is on, the whole case view is refused, not just the policy panel. The fix needs a design decision on whether the panel should fail on its own.
+2. There is no log line saying whether the check was shown or hidden, and the README doesn't mention the panel.
+3. The workspace label text and the label the indicators section uses are two separate copies of the same idea.
+4. The tests check the HTML by matching text, so a redesign of the page could break them.
+
+```json
+{
+  "task": "T21",
+  "claims": [
+    {"text": "P20 (invariants) holds on the workspace HTML under both settings: with show_policy_verdict on (and by default) every panel showing an outcome contains the illustrative label and the recommendation field is empty; with it off the page holds no outcome, rule result or label; one-account and two-account cases.", "proof_cmd": "python -m pytest -q -m invariants -k p20", "proof_output": "7 passed, 2179 deselected in 8.03s"},
+    {"text": "Failure modes: a packaged policy that cannot load (PolicyError) is a named refusal in /api/case and on the page, with no outcome and no HTTP 500; partial failure leaves nothing written (read-only path). Added test.", "proof_cmd": "python -m pytest -q -m contracts tests/test_workspace_policy_check.py", "proof_output": "7 passed, 7 deselected in 5.29s"},
+    {"text": "Operability / rollback: show_policy_verdict off hides the check without reading the policy file, so the config flip is a rollback path even if the policy is broken (R56). Added test test_with_the_setting_off_the_policy_is_never_read; it is among the 7 contracts passing above.", "proof_cmd": "python -m pytest -q tests/test_workspace_policy_check.py", "proof_output": "14 passed in 8.02s"},
+    {"text": "Idempotency: the panel is a read-only, pure render of policy.evaluate on the current figures; after an override it follows the recomputed figures (test_the_policy_check_follows_the_current_figures_after_an_override). No mutation is added.", "proof_cmd": "python -m pytest -q tests/test_workspace_policy_check.py", "proof_output": "14 passed in 8.02s"},
+    {"text": "Security / authz: no new entry point. The panel rides on the existing / and /api/case routes, which already require the per-launch token and a loopback Host header (src/cma/review/server.py:6-8). Every interpolated value in _policy_html goes through _e (escaping). No secrets, no new dependencies.", "proof_cmd": "git diff a2010c6~1 --stat -- src/cma/review/server.py; grep -n 'token\\|Host' src/cma/review/server.py | head -3", "proof_output": "(no server.py diff) 6:- issues a new random session token at each launch, and refuses every request that does / 7:  not carry it ... / 8:- refuses every request whose Host header is not exactly 127.0.0.1 and its own port"},
+    {"text": "Data / migration: not applicable. No stored data, schema or evidence key changes; the API gains additive keys (policy_check, recommendation: null). PolicyResult and policy.evaluate are unchanged; the only src addition to policy.py is a label constant.", "proof_cmd": "git diff a2010c6~1 --stat -- src", "proof_output": "src/cma/policy.py, src/cma/review/summary.py, src/cma/review/static/app.css only; additive"},
+    {"text": "Performance: one policy.evaluate per account per request over at most 28 figures; no queries; the payload adds one rules list per account (9 packaged rules). The review/workspace suites are unchanged in time.", "proof_cmd": "python -m pytest -q tests/test_review*.py tests/test_workspace*.py", "proof_output": "122 passed in 61.23s (0:01:01)"},
+    {"text": "No regression: lint, compile and the full suite pass with the change and the new tests.", "proof_cmd": "ruff check src tests; python -m compileall -q src && echo compile-ok; python -m pytest -q -x", "proof_output": "All checks passed! / compile-ok / 2186 passed in 220.50s (0:03:40)"}
+  ],
+  "files_changed": ["tests/test_workspace_policy_check.py"],
+  "notes": "Gaps for the owner (not coded; design or scope): (1) A packaged policy that fails to load with show_policy_verdict on refuses the whole case view (PolicyError added to refusal()), not just the panel; whether the panel should fail alone is a design choice. (2) Observability gap: no structured log line records policy_check=shown/hidden per view; the design puts that in the pack evidence (R56, T24/T27), not the workspace. (3) Docs gap: README does not mention the workspace policy panel or that show_policy_verdict is its rollback. (4) Duplication: summary.ILLUSTRATIVE (the indicators label) and policy.ILLUSTRATIVE_LABEL (the policy label) are two separate label strings. (5) The P20 tests check the HTML by matching class names and text; a template redesign would need them updated. Not applicable: an alert (local-only tool, no remote alerting by design); a feature flag beyond show_policy_verdict."
+}
+```

@@ -1,0 +1,446 @@
+diff --git a/src/cma/policy.py b/src/cma/policy.py
+index 666f6d2..6b03d20 100644
+--- a/src/cma/policy.py
++++ b/src/cma/policy.py
+@@ -21,6 +21,11 @@ OPS = {">=": operator.ge, "<=": operator.le, ">": operator.gt, "<": operator.lt,
+ ON_FAIL = {"refer", "fail"}
+ WHEN_MISSING = {"pass", "refer", "fail"}
+ DEFAULT_POLICY_NAME = "uk_sme_default.yaml"
++# The illustrative label (R25): shown in the same workspace panel and the same pack section as
++# every policy outcome, so copying the section copies it. It holds no digits, so it never
++# trips the grounding guard.
++ILLUSTRATIVE_LABEL = ("Illustrative thresholds shipped with this tool. They are not your firm's lending "
++                      "policy, and this is not a lending decision: the underwriter decides.")
+ 
+ 
+ class PolicyError(ValueError):
+diff --git a/src/cma/review/static/app.css b/src/cma/review/static/app.css
+index e1234d9..6a74ebd 100644
+--- a/src/cma/review/static/app.css
++++ b/src/cma/review/static/app.css
+@@ -15,3 +15,6 @@ tr.total td { font-weight: 600; border-top: 2px solid #8888; }
+ .indicator { margin: 0 0 0.75rem; }
+ .illustrative, .firm, .note, .none { font-size: 0.8rem; opacity: 0.8; }
+ .threshold { white-space: nowrap; }
++.policy-check { border: 1px solid #8888; padding: 0.5rem 1rem; margin: 0 0 0.75rem; }
++.illustrative-label { font-weight: 600; }
++.field { min-height: 3rem; border: 1px dashed #8888; }
+diff --git a/src/cma/review/summary.py b/src/cma/review/summary.py
+index 10d115b..c01e2c9 100644
+--- a/src/cma/review/summary.py
++++ b/src/cma/review/summary.py
+@@ -16,6 +16,11 @@ and render() turns into the page's HTML:
+   are raised by the figures layer (indicators.py) from the firm's thresholds file, the case
+   root's indicators.yaml or the path firm.yaml gives, when there is one, and the packaged,
+   illustrative file otherwise;
++- while show_policy_verdict is on in firm.yaml (the default), for each account the policy
++  check: the overall pass, refer or fail outcome and each rule's result from the packaged
++  policy, by policy.evaluate on the account's current figures, with the illustrative label in
++  the same panel (R25). With it off, no outcome and no rule result, in the HTML or the data
++  (R56). The recommendation is a field left blank for the underwriter either way (R24);
+ - or, when the money-in buckets do not reconcile with total money in, or a credit is in no
+   bucket or in more than one, in any account, no figures at all, for any account: only each
+   failing account's difference in pence and the lines involved (R3);
+@@ -35,7 +40,7 @@ from pathlib import Path
+ from typing import Any
+ 
+ from .. import case as caselog
+-from .. import firm, metrics, overrides, store
++from .. import firm, metrics, overrides, policy, store
+ from .. import indicators as ind
+ from ..categorise import RulesetError
+ from ..ingest import StatementError
+@@ -121,19 +126,31 @@ def _queue_entry(account: str, e: QueueEntry, lines: dict[str, Transaction],
+             "pairs_with": list(e.pairs_with)}
+ 
+ 
+-def case_thresholds() -> ind.Thresholds:
++def case_thresholds(config: firm.FirmConfig | None = None) -> ind.Thresholds:
+     """The firm's thresholds file when the case root has one (firm.yaml can name another),
+     or the packaged, illustrative one (R14). A malformed file is refused naming its line, and
+     a file firm.yaml names that is not there is refused naming it, as `cma run --thresholds`
+     refuses it: no case opens with flags the firm did not choose."""
+-    config = firm.load()
++    config = config or firm.load()
+     path = config.thresholds_path
+     if config.names_path("thresholds") or path.exists():
+         return ind.load_thresholds(path)
+     return ind.shipped()
+ 
+ 
+-def _account(f: overrides.CaseFigures, raised: list[Indicator]) -> dict[str, Any]:
++def _policy_check(f: overrides.CaseFigures, rules: dict | None) -> dict[str, Any] | None:
++    """The packaged policy's outcome on the account's current figures (R25), or None when the
++    firm hides it (R56). policy.evaluate compares; nothing here does."""
++    if rules is None:
++        return None
++    result = policy.evaluate(f.metrics, rules)
++    return {"policy_name": result.policy_name, "policy_sha256": result.policy_sha256,
++            "overall": result.overall.value,
++            "rules": [{"rule_id": r.rule_id, "description": r.description, "metric_id": r.metric_id,
++                       "outcome": r.outcome.value, "detail": r.detail} for r in result.rules]}
++
++
++def _account(f: overrides.CaseFigures, raised: list[Indicator], rules: dict | None = None) -> dict[str, Any]:
+     by_id = {m.id: m for m in f.metrics}
+     txns = f.statement.transactions
+     lines = {t.id: t for t in txns}
+@@ -151,6 +168,7 @@ def _account(f: overrides.CaseFigures, raised: list[Indicator]) -> dict[str, Any
+                      **{key: _cell(getattr(r, key), (r.month, key) in f.marked_cells) for key, _ in CELLS}}
+                     for r in f.monthly],
+         "indicators": [_indicator(i, lines) for i in raised],
++        **({"policy_check": _policy_check(f, rules)} if rules is not None else {}),
+     }
+ 
+ 
+@@ -185,7 +203,7 @@ def refusal(e: Exception) -> dict[str, Any] | None:
+         return {"state": "refused", "refusal": f"The case log is broken at entry {e.first_bad}: {e.reason}. "
+                                                "No figures are shown until it is resolved."}
+     if isinstance(e, (store.CaseStoreError, StatementError, metrics.AmountError, RulesetError,
+-                      ind.ThresholdsError, firm.FirmConfigError)):
++                      ind.ThresholdsError, firm.FirmConfigError, policy.PolicyError)):
+         return {"state": "refused", "refusal": f"{str(e).rstrip('.')}. No figures are shown for this case."}
+     if isinstance(e, OSError):
+         return {"state": "refused",
+@@ -209,7 +227,8 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+     folder = Path(folder)
+     out: dict[str, Any] = {"case": case_id, "label": None, "business_name": None, "profile": None,
+                            "state": "shown", "accounts": [], "queue": [], "thresholds": None,
+-                           "reconciliation": None, "refusal": None}
++                           "reconciliation": None, "refusal": None,
++                           "policy_check": {"shown": False}, "recommendation": None}  # left blank (R24)
+     try:
+         profile = store.load_profile(folder)
+         out["label"], out["business_name"] = profile.get("label"), profile.get("business_name")
+@@ -225,9 +244,12 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+     if refused is not None:
+         out.update(refused)
+         return out
+-    try:  # R14: the indicators and the queue, raised by the figures layer
+-        thresholds = case_thresholds()
++    try:  # R14: the indicators and the queue, raised by the figures layer; R25: the policy check
++        config = firm.load()
++        thresholds = case_thresholds(config)
+         raised = {a: ind.raise_indicators(f.statement, thresholds) for a, f in figures.items()}
++        rules = policy.load_policy() if config.show_policy_verdict else None  # the packaged policy
++        accounts = [_account(f, raised[a], rules) for a, f in figures.items()]
+     except Exception as e:
+         refused = refusal(e)
+         if refused is None:
+@@ -236,7 +258,9 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+         return out
+     out["thresholds"] = {"source": thresholds.source, "sha256": thresholds.sha256,
+                          "shipped": thresholds.sha256 == ind.shipped().sha256}
+-    out["accounts"] = [_account(f, raised[a]) for a, f in figures.items()]
++    out["accounts"] = accounts
++    if rules is not None and accounts:
++        out["policy_check"] = {"shown": True, "label": policy.ILLUSTRATIVE_LABEL}
+     queues = [(a, f.statement, ind.judgement_queue(f.statement, raised[a])) for a, f in figures.items()]
+     lines = {a: {t.id: t for t in f.statement.transactions} for a, f in figures.items()}
+     kinds = {a: {i.id: i.kind for i in raised[a]} for a in figures}
+@@ -349,6 +373,41 @@ def _indicators_html(indicators: list[dict[str, Any]], account: str = "",
+     return f'<section class="indicators"><h3>Indicators</h3>{note}{"".join(parts)}</section>'
+ 
+ 
++OUTCOME_CLASS = {"pass": "pass", "refer": "refer", "fail": "fail"}
++
++
++def _policy_html(a: dict[str, Any]) -> str:
++    """One account's policy check: the illustrative label first, inside the same panel as the
++    overall outcome and each rule's result (R25, P20), so copying the panel copies the label."""
++    pc = a["policy_check"]
++    rows = "".join(
++        f'<tr><td>{_e(r["rule_id"])}</td><td>{_e(r["description"])}</td><td>{_e(r["metric_id"])}</td>'
++        f'<td class="rule-outcome {OUTCOME_CLASS.get(r["outcome"], "")}">{_e(r["outcome"])}</td>'
++        f'<td>{_e(r["detail"])}</td></tr>' for r in pc["rules"])
++    return (f'<section class="policy-check" data-account="{_e(a["account"])}">'
++            f'<h3>Policy check (illustrative): account {_e(a["account"])}</h3>'
++            f'<p class="illustrative-label">{_e(policy.ILLUSTRATIVE_LABEL)}</p>'
++            f'<p class="outcome {OUTCOME_CLASS.get(pc["overall"], "")}">Overall outcome: {_e(pc["overall"].upper())}</p>'
++            f'<p class="policy-source">From {_e(pc["policy_name"])}, the policy shipped with this tool, '
++            'on the figures as they now stand.</p>'
++            '<table class="rules"><thead><tr><th>Rule</th><th>Description</th><th>Figure</th><th>Outcome</th>'
++            f'<th>Detail</th></tr></thead><tbody>{rows}</tbody></table></section>')
++
++
++def _policy_checks_html(summary: dict[str, Any]) -> str:
++    if not summary.get("policy_check", {}).get("shown"):
++        return ('<section id="policy-checks"><h2>Policy check</h2><p class="note">Not shown: the firm '
++                'configuration has show_policy_verdict off.</p></section>')
++    return ('<section id="policy-checks"><h2>Policy check</h2>'
++            + "".join(_policy_html(a) for a in summary["accounts"] if a.get("policy_check")) + "</section>")
++
++
++RECOMMENDATION_HTML = ('<section id="recommendation"><h2>Recommendation</h2>'
++                       '<p class="for-underwriter">For the underwriter: the tool leaves this field blank, '
++                       'whatever the policy check shows.</p>'
++                       '<p class="field" data-field="recommendation"></p></section>')
++
++
+ def _candidate_html(c: dict[str, Any]) -> str:
+     bucket = _e(c["bucket"]) if c["bucket"] else '<span class="none">no bucket</span>'
+     return f'{_e(c["rule_id"])} ({bucket})'
+@@ -428,4 +487,5 @@ def render(summary: dict[str, Any], token: str | None = None) -> str:
+                 f'<p>{_e(summary["refusal"])}</p></section>')
+     if state == "empty":
+         return head + '<section id="empty"><p>No statement has been imported into this case yet.</p></section>'
+-    return head + "".join(_account_html(a, token, summary.get("thresholds")) for a in summary["accounts"])
++    return (head + "".join(_account_html(a, token, summary.get("thresholds")) for a in summary["accounts"])
++            + _policy_checks_html(summary) + RECOMMENDATION_HTML)
+diff --git a/tests/test_workspace_policy_check.py b/tests/test_workspace_policy_check.py
+new file mode 100644
+index 0000000..d0b506e
+--- /dev/null
++++ b/tests/test_workspace_policy_check.py
+@@ -0,0 +1,251 @@
++"""T21: the workspace's policy-check panel (C5; R15, R24, R25, R56, P20).
++
++While show_policy_verdict is on in firm.yaml (the default), the case view shows, for each
++account, the overall pass, refer or fail outcome and each rule's result from the packaged
++policy, computed by policy.evaluate from the current figures (overrides included), with the
++illustrative label inside the same panel (R25). The recommendation is a field left blank for
++the underwriter whatever the outcome (R24). With show_policy_verdict off, neither the page nor
++the API holds an outcome or a rule result (R56).
++
++Each test talks to a real server running in a thread, through its page (/) and API (/api/case)."""
++
++import http.client
++import json
++import re
++from html import escape
++from html.parser import HTMLParser
++
++import pytest
++
++from cma import overrides, policy, store
++from cma.models import RuleOutcome
++from cma.review import server as rs
++
++STATEMENT = ("id,date,description,amount,balance\n"
++             "L1,2026-01-05,CARD SETTLEMENT STRIPE,500.00,1500.00\n"
++             "L2,2026-01-06,FPS CREDIT J BLOGGS,300.25,1800.25\n"
++             "L3,2026-01-07,DD COUNCIL,-100.00,1700.25\n"
++             "L4,2026-02-02,CASH PAID IN,250.10,1950.35\n")
++OTHER = ("id,date,description,amount,balance\n"
++         "S1,2026-01-03,CARD SETTLEMENT SUMUP,900.00,900.00\n"
++         "S2,2026-01-20,IWOCA LOAN REPAYMENT,-120.00,780.00\n")
++OUTCOME_WORD = re.compile(r"\b(pass|refer|fail|PASS|REFER|FAIL)\b")
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    return root
++
++
++def _setting(home, shown: bool | None) -> None:
++    home.mkdir(parents=True, exist_ok=True)
++    if shown is not None:
++        (home / "firm.yaml").write_text(f"show_policy_verdict: {'true' if shown else 'false'}\n", encoding="utf-8")
++
++
++def _case(tmp_path, accounts=(("main", STATEMENT),)):
++    case_id = store.new_case(label="t21")
++    folder = store.case_folder(case_id)
++    for account, body in accounts:
++        src = tmp_path / f"{account}.csv"
++        src.write_text(body, encoding="utf-8")
++        store.import_file(folder, src, "csv", account=account)
++    return case_id, folder
++
++
++@pytest.fixture
++def serve():
++    servers = []
++
++    def start(case_id):
++        srv = rs.start(store.case_folder(case_id), case_id, port=0)
++        srv.serve_in_thread()
++        servers.append(srv)
++        return srv
++
++    yield start
++    for srv in servers:
++        srv.close()
++
++
++def _get(srv, path):
++    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=10)
++    try:
++        conn.request("GET", path, headers={"Host": f"127.0.0.1:{srv.port}", "X-CMA-Token": srv.token})
++        r = conn.getresponse()
++        return r.status, r.read()
++    finally:
++        conn.close()
++
++
++def _page(srv) -> str:
++    status, body = _get(srv, "/")
++    assert status == 200
++    return body.decode("utf-8")
++
++
++def _api(srv) -> dict:
++    status, body = _get(srv, "/api/case")
++    assert status == 200
++    return json.loads(body)
++
++
++class _Sections(HTMLParser):
++    """Each element's text, kept with the classes and ids of the sections around it."""
++
++    def __init__(self):
++        super().__init__()
++        self.stack: list[dict] = []
++        self.done: list[dict] = []
++
++    def handle_starttag(self, tag, attrs):
++        a = dict(attrs)
++        self.stack.append({"tag": tag, "class": (a.get("class") or "").split(), "id": a.get("id"),
++                           "data": a, "text": []})
++
++    def handle_endtag(self, tag):
++        while self.stack:
++            el = self.stack.pop()
++            text = "".join(el["text"])
++            el["text"] = text
++            self.done.append(el)
++            if self.stack:
++                self.stack[-1]["text"].append(text)
++            if el["tag"] == tag:
++                break
++
++    def handle_data(self, data):
++        if self.stack:
++            self.stack[-1]["text"].append(data)
++
++
++def _elements(page: str) -> list[dict]:
++    p = _Sections()
++    p.feed(page)
++    p.close()
++    return p.done
++
++
++def _expected(folder):
++    """The policy check the workspace must show: policy.evaluate on each account's current figures."""
++    return {a: policy.evaluate(f.metrics) for a, f in overrides.case_figures(folder).items()}
++
++
++def _check_shown(page: str, folder) -> None:
++    els = _elements(page)
++    panels = [e for e in els if "policy-check" in e["class"]]
++    expected = _expected(folder)
++    assert len(panels) == len(expected) >= 1
++    for panel in panels:
++        # P20: the panel that shows an outcome holds the illustrative label.
++        assert policy.ILLUSTRATIVE_LABEL in panel["text"]
++    for account, result in expected.items():
++        panel = next(p for p in panels if p["data"].get("data-account") == account)
++        assert f"Overall outcome: {result.overall.value.upper()}" in panel["text"]
++        for r in result.rules:
++            assert r.rule_id in panel["text"] and r.description in panel["text"] and r.detail in panel["text"]
++    # Every element that shows an outcome sits inside a panel with the label (P20).
++    for e in els:
++        if "outcome" in e["class"] or "rule-outcome" in e["class"]:
++            assert any(p["text"].find(e["text"]) >= 0 and policy.ILLUSTRATIVE_LABEL in p["text"] for p in panels)
++    # The recommendation is left blank for the underwriter (R24, P20).
++    rec = [e for e in els if e["data"].get("data-field") == "recommendation"]
++    assert len(rec) == 1 and rec[0]["text"].strip() == ""
++
++
++def _check_hidden(page: str, folder) -> None:
++    els = _elements(page)
++    assert not [e for e in els if "policy-check" in e["class"] or "outcome" in e["class"]
++                or "rule-outcome" in e["class"]]
++    assert "Overall outcome" not in page and policy.ILLUSTRATIVE_LABEL not in page
++    for result in _expected(folder).values():
++        for r in result.rules:  # no rule result: neither its sentence nor its rule
++            for text in (r.detail, r.description):
++                assert text not in page and escape(text, quote=True) not in page
++            assert f">{r.rule_id}<" not in page
++    assert not OUTCOME_WORD.search(page)
++    # The recommendation is still blank for the underwriter (R24).
++    rec = [e for e in els if e["data"].get("data-field") == "recommendation"]
++    assert len(rec) == 1 and rec[0]["text"].strip() == ""
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("setting", [None, True, False], ids=["default", "on", "off"])
++@pytest.mark.parametrize("accounts", [(("main", STATEMENT),), (("main", STATEMENT), ("savings", OTHER))],
++                         ids=["one-account", "two-accounts"])
++def test_p20_the_workspace_html_under_both_settings(home, tmp_path, serve, setting, accounts):
++    _setting(home, setting)
++    case_id, folder = _case(tmp_path, accounts)
++    page = _page(serve(case_id))
++    if setting is False:
++        _check_hidden(page, folder)
++    else:  # on, and on by default (R25)
++        _check_shown(page, folder)
++
++
++@pytest.mark.invariants
++def test_p20_the_api_holds_no_outcome_or_rule_result_with_the_setting_off(home, tmp_path, serve):
++    _setting(home, False)
++    case_id, folder = _case(tmp_path)
++    data = _api(serve(case_id))
++    assert data["policy_check"] == {"shown": False}
++    text = json.dumps(data)
++    for result in _expected(folder).values():
++        assert '"overall"' not in text
++        for r in result.rules:
++            assert r.detail not in text and r.description not in text
++
++
++@pytest.mark.contracts
++def test_the_api_gives_each_account_s_policy_check_with_the_label(home, tmp_path, serve):
++    _setting(home, None)
++    case_id, folder = _case(tmp_path)
++    data = _api(serve(case_id))
++    expected = _expected(folder)["main"]
++    assert data["policy_check"]["shown"] is True
++    assert data["policy_check"]["label"] == policy.ILLUSTRATIVE_LABEL
++    pc = data["accounts"][0]["policy_check"]
++    assert pc["overall"] == expected.overall.value
++    assert pc["policy_name"] == expected.policy_name and pc["policy_sha256"] == expected.policy_sha256
++    assert [(r["rule_id"], r["outcome"], r["detail"]) for r in pc["rules"]] == [
++        (r.rule_id, r.outcome.value, r.detail) for r in expected.rules]
++    assert data["recommendation"] is None
++
++
++@pytest.mark.contracts
++def test_the_policy_check_follows_the_current_figures_after_an_override(home, tmp_path, serve):
++    """An override moves a line, the figures recompute, and the panel shows the outcome for the
++    figures as they now stand (R25), never one computed before."""
++    _setting(home, None)
++    case_id, folder = _case(tmp_path)
++    before = _expected(folder)["main"]
++    overrides.add_override(folder, "L1", "other", reason="not trading", name="A Person")
++    after = _expected(folder)["main"]
++    assert [r.detail for r in before.rules] != [r.detail for r in after.rules]
++    srv = serve(case_id)
++    _check_shown(_page(srv), folder)
++    pc = _api(srv)["accounts"][0]["policy_check"]
++    assert [r["detail"] for r in pc["rules"]] == [r.detail for r in after.rules]
++
++
++@pytest.mark.contracts
++def test_the_label_has_no_digits_and_says_the_underwriter_decides():
++    assert not re.search(r"\d", policy.ILLUSTRATIVE_LABEL)
++    assert "not your firm's lending policy" in policy.ILLUSTRATIVE_LABEL
++    assert "the underwriter decides" in policy.ILLUSTRATIVE_LABEL
++
++
++@pytest.mark.contracts
++def test_a_case_with_no_figures_shows_no_policy_check(home, tmp_path, serve):
++    _setting(home, None)
++    case_id = store.new_case(label="empty")
++    page = _page(serve(case_id))
++    assert "policy-check" not in page and not OUTCOME_WORD.search(page)
++
++
++@pytest.mark.contracts
++def test_outcome_values_are_the_three_policy_outcomes():
++    assert {o.value for o in RuleOutcome} == {"pass", "refer", "fail"}
