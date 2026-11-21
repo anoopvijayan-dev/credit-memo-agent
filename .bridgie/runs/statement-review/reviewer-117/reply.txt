@@ -1,0 +1,62 @@
+```json
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Applied the supplied revision 22 because the repository copy of requirements.md is revision 2. Mapped the maintained lists and directions at src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest alternatives and surviving occurrences at src/cma/categorise.py:1108–1180, bucket precedence and bank-code priority at :1198–1235, override handling at :1238–1262, and ambiguity, profile candidates and firm-rule precedence at :1294–1315. The graph applies the selected ruleset and exports line provenance at src/cma/graph.py:188–223,250–253, and the CLI writes the evidence at src/cma/cli.py:224–229. Checked digest gating, changed-v1 refusal, exception reporting and matcher builds at src/cma/categorise.py:410–670,943–973. The runner logged 845 suite, 223 contract, 138 invariant and 83 dual-run passes, with named list, CLI provenance, rollback, checkpoint replay, timing and both offline eval tests. Source inspection found that some invalid alternatives and pattern exceptions still go unnamed. Reviewed double submission and concurrent output at src/cma/cli.py:81–86,146–158,224–229, GBP and date boundaries at src/cma/ingest.py:42–57,100, partial table-load failure at src/cma/categorise.py:943–973, path scope and tenant isolation at src/cma/mcp_server.py:37–55, case-local categorisation inputs at src/cma/categorise.py:1396, and evidence and MCP consumers at src/cma/graph.py:188–223 and src/cma/mcp_server.py:90–105. Review was read-only and used the runner's test results.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 618,
+      "criterion": "R4",
+      "claim": "A repeated pattern can hide that one version of the table has no bank returned-payment code. The mandatory-code check treats a code present in any alternative as present in every alternative.",
+      "repro": "In a copy of v2.yaml, leave the returned_dd rule as the sole bank-code rule and give it two pattern keys, '^UNPAID DD\\b' and 'UNPAID ITEM'. Load the table in a fresh process. The refusal names the repeat and the invalid flag shape but omits the missing-bank-code fault. With only 'UNPAID ITEM' as the pattern, the same validator also reports that the mandatory code has no rule with bank_code: true. Reversing the repeated values leaves the omission."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 532,
+      "criterion": "R4",
+      "claim": "An exception in a parseable pattern goes unnamed if regex compilation also fails. The early compile check prevents inspection for both forbidden lookarounds and anchors.",
+      "repro": "Keep the shipped frozen v1 copy and add an otherwise well-formed cash rule whose pattern is '^CASH(?<=A+)'. Load it as v1 in a fresh process. The refusal starts with the changed-table message and names the fixed-width lookbehind compilation error. It omits the forbidden anchor and the explicit exception check never runs, even though the regex parser can identify both constructs."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 513,
+      "criterion": "R4",
+      "claim": "Duplicate valid boolean values produce a false field-type diagnostic because validation checks the internal duplicate marker as a supplied value.",
+      "repro": "Repeat 'bank_code: true' on the shipped returned_dd rule. The refusal correctly names the repeat and also says 'bank_code must be true or false' although both values are true. The runner's repeated-true regression checks only for the absence of the separate 'must carry bank_code: true' message."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The documented precedence says a profile name can settle an ambiguous credit. The implementation keeps the credit unexplained and records the name as another candidate.",
+      "repro": "Classify a positive 'FPS CASH DEPOSIT JANE DOE' line with Jane Doe in the director profile. src/cma/categorise.py:1301–1309 returns other with v2:conflict:payment_rail+cash_paid_in+profile:director. The README says the conflict lasts until a person overrides it or the profile names the payer."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 25,
+      "criterion": "R4",
+      "claim": "The producer's compileall claim extends to evals and tests. The passing runner compileall row covers src only.",
+      "repro": "Compare mechanical:2, 'python -m compileall -q src', with the claimed 'python -m compileall -q src evals tests'. A passing runner row for the latter command would prove the claimed scope."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```

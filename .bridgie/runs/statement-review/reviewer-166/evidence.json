@@ -1,0 +1,102 @@
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:480 assigns positive transactions to the money-in breakdown and src/cma/metrics.py:561 emits GBP values and evidence IDs for total money in, cash within trading receipts and the seven other buckets. The graph calls compute at src/cma/graph.py:308 and MCP serializes its results at src/cma/mcp_server.py:98.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:86 verifies exact penny round-tripping, src/cma/metrics.py:512 handles unreportable M3, and src/cma/graph.py:175 and src/cma/cli.py:415 display pennies. Monzo loses the stopping row's readable amount when Currency is omitted, and an unclosed trailing quoted field discards usable currency and amount cells.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks both per-ID membership and the penny difference before returning figures. src/cma/cli.py:118 exits 6 with escaped diagnostics before review or export. Runner log confirms CLI and MCP reconciliation refusal tests ran and passed.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 send unmatched credits to OTHER under v1 and v2. src/cma/metrics.py:480 and :567 place these credits in M25, with M2 selected separately at :351.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:480 and :578 enforce exact coverage and reconciliation. M18 is selected from M2 at :494 and emitted separately at :564. Both named P1 tests ran and passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the figures delivered in T04, src/cma/metrics.py:523 ties M2 to its signed inputs and :538 through :569 emit the outflow, sum and share evidence. M5 and M6 retain their balance-setting and overdrawn-close evidence at :531 and :533. The M9 partial-credit allocation is at :419 and its evidence note at :545. The named P2 tests and previous-release comparisons ran and passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 assign the default credit category, and src/cma/metrics.py:351 and :480 separate trading evidence from other buckets. Named invariant cases for both rulesets ran and passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 195,
+      "criterion": "R2",
+      "claim": "A partial row requires a physical Currency column even though the supported format defaults a missing Currency column to GBP. Its readable Amount is dropped from the running total.",
+      "repro": "Use header Transaction ID,Date,Type,Amount,Balance,Name. Put 9999999999999.99 in Amount and Balance on the first valid row. On the next row put 0.01 in Amount, a readable Balance and an invalid UTF-8 byte in Name. Run cma import monzo. The refusal names the UTF-8 problem but omits money in at the limit."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 262,
+      "criterion": "R2",
+      "claim": "The unclosed-quote path discards the partial row and its readable fields, so Monzo cannot include an amount read before the malformed trailing field.",
+      "repro": "Use header Transaction ID,Date,Type,Amount,Currency,Balance,Name. Put 9999999999999.99 in Amount and Balance on the first valid GBP row. On the next GBP row put 0.01 in Amount, a readable Balance and a Name beginning with a double quote that remains open at EOF. The refusal names the open quote but omits money in at the limit."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 90,
+      "criterion": "R2",
+      "claim": "The producer's probe claims have no runner result, and the referenced script is absent from the review checkout. The test logs and source substantiate several individual behaviors independently, but the reported probe execution is unproven. The above-limit claim also omits that the supported import paths refuse such a statement.",
+      "repro": "Check the configured runner commands for PYTHONPATH=src python scratchpad/probe.py and look for scratchpad/probe.py in the checkout. A runner result for that command with the script supplied would prove the claimed probe execution. For the public-path distinction, supply a credit of 10000000000000.01 to cma run and follow the limit check in src/cma/ingest.py:86."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 98,
+      "criterion": null,
+      "claim": "The quoted full-suite and marker counts describe an older snapshot. The current runner logged 965 full-suite passes and 84 dual-run passes, and its named results substantiate the relevant invariant, contract and security test passes on the reviewed tree.",
+      "repro": "Compare git log -1 and the totals in specified-3.log and dual_run-7.log with the claim for ca0092c. To prove the historical counts, the runner would need to run python -m pytest -q and the quoted marker commands at ca0092c."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": null,
+      "claim": "The producer note says the committed evidence lacks evidence_note and was left unregenerated. The checked-in example already contains evidence_note fields and the patch changes decided_at.",
+      "repro": "Read the first metric in examples/cafe_stretched.memo.evidence.json and compare decided_at in the supplied diff."
+    }
+  ],
+  "verdict": "fail"
+}

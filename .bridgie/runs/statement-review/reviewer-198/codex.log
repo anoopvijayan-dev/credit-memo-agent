@@ -1,0 +1,83 @@
+```json
+{
+  "task": "T17",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "src/cma/firm.py:68 defaults the lock on. src/cma/llm.py:79 and :104 gate client creation and requests. src/cma/mcp_server.py:45, :69, :103, :112 and :167 gate startup, app factories, requests and tools. src/cma/graph.py:292 and :301 retain the effective resume lock in evidence. The named legacy evidence and unchanged-file resume tests passed, but src/cma/graph.py:464-473 allows a pre-lock checkpoint's resume to consume an earlier configuration reading.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:211-253 builds the metric and rule tables, overall outcome row, period, placeholder name and allowlisted redraft IDs. src/cma/metrics.py:295-299 emits metric summaries without evidence lines. The hosted CLI redraft tests ran and passed. Policy-authored numeric spelling in a rule detail is assessed under P5.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "The hosted redraft and custom-limit masking tests ran and passed. The period at src/cma/graph.py:248 is allowed under revision 33. src/cma/graph.py:194-201 and :221-226 still admit a supplied policy's own numeric spelling through the rule detail, which src/cma/policy.py:90 builds from the original YAML number.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "The runner exercised both SDKs on retryable 503s, both native HTTP transports at bind, delayed startup of a saved app, and same-object nested tracer filtering. Those cases passed. The separate resume read is conditional on a stored lock field at src/cma/graph.py:464, while P18 incorporates R29's fresh-reading requirement for resumes.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 464,
+      "criterion": "R29",
+      "claim": "A resume of a pre-lock checkpoint can consume a firm configuration supplied at graph construction instead of reading firm.yaml at resume. The legacy evidence fix preserves the result it receives, but cannot make that result a fresh reading. This also affects P18.",
+      "repro": "Open a pending checkpoint written before offline_lock was stored. Build a graph with that checkpointer and an unused firm.load() result, leave firm.yaml unchanged, and instrument firm.load while invoking Command(resume=...). The absent stored lock sends the resume through take_for_run, so the resume calls firm.load zero times. tests/test_firm.py:1226 exercises a checkpoint with the lock field, while the legacy test only calls the evidence formatter."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/policy.py",
+      "line": 90,
+      "criterion": "P5",
+      "claim": "A rule that compares equal to a shipped rule can still send text specific to the supplied policy. The comparison normalizes numeric thresholds, but the prompt's detail keeps the original spelling of the parsed YAML number.",
+      "repro": "Copy the shipped policy and set R8's threshold to -0.0 in place of 0. Use a statement with a nonzero M9 and a description containing 'rule requires > -0.0'. The numerical comparison treats the thresholds as equal, so the unmasked detail contains that sentinel. The corresponding shipped detail uses 'rule requires > 0'. The sentinel is in the custom threshold text, outside the case-value exception in revision 33."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/firm.py",
+      "line": 199,
+      "criterion": "R29",
+      "claim": "The producer's one-read and performance claims count configuration parses instead of file reads. The ordinary hosted CLI draft reads the file contents four times, and the suite duration alone does not establish a performance comparison.",
+      "repro": "For an unchanged, present firm.yaml, count file-content reads before the first hosted call in cma run. load reads bytes for the stamp and then reads text to parse. Client authorization and graph authorization each read bytes again to check the stamp. The load-count test instruments firm.load, so it misses the extra file reads."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 43,
+      "criterion": null,
+      "claim": "The claim that the only external contract changes are additive evidence and MCP description withholding omits a Monzo input compatibility change.",
+      "repro": "Convert an otherwise valid Monzo export with Transaction ID '-tx' and a valid opening balance. The previous SAFE_ID accepted it. The new importer rejects it, as the passing test_formula_leading_transaction_id_is_refused case confirms."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 222,
+      "criterion": "P5",
+      "claim": "The producer's note says a changed custom rule using the shipped R2 identifier still sends R2. The current implementation masks the identifier when the whole-rule comparison fails.",
+      "repro": "Copy the shipped policy and change only R2's referral band. Build the prompt and inspect the R2 row. It shows '(custom id)'. The runner passed test_p5_a_custom_rule_differing_only_in_a_referral_band_is_custom."
+    }
+  ],
+  "verdict": "fail"
+}
+```

@@ -1,0 +1,36 @@
+T13 is built. The 40 new tests pass, and so do the full suite (1,866 tests), ruff and compileall. The changes are not committed; they are in the T13 worktree.
+
+**What's new**
+- **`src/cma/store.py`** (the case store) handles three things:
+  - **Case root:** this is `CMA_HOME`, or `private/cma`. The root and every folder under it are owner-only (0700). Every file written there is 0600, and the imported originals are read-only (0400).
+  - **Git check:** a root inside a git working tree that doesn't ignore it is refused before anything is created. So is a root that is the working tree itself, or one in a tree git can't be asked about.
+  - **Profile:** `case.yaml` holds the label, demo flag, business name, directors, shareholders, own accounts, VAT stagger and proposed monthly repayment. It is validated, and unknown or repeated keys are refused.
+- **`src/cma/cli.py`** gains three commands:
+  - **`cma case new [--demo] [--label]`** prints a random 16-character id.
+  - **`cma case profile CASE`** shows the profile, or changes it with options or `--from FILE`.
+  - **`cma case import CASE FILE --format csv|monzo [--account]`** keeps the original in `inputs/` under its sha256 and writes a checked statement to `statements/<account>.csv`.
+- **Log entries:** creating a case, changing the profile and importing each append an entry to the case log. A profile change records only the changed field names and the profile's hash, never the names. If the log refuses the entry, the files are put back as they were.
+- **`tests/test_case_store.py`** holds the permission, git-ignore and log-entry tests, marked `contracts`.
+
+**Decisions the reviewer may question**
+- **Importing the same file twice** leaves the case and its log head unchanged, with no new entry. P9 requires that, though one Failure-modes row says the log "notes it was already imported". I followed P9.
+- **A second statement for an account that already has one** is refused, and the message points to `--account`. Detecting overlapping accounts is R40/R41 (Tier 2).
+- **The new commands take the case id, not a folder.** `cma case check` still takes a folder, as T12 left it.
+- **Nothing in production passes the profile to the categoriser yet.** That wiring is T05's.
+
+```json
+{
+  "task": "T13",
+  "claims": [
+    {"text": "R31 permissions: with umask 022, the case root, cases/, the case folder, inputs/ and statements/ are 0700, no file under the case folder (profile, statement, case log and its head/gate/lock files) is readable or writable by group or others, and the imported original is 0400. An existing root opened to others is set back to 0700.", "proof_cmd": "python -m pytest tests/test_case_store.py -q -k 'owner_only'", "proof_output": "2 passed, 38 deselected"},
+    {"text": "R31 git-ignore: a case root inside a git working tree that does not ignore it, or a root that is the working tree itself, is refused before anything is made (library and `cma case new`, which exits 2). The same holds for a tree git cannot be asked about, and for an existing root that later stops being ignored, at every command. A root that git ignores (cma/, cma, /cma/, private/) is allowed.", "proof_cmd": "python -m pytest tests/test_case_store.py -q -k 'git or unignored'", "proof_output": "8 passed, 32 deselected"},
+    {"text": "Log entries (R42): `cma case new --demo --label` prints a random 16-hex id and appends case_created (case id, demo flag, profile hash; no label text). `cma case profile` validates and writes case.yaml and appends profile_changed (changed fields and profile hash); an unchanged profile appends nothing. `cma case import` for csv and monzo appends an import entry (account, format, input and statement sha256, lines, period). `cma case check` stays at exit 0.", "proof_cmd": "python -m pytest tests/test_case_store.py -q -k 'logs or logged or keeps_the_original or monzo_import'", "proof_output": "4 passed, 36 deselected"},
+    {"text": "Profile validation: unknown or repeated keys, separator-only names, non-list name fields, duplicate names, a non-boolean demo, vat_stagger outside 1-3, and a repayment with more than two decimals, at or below zero, at the £10tn limit or boolean are each refused, and nothing changes. --from replaces the whole profile.", "proof_cmd": "python -m pytest tests/test_case_store.py -q -k 'profile'", "proof_output": "15 passed, 25 deselected"},
+    {"text": "Import: the original goes into inputs/<sha256>.<ext> and the statement into statements/<account>.csv, checked by ingest.load_csv. The same file again leaves the case and its log head unchanged. A refused statement (a bad number, or the R2 limit), a broken log (exit 3), a log refusal (files put back), a second statement for one account, or a bad account key leaves the case as it was.", "proof_cmd": "python -m pytest tests/test_case_store.py -q -k 'import or account or statement'", "proof_output": "12 passed, 28 deselected"},
+    {"text": "The new contract tests pass under the contracts marker.", "proof_cmd": "python -m pytest tests/test_case_store.py -q -m contracts", "proof_output": "38 passed, 2 deselected"},
+    {"text": "Full suite, ruff and compileall pass with the change.", "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q", "proof_output": "All checks passed!\n1866 passed in 138.37s (0:02:18)"}
+  ],
+  "files_changed": ["src/cma/store.py", "src/cma/cli.py", "tests/test_case_store.py"],
+  "notes": "Changes are left uncommitted in the worktree. New module src/cma/store.py (C3 case store) is called by the new CLI commands `cma case new`, `cma case profile CASE` and `cma case import CASE FILE --format csv|monzo`, which take the case id, not a folder. `cma case check` still takes a folder, as T12 left it. Choices the reviewer may weigh: (1) Importing an already-imported file appends nothing (R39 and P9 ask for the same log head). The Failure-modes row 'the log notes it was already imported' would contradict P9, so P9 was followed. (2) A second statement for an account that already has one is refused, naming --account; overlap detection and multi-account limits are R40 and R41 (Tier 2). (3) The profile has label, demo, business_name, directors, shareholders, own_accounts, vat_stagger and proposed_monthly_repayment (stored as exact pounds text). profile_names() merges directors and shareholders into ProfileNames.directors for R5. Nothing in production passes a profile to the categoriser yet; that is T05's. (4) The log records the profile's hash and changed field names, never names. (5) The git check runs `git check-ignore` on the root path with a trailing slash, from the nearest folder that holds .git; with GIT_* variables removed. A tree git cannot answer about is refused. (6) Case-log files are 0600 because case.py creates them so; this task changed nothing in case.py."
+}
+```

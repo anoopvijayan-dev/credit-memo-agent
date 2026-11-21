@@ -1,0 +1,15 @@
+ .gitattributes                               |   3 +
+ src/cma/cli.py                               |   4 +-
+ src/cma/importers/contract.py                | 136 ++++++++++++++++++
+ src/cma/importers/monzo.py                   | 133 ++++++------------
+ src/cma/ingest.py                            |  30 ++++
+ src/cma/mcp_server.py                        |  15 +-
+ src/cma/store.py                             |  13 +-
+ tests/golden/monzo/business_export.golden    |   5 +
+ tests/golden/monzo/business_statement.golden |   5 +
+ tests/golden/monzo/personal_export.golden    |  13 ++
+ tests/golden/monzo/personal_statement.golden |  12 ++
+ tests/golden/monzo/results.json              |  26 ++++
+ tests/test_importer_contract.py              | 203 +++++++++++++++++++++++++++
+ tests/test_money_in.py                       |  34 +++--
+ 14 files changed, 508 insertions(+), 124 deletions(-)

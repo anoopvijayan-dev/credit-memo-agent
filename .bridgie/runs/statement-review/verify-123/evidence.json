@@ -1,0 +1,109 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Applied supplied revision 23. The repository copy is revision 2 at .bridgie/specs/statement-review/requirements.md:5. Mapped the maintained lists and directions at src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest matches, containment, bank-code precedence, ambiguity, profile candidates, and override and firm-rule precedence at src/cma/categorise.py:1105–1349. Traced table selection and per-line provenance at src/cma/graph.py:188–223,250–253 and src/cma/cli.py:224–229. Reviewed matcher construction, exception checks, duplicate keys, and frozen-table refusal at src/cma/categorise.py:419–706,798–858,964–1011. The two previous repros are covered by the new direction checks and explicit-null check, but two malformed table shapes still load. Checked repeat submission, concurrent updates and partial writes at src/cma/cli.py:73,116,146–158,224–229, amount and local-date boundaries at src/cma/ingest.py:38–59,98–110, and scope and consumer paths at src/cma/mcp_server.py:30–105 and src/cma/graph.py:188–223. Runner logs establish 852 full-suite, 230 contract, 138 invariant and 83 dual-run passes, including the named list and CLI provenance tests, rollback, checkpoint replay, the timing fixture and both offline evaluations. The review was read-only.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-123/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-123/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-123/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-123/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-123/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-123/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-123/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 624,
+      "criterion": "R4",
+      "claim": "The validator rejects a money-in-only category for direction out but accepts the same contradiction for direction any, which also applies to debits.",
+      "repro": "In the packaged v2 table, change only cash_paid_in from direction in to direction any. Load v2 and categorise a debit of £20 described as CASH DEPOSIT. The table loads and the debit receives cash_deposit with v2:cash_paid_in provenance."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 845,
+      "criterion": "R4",
+      "claim": "Duplicate merge keys escape duplicate-key detection because PyYAML flattens the mapping before the loader counts its keys.",
+      "repro": "In a fresh process, replace the cash_paid_in rule's direction and category lines with two entries at the same indentation, `<<: {direction: in}` and `<<: {category: cash_deposit}`. Keep the other fields unchanged and load v2. Flattening removes both occurrences of the merge key and leaves distinct direction and category keys, so the table loads and categorises a CASH DEPOSIT credit despite the repeated key."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README says a profile name can settle an ambiguous credit. The implementation adds that name to the candidates and leaves the credit unexplained.",
+      "repro": "With Jane Doe in the director profile, classify a positive FPS CREDIT CASH DEPOSIT REF JANE DOE line. The result is other with provenance v2:conflict:payment_rail+cash_paid_in+profile:director."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "The producer's compilation claim covers src, evals and tests. The runner's compileall result covers src only.",
+      "repro": "Compare mechanical-2's command, `python -m compileall -q src`, with the claimed scope. A passing runner result for `python -m compileall -q src evals tests` would prove the broader claim."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 857,
+      "criterion": "R4",
+      "claim": "The runner confirms the 10,000-line fixture meets the timer assertion for categorisation. The test does not measure the end-to-end recompute budget.",
+      "repro": "Inspect the timed block. It calls categorise only. A benchmark that times an override save through recomputed figures, indicators and policy output would establish end-to-end timing."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

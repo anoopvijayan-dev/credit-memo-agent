@@ -1,0 +1,109 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Reviewed revision 19 at /home/user/credit-memo-agent/.bridgie/specs/statement-review/requirements.md:53. The review checkout contains the original recognition clause at .bridgie/specs/statement-review/requirements.md:19. Mapped the maintained lists to src/cma/rules/v2.yaml:74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest matches and occurrence containment at src/cma/categorise.py:807,829, bank-code and ambiguity precedence at :916, and override, profile candidates and firm rules at :936,983. Traced ruleset selection, checkpoint replay and per-line evidence through src/cma/graph.py:188,221,250 and src/cma/cli.py:74,225. Checked repeat classification, duplicate and concurrent review paths, signed GBP inputs and date-only ingestion, Unicode boundaries, partial failure, override precedence, case-local inputs and evidence consumers. Runner logs confirm per-list provenance, CLI classification, ambiguity, containment, rollback and checkpoint tests. The malformed-pattern test leaves bank_code unset on the malformed rule, so it misses the raw TypeError at src/cma/categorise.py:534. That exception also bypasses the changed-frozen-table diagnostic at :684 when a changed v1 table enters strict validation.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-79/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-79/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-79/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-79/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-79/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-79/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-79/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 534,
+      "criterion": "R4",
+      "claim": "A malformed pattern on a rule with bank_code: true raises a raw TypeError and discards all accumulated rule diagnostics.",
+      "repro": "In a copy of v2.yaml, leave returned_dd.bank_code set to true and replace its pattern with the YAML list [UNPAID DD]. Also add unless: FPS to cash_paid_in. On load, validation accumulates both problems, then tries to insert the list into a set. The caller receives TypeError: unhashable type: 'list' instead of a refusal naming both rules and fields."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 684,
+      "criterion": "R4",
+      "claim": "Changed v1 bytes can still bypass the required changed-frozen-table diagnostic. The loader compares the hash first, but only prefixes diagnostics when parsing or validation raises RulesetError.",
+      "repro": "In a copy of packaged v1.yaml, set frozen: false and add bank_code: true to a rule whose pattern is a YAML list. Load it as v1. The digest differs, but validation raises TypeError at src/cma/categorise.py:534 and escapes the handler. The refusal should name the changed frozen table first, then name the invalid rule field."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The documented precedence says a profile name can settle an ambiguous credit. The implementation keeps the credit unexplained and adds the profile match as a candidate.",
+      "repro": "Compare the README with the passing test at tests/test_rules_v2.py:1572. Classifying FPS CREDIT CASH DEPOSIT REF JANE DOE with Jane Doe in the director profile returns OTHER with profile:director appended to the conflict provenance."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 205,
+      "criterion": "R4",
+      "claim": "The producer's claim that every evidence record identifies the rule that categorised each line overstates the checkpoint replay guarantee.",
+      "repro": "Use a pre-provenance checkpoint with a recorded ruleset hash that differs from the installed table and null line rule IDs. Evidence keeps those IDs null. The runner passed tests/test_rules.py:368, which explicitly checks this outcome."
+    },
+    {
+      "severity": "minor",
+      "file": "pyproject.toml",
+      "line": 41,
+      "criterion": "R4",
+      "claim": "The current runner confirms the full suite and marker tiers passed, with counts of 781, 159 contracts, 138 invariants and 83 dual-run. It does not substantiate the producer's reported counts of 688, 73, 133 and 83 for this review. Compilation of evals and tests is also unproven as a separate static gate.",
+      "repro": "Compare the producer's output with specified-3.log, contracts-4.log and invariants-5.log and the command in mechanical:2. That gate ran python -m compileall -q src. A runner row for python -m compileall -q src evals tests would prove the broader compilation claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

@@ -1,0 +1,62 @@
+```json
+{
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:196–315 validates canonical entries, chain links and the recorded head, and names the first divergence. Lines 371–383 recognize the current thread's lock through folder aliases. Lines 443–480 compare head snapshots and limit a contended read to recorded entries. Lines 527–614 enforce single-writer ownership and refuse inherited writers. The runner logs confirm the named Linux tamper, rebuilt-chain, contention and torn-entry tests. The criterion fails at lines 395–407 and 454–464 because a writer can release the case before the fallback read, leaving an incomplete entry that the reader still reports as being saved. The sign-off integration is assigned to T27 in the repository task list. The current production caller is src/cma/cli.py:321.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-45/invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 459,
+      "criterion": "P15",
+      "claim": "A reader can report an incomplete entry as being saved even though the case was free throughout the read that produced the verdict. The fallback relies on contention observed before that read.",
+      "repro": "Start with two recorded entries. Pause a writer after it writes part of entry 3 and keep it locked through the reader's final shared-lock probe. Before the reader enters _steady(), let the writer raise its write error and release the lock. The head remains unchanged throughout the fallback read. _held() discards the incomplete-entry result and the CLI exits 4. P15 requires the free-case check to name entry 3 as incomplete."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 303,
+      "criterion": "P15",
+      "claim": "Losing the head file of a one-entry log makes the only committed entry eligible for destructive torn-entry repair. The producer's missing-head claim cites a test that uses three entries and misses this branch.",
+      "repro": "Commit entry 1, remove only log.jsonl.head, and leave the complete log line untouched. verify() reports a droppable incomplete entry instead of a missing head. drop_torn_entry(expected=0, by='Reviewer') replaces the committed entry with a repair event at position 1. The rewritten log then verifies as intact."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1348,
+      "criterion": "P15",
+      "claim": "The producer's exit-code claim contradicts the runner-proven contract. A held case reports being saved and exits 4.",
+      "repro": "Compare the passing test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break in contracts-4.log with its assertions at tests/test_case_log.py:1348–1352. The test requires exit 4 and saved wording, while the claim says exit 0 and 'appending'."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 283,
+      "criterion": "P15",
+      "claim": "Windows lock behavior is not proven by the Linux runner. The contention test also injects an errno the Windows implementation does not recognize as contention.",
+      "repro": "On Windows, run python -m pytest -v tests/test_case_log.py -k 'contended_lock or two_checks_at_once or long_check'. The contention test injects EWOULDBLOCK and expects CaseLocked, but src/cma/case.py:786 recognizes only EACCES on that platform. The supplied logs show Linux execution only."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1201,
+      "criterion": "P15",
+      "claim": "The passing rapid-append test does not prove the producer's claimed deterministic reproduction of two commits during each retry with the lock held at fallback.",
+      "repro": "Inspect the test's background append loop. It has no synchronization with individual read attempts and asserts only that no check reports a bad entry. A deterministic pytest case that gates two commits within each attempt and holds the writer through fallback is needed to prove the claimed schedule."
+    }
+  ],
+  "verdict": "fail"
+}
+```

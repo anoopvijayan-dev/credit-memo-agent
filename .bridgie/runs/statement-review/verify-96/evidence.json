@@ -1,0 +1,101 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed HEAD b3ba156 against requirements.md:309. Canonical UTF-8 hashing, UTC timestamps, first-bad-entry reporting and head comparison are at src/cma/case.py:177–348. Holder recognition across path aliases, shared locking, steady reads, retries and the sign-off guard are at src/cma/case.py:457–681. Writer exclusion, inherited-handle refusal, nested-save refusal, expected-position conflicts and repair rechecks are at src/cma/case.py:683–1105. Publication, read-back and take-back are at src/cma/case.py:1107–1192. Traced the production CLI at src/cma/cli.py:309–338 and checked double submission, competing updates, empty and malformed inputs, Unicode, UTC, partial failure, OS permissions, case-folder isolation and CLI exit codes. The diff adds no currency arithmetic or database migration. The runner logs confirm 496 full-suite passes, 179 invariant passes and 13 contract passes, including the named CLI tamper, rebuilt-chain, torn-tail and duplicate-submit tests. The holder recheck and take-back schedules below fail P15. No tests were run during this review.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-96/invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-96/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-96/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-96/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-96/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-96/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-96/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-96/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 481,
+      "criterion": "P15",
+      "claim": "A holder can accept a read across a replaced case lock. Its post-read check samples the case lock before examining the gate and accepts the earlier lock identity even if the lock is replaced before that check completes.",
+      "repro": "Start with two recorded entries and a torn third entry. Have the holder verify the log. At the holder's post-read gate stat, after its case-lock stat has returned, pause it. Replace the case lock and let a second writer take the new lock and complete a confirmed repair. Resume the gate stat. The unchanged gate makes the old holder return the captured torn result. P15 requires discarding that read and retrying as a non-holder."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1200,
+      "criterion": "P15",
+      "claim": "Signal deferral covers a fixed list of signals, so a Python handler for an omitted signal can still skip take-back after a failed read-back while the save owns the head.",
+      "repro": "On Linux, install a raising Python handler for SIGVTALRM. Append entry 3 and inject a one-time read-back failure with the log line, head and locks unchanged. Deliver SIGVTALRM immediately before the call to the real take-back at src/cma/case.py:1159. The handler escapes before take-back starts, the save reports not confirmed, and the head still lists entry 3. The passed SIGINT and SIGTERM cases exercise signals present in the list."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's CLI claim says a check over a locked torn tail exits 0 and prints 'appending'. The passed contract asserts exit 4 and 'being saved', which agrees with P15.",
+      "repro": "Compare the CLI branch with tests/test_case_log.py:1361 and the corresponding PASSED line in contracts-4.log. A held case with two recorded entries and a torn third yields exit 4. When the holder releases the case, the same tail yields exit 3."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1214,
+      "criterion": "P15",
+      "claim": "The producer's exact rapid-append reproduction is not proven. The passed test starts an unsynchronized append loop and checks that readers name no bad entry. It does not force two commits during every retry, hold the lock at fallback, or assert the claimed recorded prefix.",
+      "repro": "Read the test at line 1214 alongside its PASSED line in specified-3.log. A controlled regression test would need to synchronize each read with the two commits, keep the writer held at fallback, and assert the returned status and sequence. The runner command for that proof would be python -m pytest -v tests/test_case_log.py -k rapid_append_fallback once that test exists."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

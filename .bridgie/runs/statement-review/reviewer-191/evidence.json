@@ -1,0 +1,110 @@
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:481–495 partitions credits and reconciles the buckets. src/cma/metrics.py:523–525 and :562–570 publish GBP totals and evidence IDs, with cash deposits inside M2. The CLI and MCP use the same computation at src/cma/graph.py:308 and src/cma/mcp_server.py:97–98.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:77–88 checks exact pence on conversion, src/cma/metrics.py:512–517 handles unrepresentable M3, and src/cma/graph.py:175 and src/cma/cli.py:415 render GBP to the penny. The runner confirmed both previous regressions on their fixtures. A missing balance can still defer a newest-first check across multiple records, and Monzo defers its running-balance checks until after parsing and sorting the export.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578–588 checks membership counts independently of the pence difference, so an assignment failure with a zero net difference still raises. src/cma/cli.py:118–121 reports escaped line IDs and exits 6 before output. src/cma/mcp_server.py:97–98 propagates the error. The runner passed the CLI and MCP refusal tests.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The default credit paths at src/cma/categorise.py:1311 and :1360 return OTHER. src/cma/models.py:55 and src/cma/metrics.py:483–495 route OTHER to unexplained money in and leave it out of trading receipts.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:481–495 and :578–588 enforce the eight-bucket partition and exact pence equality. M18 is a subset reported separately. The runner passed both P1 tests, including the large-amount check.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the figures delivered by T04, src/cma/metrics.py:374–385 and :523–574 trace sums, outflows, closing balances and shares to their calculation inputs. src/cma/metrics.py:418–431 identifies the credit split by each M9 offset cap. The runner passed the named P2 invariants and the previous-release evidence comparisons on the tested fixtures.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/metrics.py:483–490 and :568–570 include their IDs in M25. The runner passed the P6 invariant and the unknown-payer test under both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 498,
+      "criterion": "R2",
+      "claim": "The newest-first balance check can still wait two or more records. A record with no usable balance leaves the earlier record in last['balanced'], and a later record triggers a balance comparison across the gap.",
+      "repro": "Load a five-column statement with newest-first rows A,2026-01-03,A,1.00,30.00 then B,2026-01-02,B,1.00,x then C,2026-01-01,C,1.00,10.00. The refusal reports line 2 as a broken balance using line 4's balance. Instrument ingest.follows to see the comparison for line 2 run only after line 4 is read. The passing lookahead test uses valid balances throughout."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 317,
+      "criterion": "R2",
+      "claim": "Monzo checks running-balance discrepancies after it has checked all records and sorted them. A later record error can therefore take precedence over a discrepancy already determinable from the preceding records.",
+      "repro": "Use an export with Transaction ID,Date,Type,Name,Amount,Currency,Balance as the header, followed by A,01/01/2026,Faster payment,ACME,10.00,GBP,110.00 and B,02/01/2026,Faster payment,ACME,10.00,GBP,999.00, then C,not-a-date,Faster payment,ACME,1.00,GBP,121.00. Pass --opening-balance 100.00. The importer reports the date on line 4 and never checks line 3's balance, which should be £120.00. The flow totals are below the limit."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 438,
+      "criterion": "P2",
+      "claim": "The producer's blanket claim that M1–M16 values are unchanged exceeds the dual-run proof. The fixtures demonstrate compatibility for their inputs, while exact ratio rounding can change M10 even when the old money sums were exact.",
+      "repro": "Compare the previous release and this revision on a v1 statement with a £20,001.00 CARD SETTLEMENT credit and a £20,000.00 LOAN REPAYMENT debit, without drawings or reversals. M10 is exactly halfway at 1.00005. The old binary-float round produces 1.0001 and the new decimal half-even calculation produces 1.0000. The evidence IDs are the same."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 263,
+      "criterion": "R2",
+      "claim": "The producer's scratchpad proof is unverified. There is no runner result for that script, and the passing large-credit test exercises internal conversions rather than statement loading, which has the revision 25 import ceiling.",
+      "repro": "The command that would verify the cited probe is PYTHONPATH=src python scratchpad/probe.py, with the script supplied to the runner. Separately, pass a one-line statement with amount and balance 10000000000000.01 to load_csv. src/cma/ingest.py:84–86 refuses it at the required import limit."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 213,
+      "criterion": "R3",
+      "claim": "The producer's historical suite count is unverified for ca0092c. The supplied runner logs verify the named contract and invariant tests on the review revision and report 1,295 full-suite passes and 84 dual-run passes there.",
+      "repro": "Compare git log -1 with the claimed ca0092c and read the summaries in specified-3.log and dual_run-7.log. A runner result from a checkout of ca0092c for python -m pytest -v -rs and python -m pytest -v -m dual_run would verify the historical counts."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer note says the committed example lacks evidence_note. The committed example already carries the field.",
+      "repro": "Read the first metric in examples/cafe_stretched.memo.evidence.json. It contains evidence_note set to null at line 2363."
+    }
+  ],
+  "verdict": "fail"
+}

@@ -1,0 +1,85 @@
+```json
+{
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "src/cma/firm.py:68 defaults the lock on. src/cma/llm.py:104, src/cma/graph.py:288 and src/cma/graph.py:363 connect the normal hosted dispatch and evidence to the run's lock. src/cma/mcp_server.py:69, :97 and :167 gate app factories, ASGI traffic and tool reads. Native startup still has a gap after the lifespan check, and the graph leaves explicit network tracing callbacks installed under the lock.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:237 builds the prompt from a placeholder account name, the period and the two tables. src/cma/graph.py:213 puts the overall outcome in the rule table and :225 limits redraft feedback to known IDs. src/cma/metrics.py:295 leaves evidence IDs out of the metric table. The runner passed the hosted CLI custom-policy redraft test in invariants-5.log.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "invariants-5.log confirms the hosted redraft and custom-rule failure-action collision tests ran and passed. src/cma/graph.py:190 still infers provenance from field equality, so a sentinel reused as the ID of an otherwise exact custom copy of a packaged rule reaches the prompt.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "invariants-5.log confirms both retryable-503 SDK cases, locked starts for both native HTTP transports, rejection of requests by the native app after locking, and rejection of a delayed saved-app startup. src/cma/mcp_server.py:111 lets native Uvicorn proceed to its bind after the app's one startup lock check, with no check at the native bind boundary.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/mcp_server.py",
+      "line": 111,
+      "criterion": "P18",
+      "claim": "A native HTTP start can bind its listening socket after the firm turns the lock on. Revision 30 excludes early binds by an embedder's server, while this listener belongs to the native MCP runner.",
+      "repro": "Start either native HTTP runner with the lock off. In a regression test, turn the lock on as Uvicorn's lifespan startup returns, before Server.startup proceeds to loop.create_server. Spy on socket.bind. The native runner reaches bind under the lock. The existing bind test keeps the setting constant."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 535,
+      "criterion": "R29",
+      "claim": "Disabling ambient LangSmith tracing leaves a LangChainTracer passed in the graph's callback configuration active. That callback can export graph inputs and statement data under the offline lock.",
+      "repro": "With the lock on, invoke a graph using FakeLLM and pass a LangChainTracer as a RunnableConfig callback, backed by a recording LangSmith client. The callback is still invoked. The existing tracing test only exercises environment-based tracing."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 196,
+      "criterion": "P5",
+      "claim": "The whole-rule comparison treats equality with packaged fields as proof that a custom rule ID came from the package. An exact custom copy still discloses the supplied sentinel ID.",
+      "repro": "Use R2 as a sentinel in statement descriptions and in the case profile. Supply a custom policy containing only a copy of the packaged R2 rule, keeping the compared fields identical and giving the policy a different name. Capture the initial hosted prompt. The custom rule row contains R2 because the comparison ignores policy provenance."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/firm.py",
+      "line": 199,
+      "criterion": "R29",
+      "claim": "The task and producer claim one firm.yaml read per run. The test counts calls to firm.load, while the implementation also reads the file's bytes to build and recheck its stamp.",
+      "repro": "Use an unchanged, nonempty firm.yaml and instrument reads of that path during cma run with automatic approval. The initial load reads it via both _stamp and _load. Client authorization, graph entry and review resumption check the stamp with additional reads."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 288,
+      "criterion": "R29",
+      "claim": "The producer's dispatch-to-evidence test claim is not proven. The runner passed evidence tests for the offline model and lock states, with no dispatch_used test in the full log. The test that checks the hosted reading stubs the send and does not check the emitted CLI evidence.",
+      "repro": "Compare specified-3.log with the claimed evidence_records or dispatch_used selection. To prove the claim end to end, add a test that records the hosted dispatch reading and checks the emitted evidence, then have the runner execute python -m pytest -v tests/test_firm.py -k dispatch_used."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 102,
+      "criterion": "P18",
+      "claim": "The producer's exit-4 test claim is not proven. The runner's retryable-503 tests call the provider wrapper directly and never assert a CLI exit status.",
+      "repro": "Inspect the two one_attempt_per_lock results in specified-3.log and their test body. To prove the CLI claim, add a test that returns a retryable provider error through cma run and asserts exit 4, then have the runner execute python -m pytest -v tests/test_firm.py -k hosted_cli_failure_exit_code."
+    }
+  ],
+  "verdict": "fail"
+}
+```

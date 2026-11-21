@@ -1,0 +1,130 @@
+{
+  "task": "T17",
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "The default is locked at src/cma/firm.py:66. The CLI reads once at src/cma/cli.py:79-94, and src/cma/graph.py:238-254,279,305-306 uses the same value for dispatch and evidence. Both SDK constructors check the lock with retries disabled at src/cma/llm.py:110-135. The ASGI startup check at src/cma/mcp_server.py:88-108 depends on lifespan delivery, so a previously created app can listen under the lock if lifespan is disabled.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:178-200,301-308 uses the placeholder, date period, metric table, overall outcome row and allowlisted redraft IDs. src/cma/metrics.py:295-299 omits evidence IDs. The supported custom policy path at src/cma/cli.py:49,93 and src/cma/graph.py:297-299 renders free-text descriptions verbatim at src/cma/graph.py:174, so the prompt can contain transaction or case text supplied through that field.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "The runner passed all 20 named P5 cases, including redrafts. tests/test_firm.py:447-450 invokes the graph without a custom policy. The custom policy accepted by src/cma/policy.py:62-79,109-111 can carry a case sentinel into the prompt at src/cma/graph.py:174,196.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "The runner passed all 55 named P18 cases, including both SDK retry checks and the saved ASGI app check with lifespan enabled. tests/test_firm.py:669 explicitly enables lifespan. With lifespan disabled, src/cma/mcp_server.py:88-108 has no startup event on which to refuse before bind.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-122/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-122/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-122/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-122/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-122/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-122/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-122/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/mcp_server.py",
+      "line": 89,
+      "criterion": "P18",
+      "claim": "The saved ASGI app can bind a socket while the lock is on if the ASGI runner skips lifespan. The request-time 503 comes after the listener opens. This also violates R29.",
+      "repro": "In the scenario in tests/test_firm.py:652-679, create the app while unlocked, enable the lock, and launch Uvicorn with lifespan='off'. A bind is expected before the first HTTP request receives 503. The existing runner test covers lifespan='on' only."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 174,
+      "criterion": "R30",
+      "claim": "Custom policy descriptions are copied verbatim into hosted prompts. Putting the text in a rule-table cell does not enforce the prompt's prohibited-data boundary.",
+      "repro": "With a stub hosted SDK and the lock off, add SNTLDESC to a statement description and copy that description into one rule's description in a valid policy. Pass the policy through cma run --policy and inspect the captured request. The policy-table row includes SNTLDESC on the initial draft. The same path carries a profile sentinel and breaks P5."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/mcp_server.py",
+      "line": 193,
+      "criterion": "R30",
+      "claim": "The changed MCP response removes the previously returned untrusted_description field when include_descriptions is true. The parameter remains accepted, but consumers of the opted-in field have a breaking change.",
+      "repro": "With the lock off, call transactions_for with a valid line ID and include_descriptions=True. A consumer reading row['untrusted_description'] now gets KeyError. The updated test at tests/test_mcp_paths.py:72 explicitly expects the field to be absent."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 42,
+      "criterion": null,
+      "claim": "The Monzo formula safeguard also rejects previously accepted IDs beginning with a dot or colon. Neither character is a formula prefix in the stated contract.",
+      "repro": "Import an otherwise valid Monzo row with Transaction ID .tx or :tx. The old pattern accepted both. The new pattern refuses both before writing CSV, as covered by tests/test_import_monzo.py:182."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 242,
+      "criterion": "R29",
+      "claim": "The claim that the previous package ignores the additive egress key is unproven. The named tests establish that current code can format egress from older state. They do not pass new evidence to a previous-release reader.",
+      "repro": "Compare the named egress tests in specified-3.log with tests/test_firm.py:377-394. To prove the reverse-compatibility claim, run a previous-release contract test that feeds the old consumer an evidence record emitted by this version and asserts acceptance. The runner supplied no result for that case."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

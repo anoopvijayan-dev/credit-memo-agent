@@ -1,0 +1,159 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483 assigns credits to the bucket lists, checks reconciliation and returns GBP values with line IDs at lines 523 and 561–567. src/cma/graph.py:302 and src/cma/mcp_server.py:98 carry the computed figures to callers.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:77 checks exact pence, src/cma/metrics.py:512 handles an unrepresentable M3, and src/cma/graph.py:175 and src/cma/cli.py:415 render money to the penny. The runner confirmed the ordinary record lookahead and malformed header regressions. Date order and running balance checks still wait until record iteration ends at src/cma/ingest.py:539–557. The Monzo importer can also silently discard the tail of an export when an unclosed foreign-currency record contains an invalid UTF-8 byte.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks the exact pence difference and bucket membership before returning figures. src/cma/cli.py:118 exits 6 with the difference and line IDs, and src/cma/mcp_server.py:98 propagates the failure. The named CLI and MCP refusal tests passed in the contracts tier.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The v1 and v2 fallbacks assign unmatched credits to OTHER at src/cma/categorise.py:1311 and :1360. src/cma/models.py:55 maps OTHER to unexplained and excludes it from revenue categories at line 69.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483 and :578 check the credit partition by ID and reconcile integer pence. M18 is formed from M2's cash lines at line 495 and emitted separately at line 564. The runner passed the named partition and large-amount invariants.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:523–574 derives the emitted sums and outflows from their evidence lists. Lines 373–379 preserve the M5 and M6 evidence rules, lines 419–429 identify the partially counted M9 credit, and lines 499–503 use the shared M16 and M26 denominator. The runner confirmed the named sum, outflow and M9 invariants. This check covers figures emitted by T04.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/metrics.py:483–490 and :567 put those IDs in M25, while M2 takes its IDs from revenue categories at lines 352 and 523. The runner passed named tests for both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-188/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-188/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-188/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-188/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-188/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-188/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-188/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 421,
+      "criterion": "R2",
+      "claim": "The invalid UTF-8 branch bypasses the unclosed-quote check and leaves the record marked as recoverable. Monzo skips that record when its Currency is EUR and exports the preceding GBP rows, even if the open quote consumed later GBP rows.",
+      "repro": "Use the Monzo header Transaction ID,Date,Type,Name,Amount,Currency,Balance. Add a valid GBP debit with a 90.00 balance, then a EUR debit whose Balance starts with a double quote and contains byte 0xE9. Append another valid GBP debit on the next physical line and leave the quote open to EOF. Run cma import monzo on the file. The parser yields the EUR record with stops=False and src/cma/importers/monzo.py:218–223 skips it. The command succeeds with one exported transaction instead of refusing the unreadable record."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 549,
+      "criterion": "R2",
+      "claim": "The statement loader checks running balances only after consuming the record iterator. Revision 30 permits one record of lookahead for validation. The existing lookahead test observes the first amount conversion and misses the deferred balance check.",
+      "repro": "Load four or more ascending, past-dated CSV rows, each with amount 1.00, with balances 1.00, 5.00, 6.00, 7.00 and so on. Observe _Feed.__next__ and follows using the same instrumentation pattern as test_the_loader_checks_each_record_as_it_is_read. The inconsistent second record is first checked after EOF, after more than one following record has been read."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 1,
+      "criterion": "P2",
+      "claim": "The claim that 878 tests passed at ca0092c is unproven by the supplied runner. The specified result documents 991 passes for the reviewed worktree at bb5198c.",
+      "repro": "Compare the claimed revision and count to git rev-parse HEAD and the final line of specified-3.log. A runner result for python -m pytest -v -rs on a checkout of ca0092c would establish the historical claim."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 77,
+      "criterion": "R2",
+      "claim": "The no-ceiling probe supports the figures helper on a constructed input. The normal statement-loading entry point intentionally refuses that input at the Revision 30 import limit.",
+      "repro": "Put a 10000000000000.01 credit in a five-column statement and give it to cma run. The loader refuses it at the line limit. The runner's passing test_a_large_whole_penny_amount_is_counted_not_refused_by_a_ceiling calls metrics.pence and metrics._gbp directly."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 314,
+      "criterion": "P1",
+      "claim": "The producer's idempotency probe has no supplied runner result. The runner's P1 tests establish reconciliation and partitioning, while the probe claims repeatability.",
+      "repro": "Compare the idempotency claim's proof command with the runner rows. A runner result for PYTHONPATH=src python scratchpad/probe.py, with the script available, would verify the reported probe."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer note says the committed example lacks evidence_note and was not regenerated. The reviewed artifact contains the field and the additional metrics.",
+      "repro": "Run rg -n 'evidence_note|\"id\": \"M26\"' examples/cafe_stretched.memo.evidence.json and compare it with claim.json's notes."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

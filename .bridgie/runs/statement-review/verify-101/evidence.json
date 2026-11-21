@@ -1,0 +1,125 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced byte pinning and validation at src/cma/categorise.py:468,565,848, longest matches and containment at :995,1012,1034, bank-code and cash conflicts at :1121, and overrides, profile candidates and firm rules at :1141,1188. Category.OTHER maps to unexplained at src/cma/models.py:65. Traced double submit and concurrent-update checks at src/cma/cli.py:84,243, zero and signed amount handling at src/cma/categorise.py:889, pence and date-only input at src/cma/ingest.py:42,100,127, partial output failure at src/cma/cli.py:228, path scope at src/cma/mcp_server.py:37, case-local inputs at src/cma/categorise.py:1299, and evidence consumers and historical replay at src/cma/graph.py:188,210 and src/cma/mcp_server.py:74,90. The full runner log confirms table-driven provenance, CLI evidence, idempotency, legacy replay, and both offline evals. R4 fails because repeated fields still suppress required diagnostics and a loaded table can compile rule matchers during categorisation.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-101/specified-3.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-101/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-101/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-101/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-101/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-101/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-101/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-101/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 781,
+      "criterion": "R4",
+      "claim": "The 32-variant cap lets a repeated pattern hide a forbidden exception from the changed-v1 refusal.",
+      "repro": "Append a rule named cashx to a copy of v1 with frozen: true. Give it 32 consecutive pattern fields containing CASH, then a 33rd containing 'CASH(?! FPS)', with direction: in and category: cash_deposit. Load it as v1. The refusal reports the changed table and repeated field, but the lookahead never reaches exception validation."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 580,
+      "criterion": "R4",
+      "claim": "Matcher validation skips all values of a repeated pattern field, even when one compiles alone and fails in a matcher form.",
+      "repro": "In a changed v1 copy, add a rule named cashx with pattern: CASH followed by pattern: '(?i)CASH', direction: in and category: cash_deposit. Load as v1. The repeated field is reported, but the wrapped matcher failure is absent because own_ok sees a _Repeated object. Removing the first pattern exposes the missing matcher diagnostic."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 1006,
+      "criterion": "R4",
+      "claim": "The matcher forms are stored in a global LRU with 8,192 entries. A loaded rule retains only the source, so eviction causes the categoriser to compile its matcher forms again.",
+      "repro": "Load a valid v2 table with 8,193 distinct variable-length patterns, such as numbered variants of 'ACME00000X?' with unique ids and the same credit category. Give the payment rail a match on 'FPS'. After load, instrument re.compile and classify 'FPS ACME00000X'. With both rules matching, _spans calls _ends_at and rebuilds the first rule's evicted matcher. The existing compile-guard test at tests/test_rules_v2.py:2201 has only one matching rule and returns before _spans."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 1166,
+      "criterion": "R4",
+      "claim": "The producer's whole-statement shuffle claim overstates the tested corpus. The relative order of debit rules can change a category.",
+      "repro": "Categorise a debit described as 'PAYROLL BANK CHARGES', then swap the two unprotected name-stage rules payroll and bank_fees and categorise again. The first matching rule changes from bank_fees to payroll. The shuffled statement cases at tests/test_rules_v2.py:1387 omit that collision."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The claimed precedence documentation says a profile name settles an ambiguous credit. The implementation records the profile match as another candidate.",
+      "repro": "Classify a positive 'FPS CASH DEPOSIT JANE DOE' with Jane Doe in the director profile. The category remains OTHER and the conflict provenance gains profile:director, as implemented at src/cma/categorise.py:1204."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 850,
+      "criterion": "R4",
+      "claim": "The runner proves the two-second categoriser assertion for the fixed mixed-line fixture. The producer's broader recompute-budget claim is unproven by that assertion.",
+      "repro": "Inspect the timed region in test_categorise_10000_lines_under_v2_with_a_profile_is_fast. It calls categorise only. A runner result timing an override save through recomputed figures, indicators, and policy on the stated hardware would prove the full recompute claim."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 35,
+      "criterion": "R4",
+      "claim": "Compilation of every module across src, evals and tests is unproven. The passing compileall runner row covers src only.",
+      "repro": "Compare mechanical-2 with the producer's compile command. A passing runner row for python -m compileall -q src evals tests would prove the broader claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

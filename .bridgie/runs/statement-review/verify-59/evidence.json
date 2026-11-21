@@ -1,0 +1,117 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped acquirers, gateways, marketplaces and delivery platforms to src/cma/rules/v2.yaml:304,339,356,373; lenders and MCA to :163,211; own pots to :74; HMRC to :117; returns and refunds to :63,128,137; rail and cheque to :146,155; cash deposits and withdrawals to :254,394; and explained credits to :277. Traced the two ambiguity stages and bucket precedence to src/cma/categorise.py:711–750, the override to :760, and unexplained classification, profile candidates and firm-rule exclusion to :805–824 and src/cma/models.py:54. Own-account pairing is R8. Traced v2 selection and per-line provenance through src/cma/graph.py:221,251–252 and src/cma/cli.py:229. Runner specified-3.log confirms the per-list, CLI provenance, idempotency and both previous revision 11 regression tests passed. Reviewed repeat submission, concurrent calls, input boundaries, signs and date handling, partial output failure, override and profile isolation, rollback, and evidence consumers. Accepted table edits still defeat both revision 11 guarantees.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-59/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-59/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-59/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-59/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-59/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-59/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-59/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 362,
+      "criterion": "R4",
+      "claim": "The bank-code validator rejects exception clauses but still accepts a direction that disables the mandatory verdict on credits. The direction filter removes the code before credit_verdict checks it.",
+      "repro": "Change returned_dd in v2.yaml from direction: any to direction: out and classify a positive UNPAID DD TO SAVINGS line. The table loads and the line becomes v2:own_pots_savings. R4 requires v2:returned_dd."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 656,
+      "criterion": "R4",
+      "claim": "Forcing a regex to end later cannot reopen an atomic group. V2 accepts atomic alternatives, so their order can still determine the surviving cues and change the money-in bucket.",
+      "repro": "Add (?>ACME|ACME FASTER PAYMENT LTD) as a pattern on the payment_gateways rule. Classify a positive ACME FASTER PAYMENT LTD CASH DEPOSIT line. With ACME first, the rail survives and the line is ambiguous. Reverse the alternatives and the longer match suppresses the rail, producing a cash deposit. R4 requires the longer match in both orders."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 363,
+      "criterion": "R4",
+      "claim": "The malformed-table claim promises an error naming the problem, but bank-code validation can raise an uncaught TypeError before reporting the invalid pattern type.",
+      "repro": "Set the shipped returned_dd pattern to the YAML list [UNPAID DD]. The string type check accumulates a validation error, then the bank-code membership check tries to hash the list and raises TypeError before RulesetError is produced."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README places profile names before ambiguity and says a profile name can settle an ambiguous credit. It also describes the ambiguity check for rail wording without mentioning cheque wording.",
+      "repro": "Classify a positive FPS CASH DEPOSIT JANE DOE credit with Jane Doe in the director profile. It remains unexplained and records profile:director as a candidate. A positive CHEQUE CASH DEPOSIT credit is also ambiguous."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 766,
+      "criterion": "R4",
+      "claim": "The whole-statement shuffle proof covers its selected corpus. The broader producer claim that shuffling rules within a stage changes no line category is false for debits, which deliberately use first-match order.",
+      "repro": "Move hmrc_vat ahead of own_pots_savings within the protected line-type stage. A negative HMRC VAT TO SAVINGS line changes from own_account_transfer to hmrc_vat. This claim gap does not affect R4's credit ambiguity policy."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 35,
+      "criterion": "R4",
+      "claim": "The static gate proves compilation of src. The claimed explicit compilation of every module in src, evals and tests is not proven by the runner's compileall row.",
+      "repro": "Compare mechanical:2, which ran python -m compileall -q src, with the claim's three-directory command. A runner pass for python -m compileall -q src evals tests would prove the broader compilation claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

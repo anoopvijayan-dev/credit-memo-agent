@@ -1,0 +1,101 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed 7c8fba2 against P15 in the supplied revision 18 because the checkout contains revision 2. src/cma/case.py:170–366 and :926 check canonical bytes, chain links and the recorded head, naming the first bad or incomplete entry. Reader handling is at :451–674, including holder and path aliases, steady reads, busy-gate reads, lock replacement and the intact-log guard. Writer exclusion, fork refusal, nested-save refusal, stale position and repair checks are at :677–924. Head publication and take-back are at :967–1063. The runner logs confirm the named change, removal, reorder, rebuilt-chain and torn-tail invariants and the duplicate-submit, process and thread contention, repair and CLI tests. Checked empty and malformed inputs, Unicode, UTC timestamps, partial writes, OS permissions and case-folder isolation. This code does no currency arithmetic and requires no backfill. src/cma/cli.py:321 is the production verification caller. The sign-off guard exists at src/cma/case.py:651, with sign-off integration assigned to T27. P15 fails because losing the case lock after a short write leaves a torn entry while telling the caller that nothing was written.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-76/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-76/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-76/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-76/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-76/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-76/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-76/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1010,
+      "criterion": "P15",
+      "claim": "If the case lock disappears after part of a line is written, append propagates a generic CaseLocked error saying 'nothing was written'. The partial line remains on disk and the save never reaches the code that reports it as not recorded.",
+      "repro": "Use test_p15_a_short_write_continued_after_the_lock_is_lost_is_refused at tests/test_case_log.py:1962. Its first write appends five bytes and removes the lock. Inspect the raised exception and the next verification. The exception says nothing was written, while verification names the incomplete entry. The runner passed the existing test because it checks the generic exception and byte count without asserting the save outcome."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer claims the held-tail CLI check exits 0 and prints 'appending'. It exits 4 and prints that the case is being saved. The runner-passed contract asserts the required exit 4.",
+      "repro": "Use test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break in contracts-4.log. While the writer holds the case over a torn tail, tests/test_case_log.py:1360 asserts exit 4 and the saved message. Once the writer releases the case, the same test asserts exit 3 and names entry 3."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1225,
+      "criterion": "P15",
+      "claim": "The producer disposition claims the rapid-append test forces two commits during every read attempt and holds the lock at the fallback. The passing test exercises opportunistic overlap and establishes neither condition. The specific schedule is not proven by the runner.",
+      "repro": "Inspect the test body. It starts a background writer and issues 40 checks without synchronizing reads to commits or asserting that any commit overlapped a check. To prove the claimed schedule, synchronize and assert two commits per attempt and contention at fallback, then run python -m pytest -v tests/test_case_log.py -k test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 319,
+      "criterion": "P15",
+      "claim": "The producer's owner-only authorization claim exceeds its proof. The CLI accepts any directory and relies on filesystem access. The cited test checks POSIX mode bits for newly created files without checking ownership of a supplied folder.",
+      "repro": "Point cma case check at an accessible empty directory owned by another user. The directory check succeeds and the command reports an intact zero-entry log. This does not bypass filesystem permissions on private case files."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

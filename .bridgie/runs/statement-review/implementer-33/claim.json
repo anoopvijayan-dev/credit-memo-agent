@@ -1,0 +1,33 @@
+{
+  "task": "T06",
+  "claims": [
+    {
+      "text": "metrics.monthly_summary(statement) returns one MonthRow per calendar month in the period (part months flagged, with the month's days in the period as start/end), each with money in and trading receipts (sum cells, cash deposits included, R55), money out (outflow cell: positive value, signed total negated), and average/lowest end-of-day balance and days overdrawn (derived cells citing the line that set every close of the month, carried over days with no lines). P12: monthly trading receipts sum to M2 and monthly money in to M17 to the penny over every synthetic case and 60 random statements under v1 and v2, with cash deposits present in the fixtures; P2 checked per cell kind, plus a hand-computed fixture with part months, a carried-over month and cash deposits.",
+      "proof_cmd": "python -m pytest tests/test_monthly.py -v",
+      "proof_output": "test_p12_monthly_trading_receipts_sum_to_m2_and_monthly_money_in_to_total_money_in PASSED\ntest_p2_monthly_cells_cite_their_lines_by_kind PASSED\ntest_p2_monthly_cells_hand_computed_with_carried_days_and_cash PASSED\ntest_cma_run_writes_the_monthly_summary_into_its_evidence_record PASSED\n4 passed in 6.37s"
+    },
+    {
+      "text": "cma run writes the monthly summary into its evidence record under the additive key monthly_summary (each cell with value, unit, kind, evidence ids, total and note); computed in evidence_record from the stored lines, so CHECKPOINT_TYPES is unchanged.",
+      "proof_cmd": "python -m pytest -q -m contracts",
+      "proof_output": "340 passed, 978 deselected in 34.65s"
+    },
+    {
+      "text": "Invariant tier passes, including the new p12 and p2 monthly tests.",
+      "proof_cmd": "python -m pytest -q -m invariants",
+      "proof_output": "449 passed, 869 deselected in 47.64s"
+    },
+    {
+      "text": "Full suite, dual-run tier, lint, compile and offline evals pass.",
+      "proof_cmd": "ruff check src tests evals; python -m compileall -q src && echo compile-ok; python -m pytest -q; python -m pytest -q -m dual_run; python evals/run_evals.py | tail -1",
+      "proof_output": "All checks passed!\ncompile-ok\n1318 passed in 100.74s (0:01:40)\n84 passed, 1234 deselected in 25.04s\n9/9 memos fully grounded; model = fake; ruleset = v1"
+    }
+  ],
+  "files_changed": [
+    "src/cma/models.py",
+    "src/cma/metrics.py",
+    "src/cma/graph.py",
+    "tests/test_monthly.py",
+    "examples/cafe_stretched.memo.evidence.json"
+  ],
+  "notes": "Commit 2c47748. A month's average end-of-day balance is the exact mean of its closes in pence, rounded half to even, and n/a with the reason if no float carries it (R2). The committed example evidence gained only the monthly_summary key (insertions only), computed from examples/cafe_stretched.csv under the ruleset it records; I checked first that its recorded metrics equal today's compute output. The workspace drill-down, monthly CSV and appendix table for monthly cells are out of scope for T06."
+}

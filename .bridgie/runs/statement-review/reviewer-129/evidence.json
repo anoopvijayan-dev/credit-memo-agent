@@ -1,0 +1,110 @@
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:54 maps credit categories and src/cma/metrics.py:380–389,454–464 builds the GBP totals and evidence. The float reporting boundary at src/cma/metrics.py:139–147 rejects a valid case whose individual credits are representable.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:104–122,246–247,283–285,406–412 uses integer pence for sums, balance comparisons and average monthly revenue. The CSV path at src/cma/ingest.py:47–54 loses source pennies before the figures layer receives them.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:473–483 checks amounts and evidence counts, and src/cma/cli.py:99–102 reports an escaped refusal. The runner passed the named CLI and MCP contracts. The early refusal at src/cma/metrics.py:229–236 gives an incomplete difference and line list when two kinds of unbucketed credit coexist.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311,1360 gives unmatched credits OTHER. src/cma/models.py:64–67 maps OTHER to unexplained and excludes it from trading categories. The runner passed the unmatched-credit invariants for v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:380–389,473–483 checks the eight buckets and one placement per credit, with M18 excluded. Both named invariants passed. A valid whole-penny case can still return no totals or evidence when M17 cannot round-trip through a float.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "The runner passed the named sum, outflow and single-credit M9 note invariants in tests/test_money_in.py:90–125. src/cma/metrics.py:284–288,427–429 omits positive closing balances that M6 reads to determine its count. Monthly cells belong to T06.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:380–389,462–464 uses the unexplained category for M25 and the trading categories for M2. The runner passed the default-credit property and both unknown-payer tests in tests/test_money_in.py:128–146.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 146,
+      "criterion": "R1",
+      "claim": "The reporting conversion withholds all figures and evidence when individually representable credit amounts add up to an unrepresentable float total. This also fails P1.",
+      "repro": "Use three chronological CSV lines with amount and balance pairs of 100000000000000.00/100000000000000.00, -100000000000000.00/0.00 and 0.01/0.01. Use CARD SETTLEMENT for the first, an ordinary operating debit for the second and an unmatched description for the third. M2 and M25 are individually representable. The exact M17 is 100000000000000.01 GBP, so its conversion raises AmountError and the CLI exits 2."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 53,
+      "criterion": "R2",
+      "claim": "Parsing the original GBP text as float discards pennies before metrics.compute can convert it to integers. The subsequent round-trip check validates the already-rounded value.",
+      "repro": "Use a single past-dated CSV line with an unmatched description and both amount and balance set to 10000000000000000.01. The loader accepts both fields as 10000000000000000.0 and has no preceding balance to check. M17 and M25 consequently omit the source penny."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 236,
+      "criterion": "R3",
+      "claim": "The early uncategorised-credit path reports only uncategorised credits and their sum, bypassing the full reconciliation diagnostic.",
+      "repro": "Extend the categoriser stub used by the CLI refusal contract to return a £5 credit L1 with category None and a £12.34 credit L2 with category SUPPLIER. Neither belongs to a bucket. The command exits 6 but reports 500 pence and L1 instead of 1734 pence and both IDs."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 429,
+      "criterion": "P2",
+      "claim": "The derived days-overdrawn figure omits closing-balance lines that its calculation reads.",
+      "repro": "Compute a case with L1 a £1 debit closing day one at -£1 and L2 a £2 unexplained credit closing day two at £1. M6 reads both closes to calculate one overdrawn day, but cites only L1. Using two positive closes instead yields a zero count with no evidence."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/models.py",
+      "line": 144,
+      "criterion": "R1",
+      "claim": "The appendix and interactive CLI can display a nonreconciling breakdown even after the GBP values pass the decimal round-trip check. Fixed-point formatting rounds the underlying binary value, while the check reads its shortest decimal representation.",
+      "repro": "Compute a statement with a trading credit of 1000000000000000.10 GBP and an unexplained credit of 0.10 GBP. A full debit between them allows a consistent running balance. The shortest decimals for M2 and M17 end in .1 and .2, so both pass the check. The two-place formatter prints M2 ending in .12 and M17 ending in .25, while M25 prints £0.10. The displayed parts end in .22. tests/test_money_in.py:392 exercises ordinary values and calls the formatter directly."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 227,
+      "criterion": null,
+      "claim": "The producer's standalone scratchpad probe results are not proven by the runner. The named pytest results independently cover the single-credit, M3 and uncategorised-credit examples, but provide no execution record for the exact probe or its idempotency claim.",
+      "repro": "Check the reviewer-129 command rows for PYTHONPATH=src python scratchpad/probe.py. No row ran it, and scratchpad/probe.py is absent from the checkout. Supply the script and run that command in a runner tier to verify the quoted output."
+    }
+  ],
+  "verdict": "fail"
+}

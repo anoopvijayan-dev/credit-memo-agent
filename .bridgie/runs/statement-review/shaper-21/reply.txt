@@ -1,0 +1,308 @@
+I've written revision 21 of the spec. It covers D168 and takes in the two latest failed reviews: verify-80 (T12 at 1e35352) and verify-81 (T03 at 5139e22). Only R4 and R42 change, and every id, form and risk tag stays the same.
+
+**R42**
+- **One answer per report.** Every report a save's writer gets gives one answer, and that includes the errors it carries or was raised from.
+- **Not-confirmed reports.** When the take-back is refused, the report names what stopped it in the save's own words and does not quote the refusal. No part of it says the save was recorded, was not recorded, or that nothing was written. This answers verify-80's first major.
+- **Not-recorded reports.** These never say the save was recorded or is not confirmed.
+- **Published or not.** Whether a head record was published is decided by whether its rename ran, not by reading the head record back. So a head record that can't be read before its rename answers "not recorded". This answers verify-80's second major.
+
+**R4**
+- **Exception check.** Only v1 with its pinned bytes skips it. A changed v1 is refused as changed first, then names each rule that carries an exception. This answers verify-81's first major.
+- **Changed v1 otherwise.** Apart from that check, a changed v1 is judged as the kind of table it says it is. A copy that still calls itself frozen isn't held to stages or the category order, which v1's own rules lack. This matches what the owner's 5f5bb2e does and stops a reviewer applying the "every other table" clause to changed copies of v1.
+- **Unusable patterns.** Every rule's matchers are built while the table is checked. A pattern that compiles alone but can't be used is named alongside the table's other faults, not only after they are fixed. This answers verify-81's second major.
+
+P15 and R54 don't change, and nothing in the design needs a decision from the owner this time.
+
+The owner's three new commits (26bc51e, 7fb3a23, 5f5bb2e) haven't been reviewed yet. Reading them, two gaps would likely fail the next reviews:
+- **T12:** a save refused before any part of its line is written is now told only "the step was refused". R42 asks for "not recorded".
+- **T03:** a rule with an unusable pattern and another malformed field (say, an `unless` given as a list) has only the malformed field named. The pattern problem shows up only after that field is fixed.
+
+Both are proposed as follow-up tasks below.
+
+```json
+{
+  "seat": "shaper",
+  "summary_md": "Revision 21 writes D164 and D168 into R4 and R42; every requirement id, form and risk tag is kept, and P15 and R54 do not change.\nR42: each report a save gets gives one answer, its causes included; a not-confirmed report names what stopped its take-back in the save's own words; whether a head record was published is known from its rename, so a head record that cannot be read before its rename answers not recorded.\nR4: only v1 with its pinned bytes skips the exception check, so a changed v1 names its exceptions after the changed-table refusal; every rule's matchers are built while the table is checked, so an unusable pattern is named with the other faults.\nTakes in verify-80 (T12 at 1e35352) and verify-81 (T03 at 5139e22); the owner's 26bc51e, 7fb3a23 and 5f5bb2e build it and wait for review.\nNo question. Before review, T12 words a save refused before its line as not recorded, and T03 builds a pattern's forms beside another malformed field.",
+  "questions": [],
+  "proposals": [
+    {
+      "kind": "task",
+      "text": "T12, before its next review: word the refusal a save gets before any part of its line is in the log (the re-check that opens an append or a repair, the empty head record's link, the first write call, a repair's log rename) for the save, saying nothing was written and the save was not recorded. At 7fb3a23 it reaches the caller as the lock check's own 'the step was refused' (src/cma/case.py:810-811), which names no answer where R42 asks for not recorded. Test the whole exception chain of every answer, and name the tests added since review 20 p15."
+    },
+    {
+      "kind": "task",
+      "text": "T03, before its next review: build the forms of a rule's pattern whenever the pattern is text, even when the rule's names or exceptions are malformed, and decide the skip at src/cma/categorise.py:552 by the fault's kind, not by the word 'compile' in the fault's text, so that R4 (revision 21) holds whatever else the rule carries. Correct README.md:78, which seventeen reviews have found."
+    },
+    {
+      "kind": "gotcha",
+      "text": "2026-11-20 A reviewer reads a report's words through its whole exception chain (__cause__ and __context__): a test of what a refusal says checks every error in the chain, not only str() of the outer exception."
+    }
+  ],
+  "edits": {
+    "requirements.md": [
+      {
+        "old": "Revision 20, after D163 (changes requested under the owner's standing approval",
+        "new": "Revision 21, after D168 (changes requested under the owner's standing approval of 2026-11-19, after T12's twenty-eighth review, verify-80, and T03's twenty-seventh, verify-81; the owner had answered revision 20's question as D164). R4 and R42 change; their ids, forms and risk tags do not. R42 now says that each report a save's writer gets gives one answer, and that its causes, the words of any refusal or error it carries or is raised from, give no other. No part of a not-recorded report says that the save was recorded or is not confirmed. No part of a not-confirmed report says that the save was recorded, was not recorded or that nothing was written, and one whose take-back was not made names what stopped it in the save's own words and does not quote the take-back's refusal (D164, D168). This follows verify-80, in which a save whose take-back was refused because a case lock file was replaced quoted the lock check's refusal, 'nothing was written', and the not-recorded reports at the head rename and in a short write carried the same words in the error they were raised from. D168 speaks of a not-confirmed report; R42 says one answer for every report, as D164 does, and no not-recorded report at T12's 7fb3a23 says otherwise. R42 also says that whether the rename that publishes a save's head record was made is known from that rename, never inferred from reading the head record afterwards, so a head record that cannot be read in the re-check before its rename stops the rename, and the save answers not recorded (D168, after verify-80, in which such a save answered not confirmed). R4 now says that only the frozen v1 table as its bytes were verified is spared the exception check: a changed v1 names, after the changed-table refusal, each of its rules that carries an exception (D168, after verify-81, in which a copy of v1 that kept frozen: true and gained an unless was refused as changed with the unless unnamed). Beyond that check, R4 says, what else keeps a changed v1 from loading is judged as for the kind of table it says it is, as T03's 5f5bb2e builds and tests/test_rules.py:217 tests: a copy that still calls itself frozen is not held to what only the maintained lists carry, which v1's own rules lack, and a copy that does not is. Read otherwise, 'every other table, whether or not it calls itself frozen or bears v1's id, is checked rule by rule as the maintained lists are' would hold a changed v1, which bears v1's id, to stages its own rules do not carry, as revision 18 noted; that clause now reads 'every table the system does not load as v1'. R4 also says that every rule's matchers are built while the table is checked, so a pattern that compiles on its own but cannot be used in a form the system builds from it is named by its rule with the table's other faults, never found only once they are mended (D168, after verify-81). R4 says so whatever else the rule carries, as revision 20 says of a malformed value, so a rule with an unusable pattern and a malformed exception has both named. P15 does not change: it asks less than R42 here and contradicts nothing, as when revisions 15 and 18 changed R42, and D168 keeps everything else in revision 20. R54 does not change: it refers to R4 for what else a changed v1 breaks. Every other requirement, property, term and id is as revision 20 left it.\n\nRevision 20, after D163 (changes requested under the owner's standing approval"
+      },
+      {
+        "old": "Only the frozen v1 table is spared this check.",
+        "new": "Only the frozen v1 table, as its bytes were verified, is spared this check."
+      },
+      {
+        "old": "among what else keeps it from loading). Every other table, whether or not it calls itself frozen or bears v1's id, is checked rule by rule as the maintained lists are, and THE SYSTEM SHALL refuse it",
+        "new": "among what else keeps it from loading). A changed v1 is not spared the exception check: among what else keeps it from loading, THE SYSTEM SHALL name each of its rules that carries an exception, naming the rule (with unless: FPS added to a rule of a copy of v1 that keeps frozen: true, the refusal says first that v1 has been changed, and then names that rule's unless). Beyond that check, what else keeps a changed v1 from loading is judged as for the kind of table it says it is: a copy that still calls itself frozen is not held to what only the maintained lists carry, such as a stage on every rule and the category order, which v1's own rules lack, and a copy that does not is checked as the maintained lists are. Every table the system does not load as v1, whether or not it calls itself frozen or bears v1's id, is checked rule by rule as the maintained lists are, and THE SYSTEM SHALL refuse it"
+      },
+      {
+        "old": "the refusal names, among the table's faults, the returned-payment rule's pattern and the cash rule's unless).",
+        "new": "the refusal names, among the table's faults, the returned-payment rule's pattern and the cash rule's unless). THE SYSTEM SHALL build every rule's matchers, in every form it uses to match a line, while it checks the table, and a pattern that compiles on its own but cannot be used in one of those forms is likewise a fault of its rule: THE SYSTEM SHALL name it, by its rule, with the table's other faults, whatever else the rule carries, and never only once they are mended (with cash_paid_in's names replaced by the pattern (?i)CASH DEPOSIT, whose flag no longer stands at the start once the system wraps the pattern, and unless: FPS on another rule, the refusal names both)."
+      },
+      {
+        "old": "whatever a change to v1 makes fail, the refusal names the changed frozen table first).",
+        "new": "whatever a change to v1 makes fail, the refusal names the changed frozen table first); D168 (revision 21: only v1 as its bytes were verified is spared the exception check, so a changed v1 names its exceptions, and is otherwise judged as the kind of table it says it is; every rule's matchers are built while the table is checked, so a pattern that cannot be used is named by its rule with the table's other faults)."
+      },
+      {
+        "old": "and a read-back that cannot read is a read-back that fails, as below.",
+        "new": "and a read-back that cannot read is a read-back that fails, as below. Whether the rename that publishes the save's head record was made is known from that rename, never inferred from reading the head record afterwards, which may itself be unreadable: a head record that cannot be read in the re-check before its rename stops the rename, and the save answers not recorded, naming the error."
+      },
+      {
+        "old": "a failure of the file system, or a take-back that is not made.",
+        "new": "a failure of the file system, or a take-back that is not made. Each report gives one answer, and its causes, the words of any refusal or error it carries or is raised from, give no other. No part of a not-recorded report SHALL say that the save was recorded or that it is not confirmed. No part of a not-confirmed report SHALL say that the save was recorded, that it was not recorded, or that nothing was written; where its take-back was not made, it SHALL name what stopped the take-back in the save's own words, as the head record no longer the save's own, a case lock file removed or replaced, or the operating-system error it met, named, and SHALL NOT quote the take-back's refusal."
+      },
+      {
+        "old": "no part of its report says nothing was written).",
+        "new": "no part of its report says nothing was written); D164 and D168 (revision 21: each report gives one answer, its causes included, and a not-confirmed report names what stopped its take-back in the save's own words; whether a save's head record was published is known from its rename, so a head record that cannot be read before its rename answers not recorded)."
+      }
+    ],
+    "design.md": [
+      {
+        "old": "Revision 20, 2026-11-20, after D163 (changes requested under the owner's standing approval of 2026-11-19, after T12's twenty-seventh review, verify-78, and T03's twenty-sixth, verify-79).",
+        "new": "Revision 21, 2026-11-20, after D168 (changes requested under the owner's standing approval of 2026-11-19, after T12's twenty-eighth review, verify-80, and T03's twenty-seventh, verify-81). What changed from revision 20, keeping every id. D164 answered revision 20's question with its default: one answer per report, the take-back's refusal worded for the save; the owner built it in 7fb3a23. R42 now says that each report a save's writer gets gives one answer, its causes included: a not-confirmed report names what stopped its take-back in the save's own words, and no part of it says the save was recorded, was not recorded or that nothing was written (D164, D168, after verify-80). R42 also says that whether a save's head record was published is known from its rename, never inferred from a head record that may be unreadable, so a head record that cannot be read before its rename answers not recorded (D168, after verify-80; 26bc51e). R4 now says that only v1 as its bytes were verified is spared the exception check, so a changed v1 names its forbidden exceptions after the changed-table refusal, and is otherwise judged as the kind of table it says it is. It also says that every rule's matchers are built while the table is checked, so a pattern that cannot be used is named with the table's other faults (D168, after verify-81; 5f5bb2e). No other requirement changes: P15 asks less than R42 here, and R54 refers to R4 for what else a changed v1 breaks. The owner built these before this revision, and none is reviewed yet: T12's 26bc51e and 7fb3a23, and T03's 5f5bb2e. Revision 21 asks no question. At 7fb3a23 a save refused before any part of its line is in the log is told only that the step was refused, where R42 asks for not recorded. At 5f5bb2e an unusable pattern on a rule with another malformed field is still found only once that field is mended (Context). The design takes in verify-80 and verify-81 and D164 to D168. The changes are in this header, Context, Options considered, C1's table validation, C3, C5, the traceability table, Consequences, the perspective check, the case log contract, the workspace API, Failure modes, Migration, Rollout, Observability and Consumer trace items 17, 20, 23 and 24.\n\nRevision 20, 2026-11-20, after D163 (changes requested under the owner's standing approval of 2026-11-19, after T12's twenty-seventh review, verify-78, and T03's twenty-sixth, verify-79)."
+      },
+      {
+        "old": "- The lesson is revision 19's, closed: a check that reads a value has to test its type where it reads it, and a net behind every check catches only what no check names.",
+        "new": "- The lesson is revision 19's, closed: a check that reads a value has to test its type where it reads it, and a net behind every check catches only what no check names.\n\n**What the owner decided on revision 20** (D164, D165, D168, 2026-11-20)\n- D164 answered revision 20's question with its default: one answer per report. The take-back's refusal is worded for the save, naming what stopped it, and no part of a not-confirmed report says the save was or was not recorded. The owner built it in 7fb3a23 (next section).\n- D165 approved revision 20. D168 asks for three things and keeps everything else in revision 20. First, write D164 into R42: one answer per report; a not-confirmed report names what stopped its take-back in the save's own words, and no part of it, its causes included, says the save was or was not recorded or that nothing was written. Second, write into R42 that whether a save's head record was published is known from its rename, not inferred from a head record that may be unreadable, so a head record that cannot be read before its rename answers not recorded (26bc51e). Third, write into R4 that only the pinned v1, as its bytes were verified, skips the exception checks, so a changed v1 names its forbidden exceptions, and that every rule's matchers are built during validation, a pattern that cannot be used being named with the table's other faults (5f5bb2e). Revision 21 writes all of it.\n- Three readings. 'Its causes included' is read as the words of any refusal or error a report carries or is raised from, as 7fb3a23's test reads the whole exception chain (tests/test_case_log.py:2650). 'One answer per report' is read for every report a save's writer gets, so a not-recorded report says nothing of recorded or not confirmed either; no not-recorded report at 7fb3a23 does. And 'a changed v1 names its forbidden exceptions' is read as one more thing named after the changed-table refusal. Beyond the exception check, a changed v1 is judged as the kind of table it says it is, as 5f5bb2e builds. A copy that still calls itself frozen is not held to the stages, the category order and the other checks only the maintained lists need, which v1's own rules lack; a copy set to frozen: false is (tests/test_rules.py:217). R4 says so, and its 'every other table' now reads 'every table the system does not load as v1', since a changed v1 bears v1's id. v1 carries no exception and only the bank's code as an anchor (src/cma/rules/v1.yaml:13), so the check names only what a change adds.\n\n**What T12's twenty-eighth review showed** (verify-80; D164, D168, 2026-11-20)\n- verify-80, T12's twenty-eighth review, judged the owner's 1e35352 against revision 20 and failed P15 on two majors, the two items revision 20 named as open. First, a save whose take-back was refused because the case lock was replaced quoted the lock check's refusal, which ended 'nothing was written', though its line was in the log (src/cma/case.py:1103 there). The not-recorded reports at the head rename and in a short write were raised from the same refusal, so the same words stood in their exception chains (:1064 and :1040 there), and the whole-line test read only the outer report. Second, with every read of the head record failing, the re-check before the head rename stopped the rename, but _publish read the head record back to decide, found it unreadable and answered not confirmed (:1070 there). Five minors, four of them recurring: the producer claimed exit 0 with 'appending' for a held torn tail, where the contract test expects exit 4 and 'being saved'; owner-only access was claimed for `cma case check`, which relies on the case root's permissions (R31); the rapid-append test does not force the schedule claimed for it; and the claim's totals and diff-stat are stale (the runner shows 474 suite passes, 157 invariants and 10 dual-run). The new one: the claim said a missing head record is always named while the case lock is held, though with the gate and the case lock both busy the reader rightly claims nothing.\n- The owner built 26bc51e and then 7fb3a23, neither yet reviewed; the unblock is pending. In 26bc51e the lock check's refusal ends 'the step was refused', not 'nothing was written' (_require_lock_in_place, src/cma/case.py:807-811 at 7fb3a23), so no refusal a save's report is raised from says nothing was written. _write_head notes when its rename is done (:1009), and _publish answers not recorded unless that rename was made (:1076), never reading the head record back to decide. In 7fb3a23 a take-back that is not made is named in the save's own words: a head record no longer the save's own, a case lock file removed or replaced, or the operating-system error, named. Its refusal is neither quoted nor chained (:1106-1121), and every not-confirmed report now says that whether the save is in the log is not confirmed (:1080, :1120). Three tests mark it: no part of the report or its causes says nothing was written, after the whole line and with the take-back refused (tests/test_case_log.py:2601); a head record that cannot be read before its rename answers not recorded (:2631); and a not-confirmed report, with the case lock replaced or the head record another writer's, says nothing in its chain of recorded, not recorded or nothing written (:2650). All three are marked invariants but not named p15.\n- The first major reads R42's 'no part of what the save's writer is told' through the exception chain, which D168 writes into R42 as 'its causes included'. The second reads R42's 'unless the rename that publishes the save's head record was made' as a fact about the rename, which D168 also writes into R42.\n- Still open at 7fb3a23:\n  - A save refused before any part of its line is in the log reaches its caller as the lock check's own refusal, 'a case lock file was removed or replaced while this window held the case; the step was refused' (:810-811). That holds at the re-check that opens an append or a repair, at the empty head record's link, at the first write call and at a repair's log rename. The words name no answer, where R42 asks that a save not told recorded be reported as not recorded and C5 says the save was not recorded. Worded for the save, the refusal says that nothing was written and the save was not recorded, which is true there. T12 words it before its review.\n  - The D159 test still accepts either answer at every site (:2582).\n  - A failed staging write or fsync of a head record or a repaired log still leaves its temporary file (:993-998, :933-938).\n  - Nineteen tests added since review 20 are marked invariants but not named p15 (tests/test_case_log.py:2070-2650), which the project's gotcha asks for.\n- The lesson is revision 20's, one link further: a report says what its causes say, so every refusal a report can be raised from is worded as part of it.\n\n**What T03's twenty-seventh review showed** (verify-81; D168, 2026-11-20)\n- verify-81, T03's twenty-seventh review, judged the owner's 5139e22 against revision 20 and failed R4 on two majors. First, the exception checks were spared to any table loaded as v1 that called itself frozen, whatever its bytes: a copy of v1 that kept frozen: true and gained unless: FPS on its bank-charges rule was refused as changed, and the unless went unnamed (src/cma/categorise.py:390 there). Second, a pattern that compiles alone but not in the forms the matcher builds was found only once the table's other faults were mended: with cash_paid_in's names replaced by the pattern (?i)CASH DEPOSIT and unless: FPS on the explained non-trading rule, the refusal named the unless alone (:540 there). Four minors, three recurring: README.md:78 still says a profile name settles an ambiguous credit, the seventeenth review to find it; the producer claimed the rule-order shuffle for debits, which take the first matching rule by design (RENT PAYROLL); and the claim's compileall covers evals and tests, which the runner does not compile. The new one: the 10,000-line timing uses short descriptions, and credits each holding 100 repetitions of FPS | CASH DEPOSIT | STRIPE would make the longer-phrase filter compare hundreds of occurrences per line, which nothing times (:851 there).\n- The owner built 5f5bb2e, not yet reviewed; the unblock is pending. validate_ruleset is given the hash of the table's bytes. It spares the exception checks (an unless or a requires, a lookaround, an anchor but the bank's code) only for a table loaded as v1 that calls itself frozen and whose hash is the pinned one (src/cma/categorise.py:390-393, :449-474). The checks only the maintained lists need still pass over any table loaded as v1 that calls itself frozen (:475). Every rule whose fields are well typed has its matchers built while the table is checked, the way the loader builds them, and a pattern that cannot be used is named with the table's other faults (:544-557, with _well_typed_text and _build_matchers at :563-583). Two tests mark it, both marked contracts: a changed v1 whose added rule carries an unless, refused as changed and then naming the unless (tests/test_rules_v2.py:1999), and (?i)ACME named beside another rule's fault (:2016).\n- D168: write both into R4; revision 21 does that.\n- Still open at 5f5bb2e:\n  - The matchers are built only for a rule whose pattern, names and exceptions are all well typed (:549), and not for a rule that already has a named fault whose text holds the word compile, its id included (:552). So a rule whose pattern is (?i)CASH DEPOSIT and whose unless is a list has only the unless named, and the pattern is found once the unless is mended, which R4 rules out since revision 21. Building the forms of a pattern that is text, whatever the rule's other fields, and deciding the skip by the fault's kind, would close it.\n  - validate_ruleset given no hash takes a table that bears v1's id and calls itself frozen as verified (:393). The loader always passes the hash (:639, :704), so R4 holds for loading, but a caller that validates a changed v1 without its bytes spares its exceptions, as tests/test_rules.py:210 does for a schema-valid change.\n  - The refusal for a failure no check foresees, on any table but a changed v1, still names no rule (:729-731).\n  - README.md:78; RETURNED DD reversal linking, whose bank prefixes (:1064) still hold UNPAID DD but not RETURNED DD; the timing of reversal linking and of descriptions with many overlapping matches, which T22's timed recompute (R52) should include; and the exact candidates in the test at tests/test_rules_v2.py:1910.\n- The lesson is D153's, finished: a table is spared a check only by what the code verified, its bytes, never by what it says of itself; and a check finds a fault only if it builds what the loader builds."
+      },
+      {
+        "old": "credit_matches starts at :832, credit_verdict at :919 (with the bank's code at step 2 at :925) and _classify_credit at :986, and the reversal-linking prefixes are at :1024.",
+        "new": "credit_matches starts at :832, credit_verdict at :919 (with the bank's code at step 2 at :925) and _classify_credit at :986, and the reversal-linking prefixes are at :1024. At 5f5bb2e (the owner's review-27 fix, not yet reviewed) validate_ruleset is :384-561. It takes the hash of the table's bytes and spares the exception checks only for v1 as its bytes were verified (:390-393, :449-474), keeps the checks only the maintained lists need for every table but one loaded as v1 that calls itself frozen (:475-505, :508-517, :538-543), and builds every well-typed rule's matchers while it checks the table (:544-557, with _well_typed_text and _build_matchers at :563-583), which ruleset_from_data reuses (:638-656). load_ruleset is :707-737. credit_matches starts at :872, credit_verdict at :959 (with the bank's code at step 2 at :965) and _classify_credit at :1026, and the reversal-linking prefixes are at :1064."
+      },
+      {
+        "old": "The take-back still quotes its refusal in its not-confirmed report (:1100-1104). The integration branch (c7469e8) has no case log and no profile names yet.",
+        "new": "The take-back still quotes its refusal in its not-confirmed report (:1100-1104). At 7fb3a23 (the owner's review-28 fix, 26bc51e, and D164's wording, neither yet reviewed) the lock check's refusal ends 'the step was refused' (_require_lock_in_place, :794-811). _write_head notes when its rename is done (:1009), and _publish (:1055-1122) answers not recorded unless that rename was made (:1071-1081). It names a take-back that is not made in the save's own words, neither quoting nor chaining its refusal (:1106-1121). The integration branch (cb1999d) has no case log and no profile names yet."
+      },
+      {
+        "old": "**Sub-decision: which table is spared the table checks (revision 18, after verify-75; D153, in R4 since revision 18).**",
+        "new": "**Sub-decision: which table is spared the table checks (revision 18, after verify-75; D153, in R4 since revision 18; the exception check by its bytes, D168, in R4 since revision 21).**"
+      },
+      {
+        "old": "What (i) costs: a changed copy of v1 is refused naming the table and its hash, not a rule, which R4 states; nothing loads from it, and reinstalling the package restores it. No shipped table moves.",
+        "new": "What (i) costs: a changed copy of v1 is refused naming the table and its hash, not a rule, which R4 states; nothing loads from it, and reinstalling the package restores it. No shipped table moves. *The exception check by its bytes* (revision 21, after verify-81; D168): at 5139e22 a table loaded as v1 that called itself frozen skipped the exception check whatever its bytes, so a changed v1 that gained an unless was refused as changed with its unless unnamed. 5f5bb2e spares the exception check only for v1 as its bytes were verified, so a changed v1 names each rule that carries an exception after the changed-table refusal. (ii)'s cost stays avoided: a copy that still calls itself frozen is not held to the stages, the category order and the other checks only the maintained lists need, which v1's own rules lack. v1 carries no exception and only the bank's code as an anchor, so the check names only what a change adds."
+      },
+      {
+        "old": "The same revision asks the validator to survive every value the format can hold: a value the format does not allow in a rule's field is named by rule, beside the table's other faults, never raised as a type error (R4 since revision 19).",
+        "new": "The same revision asks the validator to survive every value the format can hold: a value the format does not allow in a rule's field is named by rule, beside the table's other faults, never raised as a type error (R4 since revision 19). Revision 21 asks the same of a pattern that compiles alone but cannot be used in a form the matcher builds from it: every rule's matchers are built while the table is checked, so such a pattern is named beside the table's other faults, never found once they are mended (D168, after verify-81; 5f5bb2e)."
+      },
+      {
+        "old": "the reads a save makes only to check, D159, in R42 since revision 20, D163).**",
+        "new": "the reads a save makes only to check, D159, in R42 since revision 20, D163; the answer known from the rename, D168, in R42 since revision 21).**"
+      },
+      {
+        "old": "What (a) costs: T12 carries the error out of six reads before its review. (b) costs no build change and leaves a disk error answered as somebody else's save.",
+        "new": "What (a) costs: T12 carries the error out of six reads before its review. (b) costs no build change and leaves a disk error answered as somebody else's save. *Known from the rename* (revision 21, after verify-80; D168): (i) tells the two answers apart by where the failure falls, before or after the head record's rename. 7c8fba2 decided it by reading the head record back, and when that read failed too, as when the re-check before the rename failed for that very reason, it answered not confirmed though no rename was made (verify-80). Since 26bc51e the save notes when its rename is done and answers from that, never from a head record it may not be able to read, as R42 says since revision 21."
+      },
+      {
+        "old": "A repair refused before that rename leaves the case's files as they were, and 'nothing was written' is true of it.",
+        "new": "A repair refused before that rename leaves the case's files as they were, and 'nothing was written' is true of it. Revision 21 carries (i) into the report's causes: the words of any refusal or error a report is raised from are part of it (D168, after verify-80). 26bc51e words the lock check's own refusal as the step refused, so no cause a save carries says nothing was written; a save refused before any part of its line is in the log should still be told it was not recorded (Context, T12's twenty-eighth review)."
+      },
+      {
+        "old": "**Sub-decision: what a not-confirmed report may quote (revision 20, after the owner's 1e35352; asked).**",
+        "new": "**Sub-decision: what a not-confirmed report may quote (revision 20, after the owner's 1e35352; D164, in R42 since revision 21, D168).**"
+      },
+      {
+        "old": "*Chose (i)* as the default. A person who reads",
+        "new": "*Chose (i)*, the owner's answer (D164), which R42 says since revision 21 (D168) and 7fb3a23 builds. A person who reads"
+      },
+      {
+        "old": "and its test at tests/test_case_log.py:2401 asserts the words as well as the class.",
+        "new": "and its test at tests/test_case_log.py:2401 asserts the words as well as the class. D168 adds the report's causes: 7fb3a23 neither quotes nor chains the take-back's refusal, and 26bc51e words the lock check's own refusal as the step refused, so no refusal or error a save's report carries says nothing was written (tests/test_case_log.py:2601, :2650)."
+      },
+      {
+        "old": "*Table validation* (revision 6; revision 10, D94, D96, D97; revision 11, D110; revision 13, D115-D121; revision 14, D126; revision 15, D136; revision 16, D137):",
+        "new": "*Table validation* (revision 6; revision 10, D94, D96, D97; revision 11, D110; revision 13, D115-D121; revision 14, D126; revision 15, D136; revision 16, D137; revision 21, D168):"
+      },
+      {
+        "old": "Only the frozen v1 table is spared these checks (R4 since revision 18, D153, after verify-75; 9042fb4).",
+        "new": "Only the frozen v1 table is spared these checks (R4 since revision 18, D153, after verify-75; 9042fb4), and the seventh to ninth, the exception checks, only as its bytes were verified (R4 since revision 21, D168, after verify-81; 5f5bb2e)."
+      },
+      {
+        "old": "Every other table, whether or not it calls itself frozen, gets every check and is refused naming the rule. A failure that no check foresees is still refused, but at 5139e22 its refusal names no rule (src/cma/categorise.py:689-691).",
+        "new": "A changed v1 names, after the changed-table refusal, each of its rules that carries an exception. Beyond that it is judged as the kind of table it says it is: a copy that still calls itself frozen is not held to the checks only the maintained lists need (stages, the category order, rule ids and the v2 pattern forms), which v1's own rules lack, and a copy set to frozen: false gets them all (R4 since revision 21). Every table not loaded as v1, whether or not it calls itself frozen, gets every check and is refused naming the rule. Every rule's matchers, in every form the matcher uses, are built while the table is checked, so a pattern that compiles alone but cannot be used is named with the table's other faults, whatever else its rule carries, never found once they are mended (R4 since revision 21, D168, after verify-81; 5f5bb2e, which still skips the build for a rule with another malformed field, Context). A failure that no check foresees is still refused, but at 5f5bb2e its refusal names no rule (src/cma/categorise.py:729-731)."
+      },
+      {
+        "old": "If either was removed or replaced, the writer refuses the step. Refused before the line, it writes nothing of its entry.",
+        "new": "If either was removed or replaced, the writer refuses the step. Refused before the line, it writes nothing of its entry and says the save was not recorded, as R42 asks of every save not told recorded; at 7fb3a23 that refusal says only that the step was refused (Context, T12's twenty-eighth review)."
+      },
+      {
+        "old": "That report names what stopped the take-back in the save's own words. Since revision 20 no part of it says nothing was written, and under the revision 20 default no part says the save was or was not recorded (Options considered). At 1e35352 it quotes the refusal, which can say either (src/cma/case.py:1100-1104).",
+        "new": "That report names what stopped the take-back in the save's own words: the head record no longer the save's own, a lock file removed or replaced, or the operating-system error, named. It never quotes the take-back's refusal, and no part of it, its causes included, says the save was recorded, was not recorded or that nothing was written (D164; R42 since revision 21, D168; 7fb3a23, which neither quotes nor chains the refusal, src/cma/case.py:1106-1121)."
+      },
+      {
+        "old": "When the head record's publication fails before its rename and the head record then cannot be read, 1e35352 still answers not confirmed though no rename was made (src/cma/case.py:1065-1075), where R42 asks for not recorded.",
+        "new": "Since revision 21 R42 says that whether the head record's rename was made is known from the rename, never inferred from reading the head record back (D168, after verify-80): a head record that cannot be read in the re-check before its rename stops the rename, and the save answers not recorded. 26bc51e builds it: the save notes when its rename is done and answers from that (src/cma/case.py:1009, :1076 at 7fb3a23). At 1e35352 such a save answered not confirmed."
+      },
+      {
+        "old": "one whose head record was not then taken back says that whether the save was recorded is not confirmed, and asks the underwriter to check the case before saving again (R42 since revision 17, D143). A save that met an operating-system error names it and says that the save was not recorded or, when its head record was published and not taken back, that whether it was recorded is not confirmed (R42 since revision 18, D153; one rule since revision 19, D158).",
+        "new": "one whose head record was not then taken back says that whether the save is in the log is not confirmed, names what stopped the take-back, and asks the underwriter to check the case before saving again (R42 since revision 17, D143); no part of that message, nor any error it carries, says the save was recorded, was not recorded or that nothing was written (R42 since revision 21, D164, D168). A save that met an operating-system error names it and says that the save was not recorded or, when its head record was published and not taken back, that whether it is in the log is not confirmed (R42 since revision 18, D153; one rule since revision 19, D158)."
+      },
+      {
+        "old": "rule tables and their validation, which only the pinned frozen v1 table is spared, judged by its bytes first, and which names a malformed value by rule) |",
+        "new": "rule tables and their validation, whose exception checks only the pinned frozen v1 table, as its bytes were verified, is spared, judged by its bytes first, which names a malformed value by rule, and which builds every rule's matchers, naming a pattern that cannot be used with the other faults) |"
+      },
+      {
+        "old": "no report saying nothing was written once the line is in the log, a check that cannot read",
+        "new": "no report saying nothing was written once the line is in the log, one answer per report, its causes included, with a not-confirmed report naming what stopped its take-back in the save's own words, the head record's publication known from its rename, a check that cannot read"
+      },
+      {
+        "old": "apart from the words a not-confirmed report quotes, which revision 20 asks about.",
+        "new": "apart from the words a not-confirmed report quotes, which revision 20 asks about. Since revision 21 R42 says that each report gives one answer, its causes included, and that whether a head record was published is known from its rename, and R4 that a changed v1 names its exceptions and that every rule's matchers are built while the table is checked (D168). So both tasks are judged on text that says what 26bc51e, 7fb3a23 and 5f5bb2e build, apart from the refusal before any part of a save's line, which 26bc51e words as a refused step, and an unusable pattern beside another malformed field, which 5f5bb2e does not yet name."
+      },
+      {
+        "old": "Since D163 that holds whatever else a malformed rule carries and whatever a change to v1 makes fail.",
+        "new": "Since D163 that holds whatever else a malformed rule carries and whatever a change to v1 makes fail. Since D168 a changed v1 names the exceptions it gained, and a pattern that cannot be used is named with the table's other faults."
+      },
+      {
+        "old": "A save that cannot read what it checks names the error, never another window's save or a removed lock file (D159, D163).",
+        "new": "A save that cannot read what it checks names the error, never another window's save or a removed lock file (D159, D163). Since revision 21 each report gives one answer, its causes included, so a person told a save is not confirmed is never also told it was or was not recorded, and a save whose head record cannot be read before its rename is told it was not recorded, never not confirmed (D164, D168)."
+      },
+      {
+        "old": "T03 has used its attempts; verify-79 failed 7cb2e71 on the type-error path revision 19 named, the owner's review-26 fix (5139e22) waits for its review, and D162 is pending (D64, D70-D72, D78, D86, D94, D96, D97, D100, D110, D115, D117, D119, D121, D123, D126, D132, D136, D137, D141). T12 has used its attempts too; verify-78 failed 51c8b68, the owner's review-27 fix (de6a56e) and D159's reads (1e35352) wait for their review, and D161 is pending. Revision 20 asks one question about the words a not-confirmed report may quote. Still open are the take-back's quoted 'nothing was written', the not-confirmed answer where no rename was made, the temporary files failed staging writes leave and the p15 test names (D63, D69, D73, D80, D85, D87, D89, D93, D95, D98, D105, D107, D114, D116, D118, D120, D122, D124, D125, D136, D141).",
+        "new": "T03 has used its attempts; verify-81 failed 5139e22 on the exception check a changed v1 skipped and on an unusable pattern found only once other faults were mended, the owner's review-27 fix (5f5bb2e) waits for its review, and its unblock is pending (D64, D70-D72, D78, D86, D94, D96, D97, D100, D110, D115, D117, D119, D121, D123, D126, D132, D136, D137, D141, D168). T12 has used its attempts too; verify-80 failed 1e35352 on the two items revision 20 named, the owner's review-28 fix (26bc51e) and D164's wording (7fb3a23) wait for their review, and its unblock is pending. Revision 21 asks no question. Still open in T12 are a save refused before any part of its line, which is told only that the step was refused, the temporary files failed staging writes leave and the p15 test names; in T03, an unusable pattern on a rule with another malformed field (D63, D69, D73, D80, D85, D87, D89, D93, D95, D98, D105, D107, D114, D116, D118, D120, D122, D124, D125, D136, D141, D164, D168)."
+      },
+      {
+        "old": "Revision 20 writes D159 and D163 into R4, R42 and P15, which de6a56e, 1e35352 and 5139e22 build; its default asks T12 to word two refusals for the take-back, and it adds no component.",
+        "new": "Revision 20 writes D159 and D163 into R4, R42 and P15, which de6a56e, 1e35352 and 5139e22 build; its default asks T12 to word two refusals for the take-back, and it adds no component. Revision 21 writes D164 and D168 into R4 and R42, which 26bc51e, 7fb3a23 and 5f5bb2e build; it asks T12 to word one refusal for the save and T03 to build a pattern's forms beside a malformed field, and it adds no component."
+      },
+      {
+        "old": "and v1's bytes are compared before anything else in it is checked (revision 19).",
+        "new": "and v1's bytes are compared before anything else in it is checked (revision 19); only v1's pinned bytes spare it the exception check, and a changed v1 is otherwise judged as the kind of table it says it is (revision 21)."
+      },
+      {
+        "old": "A save refused partway through its line is not recorded, never nothing written (revision 19).",
+        "new": "A save refused partway through its line is not recorded, never nothing written (revision 19). Each report gives one answer, its causes included: a save not confirmed is never also told it was or was not recorded, and whether its head record was published is known from the rename, not from reading the head record back (revision 21)."
+      },
+      {
+        "old": "and revision 20's default that a not-confirmed report gives one answer and quotes no other.",
+        "new": "D164's not-confirmed report, which gives one answer and quotes no other, and revision 21's reading that a changed v1 still calling itself frozen is not held to the checks only the maintained lists need."
+      },
+      {
+        "old": "and a changed v1 with such a rule refused as changed (5139e22 has both);",
+        "new": "and a changed v1 with such a rule refused as changed (5139e22 has both); since D168, a changed v1 that names an exception it gained and a pattern that compiles alone but cannot be used named beside another rule's fault (5f5bb2e has both), and, still to build, such a pattern named beside a malformed field of its own rule;"
+      },
+      {
+        "old": "They should also include a take-back stopped by a replaced lock file, whose not-confirmed report never says nothing was written. Under the revision 20 default they should include one stopped by a head record no longer the save's own, whose report never says the save was not recorded.",
+        "new": "Since revision 21 they include a take-back stopped by a replaced lock file or by a head record no longer the save's own, whose not-confirmed report, causes included, never says the save was or was not recorded or that nothing was written; a lock lost after the whole line whose causes never say nothing was written; and a head record that cannot be read before its rename, answering not recorded (26bc51e and 7fb3a23; none named p15 yet). They should also include a save refused before any part of its line, whose report says it was not recorded."
+      },
+      {
+        "old": "**Case log contract** (revisions 5 to 19;",
+        "new": "**Case log contract** (revisions 5 to 21;"
+      },
+      {
+        "old": "in any part of its report (revisions 10 to 13, 15, 19 and 20; D108, D124, D136, D158, D163).",
+        "new": "in any part of its report (revisions 10 to 13, 15, 19 and 20; D108, D124, D136, D158, D163). Refused before any part of the line is in the log, it writes nothing of its entry and says the save was not recorded."
+      },
+      {
+        "old": "and a lock file missing when examined was removed (R42 since revision 20).",
+        "new": "and a lock file missing when examined was removed (R42 since revision 20). Whether its head record's rename was made is known from the rename, never read back from a head record that may be unreadable, so a head record that cannot be read before its rename answers not recorded. Each report gives one answer, its causes included: no part of a not-recorded report says the save was recorded or is not confirmed, and a not-confirmed report names what stopped its take-back in the save's own words, and no part of it says the save was or was not recorded or that nothing was written (R42 since revision 21; D164, D168)."
+      },
+      {
+        "old": "and a write whose own check could not read names that error (R42 since revision 20).",
+        "new": "and a write whose own check could not read names that error (R42 since revision 20). Each report gives one answer: a not-confirmed report names what stopped the take-back and says only that whether the write is in the log is not confirmed, never that it was or was not recorded (R42 since revision 21)."
+      },
+      {
+        "old": "gives the changed-table refusal whatever the change makes fail (D163; R4 since revision 20; verify-79) | R4, R54 |",
+        "new": "gives the changed-table refusal whatever the change makes fail (D163; R4 since revision 20; verify-79). A changed v1 is not spared the exception check: with unless: FPS added to a rule of a copy that keeps frozen: true, the refusal names that unless after the changed-table refusal (D168; R4 since revision 21; 5f5bb2e). At 5139e22 the unless went unnamed (verify-81) | R4, R54 |"
+      },
+      {
+        "old": "but names no rule (:689-691) | R4 |",
+        "new": "but names no rule (:729-731 at 5f5bb2e) | R4 |"
+      },
+      {
+        "old": "it never loads and then fails on the first credit it matches (D94) | R4 |",
+        "new": "it never loads and then fails on the first credit it matches (D94). Since revision 21 such a pattern is named with the table's other faults, never found only once they are mended: every rule's matchers are built while the table is checked (D168, after verify-81, which wrote (?i)CASH DEPOSIT on cash_paid_in beside unless: FPS on another rule; 5f5bb2e). At 5f5bb2e the build is still skipped for a rule with another malformed field (Context) | R4 |"
+      },
+      {
+        "old": "Before the line, nothing is written ('a case lock file was removed or replaced while this window held the case; nothing was written').",
+        "new": "Before any part of the line is in the log, nothing of the entry is written and the save is to be reported as not recorded (R42); at 7fb3a23 that refusal reads only 'a case lock file was removed or replaced while this window held the case; the step was refused' (26bc51e), which T12 words for the save before its review."
+      },
+      {
+        "old": "which de6a56e words at the head rename as 'its entry was written', after verify-78).",
+        "new": "which de6a56e words at the head rename as 'its entry was written', after verify-78; since revision 21 no cause the report carries says it either, which 26bc51e builds, after verify-80)."
+      },
+      {
+        "old": "Since revision 20 no part of the report says nothing was written, and under the revision 20 default no part says the save was or was not recorded. At 1e35352 it quotes the refusal that stopped the take-back: 'nothing was written' when a lock file was replaced, and 'the save was not recorded' when the head record is no longer the save's own (src/cma/case.py:1100-1104). T12 words both for the save before its review | R42, P15 |",
+        "new": "Since revision 21 the report names what stopped the take-back in the save's own words, and no part of it, its causes included, says the save was or was not recorded or that nothing was written (D164, D168; 7fb3a23, src/cma/case.py:1106-1121). At 1e35352 it quoted the refusal: 'nothing was written' when a lock file was replaced, and 'the save was not recorded' when the head record was no longer the save's own (verify-80) | R42, P15 |"
+      },
+      {
+        "old": "At 1e35352 _publish tells the answers apart by reading the head record back without raising. When it cannot read it or finds another writer's, it answers not confirmed, saying the head record could not be made durable (src/cma/case.py:1065-1075). T12 tells them apart by where the error was raised before its review | R42 |",
+        "new": "Whether the rename was made is known from the rename, never read back (R42 since revision 21, D168; 26bc51e, src/cma/case.py:1009, :1076). At 1e35352 _publish read the head record back to decide, and when it could not read it or found another writer's, it answered not confirmed, saying the head record could not be made durable (verify-80) | R42 |"
+      },
+      {
+        "old": "Under the revision 20 default T12 words two refusals for the take-back, which changes only what the caller is told.",
+        "new": "Under the revision 20 default T12 words two refusals for the take-back, which changes only what the caller is told.\n- Requirements (revision 21, D168): R4 and R42 say what D164 and D168 decided and 26bc51e, 7fb3a23 and 5f5bb2e build, so no log format, stored data, table or committed figure changes. The shipped v1 matches its pin and carries no exception, and every shipped rule's matchers build, so neither the exception check on a changed v1 nor the matchers built while a table is checked moves a shipped verdict. Wording a save refused before its line as not recorded changes only what the caller is told."
+      },
+      {
+        "old": "the table-edit cases from verify-50 to verify-79, a table that calls itself frozen, a changed v1 and a malformed pattern, on a bank-code rule too, among them;",
+        "new": "the table-edit cases from verify-50 to verify-81, a table that calls itself frozen, a changed v1, one that gained an exception among them, a malformed pattern, on a bank-code rule too, and a pattern that compiles alone but cannot be used, among them;"
+      },
+      {
+        "old": "(revisions 5 to 20):** `cma case check`",
+        "new": "(revisions 5 to 21):** `cma case check`"
+      },
+      {
+        "old": "followed by 'nothing was written' or, once any part of the line is written,",
+        "new": "followed by 'nothing was written' and that the save was not recorded or, once any part of the line is written,"
+      },
+      {
+        "old": "A save whose head record was not taken back after a failed read-back says that whether it was recorded is not confirmed, and asks for the case log to be checked before anything else is saved (R42 since revision 17, D143). A save the file system failed names the error and says the save was not recorded or, when its head record was published and not taken back, that whether it was recorded is not confirmed (R42 since revision 18; one rule since revision 19).",
+        "new": "A save whose head record was not taken back after a failed read-back says that whether the save is in the log is not confirmed, names what stopped the take-back in its own words, and asks for the case log to be checked before anything else is saved (R42 since revision 17, D143; one answer since revision 21, D168). A save the file system failed names the error and says the save was not recorded or, when its head record was published and not taken back, that whether it is in the log is not confirmed (R42 since revision 18; one rule since revision 19). No message, and no error it carries, gives a second answer (revision 21)."
+      },
+      {
+        "old": "Each worktree sits under .bridgie/worktrees but is a checkout of its task branch;",
+        "new": "- For revision 21, item 20 was searched again in the T12 worktree (branch at 7fb3a23), with in_place and SaveNotConfirmed in its pattern, over src, tests and evals, and item 23 in the T03 worktree (branch at 5f5bb2e), with FROZEN_SHA256 searched beside it for item 24, over the worktree with .bridgie/ excluded, both with the owner, using ripgrep through the Grep tool. The code cited in Context was read at 7fb3a23 and 5f5bb2e in the worktrees, and the owner's commits 26bc51e, 7fb3a23 and 5f5bb2e through git show; the branches' reflogs name them as the owner's latest. The patterns in items 17, 20 and 23 were also searched from the repository root at cb1999d on the integration branch, over src, tests and evals, together with SaveNotConfirmed, SaveNotRecorded, _one_save, _os_errors_as_not_recorded, _log_digest, raise_os, _head_renamed, _has_anchor, _has_lookaround, _rail_and_cash, _is_bank_code_text, _parse_table, _build_matchers and _well_typed_text. Items 17 and 23 find nothing and item 20 finds the same test name. git diff --stat from c7469e8 to cb1999d over src, tests, evals, examples and README.md shows no change, so FROZEN_SHA256 finds there what item 24 lists for c7469e8.\nEach worktree sits under .bridgie/worktrees but is a checkout of its task branch;"
+      },
+      {
+        "old": "at 1b4b394 for revision 19 or at c7469e8 for revision 20. No judgement queue",
+        "new": "at 1b4b394 for revision 19, at c7469e8 for revision 20 or at cb1999d for revision 21. No judgement queue"
+      },
+      {
+        "old": "Its tests are tests/test_case_log.py:2532 and :2551, marked invariants but not named p15. The take-back still quotes its refusal (:1100-1104).",
+        "new": "Its tests are tests/test_case_log.py:2532 and :2551, marked invariants but not named p15. The take-back still quotes its refusal (:1100-1104). At 7fb3a23 (the owner's review-28 fix, 26bc51e, and D164's wording, neither yet reviewed) the same pattern with in_place and SaveNotConfirmed finds 430 matches in the same three files (src/cma/case.py 124, src/cma/cli.py 4, tests/test_case_log.py 302). The lock check's refusal ends 'the step was refused' (:807-811). _write_head notes when its rename is done (:1009), and _publish (:1055-1122) answers not recorded unless that rename was made (:1076) and names a take-back that is not made in the save's own words, neither quoting nor chaining its refusal (:1106-1121). Its tests are tests/test_case_log.py:2601, :2631 and :2650, marked invariants but not named p15."
+      },
+      {
+        "old": "at 1b4b394 for revision 19 and at c7469e8 for revision 20, this pattern finds only",
+        "new": "at 1b4b394 for revision 19, at c7469e8 for revision 20 and at cb1999d for revision 21, this pattern finds only"
+      },
+      {
+        "old": "and a save's own reads name their error (D159, D163). Sign-off",
+        "new": "and a save's own reads name their error (D159, D163). Since revision 21 each report gives one answer, its causes included, and whether a save's head record was published is known from its rename (D164, D168). Sign-off"
+      },
+      {
+        "old": "revision 18, D153; revision 19, D158).** On the T03 branch",
+        "new": "revision 18, D153; revision 19, D158; revision 21, D168).** On the T03 branch"
+      },
+      {
+        "old": "Its tests are tests/test_rules_v2.py:1970 and :1982.",
+        "new": "Its tests are tests/test_rules_v2.py:1970 and :1982. At 5f5bb2e (the owner's review-27 fix, not yet reviewed) the same pattern finds 62 matches in the same three files (src/cma/categorise.py 35, src/cma/rules/v2.yaml 1, tests/test_rules_v2.py 26). validate_ruleset is :384-561. It takes the hash of the table's bytes and spares the exception checks only for v1 as its bytes were verified (:390-393, :449-474; D168, R4 since revision 21), and builds every well-typed rule's matchers while it checks the table (:544-557, with _well_typed_text and _build_matchers at :563-583), which ruleset_from_data reuses (:638-656); the bank's code at step 2 is :965. Its tests are tests/test_rules_v2.py:1999 and :2016."
+      },
+      {
+        "old": "compared first, revision 19, D158).**",
+        "new": "compared first, revision 19, D158; the exception check by its bytes, revision 21, D168).**"
+      },
+      {
+        "old": "On the integration branch at c7469e8 it finds the lines above and the same comment. Effect: the pin's value does not change. It now also decides which table skips the checks of the maintained lists, so a table that calls itself frozen under another id is checked rule by rule, and a changed copy of v1 is refused before any rule is used, as before.",
+        "new": "On the integration branch at c7469e8 it finds the lines above and the same comment, and cb1999d is as c7469e8. At 5f5bb2e the same search finds the same tests and comment, and src/cma/categorise.py:11, :111, :390, :393 and :721: :393 is new and spares the exception checks only where the table's hash is the pinned one (D168), and :721 is the comparison, still made before the table is parsed. Effect: the pin's value does not change. It now also decides which table skips the checks of the maintained lists, so a table that calls itself frozen under another id is checked rule by rule, and a changed copy of v1 is refused before any rule is used, as before; since revision 21 it also decides which table skips the exception checks, which only v1's pinned bytes do."
+      }
+    ]
+  }
+}
+```

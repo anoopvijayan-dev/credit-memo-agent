@@ -1,0 +1,60 @@
+{
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed 33cfac2 against requirements.md:249. Canonical encoding, hash-chain validation, head comparison and first-bad-entry reporting are in src/cma/case.py:177–352. Reader lock validation and retries are in src/cma/case.py:447–672. The holder retry at src/cma/case.py:546–552 bypasses the gate, and the sign-off guard at src/cma/case.py:726 consumes that result. Writer exclusion, inherited-handle refusal, nested saves, expected positions, repair and take-back are in src/cma/case.py:757–1286. The production CLI reaches verification at src/cma/cli.py:309–338. Runner logs confirm the named changed, removed, reordered, rebuilt-chain and torn-tail tests, plus duplicate-submit, partial-failure and CLI contract tests. Traced concurrent updates, empty and malformed inputs, Unicode, UTC timestamps, filesystem permissions, case-folder isolation and consumers. P15 introduces no currency arithmetic or migration. The sign-off guard has no production sign-off caller in this checkout.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 546,
+      "criterion": "P15",
+      "claim": "After detecting that the gate changed during a holder's read, verify accepts a retry that never goes through or checks the current gate. P15 requires the holder to retry as a non-holder and validate the lock files that retry relies on. require_intact can accept the resulting unchecked read as a whole-log decision.",
+      "repro": "Start with an intact log and call require_intact inside writer(). In the first _read_log call, replace the gate while leaving the case lock unchanged. In the second _read_log call, replace the gate again while leaving the case lock unchanged. require_intact returns the head after two reads because the retry only checks the case lock. The new prior-review regression replaces the gate before verify starts and does not cover replacement during the retry."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 330,
+      "criterion": "P15",
+      "claim": "The producer's exit-code claim says a held case with a torn tail exits 0 and prints 'appending'. The passing contract asserts exit 4 and a 'being saved' message.",
+      "repro": "Compare contracts-4.log with the assertions in tests/test_case_log.py:1340 and the in-progress branch in src/cma/cli.py:330."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 369,
+      "criterion": "P15",
+      "claim": "The producer claims that deleting the head while another writer holds the case still names entry 1. The current held-reader path claims no entry when the recorded count is unknown.",
+      "repro": "Create a nonempty log, keep its writer lock held in another thread with the gate free, delete log.jsonl.head, and verify from a separate CaseLog. _check returns a missing-head result with recorded=None, which _held_result converts into an unchecked result with first_bad=None."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 318,
+      "criterion": "P15",
+      "claim": "The producer's authorization claim implies case-root ownership is enforced. The CLI accepts any supplied directory and relies on filesystem access. The owner-mode test covers newly created files and does not establish an ownership check on an existing folder.",
+      "repro": "Supply a case directory owned by another OS user that is traversable and whose existing log, head and lock files are readable. The command verifies that log because its only folder check is is_dir()."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 1,
+      "criterion": "P15",
+      "claim": "The producer's cited counts and source diff are stale. The current runner reports 512 full-suite, 195 invariant, 13 contract and 10 dual-run passes. The named tests in the submitted claims are present in the configured runner logs.",
+      "repro": "Compare the summaries in specified-3.log, invariants-5.log, contracts-4.log and dual_run-7.log with claim.json. Run the read-only git diff --stat 576e43d..HEAD -- src command from the claim to see 1,481 insertions across two source files."
+    }
+  ],
+  "verdict": "fail",
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

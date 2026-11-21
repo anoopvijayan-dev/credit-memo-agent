@@ -1,0 +1,70 @@
+```json
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest spans and returned-payment priority through src/cma/categorise.py:717,739,797, ambiguity and decision authority through :807,827,864,989, and CLI provenance through src/cma/graph.py:221,250 and src/cma/cli.py:229. Runner logs show the named per-list, precedence, override, CLI evidence, replay, rollback and both offline eval tests passed. Reviewed repeat categorisation, concurrent and case-local inputs, sign and Unicode boundaries, amount and date handling, partial output, authority to settle ambiguity, evidence consumers and rollback. A validated cash-list exception still defeats R4 by dropping cash wording before the ambiguity check.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 625,
+      "criterion": "R4",
+      "claim": "A valid maintained-table edit can suppress independently listed cash wording before the ambiguity check, causing an electronic credit with cash paid-in wording to enter trading receipts.",
+      "repro": "Add `unless: FPS` to `cash_paid_in` in v2.yaml and classify a positive credit described as `FPS CASH DEPOSIT STRIPE`. The exception passes validation and removes the cash match before span filtering. The surviving rail has no bucket, so the Stripe rule returns `revenue_card_settlement`. R4 requires unexplained money in with the rail, cash and gateway candidates. The runner's overlap regression covers a longer rail phrase and leaves this side-condition path untested."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 399,
+      "criterion": "R4",
+      "claim": "The malformed-table diagnostic claim exceeds its proof. An unhashable rule id escapes validation as a raw TypeError.",
+      "repro": "Change `id: cash_paid_in` to `id: [cash_paid_in]` in v2.yaml and start `CMA_RULESET=v2 cma run`. The string check accumulates a diagnostic, then the reserved-id membership check raises `TypeError: unhashable type: 'list'` before validation can report it."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 833,
+      "criterion": "R4",
+      "claim": "The producer's whole-statement order-independence claim extends beyond the corpus exercised by the passing shuffle test. Protected debit rules in one stage still use first-match order.",
+      "repro": "Categorise a debit described as `IWOCA OWNER DRAWINGS` under v2. It is `loan_repayment`. Move `owner_drawings` immediately before `lender_repayment`, keeping it within the protected names stage. The table still validates and the same debit becomes `owner_drawings`."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README documents profile names as resolving ambiguous credits and omits cheque wording from the payment-method conflict description.",
+      "repro": "Classify `FPS CASH DEPOSIT JANE DOE` with Jane Doe as a profile director. The result stays unexplained and adds `profile:director` as a candidate. Classify `CHEQUE CASH DEPOSIT` and the cheque also produces an ambiguity."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 205,
+      "criterion": "R4",
+      "claim": "The claim that every evidence record proves which rule set each line's category is broader than the replay contract. A legacy line can have a null rule id.",
+      "repro": "Pass `evidence_record` a pre-provenance checkpoint with a saved category, a missing line rule id and a recorded hash different from the installed ruleset hash. The evidence line contains `rule_id: null`. The passing T02 replay test explicitly exercises this behavior."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 850,
+      "criterion": "R4",
+      "claim": "The runner proves the two-second categorisation assertion for its 10,000-line fixture. A general 10,000-line performance guarantee remains unproven.",
+      "repro": "Run `python -m pytest -v tests/test_rules_v2.py -k 10000_lines` to reproduce the fixture result. To prove the broader recompute claim, a runner test would need to time the full override-to-results path through figures, indicators and policy on a representative office laptop."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```

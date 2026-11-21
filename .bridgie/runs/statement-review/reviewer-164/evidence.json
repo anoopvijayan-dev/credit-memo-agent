@@ -1,0 +1,94 @@
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to the eight buckets. src/cma/metrics.py:483 and :561 build M17 and the bucket evidence in pence, with M18 inside M2. src/cma/graph.py:308 and src/cma/mcp_server.py:98 call the same computation. The invariant and MCP contract tests ran and passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:86 checks exact penny round-tripping. src/cma/metrics.py:512 handles an unreportable M3. src/cma/graph.py:175 and src/cma/cli.py:415 display pennies, and src/cma/metrics.py:594 retains whole-pound prompt figures. The contract log confirms the previous amount-limit versus surplus-cell defect is fixed. An unreadable later field in the same Monzo record still prevents the importer from checking its GBP amount first.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks both the penny difference and the credit ID counts before returning figures. src/cma/cli.py:117 exits 6 with the escaped diagnostic. The CLI and MCP refusal contracts ran and passed.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/models.py:66 places OTHER in unexplained money in, outside the revenue categories at :69. The v1 and v2 unmatched-payer invariants ran and passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 counts appearances by credit ID and compares exact totals. M18 is emitted separately at :564. The synthetic, random and large-value partition invariants at tests/test_money_in.py:92 and :248 ran and passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For T04's figures, src/cma/metrics.py:377 preserves M5 and M6 evidence, :419 identifies partially counted M9 credits, :537 gives the signed evidence for outflows, and :571 cites M26's denominator lines. The sum, outflow and M9 invariant tests ran and passed, and dual_run-7.log confirms the prior-release evidence comparisons ran and passed. Monthly-cell P2 coverage is assigned to T06 in .bridgie/specs/statement-review/tasks.json:73.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:353 and :483 keep default-category credits out of M2 and put them in M25. tests/test_money_in.py:137 and :148 ran and passed for default credits and an explicit unknown payer under both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 196,
+      "criterion": "R2",
+      "claim": "The CSV reader consumes the entire Monzo record before exposing currency or amount. An oversized field after those columns hides the amount's own limit violation and the money-in limit in the same record. The surplus-cell regression test uses a readable extra cell, so it misses this path.",
+      "repro": "Use the header `Transaction ID,Date,Type,Name,Amount,Currency,Balance,Notes and #tags`. Give line 2 the prefix `tx_1,01/01/2026,Faster payment,ACME,10000000000000.00,GBP,1.00,` followed by 200,000 A characters. Run `cma import monzo input.csv -o output.csv`. The reader reports the oversized field on line 2, and src/cma/importers/monzo.py:238 receives no amount for that row. R2 requires checking the GBP amount first and reporting that money in has reached the limit."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 266,
+      "criterion": "R2",
+      "claim": "The producer's no-ceiling probe establishes direct helper behavior. It does not establish that the amount is valid for statement import. The probe itself is absent from the checkout and has no runner result.",
+      "repro": "Compare the helper test with `test_an_amount_no_float_carries_to_the_penny_is_refused_at_import`. Both ran. The helper accepts £10,000,000,000,000.01 as a whole-penny float, while the loader refuses amounts at or above £10,000,000,000,000. The claimed scratchpad invocation would require the original script and a runner result for `PYTHONPATH=src python scratchpad/probe.py`."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 92,
+      "criterion": "P1",
+      "claim": "The historical full-suite result at ca0092c and the scratchpad idempotency run are not proven by this runner. The current checkout's suite is proven independently. Its log reports 963 passing tests, and the marker logs identify the invariant, contract and dual-run tests that actually ran.",
+      "repro": "Compare `git log -1` and specified-3.log with the claim of 878 passing tests at ca0092c. Proving the historical count would require a runner result for `python -m pytest -q` at ca0092c. Proving the claimed idempotency invocation would require the original scratchpad script and a runner result for `PYTHONPATH=src python scratchpad/probe.py`."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 5106,
+      "criterion": "P2",
+      "claim": "The producer's example-artifact note is stale. It says regeneration was deferred and the example lacks evidence_note, but the committed example contains the field and an updated decision timestamp.",
+      "repro": "Read lines 4977 and 5106 of the example and compare the decision timestamp with the parent artifact in the supplied diff."
+    }
+  ],
+  "verdict": "fail"
+}

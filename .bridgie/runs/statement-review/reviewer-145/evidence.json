@@ -1,0 +1,102 @@
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to buckets. src/cma/metrics.py:482 assigns credits and reconciles the partition before returning GBP values and evidence at src/cma/metrics.py:523 and src/cma/metrics.py:563. The CLI graph and MCP both call compute at src/cma/graph.py:304 and src/cma/mcp_server.py:96.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:74 checks the decimal-to-float round trip, and src/cma/ingest.py:183 checks exact flow limits. src/cma/metrics.py:512 handles unrepresentable M3. src/cma/graph.py:172 and src/cma/cli.py:326 print pence, while src/cma/metrics.py:591 supplies the whole-pound drafting table. The CSV reader at src/cma/ingest.py:103 can fail before identifying an over-limit amount, and the CLI misreports that failure at src/cma/cli.py:111.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks both the signed difference and the per-ID counts, including duplicate IDs with zero net difference. src/cma/cli.py:107 exits 6 before the review or export. src/cma/mcp_server.py:96 propagates the refusal before returning metrics. The contracts log shows the CLI and MCP refusal tests passed.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "Unmatched credits default to OTHER at src/cma/categorise.py:1311 and src/cma/categorise.py:1360. src/cma/models.py:68 maps OTHER to unexplained and excludes it from the revenue categories. The runner exercised both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 verifies the one-bucket partition in pence. Cash is drawn from trading receipts at src/cma/metrics.py:495 and emitted separately at src/cma/metrics.py:566. The invariants log shows the partition and large-amount tests passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For T04 figures, src/cma/metrics.py:523 and src/cma/metrics.py:563 retain signed sum evidence. src/cma/metrics.py:535 uses the netted lines for outflows and drops M10 evidence when exact debt service is zero. src/cma/metrics.py:374 traces M5 and M6 to the relevant balance lines, src/cma/metrics.py:421 records the partly counted M9 credit, and src/cma/metrics.py:572 cites the shared denominator for M26. The invariants and previous-release evidence comparisons ran. The task manifest assigns monthly P2 cells to T06.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:68 and src/cma/metrics.py:485 put unmatched credits in M25 and keep them out of M2. The runner passed the generated-case invariant and the targeted unknown-payer test under v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 103,
+      "criterion": "R2",
+      "claim": "An over-limit amount in a CSV field longer than the parser limit bypasses the required line diagnostic. The parser raises csv.Error before amount validation, and cma run reports a model call failure.",
+      "repro": "Create a five-column CSV with one row dated 2026-01-01, an amount consisting of 132000 leading zeroes followed by 10000000000000.00, and balance 0.00. On the default Python CSV field limit, cma run exits 4 via src/cma/cli.py:111 and reports Error: field larger than field limit, without identifying line 2 or the monetary limit."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/policy.py",
+      "line": 118,
+      "criterion": "R53",
+      "claim": "The additive-only migration claim overstates resume compatibility. A valid historical review can be refused even when the policy would give the same outcome after recomputation.",
+      "repro": "With the previous release, leave a pending review for a one-day CARD SETTLEMENT credit and balance of £9,999,999,999,999.98. Use a custom policy whose only rule is M3 >= 0 with when_missing: pass. The previous release has a numeric, passing M3. The current release makes M3 n/a because its exact pence cannot be carried, which the custom policy also passes. cma resume exits 2 because the stored result lacks when_missing and reevaluate raises OutcomeUnknown. The passing compatibility test at tests/test_cli.py:327 changes a value within the same band and does not cover this transition."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/mcp_server.py",
+      "line": 69,
+      "criterion": null,
+      "claim": "The MCP refusal now forwards arbitrary statement header text for whole-file errors. This widens the previous refusal response, which stripped a missing-column diagnostic down to its label.",
+      "repro": "Within the configured MCP data directory, use a CSV whose header is id,date,description,amount,PRIVATE-ACCOUNT-LABEL. Calling statement_summary returns the label in the missing-balance error because src/cma/ingest.py:120 includes the supplied header in the diagnostic and the MCP forwards it in full."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 80,
+      "criterion": "R2",
+      "claim": "The producer's no-fixed-ceiling disposition describes the conversion helper in isolation. The current requirement and production loader impose a fixed import ceiling.",
+      "repro": "Compare the helper assertion at tests/test_money_in.py:262 with importing a row for £10,000,000,000,000.01 through ingest.load_csv. The helper can represent it, while the loader refuses it as required. The helper result does not establish production acceptance."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 323,
+      "criterion": null,
+      "claim": "The scratchpad proof and the historical test totals are not proven by this runner record. The configured logs establish 919 full-suite passes and 84 dual-run passes on the reviewed worktree, and corroborate the named invariant and contract tests. They do not contain the scratchpad execution or establish the reported totals at ca0092c.",
+      "repro": "Compare specified-3.log, contracts-4.log, invariants-5.log and dual_run-7.log with claim.json. To prove the historical counts, run the claimed pytest commands on ca0092c with named test output. To prove the cited scratchpad output, supply scratchpad/probe.py and have the runner execute PYTHONPATH=src python scratchpad/probe.py."
+    }
+  ],
+  "verdict": "fail"
+}

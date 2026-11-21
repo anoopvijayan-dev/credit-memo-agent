@@ -1,0 +1,52 @@
+{
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed requirements.md:309 at HEAD 42e687d. Canonical UTF-8, UTC timestamps, chain verification, head comparison and first-bad-entry reporting are in src/cma/case.py:176–348. Holder and alias recognition, lock identity checks and steady reader retries are in src/cma/case.py:399–674. Writer exclusion, fork refusal, nested-save refusal, expected-position conflicts and per-write lock checks are in src/cma/case.py:682–940 and 1023–1099. Repair, publication and take-back are in src/cma/case.py:942–1170. Checked double submission, concurrent writers, empty and malformed input, Unicode, UTC, partial failures, OS permissions, case-folder isolation and CLI consumers. Currency and database migrations are outside this change. Runner logs confirm the named CLI tamper, rebuilt-chain, torn-tail, double-submit and exit-code tests passed. The interruption tests cover an ordinary exception during take-back and a nested-save refusal just after a repair rename. Interrupts during read-back and take-back still violate P15.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1138,
+      "criterion": "P15",
+      "claim": "A Ctrl-C during read-back bypasses take-back. The save raises KeyboardInterrupt and leaves its entry listed in the head even though read-back failed and the head was still the save's own.",
+      "repro": "Start with two recorded entries. Append entry 3 and inject KeyboardInterrupt on the first log read after the head rename and directory sync. The exception bypasses both the read-back handler and the outer save handler at line 867. Open the case again and verify that it reports three intact recorded entries. The passing test at tests/test_case_log.py:2716 injects a nested-save refusal, which is an Exception and takes a different path."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1152,
+      "criterion": "P15",
+      "claim": "A Ctrl-C that stops take-back escapes without the required not-confirmed report or the instruction to check the log before saving again.",
+      "repro": "Append entry 3, inject a one-time read-back OSError after head publication, then inject KeyboardInterrupt while staging the take-back head, before its rename. The original head still lists entry 3 and the caller receives KeyboardInterrupt. The runner-passing test at tests/test_case_log.py:2756 uses RuntimeError, which the handler catches."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 331,
+      "criterion": "P15",
+      "claim": "The producer's CLI contract claim gives exit 0 and 'appending' for a held case with a torn tail. The implementation and the cited passing contract test require exit 4 and say the log is being saved.",
+      "repro": "Hold the writer lock over a case with two recorded entries and a torn third entry, then invoke cma case check from another thread. Compare the result with the assertions in tests/test_case_log.py:1339 and the corresponding PASSED row in contracts-4.log."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1213,
+      "criterion": "P15",
+      "claim": "The producer's claim that the continuous-append test reproduces two commits in each reader retry and contention at fallback is not_proven. The runner shows that the stress test passed, but the test neither coordinates nor asserts that schedule.",
+      "repro": "Read the test at line 1213. Its background loop and the reader's 40 checks have no synchronization that forces commits between head reads, so the test can pass without reaching the claimed fallback. To prove the claim, add a regression that forces and asserts that schedule, then run python -m pytest -v tests/test_case_log.py -k two_commits_per_reader_retry."
+    }
+  ],
+  "verdict": "fail",
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

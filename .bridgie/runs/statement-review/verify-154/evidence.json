@@ -1,0 +1,159 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to buckets. src/cma/metrics.py:483 and :563 build total money in and the bucket figures with their line IDs. src/cma/mcp_server.py:97 returns the complete figure list through the existing data-directory guard at :37.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:82 checks penny-exact float round trips, src/cma/ingest.py:256 checks flow ceilings, and src/cma/metrics.py:512 handles unrepresentable M3 results. src/cma/graph.py:175 and src/cma/cli.py:407 show pennies, while src/cma/metrics.py:591 preserves whole-pound drafting. Monzo still validates Transaction ID before currency and amount at src/cma/importers/monzo.py:186, and row-level date and balance refusals omit the source line.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks both the integer-pence difference and credit ID multiplicity. src/cma/cli.py:115 refuses before review or export with exit 6 and escaped line IDs. Contracts passed for an unbucketed credit and the MCP refusal.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/models.py:55 and src/cma/metrics.py:483 route them to unexplained money in, separately from trading receipts.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483, :495 and :578 enforce one bucket evidence entry per credit and exact reconciliation. M18 is a subset of M2 and stays out of the reconciliation sum. The runner passed both named P1 invariants, including the large-value check.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the figures delivered by T04, src/cma/metrics.py:373, :418, :499 and :522 implement the evidence rules, including negated outflows, carried overdrawn closes, the M9 partial-credit note and both shares' denominator evidence. The runner passed the named P2 invariants and the M1–M16 evidence comparisons. Monthly cells, M27 and M28 belong to later tasks.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER, which src/cma/metrics.py:483 places in M25 and excludes from M2. The runner passed the named P6 checks, including an unknown payer under each ruleset.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-154/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-154/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-154/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-154/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-154/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-154/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-154/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 186,
+      "criterion": "R2",
+      "claim": "Transaction ID validation runs before currency and amount. It can refuse a row that should be skipped or hide a flow limit reached by the row that stopped the import.",
+      "repro": "Import a valid GBP Row A for £9,999,999,999,999.99 followed by a GBP row with the same Transaction ID and an amount of £0.01. The refusal names the duplicate ID and omits that money in reached the limit. In a separate export, put an empty Transaction ID on a USD row ahead of a valid GBP row. The importer refuses on the USD row before reading its currency."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 202,
+      "criterion": "R2",
+      "claim": "Monzo row refusals can omit the physical record start. A malformed date has no line label, and a walked balance refusal reports only the transaction ID.",
+      "repro": "After the Monzo header and a blank line, put a GBP record with a valid ID and amount and a Date of `someday`. The refusal says `unrecognised date 'someday'` without `line 3`. Separately, use a GBP credit of £0.01 on physical line 3 in an export without a Balance column and supply an opening balance of £9,999,999,999,999.99. The walked balance refusal uses the record's transaction ID without `line 3`."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 200,
+      "criterion": "R2",
+      "claim": "An amount that reaches the per-line limit is parsed to exact pence but raises before it is included in the flow diagnostic.",
+      "repro": "Import a Monzo export with one otherwise valid GBP row whose Amount is `10000000000000.00`. The refusal identifies the Amount at the limit and omits that money in has also reached the limit. Use `-10000000000000.00` for the equivalent money-out case."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 336,
+      "criterion": "R53",
+      "claim": "Export uses predictable staging names and can overwrite and remove an existing sibling file during a successful export.",
+      "repro": "Put an existing file at `memo.evidence.json.part` before starting a review. Leave `memo.md` and its final evidence and rejected paths free. Approve a grounded run with `--out memo.md`. The output preflight at line 213 accepts the path, then export truncates the existing sibling and moves it to `memo.evidence.json`."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 99,
+      "criterion": "R2",
+      "claim": "The producer's scratchpad claims have no runner result. The above-limit probe bypasses the import path and its output cannot establish acceptance of a statement under R2. The display probe prints metric values without exercising either named renderer.",
+      "repro": "The runner logs contain no execution of `PYTHONPATH=src python scratchpad/probe.py`, and the producer says the script is outside the repository. A runner row for that command would verify the cited probe output if the script were supplied. Import and renderer claims require checks through `ingest.load_csv`, the CLI table and the memo appendix."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer's note about the committed example is stale. It says the example lacks `evidence_note` and has no comparison test.",
+      "repro": "Read the committed `evidence_note` key at the cited line. The runner also passed `tests/test_models.py::test_the_committed_example_evidence_carries_todays_keys_and_a_schema_version` in `specified-3.log`."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

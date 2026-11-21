@@ -1,0 +1,138 @@
+{
+  "task": "T17",
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "src/cma/firm.py:68 defaults the lock on, src/cma/mcp_server.py:40–119 checks startup and ASGI requests, and src/cma/graph.py:324–342 serializes the lock. Runner coverage confirms native bind refusal, inherited tracer removal, and resume evidence after finalisation. The request gate at src/cma/firm.py:191 accepts a reading from a different active run, and src/cma/graph.py:421–423 updates the destination during a drafting resume without recording that resume's lock until finalisation.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:236–290 builds the tables, period, placeholder and redraft IDs. Runner coverage confirms custom masks, exact-copy rendering and current checkpoint serialization. The legacy fallback at src/cma/graph.py:228–232 exposes rules whose failure or missing-figure action differs from the shipped rule.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "The runner exercised initial and redraft sentinels, custom IDs and limits, and shipped numeric spellings. The legacy rule comparison at src/cma/graph.py:228–232 admits custom policy text to both prompt paths at src/cma/graph.py:256–271 when both stored actions are absent.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "The runner confirmed constructor refusal, retryable 503 handling, redirect refusal, native MCP bind refusal, saved ASGI refusal and the async locked-resume path. src/cma/llm.py:147–154 accepts a reading that belongs to a different invocation because src/cma/firm.py:188–191 checks activity and firm root without checking invocation ownership.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-210/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-210/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-210/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-210/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-210/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-210/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-210/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/firm.py",
+      "line": 191,
+      "criterion": "P18",
+      "claim": "A separate caller can use the unlocked reading of a suspended stream to dispatch a hosted request after the firm locks. The registry authorizes the reading by object identity and active status, with no check that the request belongs to that stream. This also fails R29.",
+      "repro": "Use a recording SDK stand-in. Load an unlocked reading and pass it to build. Advance graph.stream once, keeping the iterator open. Turn the lock on, then issue a separate model.complete call with the same reading. The stand-in records a request. The runner's ownership test exercises a reading whose run is inactive."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 421,
+      "criterion": "R29",
+      "claim": "A resume that drafts and pauses again can produce evidence that omits the resume's effective lock. The draft writes the new model and destination, while finalise is the first node to write resume_offline_lock.",
+      "repro": "Run an unlocked draft to its review interrupt and move its checkpoint back to the policy node. Turn the lock on and resume with the fake model. Once the resume reaches the review interrupt again, call evidence_record on its state. The record still reports offline_lock false and has no resume_offline_lock. The producer's destination test finalises before inspecting the evidence."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 232,
+      "criterion": "R30",
+      "claim": "A legacy custom rule is treated as shipped even when its failure or missing-figure action differs. The missing actions are precisely the fields needed to make the exact-match decision. The rule's text and ID enter the prompt, and its ID is eligible for redraft feedback. This also fails P5 when the case contains that custom rule's text.",
+      "repro": "Copy shipped R2, change only on_fail from fail to refer, and put its description in a transaction. Use a legacy checkpoint paused before drafting, with both action fields absent. Resume with a recording hosted stand-in and the lock off. The prompt contains the unmasked R2 row. The runner's legacy test compares a shipped rule with missing actions and a rule with a changed threshold, leaving the changed-action case uncovered."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/firm.py",
+      "line": 145,
+      "criterion": "R29",
+      "claim": "The claimed single file read per run is false. The passing test counts firm.load calls, while stamp validation reads the file again.",
+      "repro": "Instrument Path.read_bytes for firm.yaml in the existing test at tests/test_firm.py:940. An unchanged hosted CLI draft reads the bytes at load, client claim and graph claim. The resume reads them at load and run claim."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 244,
+      "criterion": "R30",
+      "claim": "The producer's performance proof establishes suite completion. A timing comparison is not_proven, and prompt construction loads the shipped policy twice, with a further load to filter redraft IDs.",
+      "repro": "Count policy.load_policy calls for one initial prompt and one redraft. A matched before-and-after benchmark of those paths would establish the timing claim. The runner's full pytest duration supplies only the current suite time."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/mcp_server.py",
+      "line": 74,
+      "criterion": "P18",
+      "claim": "The producer's unqualified claim that no ASGI app is handed out contradicts the implementation. Returning a guarded app while unlocked is the required behavior.",
+      "repro": "Set offline_lock to false and call server.sse_app(). The runner's HTTP transport contract test verifies that it returns a LockCheckedASGI instance."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

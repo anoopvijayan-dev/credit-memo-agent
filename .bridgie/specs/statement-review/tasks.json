@@ -40,12 +40,12 @@
         "T01",
         "T02"
       ],
-      "status": "verify",
+      "status": "passed",
       "attempts": 6,
       "max_attempts": 6,
       "branch": "bridgie-task/statement-review/T03",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-41/evidence.json",
-      "escalation": "blocked after 6 attempts. Last verdict fail: R4 fail (The shipped tables cover own-account moves, HMRC, refunds and rails at src/cma/rules/v2.yaml:63–160, lenders and MCA providers at :162–241, cash deposits and explained credits at :253–280, and trading providers and cash withdrawals at :298–405. src/cma/categorise.py:495–559 filters contained phrases, applies the bank-code exception and evaluates both ambiguity stages. At :607–617, an unresolved conflict records all candidates and takes precedence over firm rules, but any profile-name occurrence in the description can settle it, including an occurrence in the payment reference of a different counterparty. src/cma/models.py:54–68 maps OTHER to unexplained and cash deposits to trading receipts. src/cma/graph.py:250–253 selects and applies the ruleset, and :210–224 exports line provenance. The runner logged 723 passed, including the table-driven lists, the two prior review regressions, CLI provenance, checkpoint compatibility, and offline evals under both rulesets. Source inspection covered repeated categorisation and duplicate input, concurrent updates, sign and text boundaries, currency and timezone dependencies, partial writes, authorisation, case isolation, rollback, and CLI, checkpoint and MCP consumers. No tests were run or files changed during review.); major: A director name in the payment reference can settle an ambiguous credit even when the payer is a different counterparty. The classifier searches the full description and discards the ambiguity and its candidates. at src/cma/categorise.py:595; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-126/evidence.json",
+      "escalation": null
     },
     {
       "id": "T04",
@@ -62,11 +62,11 @@
       "depends_on": [
         "T03"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 3,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T04",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-216/evidence.json",
       "escalation": null
     },
     {
@@ -81,11 +81,11 @@
       "depends_on": [
         "T04"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T06",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-217/evidence.json",
       "escalation": null
     },
     {
@@ -98,11 +98,11 @@
       "depends_on": [
         "T04"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T07",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-218/evidence.json",
       "escalation": null
     },
     {
@@ -116,11 +116,11 @@
         "T04",
         "T06"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T08",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-219/evidence.json",
       "escalation": null
     },
     {
@@ -132,11 +132,11 @@
       "depends_on": [
         "T08"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T09",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-220/evidence.json",
       "escalation": null
     },
     {
@@ -146,12 +146,12 @@
         "P15"
       ],
       "depends_on": [],
-      "status": "blocked",
+      "status": "passed",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T12",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-43/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:196 and :257 check canonical bytes, chain links and recorded hashes. Lines 363–378 recognize the reader's own lock across folder aliases, lines 441–474 check head stability, and lines 519–588 enforce writer ownership and refuse inherited writers. Lines 631–635 reject stale duplicate submissions, and lines 710–721 write the log before advancing the head. The CLI at src/cma/cli.py:321 is the sole production consumer. Linux runner logs confirm the named tamper, rebuilt-chain, append-failure, lock contention, duplicate-submit, strict JSON, file permissions and CLI tests. Case folders have separate log and lock files, authorization uses filesystem permissions, timestamps use UTC, currency remains payload data, and there is no existing case-log format to migrate. P15 fails because the free or holding reader misclassifies an incomplete recorded last entry, the first-write race can return intact while a writer holds the case, and Windows checks can mistake another reader for a writer.); major: A recorded last entry with an incomplete line is reported as missing. The incomplete-tail branch requires the complete-entry count to equal the head count. at src/cma/case.py:309; major: After a missing-lock probe, a stable intact snapshot bypasses a second lock check even when a writer has since created and acquired the lock. at src/cma/case.py:397; major: On Windows, a reader takes an exclusive lock. A second reader that exhausts its retries treats that reader as a writer and can hide an incomplete tail. at src/cma/case.py:767; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-228/evidence.json",
+      "escalation": null
     },
     {
       "id": "T13",
@@ -162,11 +162,11 @@
       "depends_on": [
         "T12"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 2,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T13",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-230/evidence.json",
       "escalation": null
     },
     {
@@ -180,11 +180,11 @@
         "T13",
         "T04"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T16",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-233/evidence.json",
       "escalation": null
     },
     {
@@ -197,11 +197,11 @@
         "P18"
       ],
       "depends_on": [],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 3,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T17",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-226/evidence.json",
       "escalation": null
     },
     {
@@ -214,11 +214,11 @@
         "T13",
         "T17"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T18",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-234/evidence.json",
       "escalation": null
     },
     {
@@ -235,11 +235,11 @@
         "T07",
         "T13"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 2,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T19",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-238/evidence.json",
       "escalation": null
     },
     {
@@ -254,12 +254,12 @@
         "T19",
         "T03"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "verify",
+      "attempts": 2,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
-      "escalation": null
+      "branch": "bridgie-task/statement-review/T05",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-239/evidence.json",
+      "escalation": "attempt 1 of 3 fail: R5 fail (Under v2, src/cma/categorise.py:1333-1365 (_classify_credit) puts a protected verdict first, then makes the credit ambiguous (wording, or director plus own account), then lets the profile name decide; store.profile_names (src/cma/store.py:441-446) merges shareholders into directors; overrides._figures passes the profile (src/cma/overrides.py:250-256). The runner's contracts log shows tests/test_case_profile.py passed 15/15. Under v1 (categorise.py:1299-1313) the code reads only ruleset.protected before the profile name, and v1.yaml marks no rule protected (grep -c protected = 0). So v1's generic-loan and returned-DD verdicts, which are protected verdicts by the term's definition, lose to a director's name. R54 applies R5 under v1, and R5's own example (JANE DOE LOAN is a lending drawdown) fails there.); R6 fail (The profile own-account name decides lines in either direction (categorise.py:1322-1330, 1307-1313, 1349-1358); the M2 exclusion holds because OWN_ACCOUNT_TRANSFER is not a revenue category. M9 leaves out profile-named lines (metrics.py:476-482, 492-500), and the tests at test_case_profile.py:151-168 pass. But a returned direct debit that undoes a profile-named own-account debit counts in M9 at metrics.py:479-485/514, so own-account money reaches M9. Under v1, a protected verdict (returned DD, loan wording) does not outrank the own-account name, as in R5.); major: This diff introduced the leak. own_account_named removes a profile-named own-account debit from M9's operating lines, but the returned direct debit that reverses it is still an operating line: operating_line returns t.reverses is not None for RETURNED_DD, and RETURNED_DD is not in NON_TRADING_IN at line 514. M9 (and M10 and M28) therefore count the reversal as positive operating cash although the debit it undoes is left out. Before this change the two lines netted to zero. at src/cma/metrics.py:485; major: Under v1 (frozen path), a profile name is checked after ruleset.protected only, and v1.yaml marks no rule protected. A case-profile name therefore outranks v1's loan_drawdown, loan_repayment, returned_dd and director rules. R54 applies R5 and R6 under v1 (case profile 'new behaviour under any ruleset'), and both requirements say a protected verdict (generic loan wording, a returned payment, a lender) decides first. tests/test_case_profile.py:242-249 asserts the wrong behaviour: M20 = 1160 includes IWOCA and REFUND lines. at src/cma/categorise.py:1299; major: The same v1 precedence gap applies to debits and returned payments. With an own account named, a v1 loan repayment or a returned DD whose wording names that account becomes own_account_transfer. Debt service (M8) then loses the repayment, and M10 and M28 change. R6 requires that a debit to a lender, or a returned direct debit, that names an own account keeps its protected verdict. at src/cma/categorise.py:1307; reviewer verdict fail"
     },
     {
       "id": "T20",
@@ -475,11 +475,11 @@
       "depends_on": [
         "T13"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T15",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-232/evidence.json",
       "escalation": null
     },
     {
@@ -491,11 +491,11 @@
       "depends_on": [
         "T13"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T14",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-231/evidence.json",
       "escalation": null
     },
     {
@@ -507,11 +507,11 @@
       "depends_on": [
         "T13"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T28",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-235/evidence.json",
       "escalation": null
     },
     {
@@ -573,11 +573,11 @@
       "depends_on": [
         "T13"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T32",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-236/evidence.json",
       "escalation": null
     },
     {

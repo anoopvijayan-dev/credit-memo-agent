@@ -2,3 +2,6 @@
 # src/cma/categorise.py). Keep them LF on every checkout, including Windows with
 # core.autocrlf=true, or the pin refuses an unmodified table.
 src/cma/rules/*.yaml text eol=lf
+
+# The Monzo golden files are compared byte for byte, CRLF line ends included (T28).
+tests/golden/monzo/* -text

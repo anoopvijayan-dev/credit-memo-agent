@@ -1,0 +1,92 @@
+{
+  "task": "T19",
+  "criteria": [
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "metrics._reconcile (src/cma/metrics.py:742-752) raises ReconciliationError with the difference and the lines involved; overrides.case_figures (src/cma/overrides.py:266-279) tags it with account and statement and re-raises; summary.case_summary (src/cma/review/summary.py:98-101) returns state not_reconciled with no accounts; render() (summary.py:194-195) shows only the difference in pence and the lines. 'Nothing is shown' holds (contracts tests test_a_case_that_does_not_reconcile_shows_no_figures_and_names_difference_and_lines and test_one_account_that_does_not_reconcile_hides_every_account ran and passed in contracts-4.log). 'Report the difference and the lines involved' is incomplete: case_figures raises at the first failing account, so with two failing accounts the second account's difference and lines are never reported.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "P8",
+      "tier": "adversarial",
+      "check": "Every piece of case text in summary.render goes through _e (html.escape with quote=True, summary.py:121-122): descriptions of unreconciled lines (summary.py:182-183), label and business name (188-190), refusals (197), account key and month. The token mark is replaced at ReviewServer init before the summary is inserted (server.py:194, 211-215), so a label holding __CMA_TOKEN__ or __CMA_SUMMARY__ is not expanded again. The shown state carries no description text, and app.js sets textContent only. test_p8_the_workspace_html_holds_description_text_only_escaped[0..24] and test_p8_the_api_carries_description_text_as_json_data_only ran and passed (invariants-5.log). The CSV half of P8 is outside T19, which covers the workspace HTML.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-237/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-237/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-237/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-237/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-237/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-237/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-237/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/overrides.py",
+      "line": 266,
+      "criterion": "R3",
+      "claim": "When more than one account of a case fails reconciliation, only the first failing account's difference and lines are reported. case_figures re-raises the first account's ReconciliationError inside its loop and never computes the remaining accounts, so R3's 'report the difference in pence and the lines involved' is incomplete for the case (the producer's note (2) admits this).",
+      "repro": "Build a case with accounts 'main' and 'savings' as in test_one_account_that_does_not_reconcile_hides_every_account, then break one credit in each (patch overrides.categorise to set L2 and X2 to Category.SUPPLIER). GET /api/case: reconciliation.lines is [('main','L2')] and difference_pence is 30025; X2 in 'savings' and its 2000-pence difference are not reported."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/review/summary.py",
+      "line": 168,
+      "criterion": null,
+      "claim": "A monthly cell that is n/a, such as average_balance with the note 'too large to report to the penny' (metrics.py:721-722), is rendered as a bare 'n/a'. c['note'] is carried in the JSON (summary.py:54) but never rendered, so the page shows n/a without the reason R2 asks for.",
+      "repro": "A statement whose month's average end-of-day balance cannot be carried to the penny (avg_note set in metrics.monthly_summary) renders <td class=\"num\">n/a</td> with no reason in the HTML from summary._account_html."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

@@ -1,0 +1,953 @@
+diff --git a/.gitattributes b/.gitattributes
+index f5bec7f..310b12c 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -2,3 +2,6 @@
+ # src/cma/categorise.py). Keep them LF on every checkout, including Windows with
+ # core.autocrlf=true, or the pin refuses an unmodified table.
+ src/cma/rules/*.yaml text eol=lf
++
++# The Monzo golden files are compared byte for byte, CRLF line ends included (T28).
++tests/golden/monzo/* -text
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index c1d4b90..93da199 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -448,11 +448,11 @@ def import_monzo(
+     ),  # text, read exactly by the importer, never rounded through a float first (T04 review 8)
+ ):
+     """Convert a Monzo export locally. Nothing is uploaded; the file stays on this machine."""
+-    from .importers import monzo
++    from .importers import contract, monzo
+ 
+     try:
+         r = monzo.convert(export, out, opening_balance)
+-    except monzo.MonzoImportError as e:
++    except contract.ImportRefused as e:  # by line, never a cell's value (T28)
+         console.print(f"[red]Import refused.[/red] {escape(str(e))}")  # cells are text, never markup (T04 review 31)
+         raise typer.Exit(code=2) from e
+     console.print(
+diff --git a/src/cma/importers/contract.py b/src/cma/importers/contract.py
+new file mode 100644
+index 0000000..9baf149
+--- /dev/null
++++ b/src/cma/importers/contract.py
+@@ -0,0 +1,136 @@
++"""The importer contract (C4; design, Interfaces and contracts).
++
++An importer reads one source file and an optional opening balance, and writes the
++five-column statement for one account (id, date, description, amount, balance). Every
++importer goes through this module, so that:
++
++- one step walks and verifies the running balance: `opening_balance` settles the balance
++  before the first line, from a supplied one or from the provider's own balance column, and
++  `walk` walks it forward, checking every walked balance against the provider's and against
++  the £10,000,000,000,000 limit (R2), in whole pence, with the figures layer's arithmetic;
++- the output passes ingest.load_csv: `write_statement` loads the bytes it would write with
++  the statement loader and writes nothing the loader refuses;
++- refusals name lines, never a cell's value: every refusal here, and every refusal an
++  importer raises (ImportRefused), names the line of the source file its record starts on and
++  what is wrong, and quotes nothing the file holds (R34; as the MCP server does).
++
++`cma import monzo` and `cma case import` catch ImportRefused, the refusal of any importer.
++"""
++
++from __future__ import annotations
++
++import csv
++import io
++from collections.abc import Sequence
++from dataclasses import dataclass
++from datetime import date
++from pathlib import Path
++
++from .. import ingest
++from ..metrics import AT_LIMIT, at_limit, opening_before, pounds_text, running_balances
++from ..models import Statement
++
++COLUMNS = ("id", "date", "description", "amount", "balance")
++FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
++
++
++class ImportRefused(ValueError):
++    """An importer's refusal: it names lines of the source file, never a cell's value."""
++
++
++@dataclass(frozen=True)
++class Line:
++    """One line of the statement an importer builds, in whole pence. `line` is the line of the
++    source file its record starts on; `balance` is the provider's own balance after it, when
++    the source gives one."""
++
++    line: int
++    id: str
++    date: date
++    description: str
++    amount: int
++    balance: int | None = None
++
++
++def neutralise_formula(text: str) -> str:
++    """A text cell a spreadsheet would read as a formula gets a leading apostrophe (R34)."""
++    return "'" + text if text.startswith(FORMULA_START) else text
++
++
++def opening_balance(lines: Sequence[Line], supplied: int | None, *, column: str,
++                    option: str = "--opening-balance", source: str | None = None) -> tuple[int, str]:
++    """The balance before the first line, in pence, and where it came from: `supplied` when
++    given, checked against the one the provider's balance column (`column`, as a refusal
++    names it) implies; else that implied one, from `source` (`column` if not given). `lines`
++    are in the order they are walked."""
++    first = lines[0]
++    implied = opening_before(first.balance, first.amount) if first.balance is not None else None
++    if supplied is None:
++        if implied is None:
++            raise ImportRefused(f"line {first.line}: the first transaction has no balance; pass {option}")
++        return implied, source or column
++    if implied is not None and implied != supplied:
++        # The implied balance is the tool's own arithmetic, which the person needs to mend the
++        # option they gave; no cell is quoted.
++        raise ImportRefused(f"{option} {pounds_text(supplied)} disagrees with {column}, which implies "
++                            f"{pounds_text(implied)} at line {first.line}, the first transaction; leave "
++                            f"{option} out to use it")
++    return supplied, "opening balance supplied"
++
++
++def walk(lines: Sequence[Line], opening: int, *, column: str) -> list[int]:
++    """The running balance after each line, walked from `opening` (R2): each held below the
++    limit, and each the provider's own balance where the source gives one."""
++    balances = running_balances(opening, [x.amount for x in lines])
++    for x, bal in zip(lines, balances, strict=True):
++        if at_limit(bal):
++            raise ImportRefused(f"line {x.line}: the running balance reaches £10,000,000,000,000; "
++                                "no figure could be reported to the penny")
++        if x.balance is not None and x.balance != bal:
++            raise ImportRefused(f"line {x.line}: the balance walked from the opening balance disagrees with "
++                                f"{column}; the export may be missing transactions")
++    return balances
++
++
++def statement_bytes(lines: Sequence[Line], balances: Sequence[int]) -> bytes:
++    """The five-column statement, as the csv module writes it."""
++    buf = io.StringIO(newline="")
++    w = csv.DictWriter(buf, fieldnames=list(COLUMNS))
++    w.writeheader()
++    for x, bal in zip(lines, balances, strict=True):
++        w.writerow({"id": x.id, "date": x.date.isoformat(), "description": neutralise_formula(x.description),
++                    "amount": pounds_text(x.amount), "balance": pounds_text(bal)})
++    return buf.getvalue().encode("utf-8")
++
++
++def checked(data: bytes, label: str | Path, *, account_name: str | None = None,
++            source_lines: Sequence[int] | None = None) -> Statement:
++    """The statement these bytes hold, as ingest.load_csv reads it; refused, by line and never
++    by a cell's value, if the loader refuses it. `source_lines`, when given, are the source
++    file's lines of the statement's rows, so a refusal names the line the person can find."""
++
++    def line(n: int) -> int:
++        k = n - 2  # the statement's line 2 is its first row
++        return source_lines[k] if source_lines is not None and 0 <= k < len(source_lines) else n
++
++    try:
++        return ingest.load_csv(Path(label), account_name=account_name, data=data)
++    except ingest.StatementError as e:
++        parts = ingest.refusal_parts(e, line)
++        raise ImportRefused(f"{label}: {len(e.problems)} problem(s): {'; '.join(parts)}") from None
++
++
++def write_statement(dst: Path, lines: Sequence[Line], balances: Sequence[int], *,
++                    label: str | Path) -> Statement:
++    """Write the statement to `dst` once the statement loader accepts it; nothing otherwise."""
++    data = statement_bytes(lines, balances)
++    stmt = checked(data, label, source_lines=[x.line for x in lines])
++    dst = Path(dst)
++    dst.parent.mkdir(parents=True, exist_ok=True)
++    with dst.open("wb") as f:  # into the file as it is, so a private one keeps its mode
++        f.write(data)
++    return stmt
++
++
++__all__ = ["AT_LIMIT", "ImportRefused", "Line", "checked", "neutralise_formula", "opening_balance",
++           "statement_bytes", "walk", "write_statement"]
+diff --git a/src/cma/importers/monzo.py b/src/cma/importers/monzo.py
+index ee940db..cd8491a 100644
+--- a/src/cma/importers/monzo.py
++++ b/src/cma/importers/monzo.py
+@@ -21,6 +21,10 @@ So this module:
+ - treats Monzo Flex as the credit line it is: money in is "LOAN DRAWDOWN MONZO FLEX",
+   money out is "LOAN REPAYMENT MONZO FLEX", so repayments count as debt service.
+ 
++The balance walk, the check that the output passes the statement loader and the writing of
++the statement are the importer contract's (importers/contract.py), shared by every importer.
++A refusal names the line of the export its record starts on, never a cell's value (T28).
++
+ It reads the file locally and writes a new file. Nothing is sent anywhere.
+ """
+ 
+@@ -34,15 +38,12 @@ from pathlib import Path
+ 
+ from ..categorise import INVOICE_REF
+ from ..ingest import CsvRecordError, iter_data, read_header, shown
+-from ..metrics import (
+-    AT_LIMIT,
+-    at_limit,
+-    flows_at_limit,
+-    opening_before,
+-    pounds,
+-    pounds_text,
+-    running_balances,
+-    text_pence,
++from ..metrics import AT_LIMIT, at_limit, flows_at_limit, pounds, text_pence
++from . import contract
++from .contract import (  # noqa: F401 (kept importable here)
++    FORMULA_START,
++    ImportRefused,
++    neutralise_formula,
+ )
+ 
+ REQUIRED = ("Transaction ID", "Date", "Type", "Name", "Amount")
+@@ -54,8 +55,11 @@ CURRENCY_CODE = re.compile(r"^[A-Z]{3}$")
+ SAFE_ID = re.compile(r"^[A-Za-z0-9_.:][A-Za-z0-9_.:-]*$")
+ 
+ 
+-class MonzoImportError(ValueError):
+-    pass
++class MonzoImportError(ImportRefused):
++    """A Monzo export refused; an importer's refusal under the contract (T28)."""
++
++
++BALANCE_COLUMN = "Monzo's Balance column"
+ 
+ 
+ @dataclass
+@@ -84,7 +88,8 @@ def _parse_when(raw: str | None) -> tuple[date, str | None, bool]:
+     try:
+         when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+     except ValueError as e:
+-        raise MonzoImportError(f"unrecognised date {shown(raw)}") from e
++        raise MonzoImportError("unrecognised date; Monzo writes DD/MM/YYYY, YYYY-MM-DD or an ISO "
++                               "timestamp") from e
+     if when.tzinfo is not None:
+         # Dated in UTC too, so a statement's dates keep to the order its rows are walked in,
+         # across midnight in any offset (T04 review 64).
+@@ -98,22 +103,19 @@ def _money(raw: str | None, field: str, line: int, *, limit: bool = True) -> int
+     """The amount in whole pence, read exactly from Monzo's text, never through a binary
+     float; one the statement could not carry to the penny is refused (R2, T04 review 4)."""
+     text = (raw or "").strip()
+-    at = f"line {line}: " if line else ""  # line 0: the command line, not the export
++    # Line 0 is the command line: the person's own option is quoted back to them. A cell of the
++    # export never is; its line is named (the importer contract, T28).
++    at = f"line {line}: {field}" if line else f"{field} {shown(raw)}"
+     if not PLAIN_MONEY.match(text):
+-        raise MonzoImportError(f"{at}{field} {shown(raw)} is not a plain amount like -12.40")
++        raise MonzoImportError(f"{at} is not a plain amount like -12.40")
+     p = text_pence(text)  # exact, in the figures layer (R2, T04 review 13)
+     if p is None:
+-        raise MonzoImportError(f"{at}{field} {shown(raw)} has more than two decimal places")
++        raise MonzoImportError(f"{at} has more than two decimal places")
+     if limit and at_limit(p):
+-        raise MonzoImportError(f"{at}{field} {shown(raw)} is {AT_LIMIT}; no figure could be reported to the penny")
++        raise MonzoImportError(f"{at} is {AT_LIMIT}; no figure could be reported to the penny")
+     return p
+ 
+ 
+-def _gbp(p: int) -> str:
+-    """Whole pence written as pounds with two decimals, by the figures layer."""
+-    return pounds_text(p)
+-
+-
+ def references(*fields: str | None) -> str:
+     """Invoice references found in Monzo's free-text fields, e.g. "INV1234"."""
+     found = []
+@@ -125,15 +127,6 @@ def references(*fields: str | None) -> str:
+     return " ".join(found)
+ 
+ 
+-FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+-
+-
+-def neutralise_formula(text: str) -> str:
+-    """A text cell a spreadsheet would read as a formula gets a leading apostrophe (R34).
+-    Monzo's Type is provider-written; an unknown one becomes the description's prefix."""
+-    return "'" + text if text.startswith(FORMULA_START) else text
+-
+-
+ def describe(kind: str, name: str, amount: float, extra: str = "") -> str:
+     """A bank-statement style description from Monzo's Type, Name and direction."""
+     k = kind.strip().lower()
+@@ -200,19 +193,18 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
+ 
+     parsed = []
+     skipped = 0
+-    seen: set[str] = set()
++    seen: dict[str, int] = {}  # each Transaction ID's line
+ 
+     def flows_before() -> str:
+         """Money in or out among the records read so far already at the limit: said with any
+         later problem, so a bad row or an unreadable field never hides it (T04 reviews 23-24)."""
+         # The row being read counts once its amount is known, even if a later field of it is
+         # bad (T04 review 26).
+-        reached = flows_at_limit([a for *_, a, _b in parsed] + ([reading] if reading is not None else []))
++        reached = flows_at_limit([x.amount for *_, x in parsed] + ([reading] if reading is not None else []))
+         return (f"{' and '.join(reached)} {'total' if len(reached) > 1 else 'totals'} {AT_LIMIT} in the lines "
+                 "read so far: no figure could be reported to the penny; ") if reached else ""
+ 
+     reading: int | None = None
+-    line_of: dict[str, int] = {}  # each transaction's line, for refusals after sorting
+ 
+     try:
+         # A record that cannot be read whole (a field too long to read, a bad byte) is still
+@@ -249,14 +241,13 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
+                 # "1,000.00" shifts them), so it is refused, never skipped (T04 review 34).
+                 shifted = "; the row has more fields than the header has columns, so an amount with a comma " \
+                           "in it must be quoted" if None in r else ""
+-                raise MonzoImportError(f"line {i}: Currency {shown(r.get('Currency'))} is not a currency code{shifted}")
++                raise MonzoImportError(f"line {i}: Currency is not a currency code{shifted}")
+             if partial and "Amount" not in unreadable.readable:
+                 raise MonzoImportError(f"{src}: {unreadable}")
+             amount = _money(r["Amount"], "Amount", i, limit=False)
+             reading = amount
+             if at_limit(amount):
+-                raise MonzoImportError(f"line {i}: Amount {shown(r['Amount'])} is {AT_LIMIT}; no figure could be "
+-                                       "reported to the penny")
++                raise MonzoImportError(f"line {i}: Amount is {AT_LIMIT}; no figure could be reported to the penny")
+             if partial:
+                 raise MonzoImportError(f"{src}: {unreadable}")  # its amount is counted above
+             # More cells than the header has columns: an unquoted thousands separator ("1,000.00")
+@@ -272,9 +263,8 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
+                 raise MonzoImportError(f"line {i}: unexpected characters in Transaction ID (it must start with a "
+                                        "letter, digit, _ . or :, then only letters, digits, _ . : -)")
+             if tid in seen:
+-                raise MonzoImportError(f"line {i}: duplicate Transaction ID {tid}")
+-            seen.add(tid)
+-            line_of[tid] = i
++                raise MonzoImportError(f"line {i}: duplicate Transaction ID (first on line {seen[tid]})")
++            seen[tid] = i
+             try:
+                 d, moment, offset = _parse_when(r["Date"])
+             except MonzoImportError as e:
+@@ -293,7 +283,8 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
+                 if len(cell) > csv.field_size_limit():
+                     raise MonzoImportError(f"line {i}: the {name} would be {len(cell):,} characters, longer "
+                                            f"than the {csv.field_size_limit():,} a statement's CSV reader reads")
+-            parsed.append((d, t, tid, desc, amount, bal))
++            parsed.append((t, tid, contract.Line(line=i, id=tid, date=d, description=desc, amount=amount,
++                                                 balance=bal)))
+             reading = None
+     except MonzoImportError as e:
+         note = flows_before()
+@@ -308,7 +299,7 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
+         raise MonzoImportError(f"{src}: no GBP transactions")
+     # Money in or out at the limit is said before anything else about the export (its
+     # opening balance, say) can refuse it (T04 review 25).
+-    reached = flows_at_limit([a for *_, a, _b in parsed])
++    reached = flows_at_limit([x.amount for *_, x in parsed])
+     if reached:
+         raise MonzoImportError(f"{' and '.join(reached)} {'total' if len(reached) > 1 else 'totals'} "
+                                f"{AT_LIMIT}: no figure could be reported to the penny")
+@@ -317,52 +308,20 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
+             "this export has no Balance column; pass --opening-balance (the balance just "
+             "before the first transaction, from your Monzo statement)"
+         )
+-    parsed.sort(key=lambda x: (x[1], x[2]))  # when it happened, then Transaction ID
+-    first = parsed[0]
+-    # Everything below is whole pence (T04 review 4).
+-    implied = opening_before(first[5], first[4]) if first[5] is not None else None
+-    if opening_pence is None:
+-        if implied is None:
+-            raise MonzoImportError(f"line {line_of[first[2]]}: the first transaction, {first[2]}, has no Balance; "
+-                                   "pass --opening-balance")
+-        opening_pence = implied
+-        source = "Monzo Balance column"
+-    else:
+-        if implied is not None and implied != opening_pence:
+-            raise MonzoImportError(
+-                f"--opening-balance {_gbp(opening_pence)} disagrees with Monzo's Balance column, which "
+-                f"implies {_gbp(implied)} at line {line_of[first[2]]} ({first[2]}, the first transaction); "
+-                "leave --opening-balance out to use Monzo's"
+-            )
+-        source = "opening balance supplied"
+-
+-    # The totals and the walk are figures-layer arithmetic (R2, T04 review 13).
+-    reached = flows_at_limit([a for *_, a, _b in parsed])  # each named (T04 review 6)
+-    if reached:
+-        raise MonzoImportError(f"{' and '.join(reached)} {'total' if len(reached) > 1 else 'totals'} "
+-                               f"{AT_LIMIT}: no figure could be reported to the penny")
+-    out_rows = []
+-    bal = opening_pence
+-    for (d, _t, tid, desc, amount, monzo_bal), bal in zip(parsed, running_balances(opening_pence, [x[4] for x in parsed]),
+-                                                          strict=True):
+-        if at_limit(bal):
+-            raise MonzoImportError(f"line {line_of[tid]}: {tid}: the running balance reaches £10,000,000,000,000; "
+-                                   "no figure could be reported to the penny")
+-        if monzo_bal is not None and monzo_bal != bal:
+-            raise MonzoImportError(
+-                f"line {line_of[tid]}: {tid}: walked balance {_gbp(bal)} disagrees with Monzo's {_gbp(monzo_bal)}; "
+-                "the export may be missing transactions"
+-            )
+-        out_rows.append({"id": tid, "date": d.isoformat(), "description": neutralise_formula(desc),
+-                         "amount": _gbp(amount), "balance": _gbp(bal)})
+-
+-    Path(dst).parent.mkdir(parents=True, exist_ok=True)
+-    with Path(dst).open("w", newline="") as f:
+-        w = csv.DictWriter(f, fieldnames=["id", "date", "description", "amount", "balance"])
+-        w.writeheader()
+-        w.writerows(out_rows)
++    parsed.sort(key=lambda x: (x[0], x[1]))  # when it happened, then Transaction ID
++    lines = [x for *_, x in parsed]
++    # The opening balance, the walk and the writing are the importer contract's, shared by every
++    # importer (T28); everything is whole pence, in the figures layer (R2, T04 reviews 4 and 13).
++    try:
++        opening_pence, source = contract.opening_balance(lines, opening_pence, column=BALANCE_COLUMN,
++                                                         source="Monzo Balance column")
++        balances = contract.walk(lines, opening_pence, column=BALANCE_COLUMN)
++        # The output passes the statement loader, or nothing is written (T28).
++        contract.write_statement(dst, lines, balances, label=src)
++    except ImportRefused as e:  # said as this importer's refusal, as before the contract
++        raise MonzoImportError(str(e)) from None
+     return ImportResult(
+-        rows=len(out_rows), start=parsed[0][0], end=parsed[-1][0],
+-        opening_balance=pounds(opening_pence), closing_balance=pounds(bal),
++        rows=len(lines), start=lines[0].date, end=lines[-1].date,
++        opening_balance=pounds(opening_pence), closing_balance=pounds(balances[-1]),
+         balance_source=source, skipped_non_gbp=skipped,
+     )
+diff --git a/src/cma/ingest.py b/src/cma/ingest.py
+index 787a438..fa73cdb 100644
+--- a/src/cma/ingest.py
++++ b/src/cma/ingest.py
+@@ -61,6 +61,36 @@ class StatementError(ValueError):
+         super().__init__(f"{path}: {len(problems)} problem(s)\n  " + "\n  ".join(whole + limit + rest))
+ 
+ 
++def refusal_parts(e: StatementError, line=None) -> list[str]:
++    """A refusal's problems said without any cell's value, grouped by the kind the loader
++    recorded, never by their text, which can quote a cell (T04 review 22): money in or out at
++    the limit in full; another problem with the whole file by its label; lines at the limit,
++    lines with a field too long to read, then up to ten other line labels. `line`, when given,
++    maps a line of the checked file to the line of the file it came from (an importer's
++    source). Used by the MCP server and the importer contract (R2, R34; T28)."""
++    problems, kinds = e.problems, e.kinds
++    where = line or (lambda n: n)
++
++    def label(text: str) -> str:
++        head = text.split(":", 1)[0]
++        parts = head.split()
++        return f"line {where(int(parts[1]))}" if len(parts) == 2 and parts[0] == "line" and parts[1].isdigit() else head
++
++    def labels(kind: str) -> list[str]:
++        got = {label(x) for x, k in zip(problems, kinds, strict=True) if k == kind}
++        return sorted(got, key=lambda lab: int(lab.split()[1]))
++
++    flows = [x for x, k in zip(problems, kinds, strict=True) if k == "flow"]
++    files = [label(x).split(" (", 1)[0] for x, k in zip(problems, kinds, strict=True) if k == "file"]
++    limit, long_ = labels("limit"), labels("too_long")
++    other = [x for x in labels("line") if x not in limit and x not in long_]
++    parts = flows + files + ([f"amount or balance {AT_LIMIT} on {', '.join(limit)}"] if limit else [])
++    parts += [f"{TOO_LONG} on {', '.join(long_)}"] if long_ else []
++    if other:
++        parts.append(f"other problems on {', '.join(other[:10])}{' and more' if len(other) > 10 else ''}")
++    return parts
++
++
+ AMOUNT = re.compile(r"^[-+]?\d+(?:\.\d{1,2})?$")
+ SPLIT_COLUMNS = {"paid in", "paid out", "money in", "money out", "debit", "credit"}
+ 
+diff --git a/src/cma/mcp_server.py b/src/cma/mcp_server.py
+index 2ab6d72..ed4e8f0 100644
+--- a/src/cma/mcp_server.py
++++ b/src/cma/mcp_server.py
+@@ -178,20 +178,7 @@ def _statement(path: str):
+         # problem with the whole file is named by its label; lines at the limit, and lines
+         # with a field too long to read (whose content is not known), are each named in full,
+         # ahead of up to ten other line labels. No cell value is given (R2, T04 reviews 12-22).
+-        problems, kinds = e.problems, e.kinds
+-
+-        def labels(kind: str) -> list[str]:
+-            got = {x.split(":", 1)[0] for x, k in zip(problems, kinds, strict=True) if k == kind}
+-            return sorted(got, key=lambda label: int(label.split()[1]))
+-
+-        flows = [x for x, k in zip(problems, kinds, strict=True) if k == "flow"]
+-        files = [x.split(":", 1)[0].split(" (", 1)[0] for x, k in zip(problems, kinds, strict=True) if k == "file"]
+-        limit, long_ = labels("limit"), labels("too_long")
+-        other = [x for x in labels("line") if x not in limit and x not in long_]
+-        parts = flows + files + ([f"amount or balance {metrics.AT_LIMIT} on {', '.join(limit)}"] if limit else [])
+-        parts += [f"{ingest.TOO_LONG} on {', '.join(long_)}"] if long_ else []
+-        if other:
+-            parts.append(f"other problems on {', '.join(other[:10])}{' and more' if len(other) > 10 else ''}")
++        problems, parts = e.problems, ingest.refusal_parts(e)
+         raise ValueError(f"{path}: statement refused, {len(problems)} problem(s): {'; '.join(parts)}; "
+                          "run `cma run` locally to see them") from None
+ 
+diff --git a/src/cma/store.py b/src/cma/store.py
+index 71420ae..f681470 100644
+--- a/src/cma/store.py
++++ b/src/cma/store.py
+@@ -540,8 +540,7 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
+     """Import a bank file into a case: the original into inputs/ by its hash, the converted
+     statement into statements/<account>.csv, checked by the statement loader, and one log
+     entry (R42). The same file imported again leaves the case unchanged (R39)."""
+-    from .importers import monzo
+-    from .ingest import StatementError, load_csv
++    from .importers import contract, monzo
+ 
+     folder = Path(folder)
+     if fmt not in FORMATS:
+@@ -576,7 +575,7 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
+             _write_private(converted, b"")  # made 0600 before the importer writes into it
+             try:
+                 monzo.convert(raw, converted, opening_balance)
+-            except monzo.MonzoImportError as e:
++            except contract.ImportRefused as e:  # by line, never a cell's value (T28)
+                 raise CaseStoreError(f"import refused: {str(e).replace(str(raw), src.name)}") from None
+             out = converted.read_bytes()
+         else:
+@@ -584,9 +583,11 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
+                 raise CaseStoreError("--opening-balance is for a Monzo export; a statement CSV has its balances")
+             out = data
+         try:
+-            stmt = load_csv(statement, account_name=account, data=out)
+-        except StatementError as e:
+-            raise CaseStoreError(f"import refused: {str(e).replace(str(statement), src.name)}") from None
++            # The statement every importer writes passes the statement loader; a refusal names
++            # lines, never a cell's value (the importer contract, T28).
++            stmt = contract.checked(out, src.name, account_name=account)
++        except contract.ImportRefused as e:
++            raise CaseStoreError(f"import refused: {e}") from None
+ 
+         entry = {"account": account, "format": fmt, "input_sha256": sha,
+                  "statement_sha256": hashlib.sha256(out).hexdigest(), "lines": len(stmt.transactions),
+diff --git a/tests/golden/monzo/business_export.golden b/tests/golden/monzo/business_export.golden
+new file mode 100644
+index 0000000..4928b62
+--- /dev/null
++++ b/tests/golden/monzo/business_export.golden
+@@ -0,0 +1,5 @@
++Transaction ID,Date,Time,Type,Name,Emoji,Category,Amount,Currency,Local amount,Local currency,Notes and #tags,Address,Receipt,Description,Category split,Money Out,Money In,Balance
++tx_b1,01/03/2026,09:00:00,Faster payment,Client A,,general,100.00,GBP,100.00,GBP,,,,,,,100.00,600.00
++tx_b2,02/03/2026,09:00:00,Card payment,Shop,,general,-50.25,GBP,-50.25,GBP,,,,,,-50.25,,549.75
++tx_b3,02/03/2026,10:00:00,Direct Debit,Supplier,,general,-20.00,GBP,-20.00,GBP,,,,,,-20.00,,529.75
++tx_b4,05/03/2026,09:00:00,Bank transfer,Client B INV9,,general,300.50,GBP,300.50,GBP,,,,,,,300.50,830.25
+diff --git a/tests/golden/monzo/business_statement.golden b/tests/golden/monzo/business_statement.golden
+new file mode 100644
+index 0000000..66e4df1
+--- /dev/null
++++ b/tests/golden/monzo/business_statement.golden
+@@ -0,0 +1,5 @@
++id,date,description,amount,balance
++tx_b1,2026-03-01,FPS CREDIT CLIENT A,100.00,600.00
++tx_b2,2026-03-02,CARD SHOP,-50.25,549.75
++tx_b3,2026-03-02,DD SUPPLIER,-20.00,529.75
++tx_b4,2026-03-05,FPS CREDIT CLIENT B INV9,300.50,830.25
+diff --git a/tests/golden/monzo/personal_export.golden b/tests/golden/monzo/personal_export.golden
+new file mode 100644
+index 0000000..d5313c4
+--- /dev/null
++++ b/tests/golden/monzo/personal_export.golden
+@@ -0,0 +1,13 @@
++﻿Transaction ID,Date,Time,Type,Name,Emoji,Category,Amount,Currency,Local amount,Local currency,Notes and #tags,Address,Receipt,Description,Category split,Money Out,Money In
++tx_0010,2026-03-02T08:15:00Z,,Faster payment,Acme Trading Ltd,,general,1250.00,GBP,1250.00,GBP,INV 1042,,,,,,1250.00
++tx_0009,28/02/2026,17:45:00,Card payment,Corner Shop,,general,-12.40,GBP,-12.40,GBP,,,,,,-12.40,
++tx_0008,28/02/2026,09:00:00,Faster payment,Example Client,,general,640.00,GBP,640.00,GBP,,,,Payment for inv-77,,,640.00
++tx_0007,15/02/2026,10:00:00,Monzo Flex,Purchase,,general,-300.00,GBP,-300.00,GBP,,,,,,-300.00,
++tx_0006,10/02/2026,12:00:00,flex,Monzo Flex,,general,450.00,GBP,450.00,GBP,,,,,,,450.00
++tx_0005,01/02/2026,06:00:00,Direct Debit,Example Council,,general,-150.00,GBP,-150.00,GBP,,,,,,-150.00,
++tx_0004,31/01/2026,09:00:00,Bacs,HMRC,,general,88.12,GBP,88.12,GBP,,,,,,,88.12
++tx_0003,20/01/2026,14:30:00,=1+1,Odd Type,,general,-1.01,GBP,-1.01,GBP,,,,,,-1.01,
++tx_0002,05/01/2026,12:00:00,Pot transfer,Holiday pot,,general,-200.00,GBP,-200.00,GBP,,,,,,-200.00,
++tx_0001,04/01/2026,08:00:00,Standing order,Landlord,,general,-700.00,GBP,-700.00,GBP,,,,,,-700.00,
++tx_0000,03/01/2026,11:00:00,Card payment,Cafe Abroad,,general,-9.99,EUR,-9.99,EUR,,,,,,-9.99,
++tx_000a,02/01/2026,11:00:00,Interest,Monzo,,general,0.37,GBP,0.37,GBP,,,,,,,0.37
+diff --git a/tests/golden/monzo/personal_statement.golden b/tests/golden/monzo/personal_statement.golden
+new file mode 100644
+index 0000000..53c7ca1
+--- /dev/null
++++ b/tests/golden/monzo/personal_statement.golden
+@@ -0,0 +1,12 @@
++id,date,description,amount,balance
++tx_000a,2026-01-02,INTEREST MONZO,0.37,1000.37
++tx_0001,2026-01-04,SO LANDLORD,-700.00,300.37
++tx_0002,2026-01-05,POT TRANSFER OUT HOLIDAY POT,-200.00,100.37
++tx_0003,2026-01-20,'=1+1 ODD TYPE,-1.01,99.36
++tx_0004,2026-01-31,BACS CREDIT HMRC,88.12,187.48
++tx_0005,2026-02-01,DD EXAMPLE COUNCIL,-150.00,37.48
++tx_0006,2026-02-10,LOAN DRAWDOWN MONZO FLEX,450.00,487.48
++tx_0007,2026-02-15,LOAN REPAYMENT MONZO FLEX PURCHASE,-300.00,187.48
++tx_0008,2026-02-28,FPS CREDIT EXAMPLE CLIENT INV-77,640.00,827.48
++tx_0009,2026-02-28,CARD CORNER SHOP,-12.40,815.08
++tx_0010,2026-03-02,FPS CREDIT ACME TRADING LTD INV1042,1250.00,2065.08
+diff --git a/tests/golden/monzo/results.json b/tests/golden/monzo/results.json
+new file mode 100644
+index 0000000..d723a6c
+--- /dev/null
++++ b/tests/golden/monzo/results.json
+@@ -0,0 +1,26 @@
++{
++  "personal": {
++    "opening_balance": "1000.00",
++    "result": {
++      "rows": 11,
++      "start": "2026-01-02",
++      "end": "2026-03-02",
++      "opening_balance": 1000.0,
++      "closing_balance": 2065.08,
++      "balance_source": "opening balance supplied",
++      "skipped_non_gbp": 1
++    }
++  },
++  "business": {
++    "opening_balance": null,
++    "result": {
++      "rows": 4,
++      "start": "2026-03-01",
++      "end": "2026-03-05",
++      "opening_balance": 500.0,
++      "closing_balance": 830.25,
++      "balance_source": "Monzo Balance column",
++      "skipped_non_gbp": 0
++    }
++  }
++}
+diff --git a/tests/test_importer_contract.py b/tests/test_importer_contract.py
+new file mode 100644
+index 0000000..4597392
+--- /dev/null
++++ b/tests/test_importer_contract.py
+@@ -0,0 +1,203 @@
++"""The importer contract (C4, Interfaces): every importer writes the five-column statement
++that ingest.load_csv validates, all importers share one step that walks and verifies the
++balance, and refusals name lines, never a cell's value. Used by `cma import monzo` and
++`cma case import`. The Monzo golden files were captured from the importer before the
++shared step was extracted from it (tests/golden/monzo/)."""
++
++import csv
++import json
++from datetime import date
++from pathlib import Path
++
++import pytest
++from typer.testing import CliRunner
++
++from cma import ingest, store
++from cma.cli import app
++from cma.importers import contract, monzo
++
++runner = CliRunner()
++GOLDEN = Path(__file__).parent / "golden" / "monzo"
++RESULTS = json.loads((GOLDEN / "results.json").read_text())
++SENTINEL = "ZQXJ"  # a string no message the tool writes holds
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    monkeypatch.setenv("CMA_HOME", str(tmp_path / "cma-home"))
++    return tmp_path / "cma-home"
++
++
++def _flat(text: str) -> str:
++    return " ".join(text.split())
++
++
++# --- golden output unchanged -------------------------------------------------------------
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("name", sorted(RESULTS))
++def test_monzo_golden_output_is_unchanged(tmp_path, name):
++    out = tmp_path / "statement.csv"
++    r = monzo.convert(GOLDEN / f"{name}_export.golden", out, RESULTS[name]["opening_balance"])
++    assert out.read_bytes() == (GOLDEN / f"{name}_statement.golden").read_bytes()
++    want = RESULTS[name]["result"]
++    assert {**r.__dict__, "start": r.start.isoformat(), "end": r.end.isoformat()} == want
++    ingest.load_csv(out)  # the output passes the statement loader
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("name", sorted(RESULTS))
++def test_cma_import_monzo_writes_the_golden_statement(tmp_path, name):
++    out = tmp_path / "statement.csv"
++    args = ["import", "monzo", str(GOLDEN / f"{name}_export.golden"), "-o", str(out)]
++    if RESULTS[name]["opening_balance"] is not None:
++        args += ["--opening-balance", RESULTS[name]["opening_balance"]]
++    r = runner.invoke(app, args)
++    assert r.exit_code == 0, r.output
++    assert out.read_bytes() == (GOLDEN / f"{name}_statement.golden").read_bytes()
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("name", sorted(RESULTS))
++def test_cma_case_import_keeps_the_golden_statement(home, name):
++    cid = store.new_case()
++    args = ["case", "import", cid, str(GOLDEN / f"{name}_export.golden"), "--format", "monzo"]
++    if RESULTS[name]["opening_balance"] is not None:
++        args += ["--opening-balance", RESULTS[name]["opening_balance"]]
++    r = runner.invoke(app, args)
++    assert r.exit_code == 0, r.output
++    kept = store.case_folder(cid) / "statements" / "main.csv"
++    assert kept.read_bytes() == (GOLDEN / f"{name}_statement.golden").read_bytes()
++
++
++# --- the shared balance walk -------------------------------------------------------------
++
++
++def _line(line, tid, amount, balance=None, d="2026-03-01"):
++    return contract.Line(line=line, id=tid, date=date.fromisoformat(d), description=f"FPS CREDIT {tid}",
++                         amount=amount, balance=balance)
++
++
++@pytest.mark.contracts
++def test_the_walk_infers_the_opening_balance_and_checks_every_provider_balance():
++    lines = [_line(2, "a", 10_00, 60_00), _line(3, "b", -5_00, 55_00), _line(4, "c", 1_00)]
++    opening, source = contract.opening_balance(lines, None, column="Monzo's Balance column")
++    assert (opening, source) == (50_00, "Monzo's Balance column")
++    assert contract.walk(lines, opening, column="Monzo's Balance column") == [60_00, 55_00, 56_00]
++
++
++@pytest.mark.contracts
++def test_the_walk_refuses_a_disagreeing_balance_by_line_without_its_value():
++    lines = [_line(2, "a", 10_00, 60_00), _line(7, "tx_ZQXJ", -5_00, 99_99)]
++    with pytest.raises(contract.ImportRefused) as e:
++        contract.walk(lines, 50_00, column="Monzo's Balance column")
++    msg = str(e.value)
++    assert msg.startswith("line 7:") and "disagrees with Monzo's Balance column" in msg
++    assert "99.99" not in msg and "55.00" not in msg and SENTINEL not in msg
++
++
++@pytest.mark.contracts
++def test_the_walk_refuses_a_running_balance_at_the_limit_by_line():
++    lines = [_line(2, "a", 9_999_999_999_999_99), _line(3, "b", 1)]
++    with pytest.raises(contract.ImportRefused, match=r"^line 3: the running balance reaches £10,000,000,000,000"):
++        contract.walk(lines, 0, column="Monzo's Balance column")
++
++
++@pytest.mark.contracts
++def test_a_supplied_opening_balance_must_agree_with_the_provider():
++    lines = [_line(4, "a", 10_00, 60_00)]
++    assert contract.opening_balance(lines, 50_00, column="Monzo's Balance column") == (50_00, "opening balance supplied")
++    with pytest.raises(contract.ImportRefused, match=r"implies 50\.00 at line 4, the first transaction"):
++        contract.opening_balance(lines, 40_00, column="Monzo's Balance column", option="--opening-balance")
++    with pytest.raises(contract.ImportRefused, match=r"^line 4: the first transaction has no balance"):
++        contract.opening_balance([_line(4, "a", 10_00)], None, column="Monzo's Balance column")
++
++
++@pytest.mark.contracts
++def test_an_output_the_loader_would_refuse_is_never_written(tmp_path):
++    """The contract's output passes ingest.load_csv, or nothing is written: a row dated after
++    today is refused by the line of the source file it came from."""
++    lines = [_line(2, "a", 1_00, d="2026-01-01"), _line(5, f"{SENTINEL}", 1_00, d="2099-01-01")]
++    dst = tmp_path / "out.csv"
++    with pytest.raises(contract.ImportRefused) as e:
++        contract.write_statement(dst, lines, contract.walk(lines, 0, column="x"), label="export.csv")
++    assert "line 5" in str(e.value) and SENTINEL not in str(e.value) and "future" not in str(e.value)
++    assert not dst.exists()
++
++
++# --- refusals name lines, never cell values ------------------------------------------------
++
++HEADER = ["Transaction ID", "Date", "Time", "Type", "Name", "Amount", "Currency", "Balance"]
++
++
++def _export(tmp_path, rows):
++    p = tmp_path / "monzo.csv"
++    with p.open("w", newline="") as f:
++        w = csv.writer(f)
++        w.writerow(HEADER)
++        w.writerows(rows)
++    return p
++
++
++OK = ["tx_1", "01/03/2026", "09:00:00", "Faster payment", "Client", "10.00", "GBP", "60.00"]
++BAD_ROWS = {
++    "date": [OK, ["tx_2", f"{SENTINEL}", "", "Card payment", "Shop", "-1.00", "GBP", "59.00"]],
++    "amount": [OK, ["tx_2", "02/03/2026", "", "Card payment", "Shop", f"{SENTINEL}", "GBP", "59.00"]],
++    "decimals": [OK, ["tx_2", "02/03/2026", "", "Card payment", "Shop", "-1.0007", "GBP", "59.00"]],
++    "amount at limit": [OK, ["tx_2", "02/03/2026", "", "Card payment", "Shop", "10000000000000.00", "GBP", ""]],
++    "balance": [OK, ["tx_2", "02/03/2026", "", "Card payment", "Shop", "-1.00", "GBP", f"{SENTINEL}"]],
++    "currency": [OK, ["tx_2", "02/03/2026", "", "Card payment", "Shop", "-1.00", f"{SENTINEL}9", "59.00"]],
++    "duplicate id": [[f"tx_{SENTINEL}", *OK[1:]], [f"tx_{SENTINEL}", "02/03/2026", "", "Card", "Shop", "-1.00",
++                                                     "GBP", "59.00"]],
++    "disagreeing balance": [OK, ["tx_2", "02/03/2026", "", "Card payment", "Shop", "-1.00", "GBP", "1234.56"]],
++    "first balance missing": [[*OK[:7], ""], ["tx_2", "02/03/2026", "", "Card payment", "Shop", "-1.00", "GBP", ""]],
++}
++CELLS = {"date": SENTINEL, "amount": SENTINEL, "decimals": "1.0007", "amount at limit": "10000000000000.00",
++         "balance": SENTINEL, "currency": SENTINEL, "duplicate id": SENTINEL, "disagreeing balance": "1234.56",
++         "first balance missing": "tx_1"}
++LINE = {"date": 3, "amount": 3, "decimals": 3, "amount at limit": 3, "balance": 3, "currency": 3,
++        "duplicate id": 3, "disagreeing balance": 3, "first balance missing": 2}
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("case", sorted(BAD_ROWS))
++def test_a_monzo_refusal_names_the_line_never_the_cell(tmp_path, case):
++    with pytest.raises(contract.ImportRefused) as e:
++        monzo.convert(_export(tmp_path, BAD_ROWS[case]), tmp_path / "o.csv")
++    msg = str(e.value)
++    assert f"line {LINE[case]}" in msg, msg
++    assert CELLS[case] not in msg, msg
++    assert not (tmp_path / "o.csv").exists()
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("case", sorted(BAD_ROWS))
++def test_cma_import_monzo_and_cma_case_import_refuse_by_line(home, tmp_path, case):
++    src = _export(tmp_path, BAD_ROWS[case])
++    r = runner.invoke(app, ["import", "monzo", str(src), "-o", str(tmp_path / "o.csv")])
++    assert r.exit_code == 2 and f"line {LINE[case]}" in _flat(r.output) and CELLS[case] not in r.output, r.output
++    cid = store.new_case()
++    r = runner.invoke(app, ["case", "import", cid, str(src), "--format", "monzo"])
++    assert r.exit_code == 2 and f"line {LINE[case]}" in _flat(r.output) and CELLS[case] not in r.output, r.output
++
++
++@pytest.mark.contracts
++def test_cma_case_import_of_a_statement_csv_refuses_by_line_never_the_cell(home, tmp_path):
++    src = tmp_path / "statement.csv"
++    src.write_text("id,date,description,amount,balance\n"
++                   "L1,2026-03-01,FPS CREDIT CLIENT,10.00,10.00\n"
++                   f"L2,2026-03-02,CARD SHOP,{SENTINEL},9.00\n"
++                   f"{SENTINEL},2026-03-0{SENTINEL[0]},CARD SHOP,-1.00,8.00\n")
++    cid = store.new_case()
++    with pytest.raises(store.CaseStoreError) as e:
++        store.import_file(store.case_folder(cid), src, "csv")
++    msg = str(e.value)
++    assert "line 3" in msg and "line 4" in msg and SENTINEL not in msg, msg
++    r = runner.invoke(app, ["case", "import", cid, str(src), "--format", "csv"])
++    assert r.exit_code == 2 and SENTINEL not in r.output, r.output
++
++
++@pytest.mark.contracts
++def test_monzo_import_error_is_an_import_refusal():
++    assert issubclass(monzo.MonzoImportError, contract.ImportRefused)
+diff --git a/tests/test_money_in.py b/tests/test_money_in.py
+index d5bce82..628b2c8 100644
+--- a/tests/test_money_in.py
++++ b/tests/test_money_in.py
+@@ -680,6 +680,7 @@ def test_import_flow_totals_and_balance_chain_come_from_the_figures_layer(monkey
+     with pytest.raises(ingest.StatementError, match="line 3: running balance"):
+         ingest.load_csv(ok, today=date(2026, 6, 1))
+ 
++    monkeypatch.undo()  # the importer's own output is checked by the loader (T28)
+     src = tmp_path / "m.csv"
+     src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance\n"
+                    "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n")
+@@ -688,8 +689,10 @@ def test_import_flow_totals_and_balance_chain_come_from_the_figures_layer(monkey
+     with pytest.raises(monzo.MonzoImportError, match="money in totals"):
+         monzo.convert(src, tmp_path / "o.csv")
+     monkeypatch.setattr(monzo, "flows_at_limit", lambda amounts: [])
+-    monkeypatch.setattr(monzo, "running_balances", lambda opening, amounts: [opening + 1 for _ in amounts])
+-    with pytest.raises(monzo.MonzoImportError, match="walked balance"):
++    # The walk is the importer contract's, shared by every importer (T28).
++    from cma.importers import contract
++    monkeypatch.setattr(contract, "running_balances", lambda opening, amounts: [opening + 1 for _ in amounts])
++    with pytest.raises(monzo.MonzoImportError, match="balance walked from the opening balance disagrees"):
+         monzo.convert(src, tmp_path / "o.csv")
+ 
+ 
+@@ -957,7 +960,7 @@ def test_records_before_an_unreadable_one_are_still_checked(tmp_path):
+     src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance\n"
+                    "tx_1,01/01/2026,09:00:00,Faster payment,ACME,10000000000000.00,GBP,90.00\n"
+                    "tx_2,02/01/2026,09:00:00,Faster payment," + "N" * 200_000 + ",-1.00,GBP,89.00\n")
+-    with pytest.raises(monzo.MonzoImportError, match=re.escape("line 2: Amount '10000000000000.00' is £10,000,000,000,000")):
++    with pytest.raises(monzo.MonzoImportError, match=re.escape("line 2: Amount is £10,000,000,000,000")):
+         monzo.convert(src, tmp_path / "o.csv")
+ 
+ 
+@@ -991,7 +994,7 @@ def test_monzo_says_money_in_at_the_limit_before_any_later_bad_row(tmp_path):
+                    "tx_3,not a date,09:00:00,Faster payment,ACME,-1.00,GBP,1.00\n")
+     with pytest.raises(monzo.MonzoImportError) as e:
+         monzo.convert(src, tmp_path / "o.csv")
+-    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "not a date" in str(e.value)
++    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "line 4: unrecognised date" in str(e.value)
+ 
+ 
+ @pytest.mark.contracts
+@@ -1024,7 +1027,7 @@ def test_monzo_counts_the_row_that_reaches_the_limit_even_if_its_balance_is_bad(
+                    f"tx_2,02/01/2026,09:00:00,Faster payment,ACME,{big},GBP,not money\n")
+     with pytest.raises(monzo.MonzoImportError) as e:
+         monzo.convert(src, tmp_path / "o.csv")
+-    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "not money" in str(e.value)
++    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "line 3: Balance is not a plain amount" in str(e.value)
+ 
+ 
+ @pytest.mark.contracts
+@@ -1040,7 +1043,7 @@ def test_monzo_says_the_limit_when_the_crossing_row_has_a_bad_date(tmp_path):
+                    f"tx_2,someday,09:00:00,Faster payment,ACME,{big},GBP,{big}\n")
+     with pytest.raises(monzo.MonzoImportError) as e:
+         monzo.convert(src, tmp_path / "o.csv")
+-    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "someday" in str(e.value)
++    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "line 3: unrecognised date" in str(e.value)
+ 
+ 
+ _MONZO_HEAD = "Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance\n"
+@@ -1067,11 +1070,11 @@ def test_monzo_names_the_line_of_a_bad_date_and_a_walked_balance(tmp_path):
+     src = tmp_path / "m.csv"
+     src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n\n"
+                    "tx_2,someday,09:00:00,Faster payment,ACME,-1.00,GBP,89.00\n")
+-    with pytest.raises(monzo.MonzoImportError, match="line 4: unrecognised date 'someday'"):
++    with pytest.raises(monzo.MonzoImportError, match="line 4: unrecognised date;"):
+         monzo.convert(src, tmp_path / "o.csv")
+     src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n\n"
+                    "tx_2,02/01/2026,09:00:00,Faster payment,ACME,-1.00,GBP,50.00\n")
+-    with pytest.raises(monzo.MonzoImportError, match="line 4: tx_2: walked balance"):
++    with pytest.raises(monzo.MonzoImportError, match="line 4: the balance walked from the opening balance disagrees"):
+         monzo.convert(src, tmp_path / "o.csv")
+ 
+ 
+@@ -1136,10 +1139,10 @@ def test_monzo_opening_balance_refusals_name_the_line(tmp_path):
+ 
+     src = tmp_path / "m.csv"
+     src.write_text(_MONZO_HEAD + "\ntx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,\n")
+-    with pytest.raises(monzo.MonzoImportError, match="line 3: the first transaction, tx_1, has no Balance"):
++    with pytest.raises(monzo.MonzoImportError, match="line 3: the first transaction has no balance"):
+         monzo.convert(src, tmp_path / "o.csv")
+     src.write_text(_MONZO_HEAD + "\ntx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n")
+-    with pytest.raises(monzo.MonzoImportError, match=r"implies 100.00 at line 3 \(tx_1"):
++    with pytest.raises(monzo.MonzoImportError, match=r"implies 100\.00 at line 3, the first transaction"):
+         monzo.convert(src, tmp_path / "o.csv", "50.00")
+ 
+ 
+@@ -1194,7 +1197,8 @@ def test_cma_import_monzo_prints_a_refusal_quoting_markup_as_text(tmp_path):
+     src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,[/red],GBP,1.00\n")
+     r = CliRunner().invoke(app, ["import", "monzo", str(src), "--out", str(tmp_path / "o.csv")])
+     flat = " ".join(r.output.split())
+-    assert r.exit_code == 2 and "line 2: Amount '[/red]'" in flat, r.output
++    # No cell is quoted (the importer contract, T28), so the refusal names the line alone.
++    assert r.exit_code == 2 and "line 2: Amount is not a plain amount" in flat and "[/red]" not in flat, r.output
+ 
+ 
+ @pytest.mark.contracts
+@@ -1276,7 +1280,7 @@ def test_monzo_refuses_an_amount_past_the_line_limit_before_a_surplus_cell(tmp_p
+ 
+     src = tmp_path / "m.csv"
+     src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,10000000000000.00,GBP,1.00,extra\n")
+-    with pytest.raises(monzo.MonzoImportError, match=r"line 2: Amount '10000000000000\.00' is £10,000,000,000,000"):
++    with pytest.raises(monzo.MonzoImportError, match=r"line 2: Amount is £10,000,000,000,000"):
+         monzo.convert(src, tmp_path / "o.csv")
+ 
+ 
+@@ -1295,7 +1299,7 @@ def test_monzo_checks_the_amount_of_a_row_with_a_later_field_too_long_to_read(tm
+         monzo.convert(src, tmp_path / "o.csv")
+     msg = str(e.value)
+     assert "money in totals £10,000,000,000,000 or more" in msg
+-    assert "line 3: Amount '10000000000000.00' is £10,000,000,000,000 or more" in msg and "NNNN" not in msg
++    assert "line 3: Amount is £10,000,000,000,000 or more" in msg and "NNNN" not in msg
+ 
+     csv = tmp_path / "s.csv"
+     csv.write_text("id,date,amount,balance,description\n"
+@@ -1356,7 +1360,7 @@ def test_monzo_checks_a_partial_rows_currency_before_needing_its_amount(tmp_path
+ 
+     src = tmp_path / "m.csv"
+     src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME," + "1" * 200_000 + ",X1,1.00\n")
+-    with pytest.raises(monzo.MonzoImportError, match="line 2: Currency 'X1' is not a currency code"):
++    with pytest.raises(monzo.MonzoImportError, match="line 2: Currency is not a currency code"):
+         monzo.convert(src, tmp_path / "o.csv")
+ 
+ 
+@@ -1447,7 +1451,7 @@ def test_a_bad_byte_in_the_first_data_record_is_on_its_line_with_its_amount_read
+     src = tmp_path / "m.csv"
+     src.write_bytes(f"Transaction ID,Amount,Currency,Date,Time,Type,Name,Balance{ending}".encode()
+                     + b"tx_1,10000000000000.00,GBP,01/01/2026,09:00:00,Faster payment,CAF\xe9,1.00" + ending.encode())
+-    with pytest.raises(monzo.MonzoImportError, match=r"line 2: Amount '10000000000000\.00' is £10,000,000,000,000"):
++    with pytest.raises(monzo.MonzoImportError, match=r"line 2: Amount is £10,000,000,000,000"):
+         monzo.convert(src, tmp_path / "o.csv")
+ 
+ 

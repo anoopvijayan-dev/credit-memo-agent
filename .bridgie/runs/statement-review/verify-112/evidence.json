@@ -1,0 +1,117 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed d9926dd against .bridgie/specs/statement-review/requirements.md:312. Canonical encoding, chain and head comparison, and first-bad-entry reporting are in src/cma/case.py:177–352. Reader lock validation, steady reads and retries are at src/cma/case.py:503–726, with gaps in the busy-gate retry and save read-back. Writer exclusion, fork refusal, nested-save refusal, expected-position conflict, per-step lock checks, repair and take-back are at src/cma/case.py:753–1286. The production CLI uses verify at src/cma/cli.py:309–338. Runner logs confirm the named changed, removed, reordered, rebuilt-chain and torn-tail cases, the gate retry with a free replacement gate, duplicate submit, partial failure and CLI contracts. Checked concurrent writers, empty and malformed inputs, Unicode, UTC timestamps, case-folder permissions and isolation, and CLI consumers. P15 adds no currency arithmetic or migration. The sign-off guard at src/cma/case.py:728 has no production sign-off caller in this checkout.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-112/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-112/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-112/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-112/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-112/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-112/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-112/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 647,
+      "criterion": "P15",
+      "claim": "After a holder's read is invalidated by a gate replacement, the busy-gate retry can treat the calling thread's own case lock as another writer's hold. It exhausts retries without naming a torn entry and reports the case as being saved.",
+      "repro": "Create a torn entry at position 3 and call require_intact through a second CaseLog in the thread holding the case lock. During its first read, replace the gate and pause a second writer after it takes the replacement gate exclusively and before it tries the case lock. Keep it paused through the retries. The holder's first read is discarded. Every retry fails to share the gate and the caller's own case lock, sets seen_held, and ignores entry 3 because it is past the recorded head. require_intact raises CaseLocked instead of naming entry 3 as incomplete. The passing regression at tests/test_case_log.py:3249 leaves the replacement gate free."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1241,
+      "criterion": "P15",
+      "claim": "A save's read-back accepts a whole-log result without checking either lock file after the read. A holder can confirm a save from a read across a replaced lock file without taking the required retry.",
+      "repro": "Append to an intact case. After the new head is published, replace log.jsonl.gate during the read-back of the log, before the head is read, and leave the replacement in place. Leave the log and head bytes unchanged. _publish_now sees the expected hash and append returns success without comparing the current gate with the gate it passed or retrying through the new gate."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 333,
+      "criterion": "P15",
+      "claim": "The producer's CLI contract claim says a held case with a torn tail exits 0 and prints 'appending'. The passing runner test asserts exit 4 and 'being saved'.",
+      "repro": "Compare the claim with tests/test_case_log.py:1340 and its PASSED row in contracts-4.log. That test holds the case lock over a torn tail and asserts exit 4, then releases it and asserts exit 3 naming the incomplete entry."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1214,
+      "criterion": "P15",
+      "claim": "The passing rapid-append test does not prove the producer's exact schedule of two commits on every read attempt followed by a held lock. Its writer runs independently and the assertions do not require either condition or verify the sequence of a returned recorded prefix.",
+      "repro": "Compare the disposition with the test's unsynchronized writer loop and its assertions. The runner's specified-3.log confirms that this test ran. Proving the claimed schedule would require a synchronized regression asserting both the schedule and the returned prefix, then running python -m pytest -v tests/test_case_log.py -k keep_landing."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 370,
+      "criterion": "P15",
+      "claim": "The producer's missing-head probe describes an entry 1 verdict while another writer holds the case. The current held-reader path makes no entry claim when the head is missing.",
+      "repro": "Create a populated log, hold its writer lock from another thread with the gate free, remove the head file and call verify. The chain check identifies a missing head internally, then _held_result returns checked=False and first_bad=None because the recorded count is unknown."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 318,
+      "criterion": "P15",
+      "claim": "The producer's owner-only access claim exceeds what the CLI and the new-file permissions test establish. The command checks that the supplied path is a directory and relies on filesystem access permissions.",
+      "repro": "Prepare an existing case directory and log files readable by a second OS account, while retaining ownership under the first account. Run cma case check as the second account. The CLI verifies the case when the OS permits those reads. The passing test at tests/test_case_log.py:736 only checks modes on newly created files."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

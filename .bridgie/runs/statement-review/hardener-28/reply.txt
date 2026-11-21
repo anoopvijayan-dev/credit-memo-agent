@@ -1,0 +1,47 @@
+T04 isn't ready to pass: two of the five failed-review findings are real and need your decision, because fixing them in code would break the rule that M1–M16 stay unchanged (P7). The other three failed-review findings are fixed at `d7ec35f`. I changed no code.
+
+**Checks, run on `d7ec35f`:**
+- Lint and compile are clean, and the full test suite passes (872 tests).
+- The P1, P2 and P6 tests pass (6 tests).
+- The interface tests pass (4 tests). They show `cma run` exits 6 naming the difference in pence and the lines, writes no memo, and keeps line ids that look like markup.
+- The tests comparing with the previous release pass (83 tests), so M1–M16 values and their lines are unchanged.
+- The offline evals show 9/9 memos fully grounded.
+- Computing the figures for 10,000 lines takes 0.16 s and gives the same result when run twice.
+
+**The five findings from the failed review:**
+- **Fixed (1–3):** I could not reproduce the penny mismatch between the reported buckets and total money in: 0 mismatches in 2,000 random statements. The lowest balance and overdrawn days now compare in pence, and refusal messages escape line ids.
+- **Real (4), M9:** I reproduced it. One £100 transfer out and £250 back from the same payer gives M9 = 0, but the two cited lines add up to £150.
+- **Real (5), money-out figures:** I reproduced it. M8, M11, M12 and M14 report money out as positive amounts, so they have the opposite sign to their lines. The P2 test gets round this by negating the sum for those figures.
+
+**Decision needed:** P2 says every sum figure's lines must add up to it, sign included. P7 and the previous-release tests fix M1–M16 as they were. M9 and M8/M11/M12/M14 can't meet both. Pick one:
+- **a.** Limit P2 to M17–M26, the buckets and the monthly cells. This is the smallest change.
+- **b.** Let P7 allow a sign change for M8/M11/M12/M14 and different cited lines for M9.
+- **c.** Record each line's contribution in the evidence.
+
+One smaller gap: `cma run` reports a refusal only through exit code 6 and its message, with no log line. I left this out on purpose because the design puts log lines in the case log, which T04 doesn't build.
+
+```json
+{
+  "task": "T04",
+  "claims": [
+    {"text": "Full suite, lint and compile pass at d7ec35f (no code change by this seat).", "proof_cmd": "ruff check src tests; python -m compileall -q src; python -m pytest -q", "proof_output": "All checks passed!; compile-ok; 872 passed in 72.20s"},
+    {"text": "P1, P2 (sum figures and buckets), P6 invariant tests pass, including the large-amount reported-GBP reconciliation test.", "proof_cmd": "python -m pytest -q -m invariants -k 'p1 or p2 or p6' tests/test_money_in.py", "proof_output": "6 passed, 11 deselected"},
+    {"text": "Contracts: cma run exits 6 naming pence and lines with no memo written, escapes markup-like line ids, MCP compute_metrics returns M1-M26 and refuses unreconciled buckets.", "proof_cmd": "python -m pytest -q -m contracts tests/test_money_in.py", "proof_output": "4 passed, 13 deselected"},
+    {"text": "Failure modes: a refused case writes nothing (exit 6, memo absent); fractional pence and amounts >= MAX_PENCE are refused before any figure; compute is a pure function (idempotent).", "proof_cmd": "PYTHONPATH=src python /tmp/claude-0/sp/det.py; pytest tests/test_money_in.py -k 'fractional or too_large or exits_non_zero'", "proof_output": "identical: True; tests pass within the 872"},
+    {"text": "Data/migration: additive only (M17-M26 appended, M1-M16 values and evidence unchanged vs previous release; committed example regenerated). Rollback = reinstall previous wheel; no stored data.", "proof_cmd": "python -m pytest -q -m dual_run", "proof_output": "83 passed, 789 deselected"},
+    {"text": "Offline evals still fully grounded.", "proof_cmd": "python evals/run_evals.py", "proof_output": "9/9 memos fully grounded; model = fake; ruleset = v1; exit=0"},
+    {"text": "Security: no new entry point (compute_metrics already exposed); refusal text escaped with rich.markup.escape at src/cma/cli.py; no new dependency (decimal is stdlib).", "proof_cmd": "git diff HEAD~3 -- src/cma/cli.py | grep escape; git diff HEAD~3 -- pyproject.toml", "proof_output": "from rich.markup import escape / escape(str(e)) in both refusal paths; pyproject unchanged"},
+    {"text": "Performance: metrics.compute on 10,000 categorised lines takes 0.16 s (R52 target 2 s for the whole recompute).", "proof_cmd": "PYTHONPATH=src python /tmp/claude-0/sp/det.py", "proof_output": "compute 10000 lines s: 0.164"},
+    {"text": "Docs: README states twenty-six figures, integer pence and exit 6.", "proof_cmd": "grep -n 'Twenty-six' README.md", "proof_output": "79:| Metrics | `metrics.py` | Twenty-six figures ..."}
+  ],
+  "files_changed": [],
+  "dispositions": [
+    {"finding": "verify-127 major 1: GBP conversion can make reported buckets and M17 disagree by a penny (metrics.py:105)", "disposition": "not_reproduced", "evidence": "At d7ec35f: 2000 random 5-line statements with amounts up to 1e13 pence; sum of printed bucket pence == printed M17 pence in every case (F1 mismatches: 0); _gbp refuses >= MAX_PENCE; test_p1_reported_gbp_figures_reconcile_as_printed_for_large_amounts passes."},
+    {"finding": "verify-127 major 2: lowest balance and overdrawn days use float GBP (metrics.py:228)", "disposition": "not_reproduced", "evidence": "Balances now via balance_pence; 0.3/-0.01/0.0 schedule gives M5 -0.01, M6 1 (repro F2); test_lowest_balance_and_overdrawn_days_are_compared_in_pence passes."},
+    {"finding": "verify-127 major 3: refusal ids read as Rich markup (cli.py:99)", "disposition": "not_reproduced", "evidence": "escape() applied; test_cma_run_refusal_shows_a_line_id_that_looks_like_markup asserts '[red]' in output, passes."},
+    {"finding": "verify-127 major 4: M9 cites full credit amounts while only a capped part counts (metrics.py:272)", "disposition": "reproduced", "evidence": "FPS DEBIT J BLOGGS -100 then FPS CREDIT J BLOGGS +250: M9 = 0.0, evidence [L1, L2], signed evidence total 150.0. Not fixed: see notes."},
+    {"finding": "verify-127 major 5: positive outflow figures (M8, M11, M12, M14) differ in sign from evidence; P2 test negates", "disposition": "reproduced", "evidence": "One loan repayment -50.00: M8 = 50.0, signed evidence total -50.0. Not fixed: see notes."}
+  ],
+  "notes": "GAP needing the owner (design, not code): P2 says every sum figure's signed evidence totals the figure. M8/M11/M12/M14 report money out as positive, and M9's round-trip offset is capped while its evidence lists whole credits. Both are M1-M16, whose values and evidence P7 and the dual_run tests pin to the previous release, so meeting P2 literally breaks P7 (or changes a signed memo's meaning). Options: (a) scope P2 to M17-M26, buckets and monthly cells in requirements; (b) amend P7 to allow M9 evidence/M8-M14 sign changes; (c) add per-line contribution amounts to evidence. T04 cannot pass P2 as written without that decision. Observability: refusal is surfaced by exit code 6 and a message naming pence and lines; no structured log line exists for cma run (design's log lines belong to the case log, T12+), not added here. No code changed by this seat."
+}
+```

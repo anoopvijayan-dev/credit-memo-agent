@@ -1,0 +1,73 @@
+**Verdict: fail on P15.** I reviewed HEAD 07568a9 (merged as ebca70d) against `src/cma/case.py` in the repository. I ran no tests and changed no files; the conclusions come from reading the code and the runner's logs.
+
+The core of P15 is in place and was proven by the runner:
+- **Hash chain and head file:** each entry is checked against its exact bytes, and the chain is compared with the head file entry by entry, naming the first bad entry. This lives at `case.py:177`, `:218` and `:285`.
+- **CLI:** `cma case check` uses it at `cli.py:465`.
+- **Tests that ran:** the runner logs show these passing in the specified and invariants tiers:
+  - changed, removed, reordered and rebuilt chains, at 2 to 6 entries;
+  - the torn-last-entry tests;
+  - both review-49 regression tests (the publish-and-take-back read, and the nested save after the folder moved).
+
+**Last round's two findings.**
+- **Publish followed by take-back during a read:** fixed. `_look` at `case.py:744` now compares which file stands at the head path as well as its contents.
+- **Nested save after the case folder moves:** fixed for a folder that already exists. The guard now keys on the folder's device and inode.
+
+**Major: the nested-save guard still misses a case whose folder does not exist yet.** R42 requires a save begun inside another save on the same thread to be refused before it writes anything, and revision 23 keeps that rule even under interference.
+- `_one_save` (`case.py:961`) works out its key before `writer()` creates the folder (`mkdir` at `:842`). With no folder, the outer save's key falls back to the resolved path.
+- A nested save from a handler (for example via `_utc_now` inside `_encode` at `:1122`) runs after the folder exists, so it gets the device-and-inode key. The two keys differ and the guard lets it through.
+- The writer lock admits the same thread, so the nested save writes the head, its line and the head record, and is told it was recorded at entry 1.
+- The outer save then fails with a `LogConflict` at `:1201`.
+- The existing test only covers a folder that already exists.
+- To reproduce: point `CaseLog` at `tmp/new/log.jsonl` with `tmp/new` absent. Patch `case._utc_now` to start one nested `append(expected=0)` on a second `CaseLog` for the same path. Call `append(expected=0)`. The nested append returns an entry instead of raising "under way".
+
+**Minor findings:**
+- **Head-file check uses the inode number:** `_file_identity` (`case.py:251`) relies on device, inode, size, mtime and ctime. A take-back's staging file can reuse the inode number freed by the publish, and within one timestamp tick all five values can match. A steady read would then still hide a publish followed by a take-back, though this is unlikely.
+- **Claim 3 is wrong:** it says that while another command holds the lock, the check exits 0 with "appending". The test (`test_case_log.py`, around line 1060) asserts exit 4 and "being saved".
+- **Claim 6 is stale:** it says `case.py` has 559 insertions; the diff adds 1518 lines.
+
+```json
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Read src/cma/case.py at HEAD 07568a9 (merged as ebca70d). Canonical exact-byte entries and the head-file comparison naming the first bad entry: case.py:177, :218, :285; CLI consumer cli.py:465. The runner's specified-3.log and invariants-5.log show test_p15_a_rebuilt_chain_that_does_not_match_the_head_file_is_detected[2..6], test_p15_loading_a_case_detects_a_tampered_log_and_names_the_first_bad_entry[change|remove|reorder|rebuild], the torn-entry tests, test_a_publish_and_take_back_during_a_read_is_not_a_steady_read and test_a_nested_save_after_the_case_folder_moved_is_refused PASSED. Steady read now also compares the head file's identity (_look, case.py:744). The nested-save guard keys on the folder's device and inode (_folder_key :261, _one_save :961). It falls back to the resolved path when the folder does not yet exist, which happens before writer() creates it (:842). A nested save on a new case is therefore not refused, contrary to P15/R42 ('a save begun inside another on the same thread SHALL be refused before it writes anything', kept by revision 23).",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 961,
+      "criterion": "P15",
+      "claim": "_one_save computes its guard key with _folder_key(self.path.parent) before self.writer() runs, and writer() creates the folder (_enter, case.py:842). For a case folder that does not exist yet, the outer save's key is ('path', realpath). A nested save from a handler or callback runs once the folder exists, so its key is ('inode', dev, ino). The keys differ and the guard admits it. The writer lock lets the same thread nest, so the nested save writes the empty head, its line and its head record, and is told it was recorded. The outer save then fails with LogConflict at case.py:1201. A same-thread nested save therefore commits instead of being refused before it writes anything, which revision 23 keeps under interference. The existing regression test only covers a folder that already exists.",
+      "repro": "log = case.CaseLog(tmp_path/'new'/'log.jsonl') with tmp_path/'new' absent. monkeypatch case._utc_now so its first call runs case.CaseLog(tmp_path/'new'/'log.jsonl').append('override', {'inner': True}, expected=0) and records the result. Call log.append('override', {'outer': True}, expected=0). Expected: the inner append raises CaseLogError 'under way'. Actual: the inner append returns Entry seq 1, the outer append raises LogConflict(0, 1), and the log reads intact with the nested entry."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 251,
+      "criterion": "P15",
+      "claim": "_look's 'same file' test compares (st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns) taken by path. After a publish renames over the head file and frees its inode, the take-back's staging file can get the same inode number. With coarse file timestamps, a publish followed by a take-back within one tick can leave all five fields equal. The steady read would then still hide the publish and take-back the review-49 fix targets.",
+      "repro": "On ext4, with no open handle on the old head file, run a publish and a take-back within one timestamp tick while a reader is between its two _look samples. If the staging file reuses the freed inode number, _file_identity(head) before == after and still is True."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1060,
+      "criterion": "P15",
+      "claim": "claim.json claim 3 says that while another command holds the lock over a torn tail, the check 'reports the recorded log (exit 0, \"appending\")'. The test it cites asserts exit_code == 4 and 'being saved'. Claim 6's diff stat (case.py 559 insertions) does not match the 1518-line file. Both claims are unproven as worded.",
+      "repro": "grep -n 'exit_code == 4' tests/test_case_log.py within test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break; wc -l src/cma/case.py."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "claude-opus-5-5"
+  }
+}
+```

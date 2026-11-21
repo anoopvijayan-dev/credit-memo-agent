@@ -1,0 +1,112 @@
+```json
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to buckets. src/cma/metrics.py:483 assigns credits and :523 and :562 report GBP figures with line IDs. src/cma/graph.py:308 and src/cma/mcp_server.py:98 consume the same figures. The runner passed the bucket and MCP contract tests.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:77 checks exact pence, src/cma/metrics.py:512 handles unrepresentable M3, and src/cma/graph.py:175 and src/cma/cli.py:415 render penny values. Statement validation waits until after all records have been parsed at src/cma/ingest.py:440. Header validation also loses the starting line for an unclosed quoted field at src/cma/ingest.py:268.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks both credit membership and the pence difference before returning figures. src/cma/cli.py:118 reports the difference and involved IDs and exits 6. The runner passed the CLI and MCP refusal tests.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The v1 and v2 unmatched-credit branches at src/cma/categorise.py:1311 and :1360 use OTHER. src/cma/models.py:66 maps OTHER to unexplained, and src/cma/metrics.py:523 restricts M2 to the trading categories.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483 and :578 reconcile positive credits by ID and integer pence. M18 is a subset of M2 at :495 and :565 and is outside the bucket total. The runner passed both the membership invariant and the large-amount reconciliation invariant.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For T04's M1–M26, src/cma/metrics.py:523 and :538–574 emit the sum and outflow evidence, :423–429 identifies partly counted M9 credits, and :530–547 preserves the legacy evidence rules for M5, M6 and M10. The runner passed the figure-kind invariants and the prior-release evidence comparisons. Monthly cells and M27–M28 are assigned to T06 and T07 in .bridgie/specs/statement-review/tasks.json.",
+      "result": "pass",
+      "artifact": "dual_run-7.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 assign unmatched credits to OTHER. src/cma/metrics.py:483–490 and :568–570 put their IDs in M25, and :523–525 emits M2 from trading lines. The runner passed the unmatched-credit invariant and the named v1 and v2 unknown-payer tests.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 440,
+      "criterion": "R2",
+      "claim": "The statement loader parses the entire record sequence before checking ordinary record values. Revision 30 permits whole-file decoding and splitting, then limits record validation to one record of lookahead.",
+      "repro": "Load a five-column statement with a malformed amount on line 2 and valid records on lines 3–5. Trace _records and _number. read_data exhausts _records at line 297 before load_csv calls _number on line 2 at line 509. Line 2 should be checked by the time line 3 has been read."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 268,
+      "criterion": "R2",
+      "claim": "An unclosed quoted field in the Monzo header can be reported as an export with no transactions, omitting both the malformed field and its starting line.",
+      "repro": "Import a file whose only line is `Transaction ID,Date,Type,Name,Amount,\"Notes`. The header parser keeps the required column names and discards the quote state. The data iterator then reaches EOF, so the importer reports `no transactions` instead of naming the unclosed quoted field on line 1."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 1482,
+      "criterion": "R2",
+      "claim": "The test named `test_monzo_reads_nothing_past_the_first_problem` proves a bound on CSV feed calls. The importer comment at src/cma/importers/monzo.py:169 claims the stronger behavior. Revision 30 permits the lookahead and whole-file preparation.",
+      "repro": "Use the test's invalid first data record followed by one valid record. The importer reads all bytes at src/cma/importers/monzo.py:154 and the iterator calls next(reader) at src/cma/ingest.py:359 for the following record before yielding the first; the test still passes."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 120,
+      "criterion": "P2",
+      "claim": "The producer's scratchpad probe results are unverified. The runner logged a repository test for a £100 debit and £250 credit, which supports the M9 invariant, while the cited £150 scenario and the separate repeat-compute probe have no runner result.",
+      "repro": "Check the reviewer-186 logs for `scratchpad/probe.py`. No configured tier ran it, and the script is absent from the checkout. The cited proof command is `PYTHONPATH=src python scratchpad/probe.py` in an environment with the script available."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 235,
+      "criterion": "R1",
+      "claim": "The historical suite counts in the claim are unverified for ca0092c. The current runner logs prove the named tests ran, with 989 full-suite passes and 84 dual-run passes on the reviewed checkout.",
+      "repro": "Compare `git log -1 --oneline` and the summaries of specified-3.log and dual_run-7.log with the claim. To prove the historical counts, the runner would need results from `python -m pytest -q` and `python -m pytest -q -m dual_run` on ca0092c."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer note says the committed example was left unregenerated and omits `evidence_note`. The checked-in example already contains that field and a changed decision timestamp.",
+      "repro": "Read the M1 record at line 2363 and compare the example with the base revision. The checked-in file contains `evidence_note: null`."
+    }
+  ],
+  "verdict": "fail"
+}
+```

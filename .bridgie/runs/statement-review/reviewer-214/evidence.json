@@ -1,0 +1,57 @@
+{
+  "task": "T06",
+  "criteria": [
+    {
+      "id": "R11",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:635-688 monthly_summary: one MonthRow per calendar month from Statement.start to .end (models.py:105-111, first/last transaction date), part_month when the month's in-period days are not the whole month (:676), money_in/money_out/trading_receipts/average/lowest/days_overdrawn cells each with evidence ids and total; kinds sum/sum/outflow/derived as R11 assigns; derived cells cite the line that set the close of every day of the month in the period via end_of_day_balances (:353-369), carried over empty days. Written into the evidence record at src/cma/graph.py:274, which cli.py:336 calls for both `cma run` and `cma resume` (resume -> _review). Proven by contracts-4.log:119 test_cma_run_writes_the_monthly_summary_into_its_evidence_record PASSED and the committed-example pin (contracts-4.log:120).",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R55",
+      "tier": "adversarial",
+      "check": "Monthly trading_receipts filters REVENUE_CATEGORIES (metrics.py:681), the same set as M2 (metrics.py:408; models.py:69 includes CASH_DEPOSIT). tests/test_monthly.py P12 test asserts every CASH_DEPOSIT line is in its month's trading_receipts evidence and that the fixtures hold cash deposits (cash_seen > 0); the hand test checks cash is counted (L1, L5). invariants-5.log:318-320 PASSED.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "flow() (metrics.py:651-655): signed pence sum to total; value = signed for sum, -signed for outflow. Derived cells have total None and evidence = setters of every in-period close of the month (:663-665). test_p2_monthly_cells_cite_their_lines_by_kind recomputes closes independently over synthetic cases and 60 random statements under v1 and v2; hand test and calendar-edge test cover carried days. invariants-5.log:319-321 PASSED.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P12",
+      "tier": "adversarial",
+      "check": "Monthly money_in = credits pence>0 (:679), the same set as M17 credits (:533); trading_receipts = M2's set. test_p12_monthly_trading_receipts_sum_to_m2_and_monthly_money_in_to_total_money_in asserts pence sums and evidence multisets equal M2/M17 across v1/v2 synthetic and random statements; test_p12_and_p2_monthly_cells_at_the_calendars_first_and_last_days covers years 1 and 9999. invariants-5.log:318,321 PASSED.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 635,
+      "criterion": null,
+      "claim": "The performance claim (monthly_summary on 10,000 lines over 24 months in 0.080 s) is proven only by an unrecorded ad-hoc snippet; no runner tier produced it.",
+      "repro": "Search the runner logs in reviewer-214 for a timing of monthly_summary: none exists. A marked test timing monthly_summary on a 10,000-line statement would prove it; R52's timed recompute belongs to T22."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_monthly_hardening.py",
+      "line": 36,
+      "criterion": "P12",
+      "claim": "The claim that test_p12_and_p2_monthly_cells_at_the_calendars_first_and_last_days failed before the (year, month) fix (assert 0 == 1000) describes a run the runner did not make. Only the post-fix pass is proven.",
+      "repro": "The runner logs show only PASSED for this test (invariants-5.log:321). Checking out 2c47748 and running `python -m pytest -q tests/test_monthly_hardening.py` would prove the before state."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

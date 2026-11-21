@@ -1,0 +1,70 @@
+```json
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Judged against the supplied revision 12. The checkout's requirements.md:249 has the earlier wording. src/cma/case.py:191–324 validates canonical bytes, chain order, head count and hashes, and names the first bad or incomplete entry. Lines 428–570 implement holder, free-case and steady reads. Lines 580–592 provide the integrity guard for sign-off, whose production integration is assigned to T27. Lines 606–742 enforce lock ownership and refuse inherited writes after a fork. Lines 744–905 implement expected-position checks, repair, publication and lock rechecks. src/cma/cli.py:321–338 exposes verification. The runner logs confirm the named tamper, rebuild, torn-entry, duplicate-submit, contention, lock-replacement and CLI tests ran and passed, including both prior regressions. The review also traced boundary values, UTC timestamps, the absence of currency arithmetic, filesystem access and case separation, partial failures, CLI consumers and migration scope. Two same-case appends can still accept the same expected position through reentrancy, and an overlapping repair after lock replacement can leave an intact log after both writers appended.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 769,
+      "criterion": "P15",
+      "claim": "A reentrant append on the same CaseLog can commit from the same expected position as an outer append. The writer lock admits both operations because they share a thread, and the outer append uses its cached check after the inner append commits.",
+      "repro": "Start at position 1. In the main thread, have a one-shot signal handler call append with expected=1 on the same CaseLog. Deliver the signal after the outer append passes its expected-position check and before it writes its line. Let the handler return after committing. The outer append also returns success, and a fresh verify finds two lines with sequence 2."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 858,
+      "criterion": "P15",
+      "claim": "Lock replacement can let two writers append and still leave a log that verifies as intact. Repair can erase the first writer's unrecorded append before the second writer commits its own.",
+      "repro": "Start with one recorded entry on POSIX. Pause A after it writes entry 2 and before it publishes the new head. Replace the case lock file. On a fresh CaseLog, let B take the replacement lock, call drop_torn_entry(expected=1, by='B') and then append with expected=2. Resume A. It refuses head publication, but a fresh verify reports an intact three-entry log containing B's repair and append. The interference allowed both A and B to append without leaving the broken result P15 requires."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 828,
+      "criterion": "P15",
+      "claim": "A failed staging write or fsync leaves a temporary file behind. The unlink handler covers rename failures only. The same gap in repair staging can leave a second file containing the intact case history.",
+      "repro": "Inject an OSError from fsync only for a repair staging descriptor at src/cma/case.py:800, before any rename. Retry and complete the repair, then list log.jsonl.*.tmp. The first staging file is still present. The existing cleanup test at tests/test_case_log.py:1990 exercises successful staging."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's held-case claim says exit 0 with 'appending'. The implementation and passing contract test show exit 4 with 'being saved', which is the required behavior.",
+      "repro": "Follow tests/test_case_log.py:1328 with another thread holding a case that has two recorded entries and a torn tail. The CLI exits 4 and reports two recorded entries with the rest unchecked. The runner recorded this test as passed."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1202,
+      "criterion": "P15",
+      "claim": "The claim that the continuous-append test forces two commits on each read attempt, a held fallback and a contiguous returned sequence is not proven. The passing runner row covers a background append loop with no synchronization at those boundaries.",
+      "repro": "Inspect the test's 40 verify calls. It does not require the worker to commit during any particular read, force the fallback, or assert the returned entries' sequence. A synchronized test forcing those events, followed by python -m pytest -v tests/test_case_log.py -k forced_handover, would prove the claimed schedule and result."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 980,
+      "criterion": "P15",
+      "claim": "The migration claim's diff-stat proof describes an earlier patch.",
+      "repro": "Run the claim's read-only command git diff --stat 576e43d..HEAD -- src. This checkout reports 980 added lines in case.py and 35 in cli.py, compared with the claim's 559 and 22. The current diff still shows no database migration."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "openai",
+    "model": "GPT-6"
+  }
+}
+```

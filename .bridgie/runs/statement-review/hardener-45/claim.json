@@ -1,0 +1,56 @@
+{
+  "task": "T19",
+  "claims": [
+    {
+      "text": "Review finding (R3 incomplete for multi-account failures) is fixed: case_figures computes every account and raises CaseNotReconciled carrying each failing account's difference and lines; the workspace reports all of them and shows no figures",
+      "proof_cmd": "python -m pytest tests/test_workspace_summary.py -q -k 'every_account or reports_every_account'",
+      "proof_output": "2 passed (included in: 44 passed in 23.93s)"
+    },
+    {
+      "text": "Full suite, contracts tier and P8 invariants pass; ruff and compileall clean",
+      "proof_cmd": "python -m pytest -q; python -m pytest -q -m contracts; python -m pytest -q -m invariants -k p8; ruff check src tests; python -m compileall -q src",
+      "proof_output": "2083 passed in 166.99s; 611 passed, 1474 deselected (after hardening tests); 26 passed, 2057 deselected; All checks passed!; compile-ok"
+    },
+    {
+      "text": "Idempotency / partial failure: GET / and /api/case are read-only — the case folder is byte-for-byte unchanged across repeated requests, with an override, and when reconciliation fails (new contracts test)",
+      "proof_cmd": "python -m pytest tests/test_workspace_summary.py -q -k writes_nothing",
+      "proof_output": "1 passed"
+    },
+    {
+      "text": "Authz on new entry points: the summary is computed only after the existing host/origin/token check; a tokenless request to / or /api/case gets 403, leaks no line id, and case_summary is never called (new contracts test); existing token tests cover both paths",
+      "proof_cmd": "python -m pytest tests/test_workspace_summary.py -q -k without_the_token; grep -n 'def test_requests_without_the_token' tests/test_review_server.py",
+      "proof_output": "1 passed; 65:def test_requests_without_the_token_are_refused(ws) (iterates /, /api/case)"
+    },
+    {
+      "text": "Input escaped at the boundary (R34/P8): every case text in the HTML is escaped; randomised descriptions/labels with markup never appear raw; JSON served as application/json with nosniff",
+      "proof_cmd": "python -m pytest -q -m invariants -k p8",
+      "proof_output": "26 passed"
+    },
+    {
+      "text": "Failure path: an unforeseen failure while computing the summary is answered 500 naming nothing of the case; ruleset/statement/log refusals show no figures",
+      "proof_cmd": "python -m pytest tests/test_workspace_summary.py -q -k 'no_refusal_foresees or ruleset_that_cannot_load or files_are_refused'",
+      "proof_output": "3 passed (in the 44-pass run)"
+    },
+    {
+      "text": "No new dependency, migration, secret or stored data: diff adds only stdlib imports (html, json) and no files under the case folder; rollback is reverting the commit (server falls back to prior page)",
+      "proof_cmd": "git diff d6fd5a2~1 HEAD --stat -- pyproject.toml; git show --stat HEAD",
+      "proof_output": "pyproject.toml unchanged; HEAD a7dc880 touches tests/test_workspace_summary.py only"
+    },
+    {
+      "text": "Consumer trace of the changed contract (case_figures raising ReconciliationError subclass): callers are review/summary.py and cli `cma case figures`; CaseNotReconciled subclasses ReconciliationError and keeps account/statement/difference_pence/lines",
+      "proof_cmd": "grep -rn 'case_figures\\|ReconciliationError\\|CaseNotReconciled' src --include=*.py",
+      "proof_output": "src/cma/cli.py:648 overrides.case_figures inside _case_errors (no ReconciliationError handler); src/cma/review/summary.py:104-105 catches metrics.ReconciliationError; src/cma/overrides.py:237 class CaseNotReconciled(ReconciliationError)"
+    }
+  ],
+  "files_changed": [
+    "tests/test_workspace_summary.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "verify T19 attempt 1 (major, src/cma/overrides.py:266): case_figures re-raises the first account's ReconciliationError, so a second failing account's difference and lines are never reported (R3)",
+      "disposition": "reproduced",
+      "evidence": "Fixed in 7352b0a: overrides.case_figures collects every failing account into CaseNotReconciled; tests test_every_account_that_does_not_reconcile_is_reported_with_its_difference_and_lines and test_case_figures_reports_every_account_that_does_not_reconcile pass (main 30025 pence L2, savings 2000 pence X2, total 32025)."
+    }
+  ],
+  "notes": "Gaps for the owner (not coded, scope): (1) `cma case figures` (src/cma/cli.py:641-648) runs overrides.case_figures inside _case_errors, which has no ReconciliationError branch, so a non-reconciling case gives a traceback rather than an exit-2 refusal; pre-existing, unchanged by this diff, belongs to the overrides/CLI task. (2) Performance: the summary is recomputed through the figures layer on every GET of / and /api/case; R52's 2-second target at 10,000 lines is T22's timed test and is not measured here. (3) Observability: no log line or counter records a summary shown/refused; the design's case-log event lines are for writes, and the server is read-only and logs nothing (token safety) — decide whether a read-side signal is wanted. Operability: no flag; the workspace is an opt-in command (`cma review`), rollback is reverting the T19 commits."
+}

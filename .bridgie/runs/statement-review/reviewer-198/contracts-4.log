@@ -1,0 +1,49 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.18, pytest-9.2.0, pluggy-1.7.0 -- /usr/local/bin/python
+cachedir: .pytest_cache
+rootdir: /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T17
+configfile: pyproject.toml
+testpaths: tests
+plugins: langsmith-0.14.17, anyio-4.15.1
+collecting ... collected 581 items / 543 deselected / 38 selected
+
+tests/test_cli.py::test_unknown_cma_ruleset_is_refused_not_blamed_on_the_model PASSED [  2%]
+tests/test_cli.py::test_written_evidence_records_the_ruleset[None] PASSED [  5%]
+tests/test_cli.py::test_written_evidence_records_the_ruleset[v1] PASSED  [  7%]
+tests/test_cli.py::test_a_refused_ruleset_leaves_a_durable_review_id_reusable PASSED [ 10%]
+tests/test_firm.py::test_http_transports_still_start_when_lock_is_off[<lambda>0] PASSED [ 13%]
+tests/test_firm.py::test_http_transports_still_start_when_lock_is_off[<lambda>1] PASSED [ 15%]
+tests/test_firm.py::test_http_transports_still_start_when_lock_is_off[<lambda>2] PASSED [ 18%]
+tests/test_firm.py::test_http_transports_still_start_when_lock_is_off[<lambda>3] PASSED [ 21%]
+tests/test_import_monzo.py::test_ids_the_previous_release_took_still_import[.tx] PASSED [ 23%]
+tests/test_import_monzo.py::test_ids_the_previous_release_took_still_import[:tx] PASSED [ 26%]
+tests/test_import_monzo.py::test_ids_the_previous_release_took_still_import[tx_1.2:3-4] PASSED [ 28%]
+tests/test_models.py::test_a_pending_review_saved_before_the_new_fields_resumes PASSED [ 31%]
+tests/test_models.py::test_a_checkpoint_written_before_the_new_fields_resumes PASSED [ 34%]
+tests/test_models.py::test_todays_evidence_keys_are_a_subset_of_the_new_record PASSED [ 36%]
+tests/test_models.py::test_the_committed_example_evidence_carries_todays_keys_and_a_schema_version PASSED [ 39%]
+tests/test_models.py::test_the_previous_release_loads_a_transaction_written_by_this_one PASSED [ 42%]
+tests/test_p7_history.py::test_a_review_left_pending_by_the_pre_change_version_resumes_here PASSED [ 44%]
+tests/test_p7_history.py::test_rollback_a_review_left_pending_here_resumes_under_the_pre_change_version PASSED [ 47%]
+tests/test_p7_history.py::test_the_built_wheel_carries_v1_byte_for_byte PASSED [ 50%]
+tests/test_p7_history.py::test_cma_run_refuses_when_the_rules_package_is_missing PASSED [ 52%]
+tests/test_previous_release.py::test_the_previous_release_is_really_the_old_code PASSED [ 55%]
+tests/test_previous_release.py::test_a_checkpoint_written_by_the_previous_release_resumes PASSED [ 57%]
+tests/test_previous_release.py::test_the_previous_release_loads_a_transaction_this_one_writes PASSED [ 60%]
+tests/test_previous_release.py::test_all_extras_are_installed PASSED     [ 63%]
+tests/test_previous_release.py::test_a_second_run_with_the_same_out_is_refused_and_leaves_the_record PASSED [ 65%]
+tests/test_rules.py::test_v1_is_packaged_with_an_id_and_the_hash_of_its_file PASSED [ 68%]
+tests/test_rules.py::test_cma_run_refuses_a_missing_table_rather_than_blaming_the_model PASSED [ 71%]
+tests/test_rules.py::test_v1_hash_is_pinned_in_code PASSED               [ 73%]
+tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[category: revenue_card_settlement-category: other] PASSED [ 76%]
+tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[direction: in\n-direction: any\n] PASSED [ 78%]
+tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[frozen: true-frozen: false] PASSED [ 81%]
+tests/test_rules.py::test_cma_run_refuses_a_changed_v1_and_writes_no_evidence PASSED [ 84%]
+tests/test_rules.py::test_an_unknown_ruleset_is_refused_naming_the_known_ones PASSED [ 86%]
+tests/test_rules.py::test_a_ruleset_id_cannot_name_a_path PASSED         [ 89%]
+tests/test_rules.py::test_evidence_records_the_ruleset PASSED            [ 92%]
+tests/test_rules.py::test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1 PASSED [ 94%]
+tests/test_rules.py::test_a_legacy_resume_with_a_damaged_table_is_refused_before_anything_is_recorded PASSED [ 97%]
+tests/test_rules.py::test_rule_tables_keep_lf_line_endings_on_every_checkout PASSED [100%]
+
+===================== 38 passed, 543 deselected in 13.45s ======================

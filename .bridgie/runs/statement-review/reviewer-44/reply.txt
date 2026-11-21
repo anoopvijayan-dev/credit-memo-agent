@@ -1,0 +1,54 @@
+```json
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Reviewed the supplied revision 8 of R4. The shipped tables cover own-account moves, HMRC, refunds, payment rails and cheques at src/cma/rules/v2.yaml:63–160, lenders and MCA providers at :162–241, cash deposits and explained credits at :253–280, and trading providers and cash withdrawals at :298–405. src/cma/categorise.py:497–559 filters contained phrases, gives the leading bank code precedence, and applies the two-stage ambiguity rules. The per-line override takes precedence at :573–574. At :595–618, an ambiguous credit remains OTHER and bypasses firm rules, but the director match short-circuits the own-account match, so a credit matching both profile-name kinds loses one required candidate. src/cma/models.py:57–65 maps cash deposits to trading receipts and OTHER to unexplained. src/cma/graph.py:250–253 applies the selected table and :210–224 exports line provenance. The runner logged 724 passing tests, including table-driven provenance, CLI output, repeat categorisation, rollback, historical checkpoint replay, and offline evals under both rulesets. Source review covered duplicate input, concurrent updates, sign and Unicode boundaries, currency and date handling, partial output writes, authorisation and data-root isolation, and CLI, checkpoint and MCP consumers. No tests were run or files changed during review.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 617,
+      "criterion": "R4",
+      "claim": "An ambiguous credit that matches both a director or shareholder name and an own-account name records only the director candidate. R4 requires both candidate kinds.",
+      "repro": "Classify a +900 v2 credit described as `FPS CREDIT CASH DEPOSIT REF JANE DOE ACME HOLDINGS` with directors `('JANE DOE',)` and own accounts `('ACME HOLDINGS',)`. The result is `other` with `v2:conflict:payment_rail+cash_paid_in+profile:director`. The candidate list must also contain `profile:own_account`."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README says a profile name outranks ambiguity and can settle an ambiguous line. The implementation keeps the ambiguity and adds the name as a candidate.",
+      "repro": "Compare the README precedence with `FPS CREDIT CASH DEPOSIT REF JANE DOE` and a profile director named Jane Doe. The runner passed the regression asserting the line stays `other` with `profile:director` appended to the conflict."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/rules/v2.yaml",
+      "line": 286,
+      "criterion": "R4",
+      "claim": "The claim that shuffling rules within a stage preserves every line's category on whole statements exceeds the tested cases. Debit classification still uses first-match order.",
+      "repro": "Categorise a statement containing a -100 `PAYROLL RENT` debit with the shipped table, then with `rent` moved ahead of `payroll` within the unprotected names stage. The debit changes from payroll to rent. The runner's shuffle test at tests/test_rules_v2.py:1384 does not include this overlapping debit."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "Compilation of every module is not proven by the configured compilation tier.",
+      "repro": "The runner's mechanical-2 command compiles only `src`. A passing runner result for `python -m compileall -q src evals tests` would prove the full claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```

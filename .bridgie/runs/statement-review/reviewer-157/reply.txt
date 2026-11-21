@@ -1,0 +1,91 @@
+```json
+{
+  "task": "T17",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "The lock defaults on at src/cma/firm.py:66. The CLI reads once before constructing the client or opening the checkpoint at src/cma/cli.py:79-94. Evidence records the dispatch value at src/cma/graph.py:258-278. MCP checks startup and tool calls at src/cma/mcp_server.py:40-78 and :128-130. A direct graph invocation can supply false as the run lock and skip the firm configuration read at src/cma/graph.py:294-304.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:212-226 builds the placeholder, date period, metric table and rule table with the overall outcome row. src/cma/metrics.py:295-299 excludes evidence IDs. Arbitrary custom IDs matching R plus one to four digits still enter the rule table at src/cma/graph.py:192-198, and redrafts use a broader ID allowlist at :202-209.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "The runner passed the sentinel and redraft cases and both custom policy field cases in invariants-5.log. The custom ID test at tests/test_firm.py:636 uses a value outside the accepted format. A sentinel such as R4242 passes the prompt filter at src/cma/graph.py:196 and appears in the first prompt when used as a custom rule ID.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "invariants-5.log confirms the SDK 503 cases, MCP startup refusals and standalone ASGI factory refusals. The request check at src/cma/llm.py:92-100 trusts the boolean supplied through src/cma/graph.py:294-304 and :329, so it can dispatch from a graph run started after the firm turned the lock on.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 303,
+      "criterion": "R29",
+      "claim": "A caller-supplied graph input can override the firm's offline lock and cause a hosted request in a newly started run. This also fails P18.",
+      "repro": "Construct a hosted client while firm.yaml is unlocked. Enable the lock before starting a new graph invocation. Invoke build(client) with a valid statement and run_offline_lock set to false. With a recording SDK transport, observe a hosted request and evidence recording offline_lock false. The graph never reads the locked file for that invocation."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 196,
+      "criterion": "R30",
+      "claim": "The custom rule ID filter checks spelling alone, so a transaction or profile sentinel in the accepted format reaches the hosted prompt. This also fails P5.",
+      "repro": "Put R4242 in a synthetic transaction description and profile label. In a copy of the packaged policy, change one rule's ID to R4242. Run cma run with that policy and a recording hosted client while unlocked. The initial prompt includes a rule row beginning with | R4242 |."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 204,
+      "criterion": "R30",
+      "claim": "Redrafts can reintroduce a custom policy ID that the initial rule table deliberately masked.",
+      "repro": "Use a custom rule with ID R12345 and make a recording model produce a draft with a wrong cited limit for [R12345]. The initial table shows (custom id). The guard accepts the citation syntax at src/cma/guard.py:40-41, and redraft_ids intersects the finding with the raw policy IDs, so the redraft feedback includes R12345."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/mcp_server.py",
+      "line": 70,
+      "criterion": "R29",
+      "claim": "The claim that no ASGI app is handed out is broader than the implementation and proof. The public factories now also refuse unlocked consumers that previously obtained an app for their own ASGI runner.",
+      "repro": "With the lock off, call server.sse_app() directly and observe NoASGIApp. During the SDK HTTP run the same factory returns an app, as the runner's test_http_transports_still_start_when_lock_is_off verifies. That test replaces uvicorn.Server.serve, so it proves delegation with a callable app. The cited scratchpad bind probe was absent from the runner logs. A runner-executed integration test that spies on bind and exercises startup would prove the bind claim directly."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_firm.py",
+      "line": 636,
+      "criterion": "R30",
+      "claim": "The producer cites a custom-policy CLI prompt capture that the runner did not execute. The named tests cover the prompt builder directly.",
+      "repro": "Search specified-3.log and invariants-5.log for the custom policy tests and read their call sites at tests/test_firm.py:590 and :636. Both call draft_prompt directly. A runner result for python -m pytest -v -m invariants -k p5_cli_custom_policy, with a test that invokes cma run --policy and records initial and redraft prompts, would prove the claimed CLI coverage."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 185,
+      "criterion": "R30",
+      "claim": "The claim that full-suite time was unchanged in scale has no before-change measurement in the supplied proof.",
+      "repro": "Read the footer of specified-3.log. It records 543 passing tests in 24.50 seconds for this revision. Run python -m pytest -q on both the baseline and the reviewed revision under matched conditions to establish the comparison."
+    }
+  ],
+  "verdict": "fail"
+}
+```

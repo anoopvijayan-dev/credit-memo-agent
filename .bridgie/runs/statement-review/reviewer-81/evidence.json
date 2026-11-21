@@ -1,0 +1,68 @@
+{
+  "task": "T03",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Reviewed the supplied revision 20. The checkout's .bridgie/specs/statement-review/requirements.md:19 contains the original recognition clause. Mapped the required lists to src/cma/rules/v2.yaml:74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest matches and containment at src/cma/categorise.py:810,832, bank-code and ambiguity precedence at :919, and override, profile and firm-rule precedence at :949,986. Traced ruleset selection, checkpoint replay and per-line evidence through src/cma/cli.py:77,229 and src/cma/graph.py:188,221,250. Checked repeat submission and concurrent review paths, signed amounts and date-only ingestion, Unicode and malformed fields, refusal before checkpoint creation, the ruleset allow-list, case-local inputs and evidence consumers. The runner confirms per-list provenance, CLI v2, checkpoint replay, both offline evals and the prior malformed bank-code repros. R4 fails because a changed v1 can still skip rule-by-rule exception diagnostics and because validation can omit a rule's unusable pattern when another rule has a reported fault.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-81/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 390,
+      "criterion": "R4",
+      "claim": "The exception-check exemption depends on the requested id and the YAML frozen flag rather than the verified byte hash. A changed packaged v1 is refused, but its diagnostic omits forbidden rule exceptions.",
+      "repro": "In a copy of v1.yaml, keep frozen: true and add unless: FPS to bank_fees. Have a fresh process load that copy as v1. The loader reports the changed frozen table, but it never names bank_fees or its unless field because the strict validation branch is skipped."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 540,
+      "criterion": "R4",
+      "claim": "An error found during schema validation prevents the loader from discovering faults in other rules' compiled matchers. R4 requires malformed rule fields to be named alongside the table's other faults.",
+      "repro": "In a copy of v2.yaml, replace cash_paid_in's names with pattern: '(?i)CASH DEPOSIT' and add unless: FPS to explained_non_trading. Load the table. The diagnostic names the forbidden unless and omits cash_paid_in's pattern. Remove the unless and load again. Compilation at line 611 now rejects cash_paid_in because the global flag is no longer at the start after the loader wraps the pattern."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README says a profile name settles an ambiguous credit. The categoriser keeps the credit ambiguous and adds the profile name as a candidate.",
+      "repro": "Classify a £900 credit described as FPS CREDIT CASH DEPOSIT REF JANE DOE under v2 with Jane Doe listed as a director. The outcome remains other with provenance v2:conflict:payment_rail+cash_paid_in+profile:director."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1385,
+      "criterion": "R4",
+      "claim": "The producer's general claim that shuffling within a stage preserves every category, reversal link and figure exceeds the test's coverage. Debit classification still uses the first matching rule.",
+      "repro": "Classify a £100 debit described as RENT PAYROLL with the shipped v2 table. It selects payroll. Swap the payroll and rent rules within the unprotected names stage and classify again. It selects rent through src/cma/categorise.py:964."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 850,
+      "criterion": "R4",
+      "claim": "The two-second classification bound is proven for the mixed fixture in the runner log. The fixture leaves out long descriptions with many overlapping matches.",
+      "repro": "Run the same timing assertion on 10,000 credits whose descriptions each contain 100 repetitions of 'FPS | CASH DEPOSIT | STRIPE'. Each line creates hundreds of occurrences for the pairwise containment scan at src/cma/categorise.py:851. The recorded test at specified-3.log:614 only times the short mixed fixture."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 30,
+      "criterion": "R4",
+      "claim": "The claim that every module compiles is not proven at its stated scope. The compile tier covered src alone, while the claim includes evals and tests.",
+      "repro": "Compare mechanical:2 with the claimed command. The missing compile check would be python -m compileall -q src evals tests."
+    }
+  ],
+  "verdict": "fail"
+}

@@ -1,0 +1,68 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped the shipped lists to src/cma/rules/v2.yaml:74,117,128,137,146,155,163,211,254,277,304,339,356,373,394. Traced the ambiguity stages, longer-phrase filter and bank-code exception through src/cma/categorise.py:565,614, and verified override precedence, profile candidates and firm-rule exclusion at lines 641 and 679–705. Traced cma run and line provenance through src/cma/graph.py:221,250 and src/cma/cli.py:229. specified-3.log confirms the table-driven cases and v2 CLI provenance test passed. Reviewed repeat submission, concurrent calls, sign and Unicode boundaries, currency and date handling, partial failure, override authorization, profile isolation, rollback and evidence consumers. Two accepted table edits violate R4's longer-phrase or bank-code behavior.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 618,
+      "criterion": "R4",
+      "claim": "The longer-phrase filter can erase a valid bank return code before the code gets its required precedence.",
+      "repro": "Add UNPAID DD TO SAVINGS to the existing own_pots_savings names list and load v2. Classify a £50 credit described as UNPAID DD TO SAVINGS. The longer own-account rule removes the anchored returned_dd match and the credit becomes an own-account transfer. R4 requires the bank code at the start to settle it as a returned payment."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 558,
+      "criterion": "R4",
+      "claim": "The span scan still loses longer alternatives inside a single regex. The passing regression at tests/test_rules_v2.py:1656 exercises a short regex and a separate longer name.",
+      "repro": "In that regression, put both alternatives in the acme rule's pattern as \\bACME\\b|\\bACME FASTER PAYMENT LTD\\b, remove names, and keep the FASTER PAYMENT rail. On a £100 ACME FASTER PAYMENT LTD CASH DEPOSIT credit, also include the shipped cash_paid_in rule. The short regex alternative wins at the shared start, so the rail survives and produces an ambiguity. The longer phrase should suppress the embedded rail, leaving two trading-receipt matches that agree on the bucket."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 724,
+      "criterion": "R4",
+      "claim": "The README's returned-DD linking claim exceeds the v2 implementation. Newly recognised returned-payment wording stays in the payee used for reversal matching.",
+      "repro": "Categorise a £450 DD IWOCA LTD debit followed by a £450 RETURNED DD IWOCA LTD credit. The credit gets v2:returned_payment but has no reverses id because the normalized names differ. The passing test at tests/test_rules_v2.py:549 uses UNPAID DD instead."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The documented precedence contradicts the implementation and R4. It says a profile name settles an ambiguous credit and omits the cheque cue and own-account pairing.",
+      "repro": "Compare the README row with classification of FPS CREDIT CASH DEPOSIT REF JANE DOE with Jane Doe in the director profile. The credit remains ambiguous and the profile name adds a candidate. CHEQUE CASH DEPOSIT likewise remains ambiguous."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 847,
+      "criterion": "R4",
+      "claim": "The reported 0.69-second result is unverified by the runner. The full log proves the under-two-second assertion passed for the categoriser workload.",
+      "repro": "Find test_categorise_10000_lines_under_v2_with_a_profile_is_fast in specified-3.log. It reports PASSED without the elapsed time of the measured section. Run python -m pytest -q tests/test_rules_v2.py -k 10000_lines with that section's elapsed time emitted to verify the specific figure."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 27,
+      "criterion": "R4",
+      "claim": "The compile claim for src, evals and tests is only partly covered by the configured compile gate. The suite and marker counts in the claim are stale.",
+      "repro": "Compare the claim with mechanical:2, which ran python -m compileall -q src. The command covering the full claimed scope is python -m compileall -q src evals tests. The passed runner totals are 732 full-suite, 110 contracts, 138 invariants and 83 dual-run. Both offline ruleset eval tests passed in specified-3.log."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

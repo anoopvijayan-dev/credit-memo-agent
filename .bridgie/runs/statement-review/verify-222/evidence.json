@@ -1,0 +1,98 @@
+{
+  "task": "T17",
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "Lock defaults on (firm.py FirmConfig offline_lock=True); hosted clients built only on an unlocked reading with max_retries=0 and a per-request HTTP hook (llm.py _require_unlocked_now, _checked_http, HostedLLM._check); MCP run paths, ASGI factories and LockCheckedASGI check the lock (mcp_server.py); evidence records offline_lock/resume locks (graph.py _egress). The verify-221 with_config gap is closed: wrappers are now methods of a per-graph subclass (graph.py:772), and test_p18_a_graph_copied_by_with_config_keeps_the_locks_rules passed (invariants-5.log:139). Gap: 'a run under the lock is untraced: LangSmith's own tracing is off whatever the environment says' is enforced only through langsmith.tracing_context(enabled=False) and callback filtering (graph.py:720-762); a caller's langchain_core tracing_v2_enabled() context keeps tracing on (finding 1).",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "draft_prompt (graph.py) carries Account: Applicant, the period, met.as_table and rules_table(for_prompt=True) with the overall row; custom rules masked unless identical to the shipped rule (_is_shipped); redraft line only ids from the tables (redraft_ids); guard findings kept out (guard node sets guard_feedback='redraft'). Tests test_p5_* passed in invariants-5.log.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "test_p5_no_prompt_carries_line_level_text (all archetypes/profiles, with redraft), test_p5_a_custom_rules_limits_never_reach_the_prompt, test_p5_a_custom_rule_id_in_the_shipped_form_never_reaches_the_prompt, test_p5_cli_custom_policy_prompts_carry_no_sentinel ran and passed (invariants-5.log); code paths match the revision 32/33 scope.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "P18 tests passed (invariants-5.log), including the with_config copy test. P18 validates R29's revision 32 scope (a run under the lock is untraced); a run under the lock inside tracing_v2_enabled() is still traced (finding 1), so the property does not hold for every run under the lock.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-222/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-222/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-222/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-222/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-222/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-222/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-222/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 720,
+      "criterion": "R29",
+      "claim": "Under the offline lock, the wrappers turn tracing off only with langsmith.tracing_context(enabled=False) and by stripping LangChainTracer from the run's own and inherited callbacks. langchain_core decides tracing by _tracing_v2_is_enabled(), which returns True first when tracing_v2_callback_var is set (langchain_core/tracers/context.py:141-144), before consulting ls_utils.tracing_is_enabled(); CallbackManager configure then adds that tracer_v2 to the run's manager (langchain_core/callbacks/manager.py:2483-2515), after the explicit callbacks were filtered. Nothing in src/ resets tracing_v2_callback_var, so a run under the lock started inside the caller's tracing_v2_enabled() context is traced to LangSmith, sending the run's inputs and statement data off the machine. This fails R29's 'LangSmith's own tracing is off whatever the environment says' and P18.",
+      "repro": "firm.yaml 'offline_lock: true'; monkeypatch LangChainTracer._persist_run/_start_trace to record runs (as the existing tests do); `from langchain_core.tracers.context import tracing_v2_enabled; with tracing_v2_enabled(client=types.SimpleNamespace()): build(llm.FakeLLM()).invoke({'statement_path': p}, {'configurable': {'thread_id': 't'}})`. The recorder sees the graph's runs (load, draft, ...). Fix: under the lock also set tracing_v2_callback_var to None for the run (and reset it after), alongside tracing_context(enabled=False)."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

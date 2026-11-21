@@ -1,0 +1,54 @@
+```json
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed revision 22 at requirements.md:312 against checkout 83f0f9d. Canonical encoding, chain and head comparison, and first-bad-entry reporting are at src/cma/case.py:177, :285 and :1087. Holder and ordinary-reader checks, including retry and recorded-prefix behavior, are at :461, :503 and :364. Writer exclusion, fork refusal, nested-save refusal, expected-position conflict, and repair rechecks are at :762, :878, :926, :995 and :1043. Read-back and take-back are at :1244 and :1279. The runner logs show passing named tests for tampering, rebuilt chains, torn tails, duplicate submission, concurrent writers, repair failure, CLI contracts, and a fresh read after lock replacement when the initial read completes. A read-back that raises an I/O error can skip that retry. Reviewed empty and malformed inputs, Unicode, UTC, OS file permissions, per-folder isolation and CLI consumers. The change performs no currency arithmetic or migration. The CLI calls verify at src/cma/cli.py:321. The sign-off guard at src/cma/case.py:736 has no production sign-off caller in this checkout.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1269,
+      "criterion": "P15",
+      "claim": "A read-back that encounters an I/O error skips the post-read lock check. If a lock was also replaced during that read, the save goes straight to take-back without the fresh read P15 requires.",
+      "repro": "Start with two recorded entries. Append entry 3 and let its head publish. On the first read-back of log.jsonl, replace log.jsonl.lock and raise a one-shot EIO. Leave the log and head intact and allow all later reads to succeed. The handler at line 1269 goes straight to take-back, which refuses the rename because of the replaced lock. The caller gets SaveNotConfirmed without a fresh read through the current gate and case lock. The runner's fresh-read test at tests/test_case_log.py:3308 lets the initial read complete and does not cover this combination."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's CLI contract claim says a held case with a torn tail exits 0 and says 'appending'. The current command and passing contract test specify exit 4 and 'being saved'.",
+      "repro": "Hold a case with two recorded entries and an incomplete third entry in another thread, then invoke cma case check on the case folder. The command exits 4 and reports two recorded entries. The runner's contracts-4.log shows the test at tests/test_case_log.py:1340 passed."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 370,
+      "criterion": "P15",
+      "claim": "The producer's disposition overstates the concurrency test and incorrectly says a missing head is reported at entry 1 while another writer holds the case. The rapid-append test does not force two commits per retry, and a missing head makes the held reader claim nothing about any entry.",
+      "repro": "Read tests/test_case_log.py:1214 to see the free-running writer and the assertion that no check names a bad entry. Then trace a reader with the gate shared while another thread holds a nonempty case whose head file has been removed. The missing-head result at src/cma/case.py:305 has no recorded count, so src/cma/case.py:370 returns an unchecked result. The runner passed the rapid-append test. To prove the exact retry schedule, add synchronized fault injection and run python -m pytest -v tests/test_case_log.py -k healthy_log_broken."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 1,
+      "criterion": "P15",
+      "claim": "The producer's diff-stat proof is stale for the reviewed checkout.",
+      "repro": "Run git diff --stat 576e43d..HEAD -- src at 83f0f9d. It reports 1,472 added lines for case.py, 35 for cli.py and 1,507 in total. The claim reports 559, 22 and 581."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```

@@ -20,3 +20,10 @@ verify:
     invariants: ['python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -v -m invariants']
     behavioural: ['python evals/run_evals.py']
     dual_run: ['python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -v -m dual_run']
+# TEMPORARY (owner's choice, 2026-11-21): the Codex reviewer is at its usage limit until
+# 2026-11-25 08:25, so reviews run on claude-code, the implementer's own model family. Restore
+# cross_family (delete this block) when Codex is back, and re-review with Codex every task
+# that passed while it was off.
+lanes:
+  engineering:
+    cross_family: false

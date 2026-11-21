@@ -1,0 +1,104 @@
+```json
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to buckets. src/cma/metrics.py:481 assigns credits and reconciles them, and src/cma/metrics.py:562 returns the GBP totals with line IDs. src/cma/graph.py:308 and src/cma/mcp_server.py:98 use the same computation.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:82 verifies penny round-trips and src/cma/ingest.py:256 checks flow limits. src/cma/metrics.py:512 computes M3 from integer pence and handles unrepresentable results. src/cma/cli.py:340 and src/cma/graph.py:175 display pennies, and src/cma/metrics.py:594 preserves whole-pound drafting. src/cma/importers/monzo.py:217 can refuse a parsed export before reporting its known over-limit flow.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks both credit membership and the signed difference in pence. src/cma/cli.py:107 exits 6 before displaying or exporting figures, and src/cma/mcp_server.py:98 propagates the refusal. The runner passed the CLI and MCP refusal tests, including an uncategorised credit and a line ID that resembles markup.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The unmatched-credit paths at src/cma/categorise.py:1311 and src/cma/categorise.py:1360 assign OTHER. src/cma/models.py:67 maps OTHER to unexplained and excludes it from revenue categories.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:562 separately reports M18 as a subset of M2. src/cma/metrics.py:581 compares placement counts and exact sums before returning figures. Both named P1 invariants passed, including the large-value check.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For T04 figures, src/cma/metrics.py:374 selects overdrawn-day evidence, src/cma/metrics.py:420 identifies the credit split by the M9 cap, and src/cma/metrics.py:535 emits the outflows and derived evidence. M26 cites the shared denominator lines at src/cma/metrics.py:571. The named sum, outflow and M9 invariant tests and the previous-release evidence comparisons passed.",
+      "result": "pass",
+      "artifact": "dual_run-7.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and src/cma/categorise.py:1360 default unmatched credits to OTHER. src/cma/metrics.py:481 puts them into M25 through the bucket map. The generated-statement P6 test and both explicit unknown-payer cases passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 217,
+      "criterion": "R2",
+      "claim": "The importer can report a missing opening balance while suppressing the flow-limit diagnostic for a fully parsed export.",
+      "repro": "Use a Monzo export with no Balance column and three distinct, chronologically ordered GBP transactions of +6000000000000.00, -6000000000000.00 and +6000000000000.00. Run cma import monzo without --opening-balance. The importer reports only that the first row has no Balance. It has already parsed £12 trillion in credits, but the flow check at line 231 is reached only after resolving the opening balance."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 155,
+      "criterion": "R53",
+      "claim": "Migration writes a previously read review into the current thread without checking that the thread still points to that pending checkpoint. A concurrent resume can reopen an already decided review.",
+      "repro": "Start two cma resume processes on the same legacy pending checkpoint. Pause A after refreshed returns its nonempty update and before update_state. Let B migrate and approve the review. Continue A. Its update_state targets the thread's current checkpoint and writes as node guard, scheduling the review node again. A can submit a second decision after B's approval."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 357,
+      "criterion": "R53",
+      "claim": "The existing Monzo opening-balance option rejects scientific notation that the previous float option accepted, even when the value is a whole number of pence.",
+      "repro": "Import a valid Monzo export without a Balance column using --opening-balance 1e3. The previous float option supplied £1,000. The new option passes the original text to src/cma/importers/monzo.py:86, which refuses it."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 314,
+      "criterion": "P2",
+      "claim": "The producer cites an idempotency probe whose execution is unproven. The runner's named figure tests substantiate the covered arithmetic and evidence claims, but the submitted probe is absent from the repository and no runner row executed it.",
+      "repro": "Check the supplied runner commands for PYTHONPATH=src python scratchpad/probe.py. To prove the claimed probe result, make the probe available to the runner and run that command, or have the runner execute a named test asserting that two compute calls on the same statement return identical figures."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer note says the committed example has no evidence_note field and was left unregenerated. The reviewed example contains evidence_note fields.",
+      "repro": "Run rg -n evidence_note examples/cafe_stretched.memo.evidence.json. The first matching field is at line 2363."
+    }
+  ],
+  "verdict": "fail"
+}
+```

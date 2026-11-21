@@ -1,0 +1,85 @@
+{
+  "task": "T18",
+  "criteria": [
+    {
+      "id": "R33",
+      "tier": "adversarial",
+      "check": "Loopback only: ReviewServer refuses any host but 127.0.0.1 (src/cma/review/server.py:178-179) and _bind binds (LOOPBACK, candidate) only (server.py:224-234); allow_reuse_address=False overrides HTTPServer's default, and SO_EXCLUSIVEADDRUSE is set where it exists (server.py:157-170). New random token: secrets.token_urlsafe(32) per ReviewServer (server.py:183). Token refusal: every route and method goes through _handle, which checks _host_ok, _origin_ok and _token_ok before anything is served (server.py:124-134); a missing, empty, wrong or doubled token (query plus header) fails len(given)!=1 or hmac.compare_digest (server.py:113-120); absolute-form targets get an empty query and are refused (server.py:130-131). Host refusal: exactly one Host header equal to '127.0.0.1:<bound port>' (server.py:105-107), so localhost, [::1], other ports, rebound names, a missing Host and a doubled Host are all refused. Bundled assets only: an allow-list read from the cma.review/static package resource at start-up and matched exactly (server.py:62-72, 147-151), with everything else getting 404. Production caller: `cma review` calls review_server.start and serve_forever, and prints srv.url with the token (src/cma/cli.py:718-751). Runner proof: specified-3.log and contracts-4.log both list all 49 tests/test_review_server.py tests as PASSED, among them test_requests_without_the_token_are_refused, test_a_bad_host_is_refused_even_with_the_token[*], test_a_missing_or_repeated_host_is_refused, test_nothing_but_the_bundled_assets_is_served[*] and test_cma_review_prints_the_url_with_its_token_and_serves_it.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-231/specified-3.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-234/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-234/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-234/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-234/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-234/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-234/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-234/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 743,
+      "criterion": "R33",
+      "claim": "webbrowser.open(srv.url) passes the token-bearing URL to the browser launcher (xdg-open, open, or the browser) as a command-line argument. Any other local OS user can read process command lines through /proc/<pid>/cmdline or ps, and 127.0.0.1 is reachable by every local user. So the per-launch token, the workspace's only defence against other users on the same machine, can leak, and with it read access to a case that R31 keeps readable only by its owner.",
+      "repro": "On a shared Linux machine, user A runs `cma review <id>` without --no-browser. While xdg-open or the browser starts, user B runs `ps -eo args | grep token=`, reads http://127.0.0.1:<port>/?token=..., and then `curl -H 'Host: 127.0.0.1:<port>' 'http://127.0.0.1:<port>/api/case?token=...'` returns 200 with the case. Opening a page that holds no token (for example a local file or a fragment the page exchanges) would avoid this."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/review/server.py",
+      "line": 93,
+      "criterion": "R33",
+      "claim": "Requests that BaseHTTPRequestHandler rejects before _handle runs are answered by the stdlib send_error. That covers a malformed request line or version (400), an unknown method such as FOO (501), and a request line or header that is too long (414/431). These answers carry none of SECURITY_HEADERS (no CSP, nosniff or frame-ancestors) and return the stdlib HTML error page, which repeats part of the request. No case data leaks, but the claim that every response carries the strict CSP does not hold, and test_every_response_carries_a_strict_csp only covers responses that _send builds.",
+      "repro": "printf 'FOO / HTTP/1.1\\r\\nHost: 127.0.0.1:PORT\\r\\n\\r\\n' | nc 127.0.0.1 PORT returns 501 with a text/html body and no Content-Security-Policy header. Overriding send_error to add SECURITY_HEADERS and a plain body would close this."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

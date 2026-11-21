@@ -1,0 +1,78 @@
+```json
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Reviewed R4 as supplied in the review packet. The worktree copy at .bridgie/specs/statement-review/requirements.md:19 has the original recognition clause only. The shipped lists are in src/cma/rules/v2.yaml:74,117,137,146,155,163,211,254,277,299,304,339,356,373,394. Reviewed longest alternatives and per-occurrence containment at src/cma/categorise.py:783,805,822,839, the returned-payment code and cue precedence at :892, and override, profile, firm-rule and candidate handling at :917 and :959. Strictly increasing match lengths make containment acyclic, and the per-occurrence filter now preserves the rail, cash and trailing gateway candidates in the packet's revised example. Traced ruleset selection and line provenance through src/cma/graph.py:188,221,251 and src/cma/cli.py:229. Checked repeat classification, concurrent output and partial failure, signed amounts and Unicode boundaries, the CSV date and amount boundary, override authority, case-local inputs and evidence consumers. Runner logs confirm the per-list provenance tests, CLI, containment regression, checkpoint replay, rollback, both offline evals and the mixed-input categoriser benchmark. R4 fails because a non-v1 table carrying a prohibited exception can be refused without naming its rule.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 436,
+      "criterion": "R4",
+      "claim": "The exception checks trust the table's frozen flag. A non-v1 table can skip them and receive a table-level refusal that omits the offending rule, contrary to R4's requirement to name it.",
+      "repro": "In a copy of v2.yaml, set frozen: true, remove category_order and supply one rule with id cash_paid_in, direction in, category cash_deposit and pattern 'CASH DEPOSIT$'. Start a fresh CMA_RULESET=v2 run. Validation skips the anchor check and the loader rejects the table at line 669 with 'marked frozen but no hash is pinned for v2'. The diagnostic omits cash_paid_in."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 469,
+      "criterion": "R4",
+      "claim": "Malformed rule patterns can raise a raw TypeError before validation reports the rule, contradicting the malformed-table claim.",
+      "repro": "Keep the shipped v2 table and replace cash_paid_in's names with 'pattern: [CASH DEPOSIT]' and 'unless: FPS'. The validator accumulates named errors, then tests the list for membership in BANK_RETURN_CODES and raises 'unhashable type: list' before reporting them."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The documented precedence says a profile name can settle an ambiguous credit. The classifier only adds it as a candidate.",
+      "repro": "Classify a positive 'FPS CREDIT CASH DEPOSIT REF JANE DOE' under v2 with Jane Doe in the director profile. src/cma/categorise.py:975 returns other with payment_rail, cash_paid_in and profile:director as candidates."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1385,
+      "criterion": "R4",
+      "claim": "The whole-statement shuffle test supports the tested corpus. The broader claim that within-stage shuffling preserves every category and figure is false for debits.",
+      "repro": "Classify a debit described as 'PAYROLL RENT', then swap the payroll and rent rules within the unprotected names stage and classify it again. The debit loop at src/cma/categorise.py:934 picks the first matching rule, so payroll changes to rent."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1910,
+      "criterion": "R4",
+      "claim": "The runner passed the occurrence regression, but its assertion does not prove the exact candidate set required by revision 17.",
+      "repro": "The final assertion checks that rail and cash appear in the result. Returning 'v2:conflict:rail+cash' would also pass, despite losing the surviving gateway. Assert the exact three candidates for the packet's 'FPS CASH DEPOSIT STRIPE | STRIPE' case, then run 'python -m pytest -v tests/test_rules_v2.py -k occurrence_set_aside'."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_evals_rulesets.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "Compilation of tests and evals is not proven by the configured compile gate. The runner compiled src only.",
+      "repro": "Compare mechanical:2 with the producer command. A runner result for 'python -m compileall -q src evals tests' would prove the full claim. The passing pytest logs establish the suite and named tests at the runner's reported counts."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 204,
+      "criterion": "R4",
+      "claim": "The observability claim that every evidence record identifies the rule for every line is too broad. Historical evidence can contain null rule IDs.",
+      "repro": "Pass a checkpoint with no saved line rule IDs and a recorded ruleset hash that differs from the installed hash to evidence_record. line_rule_ids returns the saved nulls, as the passing historical checkpoint test at tests/test_rules.py:368 expects."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```

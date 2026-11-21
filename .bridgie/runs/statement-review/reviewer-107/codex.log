@@ -1,0 +1,70 @@
+```json
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Applied the supplied revision 22 of R4. Mapped the maintained lists and directions to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest-match filtering, bank-code priority, cash and payment-method ambiguity, candidate provenance, and override, profile and firm-rule precedence at src/cma/categorise.py:1044–1249 and the unexplained bucket at src/cma/models.py:65. Traced the digest exemption, changed-v1 refusal, field checks and matcher builds at src/cma/categorise.py:397–632,804–826,879–907. Reviewed repeat submission and concurrent output checks at src/cma/cli.py:81–86,146–159,228–229, amount and date boundaries at src/cma/ingest.py:42–54,100–130 and src/cma/categorise.py:920–930, ruleset and MCP path scope at src/cma/categorise.py:881–883 and src/cma/mcp_server.py:34–46, and case-local inputs and evidence consumers at src/cma/categorise.py:1331–1345 and src/cma/graph.py:188–224. Runner logs confirm 830 suite passes, 208 contracts, 138 invariants and 83 dual-run cases, including list provenance, CLI evidence, idempotency, checkpoint replay and both offline evals. Repeated-value validation still skips table checks and rule-ID uniqueness checks.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 664,
+      "criterion": "R4",
+      "claim": "Repeated top-level category_order values receive only the generic duplicate-key and wrong-type diagnostics. The validator never checks the categories in each supplied list.",
+      "repro": "In a copy of v2.yaml, retain the original category_order and add another category_order: [bogus, bogus]. Load the table. The refusal names the repeated key and says category_order must be a list, but omits both the unknown category and the repeated category. With [bogus, bogus] supplied once, both faults are reported. Swap the two YAML entries to see the same omission."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 429,
+      "criterion": "R4",
+      "claim": "Repeated rules lists are flattened before table-wide checks. One list can supply the mandatory bank code for another list, and rules in one list can trigger false ordering and duplicate-ID errors in the other.",
+      "repro": "In a copy of v2.yaml, set the first rules key to the shipped list with returned_dd removed and the second rules key to the complete shipped list. The first list alone reports the missing bank code. With both lists present, the refusal omits that fault because the combined list contains the code, and reports ordering and ID collisions across the lists."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 554,
+      "criterion": "R4",
+      "claim": "Repeated rule IDs skip the uniqueness check for every supplied value. The check runs on the duplicate placeholder, which is never a string.",
+      "repro": "In v2.yaml, give payment_gateways two id fields, card_acquirers and payment_gateways. The refusal names the repeated id but omits the collision with the earlier card_acquirers rule. Keeping card_acquirers as the only id on that rule reports duplicate id."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README claims a case-profile name can settle an ambiguous credit. The categoriser keeps the credit unexplained and adds the profile name to its candidates.",
+      "repro": "Classify the v2 credit FPS CREDIT CASH DEPOSIT REF JANE DOE with Jane Doe in the director profile. tests/test_rules_v2.py asserts OTHER with v2:conflict:payment_rail+cash_paid_in+profile:director."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 850,
+      "criterion": "R4",
+      "claim": "The named performance test passed for the 10,000-line categoriser sample. It does not measure the complete recompute budget, which includes figures, indicators and the policy check.",
+      "repro": "Inspect test_categorise_10000_lines_under_v2_with_a_profile_is_fast. Its timer covers categorise.categorise only. An end-to-end timed override recompute is needed to establish the broader budget."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 37,
+      "criterion": "R4",
+      "claim": "The compileall claim includes evals and tests, but the configured runner compiled only src. Compileall coverage of the other directories is not proven by the runner.",
+      "repro": "Compare mechanical:2, python -m compileall -q src, with the claimed python -m compileall -q src evals tests. A passing runner row for python -m compileall -q src evals tests would establish the claimed scope."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```

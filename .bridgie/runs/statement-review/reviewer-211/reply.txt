@@ -1,0 +1,39 @@
+I'm finishing my read of the Monzo importer and writing up the verdict.
+
+**Verdict: fail.** One major defect remains in the Monzo importer, plus one minor one. Everything else on the task checks out against the repository.
+
+**What passes**
+- **R1, R3, R7:** the money-in buckets cover every credit category (`src/cma/models.py:55`). `metrics.compute` returns M17 to M26 (`src/cma/metrics.py:614-629`). Buckets that don't reconcile raise an error naming the pence and the lines (`src/cma/metrics.py:633`), and `cma run` exits 6 on it (`src/cma/cli.py:118`).
+- **P1, P2, P6:** the runner ran all eight `test_p*` invariant tests by name and they passed (invariants log, lines 10-17). The contract tests for exit 6 and for MCP carrying M1 to M26 also ran and passed.
+- **Last escalation fixed:** Monzo now converts a timestamp with a UTC offset to UTC before sorting (`src/cma/importers/monzo.py:84`). The mixed-offset regression test ran and passed.
+
+**Major finding (blocks pass).** The fix sorts rows by the UTC moment but still writes each row's local date into the output file (`src/cma/importers/monzo.py:305` and `:341`). When offsets differ near midnight, the dates in the written statement run out of order:
+- Example export: `tx_a,2026-01-02T00:30:00+02:00,…,-5.00,GBP,95.00`, then `tx_b,2026-01-01T23:00:00+00:00,…,-10.00,GBP,85.00`.
+- UTC order is tx_a (22:30) then tx_b (23:00), and the balances walk consistently, so `cma import monzo` succeeds.
+- The output dates read 2026-01-02 then 2026-01-01. The statement loader then reads the file as newest-first and refuses it: tx_a's balance of 95.00 does not follow from tx_b's 85.00 + -5.00. With a later row added, it refuses it as "date out of order" instead.
+- The result's start and end dates (`:350`) use the same local dates, so they are wrong too.
+
+**Minor finding.** A timestamp at the calendar's edge, e.g. `9999-12-31T23:00:00-02:00`, makes the UTC conversion raise `OverflowError` (`:84`). Nothing catches it, so `cma import monzo` shows a traceback instead of a refusal naming the line.
+
+I couldn't run either repro: shell commands were denied in this session. Both findings come from reading the code paths, so the reproductions above are worked through, not executed.
+
+```json
+{
+  "task": "T04",
+  "criteria": [
+    {"id": "R1", "tier": "adversarial", "check": "Every credit category maps to one bucket (src/cma/models.py:55-67); compute builds M2 and M19-M25 from CREDIT_BUCKET and M17 from all credits (src/cma/metrics.py:536-545, 614-626), each with line ids. test_p1_* and test_p2_sum_figures_* ran and passed in the invariants log.", "result": "pass", "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-211/invariants-5.log"},
+    {"id": "R2", "tier": "adversarial", "check": "Money summed in integer pence in metrics.py (total/pence/_gbp); loader and Monzo read amounts exactly via text_pence; the Monzo walk now orders offset timestamps by UTC moment (src/cma/importers/monzo.py:84, 271, 305), as the walk-after-sorting clause asks, and the mixed-offset regression ran and passed. The defect in output date order is reported as a finding.", "result": "pass", "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-211/specified-3.log"},
+    {"id": "R3", "tier": "adversarial", "check": "_reconcile (src/cma/metrics.py:633-643) raises ReconciliationError with the pence difference and the lines; cma run exits 6 (src/cma/cli.py:118-121); MCP compute_metrics propagates it. test_cma_run_exits_non_zero_naming_the_difference_and_the_lines and test_mcp_compute_metrics_refuses_buckets_that_do_not_reconcile ran and passed.", "result": "pass", "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-211/specified-3.log"},
+    {"id": "R7", "tier": "adversarial", "check": "Category.OTHER maps to UNEXPLAINED (models.py:66) and is outside REVENUE_CATEGORIES; test_p6_* ran and passed.", "result": "pass", "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-211/invariants-5.log"},
+    {"id": "P1", "tier": "adversarial", "check": "test_p1_buckets_sum_to_total_money_in_and_every_credit_is_in_exactly_one and test_p1_reported_gbp_figures_reconcile_as_printed_for_large_amounts PASSED (invariants log lines 10, 17).", "result": "pass", "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-211/invariants-5.log"},
+    {"id": "P2", "tier": "adversarial", "check": "test_p2_sum_figures_total_their_lines_and_outflow_figures_total_them_negated and the two test_p2_m9 tests PASSED (invariants log lines 11-13); M9 evidence_note is set at metrics.py:476-485.", "result": "pass", "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-211/invariants-5.log"},
+    {"id": "P6", "tier": "adversarial", "check": "test_p6_a_credit_no_rule_matches_is_unexplained_and_never_trading and test_p6_an_unknown_payer_lands_in_m25[v1,v2] PASSED (invariants log lines 14-16).", "result": "pass", "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-211/invariants-5.log"}
+  ],
+  "findings": [
+    {"severity": "major", "file": "src/cma/importers/monzo.py", "line": 341, "criterion": "R2", "claim": "Rows are sorted by their UTC moment (line 305) but each is written with its local date, d = when.date() (lines 84-86, 341). When offsets differ near midnight, the written statement's dates run against its row order. cma import monzo succeeds, then the statement loader refuses the file or reads it reversed. ImportResult start and end (line 350) take the same local dates, so they are wrong too.", "repro": "Export header 'Transaction ID,Date,Type,Name,Amount,Currency,Balance' with rows 'tx_a,2026-01-02T00:30:00+02:00,Faster payment,ACME,-5.00,GBP,95.00' and 'tx_b,2026-01-01T23:00:00+00:00,Faster payment,ACME,-10.00,GBP,85.00'. In UTC, tx_a (22:30) comes before tx_b (23:00), and the walk from 100.00 is consistent, so convert() writes tx_a dated 2026-01-02 and then tx_b dated 2026-01-01. ingest.load_csv on that output sees first date > last date, reverses the file, and refuses it: line 2's balance 95.00 does not follow from 85.00 + -5.00. With a third later-dated row it refuses it as 'date 2026-01-01 is out of order'."},
+    {"severity": "minor", "file": "src/cma/importers/monzo.py", "line": 84, "criterion": "R2", "claim": "when.astimezone(timezone.utc) raises OverflowError for an offset timestamp whose UTC moment falls outside years 1-9999. Nothing catches it, and cma import monzo catches only MonzoImportError, so the person gets a traceback instead of a refusal naming the line.", "repro": "Monzo export with Date '9999-12-31T23:00:00-02:00' (or '0001-01-01T00:30:00+01:00') on a GBP row: convert() raises OverflowError ('date value out of range') from _parse_when, not 'line 2: ...'."}
+  ],
+  "verdict": "fail",
+  "verifier": {"seat": "reviewer", "adapter": "claude-code", "model": "claude-opus-5-5"}
+}
+```

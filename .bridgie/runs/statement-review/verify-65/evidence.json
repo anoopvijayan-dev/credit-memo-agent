@@ -1,0 +1,117 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Reviewed the supplied revision 12 requirement. Mapped own pots, HMRC, returned payments, refunds, rails and cheques to src/cma/rules/v2.yaml:63,74,117,128,137,146,155, lenders and MCA providers to :163,211, cash and explained non-trading to :254,277, and trading lists and withdrawal wording to :304,339,356,373,394. Traced longest spans and bank-code priority through src/cma/categorise.py:717,739,793, ambiguity and profile candidates through :802,860, and per-line evidence through src/cma/graph.py:221,250 and src/cma/cli.py:229. Runner logs confirm the per-list provenance, precedence, CLI evidence, replay, rollback and both offline eval cases passed. Reviewed repeat submission, concurrency and per-case inputs, sign and Unicode boundaries, currency and date handling at ingest, partial failure, authority to settle ambiguity, and evidence consumers. A valid table edit can hide cash wording from ambiguity detection, and the statement pass can replace an explicit override based on its provenance string. Own-account pairing and the judgement queue are separately assigned to R8 and R15.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-65/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-65/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-65/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-65/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-65/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-65/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-65/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 625,
+      "criterion": "R4",
+      "claim": "A validated table edit can hide independently listed cash wording whenever the line contains a payment rail. This defeats R4's ambiguity rule and can put the credit into trading receipts.",
+      "repro": "Add `unless: FPS` to the existing `cash_paid_in` rule in v2.yaml. Classify a £200 credit described as `FPS CASH DEPOSIT STRIPE`. The validator accepts the edit, rule_matches drops the cash rule, and the gateway yields `revenue_card_settlement` with `v2:payment_gateways`. R4 requires an ambiguous, unexplained credit with the payment rail, cash wording and gateway among its candidates."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 958,
+      "criterion": "R4",
+      "claim": "The round-trip pass infers decision authority from a free-form provenance string. It can discard an explicit per-line override and replace its recorded provenance.",
+      "repro": "Categorise a statement containing a £100 `FPS DEBIT ACME LTD` and a £100 `FPS CREDIT ACME LTD INV 7`. Pass an override for the credit with category `REVENUE_TRANSFER` and ref `v2:approval-7`. The public categorise function accepts the override, then the round-trip pass treats it as table-owned and replaces it with `OTHER` and `v2:round_trip`. The same override with ref `override:7` survives."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 399,
+      "criterion": "R4",
+      "claim": "The malformed-table claim promises a diagnostic naming the problem. An unhashable rule ID escapes validation as a TypeError, outside the CLI's RulesetError handler.",
+      "repro": "Change the `cash_paid_in` rule ID to `id: [cash_paid_in]` in v2.yaml and invoke `CMA_RULESET=v2 cma run` with a valid statement. The validator reaches the reserved-ID membership check and raises `TypeError: unhashable type: 'list'` before it can report the field diagnostic it collected."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README tells operators that naming the payer in the profile resolves an ambiguous credit. R4 and the implementation keep the credit ambiguous and add the profile match as a candidate.",
+      "repro": "Compare the README precedence with src/cma/categorise.py:872 and the runner-passed `test_p_a_director_named_in_a_payment_reference_does_not_settle_an_ambiguous_credit`. For `FPS CREDIT CASH DEPOSIT REF JANE DOE`, naming Jane Doe as a director appends `profile:director` and leaves the category `OTHER`."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 850,
+      "criterion": "R4",
+      "claim": "The runner proves the categoriser's two-second assertion for the mixed fixture. The claim's application to a recompute budget remains unproven for the full override-to-results path.",
+      "repro": "Compare the timed block with the performance claim. The timer covers `categorise` only. To prove the broader claim, a runner tier would need to time an override save through refreshed figures, indicators and policy on a 10,000-line case on the target class of machine."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "The producer's compilation claim for src, evals and tests is not_proven. Mechanical tier 2 compiled src only.",
+      "repro": "Compare the runner command `python -m compileall -q src` with the claim's command. A passing runner result for `python -m compileall -q src evals tests` would prove the stated scope."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

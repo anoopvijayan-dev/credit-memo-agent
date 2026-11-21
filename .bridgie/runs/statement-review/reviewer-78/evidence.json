@@ -1,0 +1,44 @@
+{
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed HEAD 51c8b68 against supplied revision 19 because the checkout contains revision 2. Canonical bytes, chain links, the recorded head and the first bad entry are checked at src/cma/case.py:221–344. Holder and path aliases, steady reads, busy-gate reads and lock replacement are handled at src/cma/case.py:451–641, with the intact-log guard at :651 and the production CLI consumer at src/cma/cli.py:321. Writer exclusion, fork refusal, nested saves, expected-position conflicts and repair checks are at src/cma/case.py:677–933. Publication and take-back are at :979–1089. Checked duplicate submission, thread and process contention, empty and malformed inputs, Unicode, UTC timestamps, partial failure, filesystem permissions, case-folder isolation and CLI exit codes. The log performs no currency arithmetic and requires no backfill. The runner logs confirm the named change, removal, reorder, rebuilt-chain and torn-tail tests, along with contention, repair and duplicate-submit coverage. The short-write regression passes, but losing the lock after the full line still yields a message that says nothing was written.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1054,
+      "criterion": "P15",
+      "claim": "When the lock disappears after a full entry line is written and before the head is published, SaveNotRecorded includes the underlying message 'nothing was written' alongside 'its entry was written'. P15 explicitly forbids reporting nothing written once any part of the line reaches the log.",
+      "repro": "Reuse the fault injection in tests/test_case_log.py:2182. Start with two recorded entries and remove the case lock immediately after writing entry 3's full line. Assert that the exception text excludes 'nothing was written'. That assertion fails because _publish interpolates the CaseLocked message from src/cma/case.py:801. The next check names entry 3 as torn. The existing test only matches 'not recorded'."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 333,
+      "criterion": "P15",
+      "claim": "The producer's CLI contract claim says a held case with a torn tail exits 0 and says 'appending'. The implementation and passing runner contract instead exit 4 and say 'being saved', as P15 requires.",
+      "repro": "Hold the writer lock from another handle over a torn tail and invoke cma case check for the folder. The scenario in tests/test_case_log.py:1339 asserts exit 4 and the saving message, and contracts-4.log records that test passing."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1213,
+      "criterion": "P15",
+      "claim": "The producer claims its rapid-append test reproduces exactly two commits per retry and a contended fallback. The passing runner test proves only that a background append loop and 40 unsynchronized checks returned no bad entry. It does not establish that the claimed schedule occurred.",
+      "repro": "Inspect the test's synchronization and assertions. It starts a background thread without a barrier for any read attempt and checks neither the number of commits per attempt nor fallback contention. To prove the exact schedule, add a synchronized regression that asserts both and have the runner execute it with python -m pytest -v tests/test_case_log.py -k rapid_append_retry_schedule."
+    }
+  ],
+  "verdict": "fail"
+}

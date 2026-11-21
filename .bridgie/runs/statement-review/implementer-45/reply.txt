@@ -1,0 +1,30 @@
+I've built the T19 workspace case summary and committed it as d6fd5a2 on the T19 branch. The full suite passed (2078 tests) and ruff is clean.
+
+**What it does now**
+- **Normal case:** the page and `/api/case` show, for each account, the money-in breakdown, all 28 figures and the monthly summary. Money is shown to the penny, and figures that rest on an override are marked. Everything is computed by the existing figures layer; the new code in `src/cma/review/summary.py` only formats and renders it.
+- **Buckets don't reconcile (R3):** no figures are shown for any account in the case. The page reports the difference in pence and lists each line involved: account, id, date, description, amount and category. To make this possible, `overrides.case_figures` now attaches the account and the categorised statement to the reconciliation error before re-raising it.
+- **Case can't be read** (broken or busy case log, override log changed by hand, statement or amount refused): no figures, and the page says why.
+- **Escaping (P8):** the summary is built into the page on the server, and every piece of text from the case is HTML-escaped there. The P8 test runs 25 random statements whose descriptions, label and business name are full of markup. It checks the page contains no tags the workspace didn't write, and holds each text only in escaped form, both when figures are shown and on the reconciliation report. With escaping switched off, 26 of those tests fail, so the test does catch the problem.
+
+**Things to know**
+- No real categorisation path produces a credit outside every bucket, so the R3 tests break reconciliation by patching `overrides.categorise`.
+- I tidied the full stop on one refusal message after the full-suite run. I re-ran the touched test files afterwards (526 passed), but not the whole suite.
+- **Descriptions show only on the reconciliation report.** On a normal case they don't appear yet; per-line drill-down is T20.
+- **Accounts are shown separately.** If one account doesn't reconcile, every account is hidden; combining accounts is T33.
+
+The claim is at `/home/user/credit-memo-agent/.bridgie/runs/statement-review/implementer-45/claim.json`; its JSON is below.
+
+```json
+{
+  "task": "T19",
+  "claims": [
+    {"text": "The workspace (GET /api/case and the page at /) loads the case's statements and computes every figure through the figures layer via overrides.case_figures (profile and whole override log), showing per account the money-in breakdown (M2 with M18 within it, M19-M25, total M17, to the penny), all of M1-M28 and the monthly summary; the page renders them server-side in src/cma/review/summary.py, which does no money arithmetic.", "proof_cmd": "python -m pytest -q -m contracts tests/test_workspace_summary.py", "proof_output": "11 passed, 26 deselected in 6.06s"},
+    {"text": "R3: when the money-in buckets do not reconcile (a credit in no bucket, or a debit counted as trading receipts), in any account, the API and page show no figures for the case (no breakdown, figures or monthly table, for every account) and report the difference in pence and the lines involved (account, id, date, escaped description, amount, category). overrides.case_figures now attaches the account and categorised statement to the ReconciliationError it re-raises.", "proof_cmd": "python -m pytest -q -m contracts tests/test_workspace_summary.py", "proof_output": "11 passed, 26 deselected in 6.06s"},
+    {"text": "P8 on the workspace HTML: for 25 seeded random statements whose descriptions, label and business name mix markup, entities, script tags, comment markers and the page's own markers, the served page holds no tag or attribute the workspace does not write, holds each text only in escaped form, and a parser reads it back as the text itself; this holds both when figures are shown and when the reconciliation report lists a line's description. Removing escaping in summary._e makes 26 invariants tests fail.", "proof_cmd": "python -m pytest -q -m invariants tests/test_workspace_summary.py", "proof_output": "26 passed, 11 deselected in 16.76s"},
+    {"text": "Existing server, override and figures-layer tests still pass, and lint is clean.", "proof_cmd": "python -m pytest -q tests/test_workspace_summary.py tests/test_review_server.py tests/test_overrides.py tests/test_money_in.py && ruff check src tests", "proof_output": "526 passed in 53.95s\nAll checks passed!"},
+    {"text": "Full test suite passes.", "proof_cmd": "python -m pytest -q", "proof_output": "2078 passed in 172.52s (0:02:52)"}
+  ],
+  "files_changed": ["src/cma/review/summary.py", "src/cma/review/server.py", "src/cma/review/static/index.html", "src/cma/review/static/app.css", "src/cma/overrides.py", "src/cma/models.py", "tests/test_workspace_summary.py"],
+  "notes": "Commit d6fd5a2 on the T19 branch. Design choices: the summary is rendered into the page server-side (html.escape on every case text) so P8 is judged on the HTML the server sends; /api/case returns the same summary as JSON (application/json, nosniff). Descriptions appear in T19's view only in the reconciliation report; the per-line drill-down is T20, the queue and indicators T43, the policy panel T21. A case whose files are refused (broken or busy case log, a changed override log, a statement the loader refuses, an amount error) also shows no figures, with the refusal. Multi-account combination (R41) is T33: accounts are shown separately, and one account failing reconciliation hides all. The reconciliation tests force a credit out of every bucket by patching overrides.categorise, since no real categorisation path produces one. The full-suite run was taken just before a one-line wording change to a refusal message (period handling); the touched test files were re-run after it. models.money_exact was extracted from Metric.display_exact (same output) so monthly cells and line amounts show to the penny the same way."
+}
+```

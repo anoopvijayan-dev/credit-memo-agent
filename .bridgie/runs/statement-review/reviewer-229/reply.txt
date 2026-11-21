@@ -1,0 +1,59 @@
+My verdict on T15 is **pass**: R35 is met and I found no blocker or major issues, only three minor ones. Writing `evidence.json` into the run directory was denied, so the evidence is the JSON block at the end of this reply.
+
+**R35 holds.**
+- **Deletion:** every file a case has lives under `cases/<id>/`. The purge takes the case as a writer, renames the folder out of use while holding it, and deletes everything, including the read-only input files.
+- **Ledger:** the line holds only the case id, the UTC time and the operating-system user. It is written under a lock that also stops a case being recorded twice.
+- **Caller:** production code calls the purge through the new `cma case purge` command.
+- **Tests:** the runner's logs show all 13 tests in `tests/test_case_purge.py` ran and passed. That includes the test that no file named by the case is left and that the ledger has no personal data.
+
+**Minor findings:**
+1. **A waiting save can recreate the folder** (`src/cma/case.py:842`). A profile change or import that is waiting for the case during a purge still creates the folder and lock files once it gets the lock. It then fails, so no statement or profile data comes back. But an empty `cases/<id>/` with two lock files is left after the ledger says the case was purged, and purging again answers "no case", so it cannot be cleaned up. The hardener fixed the same problem for a second purge but not for other saves.
+2. **A cut-off ledger write breaks the next line** (`src/cma/store.py:666`). If a ledger append is cut off, the next purge's line is joined onto the fragment. The duplicate check then can't read it and can record that case twice. The code also doesn't check for a short write.
+3. **The claim is stale.** Its note (1) says a lock on the ledger is still needed, but the final commit adds it. It also cites 12 tests where there are now 13.
+
+```json
+{
+  "task": "T15",
+  "criteria": [
+    {
+      "id": "R35",
+      "tier": "adversarial",
+      "check": "Delete all the case's files: every case file lives under cases/<id>/ (store.py:1-9; new_case store.py:470-499 and import_file store.py:537-605 write nowhere else). purge_case (store.py:687-733) takes the case as a writer, renames it to cases/.purging-<id> while it holds the case (store.py:736-754), deletes every child including the 0400 inputs (store.py:713-717, 633-644, 757-762), and removes the emptied folder only after the ledger line is written. The ledger holds only three fields: _append_ledger is passed {case, purged_at (UTC, ...Z), by (getpass.getuser)} at store.py:723-726 and writes it under flock with a dedupe check (store.py:647-672). Production caller: cli.py case_purge (cli.py:580-599). Proof: the runner's specified-3 and contracts-4 logs show all 13 tests in tests/test_case_purge.py ran and passed. They include test_purge_deletes_every_file_of_the_case_and_ledger_holds_no_personal_data, which asserts no path containing the id remains, the ledger keys are exactly {case, purged_at, by}, and the director, label, description and amounts are absent. They also include the unknown/malformed id test, the refusal while a writer holds the case, the retries after an interrupted purge and after a failed ledger write, and the 8-thread ledger race.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-229/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 842,
+      "criterion": "R35",
+      "claim": "Another writer that is waiting for the case while a purge holds it recreates the case folder after the purge. The hardener fixed this for a second purge by passing create=False (store.py:741), but store._recorded (store.py:303), used by update_profile and import_file, still calls log.writer() with create=True. Each retry of _enter runs self.path.parent.mkdir(parents=True, exist_ok=True) and opens the .gate and .lock with O_CREAT. So once the purge has renamed the folder and released the lock, the waiting writer makes a new cases/<id>/ holding the two lock files. mkdir uses its default mode, so the folder is not forced to 0700. The writer then fails (no case.yaml, or no inputs/ or statements/ folder), so no statement or profile data comes back. But a folder named by the case id is left behind after the ledger says the case was purged, and purge_target (store.py:681-684) no longer finds it, because it has no case.yaml and no .purging- prefix, so purging again cannot clean it up.",
+      "repro": "Hold case.for_case(folder).writer() in thread P and call store.update_profile(folder, f) in thread B, so B retries inside writer(). In P, os.replace(folder, folder.parent / ('.purging-' + id)), delete its contents and release. B's next _enter calls mkdir at case.py:842 and creates cases/<id>/log.jsonl.gate and log.jsonl.lock. B then raises on load_profile. Afterwards os.path.isdir(cases/<id>) is True, and store.purge_case(id) answers 'no case'."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/store.py",
+      "line": 666,
+      "criterion": "R35",
+      "claim": "A ledger append that is cut off part-way, by a crash or a short write on a full disk, leaves a line with no newline. The next purge's O_APPEND write then joins its own record onto that fragment. _ledger_records (store.py:765-776) skips the joined line as invalid JSON (suppress(ValueError)), so the later case's record is unreadable and its dedupe check misses it. A retry then appends a duplicate. os.write's return value is also not checked for a short write.",
+      "repro": "Write '{\"case\":\"aaaaaaaaaaaaaaaa\",\"pur' (no newline) to purge_ledger.jsonl, then purge case B. The ledger's last line is the fragment followed by B's JSON, and json.loads fails on it. Purge B again from an unfinished .purging- mark and a second line for B is appended."
+    },
+    {
+      "severity": "minor",
+      "file": null,
+      "line": null,
+      "criterion": "R35",
+      "claim": "Claim note (1) says two fully concurrent purges can still both append, and that a lock on the ledger would be needed. The final commit 0044b3f already adds that flock (store.py:657-669), and test_purges_finishing_together_record_the_case_once covers it, so the note is stale and misdescribes the shipped code. Claim 1 also cites '12 passed', but the file now has 13 tests. The runner's logs show all 13 ran and passed.",
+      "repro": "git show 0044b3f -- src/cma/store.py; grep -c test_case_purge specified-3.log gives 13."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "claude-opus-5-5"
+  }
+}
+```

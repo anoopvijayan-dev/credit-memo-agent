@@ -1,0 +1,98 @@
+```json
+{
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483-490 partitions credits and checks the partition. Lines 562-574 return M17, the cash subset, and the seven additional buckets with their source IDs. src/cma/graph.py:308 and src/cma/mcp_server.py:92-98 carry the figures through the existing consumers.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:83 checks decimal-to-float round trips, src/cma/metrics.py:509-516 handles an unreportable M3, and src/cma/graph.py:175 and src/cma/cli.py:415 display GBP to the penny. The previous oversized-field regression passed. A bad byte in a subsequent record can still cause src/cma/ingest.py:287 to discard an already read amount from the oversized record.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578-588 checks credit membership separately from the pence difference, including when the difference is zero. src/cma/cli.py:111-114 exits 6 before figures or export, and src/cma/mcp_server.py:98 propagates the refusal. The runner confirmed the CLI and MCP failure-path tests.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "Both default credit paths return OTHER at src/cma/categorise.py:1311 and :1360. src/cma/models.py:66 maps OTHER to unexplained, and src/cma/metrics.py:483-488 assigns it to that bucket. The runner confirmed both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483-495 and :578-588 reconcile the eight buckets and credit IDs in pence while excluding the cash subtotal from the partition. Both named P1 invariants ran and passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For T04 figures, src/cma/metrics.py:374-378, :418-430 and :523-574 preserve the balance and ratio evidence rules, attach the partial-offset IDs, and report sums and outflows with their signed evidence. The named P2 invariants and previous-release evidence comparisons ran and passed. Monthly-cell coverage is assigned to T06.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360, src/cma/models.py:66, and src/cma/metrics.py:483-488 route unmatched credits to M25. The runner confirmed the generated-case invariant and the explicit unknown-payer test under v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 287,
+      "criterion": "R2",
+      "claim": "UTF-8 recovery treats the last cell of an earlier, newline-terminated oversized record as cut off. Monzo then omits that record's readable amount from its flow-limit diagnosis.",
+      "repro": "Use the header `Transaction ID,Date,Type,Name,Currency,Balance,Amount`. Put a valid GBP credit for `9999999999999.99` on line 2. Put a GBP credit for `0.01` on line 3, with 200,000 ASCII characters in Name and a newline after Amount. Start line 4 with an invalid UTF-8 byte such as 0xFF. `cma import monzo` reports line 3's oversized Name, but omits that money in among the amounts read has reached £10,000,000,000,000. The bad byte is on line 4, while `cut=True` causes line 3's complete Amount to be marked unreadable."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 558,
+      "criterion": null,
+      "claim": "The task title calls for renaming M16. Its method and denominator changed, while its displayed name is identical to the baseline.",
+      "repro": "Compare M16 in the current source with `git show d7ec35f:src/cma/metrics.py`. Both use `Non-trading money in (share)`. The assertion in tests/test_money_in.py:162 also expects the existing name."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 263,
+      "criterion": "R2",
+      "claim": "The producer's above-limit probe exercises the figures layer directly. Its output does not establish that the credit is valid through an import or load, where revision 29 requires refusal. The runner did not execute the cited scratchpad probe.",
+      "repro": "Compare the direct pence conversion in the named test with a five-column statement containing `L1,2026-01-05,CARD SETTLEMENT,10000000000000.01,10000000000000.01`. The direct conversion can carry the number, while src/cma/ingest.py:89 rejects it at load. The exact scratchpad output would require `PYTHONPATH=src python scratchpad/probe.py` in a runner with that script."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 92,
+      "criterion": null,
+      "claim": "The producer's test totals describe an older revision. The current runner verifies the named tests, but its full-suite, money-in contract and dual-run totals differ from the claim.",
+      "repro": "Compare `git log -1 --oneline` and the named entries in specified-3.log, contracts-4.log, invariants-5.log and dual_run-7.log. The reviewed commit is d4f5b4f, with 970 full-suite passes, 65 money-in contract test cases, eight money-in invariant test cases and 84 dual-run passes. Reproducing the historical 878-pass claim would require `python -m pytest -q` at ca0092c."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": null,
+      "claim": "The producer note says the committed example lacks evidence_note and was left unregenerated. The current example includes evidence_note.",
+      "repro": "Search the committed example for `evidence_note`. M1 and the subsequent metric records already carry the field."
+    }
+  ],
+  "verdict": "fail"
+}
+```

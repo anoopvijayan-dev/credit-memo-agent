@@ -1,0 +1,37 @@
+T09's one requirement, P19, holds, and my verdict is **pass**.
+
+The P19 tests did run. Three tests named `p19` and marked `invariants` passed in the runner's invariants log (lines 10–12) and again in the full suite. Six contracts tests from the new test file also passed.
+
+Where the code meets each part of P19:
+- **Cash-deposits figure (M18):** its evidence is every credit categorised as a cash deposit (`src/cma/metrics.py:669-671`).
+- **Inside trading receipts (M2):** the cash-deposit category maps to the trading-receipts bucket and is one of the revenue categories (`src/cma/models.py:58,69`). So each deposit is in M2's evidence and M18 cannot exceed M2.
+- **Large deposits in the queue:** each cash deposit at or above the limit raises its own indicator (`src/cma/indicators.py:281-286`). The queue adds every flagged line with that indicator's id and kind (`src/cma/indicators.py:449-456`).
+- **Production caller:** `cma run` builds the queue from those same indicators and the run's own thresholds (`src/cma/graph.py:270-278`). It goes into the evidence record that `src/cma/cli.py:341` writes, and nothing else calls it.
+
+The tests cover 300 random cases plus every synthetic case, at the shipped £2,500 limit and at a firm limit of £100.01.
+
+I found nothing serious, and nothing in the attack list broke it. The function only reads its inputs. The new evidence key is an addition, and nothing in `src` reads it back. Its only failure path, an unknown ruleset, is caught.
+
+Two gaps I left out of the findings because they belong to other requirements, not P19:
+- The possible own-account transfers input has no caller in production code yet. The producer says so, and it belongs to R9/R15 and Tier 2 pairing.
+- `queue_candidates` reads any rule id containing `:conflict:`. Once overrides land, an override whose text holds that string could show phantom candidates. The producer flagged this too.
+
+I couldn't write `evidence.json` to the run directory, so it is in the block below.
+
+```json
+{
+  "task": "T09",
+  "criteria": [
+    {
+      "id": "P19",
+      "tier": "adversarial",
+      "check": "P19, part by part. (1) M18's evidence is exactly the cash-deposit credits: src/cma/metrics.py:669-671. (2) Each deposit is in M2's evidence and M18 <= M2: CASH_DEPOSIT maps to TRADING_RECEIPTS (src/cma/models.py:58) and is in REVENUE_CATEGORIES (src/cma/models.py:69). (3) Each cash deposit at or above the limit raises single_cash_deposit with that line as its evidence (src/cma/indicators.py:281-286), and judgement_queue adds every indicator-evidence line with the indicator's id and kind (src/cma/indicators.py:449-456). (4) Production calls it: graph._indicator_fields builds the queue from the same raised indicators and the run's thresholds (src/cma/graph.py:270-278), and cma run writes it into the evidence record (src/cma/cli.py:341). Runner proof: invariants-5.log lines 10-12 and specified-3.log lines 194-196 show test_p19_cash_deposits_are_in_m2_and_every_large_one_is_queued_with_its_indicator, test_p19_holds_at_a_firm_single_deposit_limit and test_p19_the_queue_holds_every_unexplained_and_flagged_line_once_largest_first PASSED, covering 300 random cases plus every synth archetype/profile, at the shipped and a firm limit. contracts-4.log lines 39-44 show the CLI end-to-end evidence-record test PASSED. Attacks: the function is pure (statement unchanged, deterministic: contracts test); boundary 249,999/250,000/250,001 pence drawn; RulesetError caught in queue_candidates and load_ruleset raises only RulesetError (src/cma/categorise.py:988-1018); the new evidence key is additive and has no other consumer in src.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-217/invariants-5.log"
+    }
+  ],
+  "findings": [],
+  "verdict": "pass",
+  "verifier": {"seat": "reviewer", "adapter": "claude-code", "model": "claude-opus-5-5"}
+}
+```

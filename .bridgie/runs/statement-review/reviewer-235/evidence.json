@@ -1,0 +1,43 @@
+{
+  "task": "T19",
+  "criteria": [
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "case_figures (src/cma/overrides.py:263-315) catches ReconciliationError per account, tags it with account and statement, continues, and raises CaseNotReconciled (overrides.py:237-248) carrying every failing account; summary.case_summary (src/cma/review/summary.py:98-106) returns state not_reconciled with accounts [] for any account failing; _not_reconciled (summary.py:76-94) lists each account's difference_pence and every involved line; render (summary.py:202-203) shows only the per-account differences in pence and the lines table, with no breakdown, figures or monthly tables. The base-comparison failure (overrides.py:291-297) no longer hides a case whose overridden figures reconcile. Runner contracts-4.log shows test_every_account_that_does_not_reconcile_is_reported_with_its_difference_and_lines, test_case_figures_reports_every_account_that_does_not_reconcile, test_a_case_that_does_not_reconcile_shows_no_figures_and_names_difference_and_lines, test_one_account_that_does_not_reconcile_hides_every_account, test_a_debit_counted_as_trading_receipts_is_reported_too and test_an_override_that_puts_a_line_right_lets_the_case_be_shown PASSED. Attempt-1 major resolved.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-235/contracts-4.log"
+    },
+    {
+      "id": "P8",
+      "tier": "adversarial",
+      "check": "Workspace HTML slice (tasks.json assigns P8's CSV slice and pack HTML slice to other tasks). Every case-derived value in summary.render and its helpers (summary.py:130-211) passes through _e = html.escape(quote=True): label, business_name, refusal, account, period, figure name and method, monthly notes, and reconciliation line description, date, amount and category. The summary is inserted after the __CMA_TOKEN__ replacement (server.py:194, 211-215), so case text holding either mark is not substituted. The /api/case JSON is served application/json with nosniff, and app.js uses textContent. Runner invariants-5.log shows test_p8_the_workspace_html_holds_description_text_only_escaped[0..24] and test_p8_the_api_carries_description_text_as_json_data_only PASSED, covering both the shown and the not_reconciled states.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-235/invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/overrides.py",
+      "line": 283,
+      "criterion": "R3",
+      "claim": "case_figures collects only ReconciliationError per account. Any other error from _figures in another account propagates at once, so an account that fails R3 has its difference and lines dropped and the workspace shows only the other refusal. Nothing is shown, but the R3 report is incomplete.",
+      "repro": "Two-account case: monkeypatch overrides.categorise so that account 'main' L2 becomes SUPPLIER (fails R3) and account 'savings' has a line with reverses set to a missing id, so metrics.compute raises AmountError at metrics.py:582. GET /api/case gives state 'refused' with the AmountError text, and reconciliation is null, so main's 30025 pence and L2 are not reported. Only a categoriser bug reaches this, as with the R3 trigger itself."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/overrides.py",
+      "line": 246,
+      "criterion": "R3",
+      "claim": "CaseNotReconciled.difference_pence adds signed per-account differences, so opposite differences cancel and the case-level difference_pence in /api/case can be 0, or smaller than either account's, for a case that does not reconcile. The per-account rows and the HTML still give each account's real difference.",
+      "repro": "Two accounts, one with buckets short of money in by 100 pence and the other over by 100 pence: /api/case reconciliation.difference_pence == 0 and difference == '0.00', while accounts[] shows 100 and -100."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

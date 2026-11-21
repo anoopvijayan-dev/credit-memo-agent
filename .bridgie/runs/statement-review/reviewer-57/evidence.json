@@ -1,0 +1,68 @@
+{
+  "task": "T03",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped acquirers, gateways, marketplaces and delivery platforms to src/cma/rules/v2.yaml:304,339,356,373; lenders and MCA to :163,211; own pots to :74; HMRC to :117; returned payments and refunds to :63,128,137; rail and cheque cues to :146,155; cash paid in and withdrawals to :254,394; explained credits to :277. Traced the two ambiguity stages and agreeing-cue precedence to src/cma/categorise.py:717, the override to :745, and unexplained classification, both kinds of profile candidate and firm-rule exclusion to :793–808 and src/cma/models.py:65. Own-account pairing is R8. Traced v2 selection and line provenance through src/cma/graph.py:221,250 and src/cma/cli.py:229. The runner log confirms the per-list cases, v2 CLI provenance, and both revision 11 regressions ran and passed. Reviewed repeat submission, concurrent calls, empty, sign, Unicode and long-description boundaries, currency and date handling, partial failures, override and firm-rule boundaries, profile isolation, rollback and evidence consumers. Two accepted table edits still violate revision 11.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-57/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 635,
+      "criterion": "R4",
+      "claim": "The longest-span scan misses a longer match when a greedy repeat consumes text needed by a later optional phrase. The detector only looks for alternation and lazy repeats, so the scan keeps Python's first, shorter match.",
+      "repro": "Add the accepted pattern `ACME+(?:E FASTER PAYMENT LTD)?` to the v2 gateway rule. Classify a £100 credit described as `ACMEE FASTER PAYMENT LTD CASH DEPOSIT`. The greedy `E+` consumes both Es and the optional phrase is skipped, so the rail survives and the credit becomes ambiguous. The longest match consumes one E in the repeat and the second in the optional phrase. That span contains the rail, leaving two trading candidates and yielding `v2:cash_paid_in` under the declared category order."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 362,
+      "criterion": "R4",
+      "claim": "An accepted `unless` on the bank-code rule can disable the mandatory returned-payment verdict. The code is only given precedence after ordinary rule conditions have filtered it out.",
+      "repro": "Add `unless: 'TO SAVINGS'` to the shipped `returned_dd` rule and classify a £50 credit described as `UNPAID DD TO SAVINGS`. The table loads, the bank-code rule is excluded at src/cma/categorise.py:569, and the credit takes `v2:own_pots_savings`. R4 requires `v2:returned_dd`."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 362,
+      "criterion": "R4",
+      "claim": "The malformed-table claim overstates the type checks. The bank-code allow-list lookup raises a raw TypeError for a YAML sequence in `pattern`, bypassing the rule-specific validation message.",
+      "repro": "Change the flagged `returned_dd` rule's `pattern` to `[UNPAID DD]` and select v2. The validator records a type problem, then tries to look up the list in a frozenset before it can raise the accumulated RulesetError."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The documented precedence says a profile name settles ambiguous wording. The implementation keeps the profile match as a candidate.",
+      "repro": "Compare the README with the passing `test_p_a_director_named_in_a_payment_reference_does_not_settle_an_ambiguous_credit`. With Jane Doe in the profile, `FPS CREDIT CASH DEPOSIT REF JANE DOE` remains unexplained and gains `profile:director`."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 847,
+      "criterion": "R4",
+      "claim": "The runner proves the categoriser's 10,000-line timing assertion on its fixture. The stated recompute-budget implication is unproven because the timed section excludes figures, indicators, policy evaluation and workspace rendering.",
+      "repro": "Read the timed section of `test_categorise_10000_lines_under_v2_with_a_profile_is_fast` and its passing entry in `specified-3.log`. An end-to-end timed save-override test on a 10,000-line case would prove the R52 timing claim."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_evals_rulesets.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "The claim that every module compiled is only partially supported by the runner. Ruff covered src, tests and evals, while the compile tier covered src.",
+      "repro": "Compare the claim with the command for mechanical:2. A runner result for `python -m compileall -q src tests evals` would prove the broader compile claim."
+    }
+  ],
+  "verdict": "fail"
+}

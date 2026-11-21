@@ -1,0 +1,62 @@
+```json
+{
+  "task": "T03",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Checked the shipped own-pot, HMRC, refund, rail and cheque data at src/cma/rules/v2.yaml:63–159, lender and cash data at :162–275, and explained-credit, trading-provider and withdrawal data at :276–405. src/cma/categorise.py:507–571 applies the longer-phrase filter, bank-code precedence and ambiguity policy. At :583–589 and :630–648, an override can settle the line, while a wording conflict records both stages and matching profile kinds before firm rules can apply. src/cma/metrics.py:127 excludes the resulting OTHER category from trading receipts. src/cma/graph.py:250 selects the table for cma run and :221 exports each line's provenance. The runner passed the table-driven, ambiguity, CLI, repeated-categorisation, rollback and legacy-checkpoint tests. Reviewed signed-amount and Unicode boundaries, two-run state isolation, duplicate and concurrent processing, currency and date handling, partial failure, access boundaries and evidence consumers. The categoriser uses statement-local inputs and introduces no writer or endpoint. The existing CLI still writes memo and evidence separately at src/cma/cli.py:228–229.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-50/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 500,
+      "criterion": "R4",
+      "claim": "The claimed load-time validation catches a span pattern that fails to compile, but the wrapper can also compile successfully and silently change a numbered backreference. That lets an accepted table report the wrong ambiguity and provenance.",
+      "repro": "In a copy of v2.yaml, add the pattern '(AB)(CD)\\2 STRIPE' to the existing lender_drawdown rule. Classify a positive credit with description 'ABCDCD STRIPE'. The standalone lender regex matches the entire phrase, so the enclosed STRIPE match should be suppressed and the line should be a lending drawdown. The wrapper makes group 2 refer to AB, producing no lender span on this line. The matcher retains both rule IDs and marks the credit ambiguous. The runner's test at tests/test_rules_v2.py:1621 exercises a wrapper compilation error and does not cover a wrapper that compiles with changed semantics."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 561,
+      "criterion": "R4",
+      "claim": "An accepted table edit can silently grant an ordinary line-type cue the bank-code exception, bypassing ambiguity. The passing contract test checks only which shipped patterns are currently anchored.",
+      "repro": "In a copy of v2.yaml, add the protected, inbound line_type rule hmrc_prefix with pattern '^HMRC\\b' and category hmrc_repayment before the names stage. The table loads. Classify a positive 'HMRC FROM SAVINGS' credit. The distinct HMRC and own-account cues should produce an unexplained conflict, but the new anchored cue returns an HMRC repayment before ambiguity is checked."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 599,
+      "criterion": "R4",
+      "claim": "The producer's claim that shuffling rules within a stage changes no category on whole statements is broader than the proof. Debit categories still depend on the order of matching rules inside the same stage and protection group.",
+      "repro": "Categorise a negative 'PAYROLL RENT' line with the shipped table, then swap the payroll and rent rules. Both are unprotected names rules. The first table gives payroll and the second gives rent. The passing shuffle test at tests/test_rules_v2.py:1384 does not include this debit."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README places profile names ahead of ambiguity and says a profile name can settle an ambiguous credit. That contradicts the recorded precedence and candidate behavior.",
+      "repro": "Classify a positive 'FPS CREDIT CASH DEPOSIT REF JANE DOE' with JANE DOE in the director profile. The runner verified that the line stays unexplained and records payment_rail, cash_paid_in and profile:director as candidates."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 30,
+      "criterion": "R4",
+      "claim": "The producer's compileall claim for src, evals and tests is not proven by the runner.",
+      "repro": "The passing mechanical:2 row ran 'python -m compileall -q src'. To prove the claimed scope, the runner would need a passing row for 'python -m compileall -q src evals tests'."
+    }
+  ],
+  "verdict": "fail"
+}
+```

@@ -1,0 +1,101 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed commit 46b03be against revision 22. Canonical-byte validation, head comparison and first-bad-entry detection are in src/cma/case.py:177–352. Holder recognition, post-read lock checks, retries and the sign-off guard are in src/cma/case.py:447–719. The CLI reaches verification at src/cma/cli.py:309–338. Writer exclusion, fork refusal, nested-save exclusion, expected-position checks, repair and take-back are in src/cma/case.py:734–1259. Runner logs show 509 full-suite, 192 invariant and 13 contract passes, including the named tamper, rebuilt-chain, torn-tail, duplicate-submit and prior-review regression tests. Traced concurrent updates, partial failures, empty and malformed input, Unicode, UTC timestamps, OS permissions, case-folder isolation and CLI consumers. This change has no currency computation or migration. The sign-off guard has no production sign-off caller in this checkout. The reader can mistake its own thread for another writer and can name an entry without knowing the recorded count.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-108/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-108/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-108/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-108/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-108/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-108/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-108/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 589,
+      "criterion": "P15",
+      "claim": "After discarding a holder read across a replaced gate, verification treats the case lock still held by the same thread as evidence of another writer. It reports the recorded prefix as being saved and hides the incomplete entry even though no other writer exists.",
+      "repro": "Create a case log with two recorded entries and a torn third entry. Take writer() and call verify() on the same thread through a second CaseLog on the same folder. Replace only the gate immediately after the first log read and leave the case lock in place. The holder check rejects the first read. The fallback shares the new gate, encounters its own thread's case lock and returns in_progress with two entries and no first_bad. P15 explicitly excludes a lock held by the reader's own thread from evidence of another writer."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 370,
+      "criterion": "P15",
+      "claim": "A reader holding the gate while another writer holds the case reports entry 1 as broken when the head is unreadable, even though it has no recorded count and cannot place that entry among the recorded entries.",
+      "repro": "Create an intact two-entry log and keep a writer parked inside writer() on another thread. Replace the head file with invalid JSON, leaving both log entries and lock files untouched. Run cma case check from another thread or process. Both head reads yield the same unreadable sentinel. _check sets first_bad to 1 and leaves recorded unknown, so _held_result forwards an entry-level verdict and the CLI exits 3."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 927,
+      "criterion": "P15",
+      "claim": "An OSError from a deferred signal handler is translated into 'the save was not recorded' after the append has already published its head and verified the entry.",
+      "repro": "In the main thread, install a SIGWINCH handler that raises PermissionError and deliver SIGWINCH during the append's successful read-back, following the timing used by test_ctrl_c_during_a_save_that_confirms_is_delivered_once_the_log_is_settled. The handler runs at src/cma/case.py:1307 after confirmation. The OSError branch runs before the confirmed-state check and raises SaveNotRecorded. A fresh verify() finds the entry intact and recorded."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer claims a check during a held append exits 0 and prints 'appending'. The passing contract test asserts exit 4 and checks for 'saved'.",
+      "repro": "Inspect the passing test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break in contracts-4.log and its assertions at tests/test_case_log.py:1360–1365. With the writer holding the case over a torn tail, the CLI reports the recorded count, says the rest is unchecked and exits 4."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

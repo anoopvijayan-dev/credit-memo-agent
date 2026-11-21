@@ -1,0 +1,125 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed HEAD 1e35352 against supplied revision 20. The checkout's requirements.md:249 contains the shorter revision 2 property. Canonical encoding and chain, head and torn-tail checks are at src/cma/case.py:221–344 and :945–955. Holder identity, aliases, steady reads, lock replacement and retry handling are at :455–605 and :620–670. Writer exclusion, fork refusal, nested saves, expected-position conflicts and repair are at :681–940. Publication and take-back are at :1013–1105. The CLI consumer is at src/cma/cli.py:309–341. Checked duplicate submission, thread and process contention, empty and malformed input, Unicode, UTC, partial failure, OS permissions, case-folder isolation, CLI consumers and migration scope. The log performs no currency arithmetic. Runner logs confirm the named tamper, rebuilt-chain, torn-tail, contention, repair and duplicate-submit tests. The revision 20 reporting rule fails when take-back is refused after the line has been written, and a persistent head re-check error can misclassify a save that never published its head.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-80/invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-80/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-80/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-80/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-80/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-80/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-80/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-80/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1103,
+      "criterion": "P15",
+      "claim": "When take-back is refused because the case lock disappeared or was replaced, SaveNotConfirmed embeds the lock refusal's words 'nothing was written' even though the entry line was written. The regular publication and short-write wrappers also retain that wording in their explicit exception causes at lines 1064 and 1040. The passing whole-line test checks only str() of the outer exception.",
+      "repro": "Use the schedule in tests/test_case_log.py:2401, which publishes entry 3, replaces the case lock and makes read-back fail. Inspect str() of the resulting SaveNotConfirmed. It contains 'nothing was written'. To see the same wording in a chained traceback, use the whole-line lock-loss schedule at tests/test_case_log.py:2532 and render the full exception chain."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1070,
+      "criterion": "P15",
+      "claim": "A persistent head read error before publication is reported as not confirmed. The error handler infers whether the rename ran by rereading the head and treats an unreadable head as evidence that publication might have happened, even when the failing read was the pre-rename check and the rename was never attempted.",
+      "repro": "Append entry 3 to a two-entry case. After the entry line has been written, make every read of the head file fail with EACCES. The head check at line 1001 stops the rename. The fallback at line 1070 returns the unreadable sentinel and the caller receives SaveNotConfirmed. Restore read access and verify that the original head still records two entries and entry 3 is torn."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 340,
+      "criterion": "P15",
+      "claim": "The producer's exit-code claim contradicts both production code and its cited contract test. A held case with a torn tail exits 4 and says it is being saved.",
+      "repro": "Read the passing test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break in contracts-4.log and its assertion in tests/test_case_log.py:1339. The test expects exit 4 for the held case and exit 3 after release."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 318,
+      "criterion": "P15",
+      "claim": "The producer's owner-only authorization claim is broader than the implementation and proof. The CLI checks that the argument is a directory and relies on filesystem permissions. The cited test proves private modes for files this writer creates.",
+      "repro": "Provide a case folder and log sidecars whose OS permissions grant a second local user read access. Run cma case check as that user. The CLI proceeds to verify without comparing the user's identity to the case folder owner."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1213,
+      "criterion": "P15",
+      "claim": "The disposition says the passing rapid-append test forces two commits into each reader attempt. It actually runs an unsynchronized background loop and checks outcomes from 40 reads. The cited negative check is not proven by a runner result.",
+      "repro": "Inspect the test and its PASSED row in specified-3.log. To prove the claimed schedule, add synchronization and assertions that two commits land inside each targeted read attempt, then have the runner execute python -m pytest -v tests/test_case_log.py -k healthy_log_broken."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 585,
+      "criterion": "P15",
+      "claim": "The producer's disposition says a missing head is always named while the case lock is held. When both the gate and case lock are busy, a missing head yields no recorded count and the reader correctly claims nothing under revision 20.",
+      "repro": "Keep the gate and case lock busy throughout verify() on a nonempty log and remove the head before the first read. The busy-gate path retries and returns an unchecked result without a first bad entry."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 146,
+      "criterion": "P15",
+      "claim": "The producer's aggregate test totals and diff-stat proof are stale. The current runner verifies 474 full-suite passes, 157 invariant passes and 10 dual-run passes. The source diff has 1,255 insertions.",
+      "repro": "Compare the summaries in specified-3.log, invariants-5.log and dual_run-7.log with the claim, and compare its source diff stat with git diff --stat 576e43d..HEAD -- src."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

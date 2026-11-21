@@ -1,0 +1,41 @@
+T14 is built and committed as 2b54f68: the 37 new tests pass, as does the full suite of 1914.
+
+**What changed:**
+- **Detection** (`src/cma/store.py`): a new `sync_folder()` works out whether the case root sits inside one of the four sync clients' folders. It recognises each client by the folder names it uses on Windows, macOS and Linux. It also checks the OneDrive locations Windows records in environment variables and the folders listed in Dropbox's own settings file, so renamed folders are caught too. Symlinks are followed to where the files really land.
+- **Creating a case:** `new_case` checks the root before making the case folder. If it is a synced folder, the warning goes to a new `warn` callback, or is raised as a Python warning when no callback is given. It is then saved as the case log's second entry, `sync_folder_warning`, recording the client, the synced folder, the case root and the message.
+- **CLI** (`src/cma/cli.py`): `cma case new` prints the warning on stderr before the case is created. stdout still shows only the case id, so anything that reads the id is unaffected.
+- **Tests** (`tests/test_sync_folder.py`, all marked `contracts`): sample paths for each client in Windows and macOS/Linux style, plus look-alike names that must not trigger. They also cover the environment-variable and Dropbox-settings cases, a broken Dropbox settings file, the symlink case, and the CLI warning and log entry for each client. Other tests check the warning comes before the case folder exists, that an ordinary folder gives no warning, and that a library caller gets a Python warning.
+
+**Limits worth knowing:**
+- This only warns; it never refuses, since R32 asks for a warning only.
+- A synced folder whose name no client uses, and that neither the Windows variables nor Dropbox's settings file name, is not detected. A plain folder that happens to be called `Dropbox` or `My Drive` will trigger the warning even if nothing syncs it.
+- The log entry stores the case root's path, which can include the computer user's name but never the applicant's.
+
+```json
+{
+  "task": "T14",
+  "claims": [
+    {
+      "text": "sync_folder recognises path fixtures for each client (OneDrive, Dropbox, Google Drive, iCloud Drive) on POSIX and Windows paths, the Windows OneDrive environment variables, Dropbox's info.json and symlinks, and does not flag ordinary or look-alike folders; cma case new warns on stderr before the case folder exists and records a sync_folder_warning entry (client, sync_folder, case_root, warning) as the case log's second entry, while a case outside a synced folder gets no warning and no entry",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_sync_folder.py tests/test_case_store.py",
+      "proof_output": "88 passed in 1.77s"
+    },
+    {
+      "text": "Full suite passes with the change",
+      "proof_cmd": "python -m pytest -q -x",
+      "proof_output": "1914 passed in 131.06s (0:02:11)"
+    },
+    {
+      "text": "Lint and compile are clean",
+      "proof_cmd": "ruff check src tests; python -m compileall -q src",
+      "proof_output": "All checks passed!"
+    }
+  ],
+  "files_changed": [
+    "src/cma/store.py",
+    "src/cma/cli.py",
+    "tests/test_sync_folder.py"
+  ],
+  "notes": "R32 is a warning, not a refusal: the case is still made. The warning is given before anything of the case is made, through new_case's warn callback (the CLI prints it on stderr so stdout keeps only the case id), or as a store.SyncFolderWarning when no callback is given. It is recorded as a separate case-log event, sync_folder_warning, appended in the same writer hold as case_created (expected=1); if that append fails, the half-made case folder is removed as before. Detection covers known folder names per client (OneDrive, 'OneDrive - Org', CloudStorage OneDrive-*, Dropbox, 'Dropbox (Org)', Dropbox-*, 'Google Drive', GoogleDrive(-*), 'My Drive', iCloudDrive, 'iCloud Drive', com~apple~CloudDocs, Library/Mobile Documents), the Windows OneDrive/OneDriveCommercial/OneDriveConsumer variables, and Dropbox info.json under ~/.dropbox, %APPDATA% and %LOCALAPPDATA%. A folder synced under a name no client uses, and not named by those sources, is not detected; the docstring says so. ruff format --check reports differences across most of src, which the project does not enforce, so the new code follows the existing hand-wrapped style."
+}
+```

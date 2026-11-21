@@ -1,0 +1,97 @@
+{
+  "task": "T17",
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "src/cma/firm.py:67 defaults the lock on. src/cma/graph.py:283 and :356 tie draft evidence and hosted dispatch to the run reading. src/cma/mcp_server.py:69 and :94 gate exported apps, and :167 gates tool file reads. The native HTTP runners bypass the ASGI gate at :48–78, allowing requests and a delayed bind after the lock changes.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:237 builds the prompt from the placeholder, period and tables. src/cma/metrics.py:295 omits evidence IDs. The custom-rule filter at src/cma/graph.py:189 still admits a rule ID taken from a statement when a custom rule matches the packaged fields compared there but changes its failure action.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "The runner passed the hosted custom-policy redraft and referral-band collision tests. src/cma/graph.py:189 and :225 still admit a case sentinel used as a custom rule ID when only on_fail changes. src/cma/policy.py:106 applies that change.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "The runner passed both retryable-503 SDK cases, native starts with the lock already on, and delayed startup of a saved app. src/cma/mcp_server.py:48–78 leaves native startup unguarded after its entry check. The bind test holds the lock constant and misses the transition before bind.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/mcp_server.py",
+      "line": 70,
+      "criterion": "R29",
+      "claim": "Native HTTP transports give Uvicorn the raw ASGI app. A lock change after the runner's entry check leaves protocol requests outside the ASGI lock gate and can allow a native bind while locked.",
+      "repro": "In a local test, capture the app passed to uvicorn.Server.serve by run_streamable_http_async or run_sse_async while unlocked. Enable the lock before continuing startup. The captured app still runs its normal lifespan and reaches bind. If the server was already listening, a fresh HTTP request reaches Starlette instead of receiving the lock's 503. The existing tool-level lock still protects statement reads."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 197,
+      "criterion": "P5",
+      "claim": "The claimed whole-rule comparison omits on_fail and when_missing, allowing custom rules to send case-derived IDs that collide with packaged IDs.",
+      "repro": "Use a synthetic statement whose description contains the sentinel R1 and whose period is shorter than 12 months. Copy the packaged policy and change only R1's on_fail from refer to fail, retaining the ID copied from the description. Record the hosted prompt with a stub SDK. The custom rule appears as R1 with outcome fail. A returned draft with a bad limit tagged R1 also makes R1 eligible for redraft feedback."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 507,
+      "criterion": "R29",
+      "claim": "The run context treats a distinct graph invocation as an internal LangGraph call when an outer stream is suspended, allowing the second invocation to inherit an unlocked tracing decision.",
+      "repro": "Enable LangSmith tracing with a local recording transport. Start consuming an unlocked graph.stream and pause it after one yield in the same Python context. Enable the lock and invoke a separate graph using FakeLLM before closing the first stream. The second graph reads the locked configuration in its load node, but its wrapper skips the tracing gate and tracing remains enabled."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/llm.py",
+      "line": 133,
+      "criterion": "P18",
+      "claim": "The 503 tests prove SDK retries are disabled. The broader claim that every HTTP request passes a lock check is false because the default SDK HTTP clients follow redirects inside a single completion call.",
+      "repro": "With a local HTTP fixture and the default SDK transport, respond to the first completion POST with a same-origin 307 after enabling the lock. The SDK follows the redirect without a second call to HostedLLM._check. The runner's test covers 503 responses with a custom transport, so it does not establish redirect behavior."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/firm.py",
+      "line": 199,
+      "criterion": "R29",
+      "claim": "The read-once and performance claims count calls to firm.load rather than physical reads of firm.yaml. Each load hashes the file and then reads it again for parsing. An unchanged hosted CLI run also hashes it during client authorization and graph startup. The suite timing does not establish the claimed absence of a regression.",
+      "repro": "Instrument reads of firm.yaml through Path.read_bytes and Path.read_text during an unchanged hosted CLI run. The runner's test_p18_an_unchanged_firm_yaml_is_read_once_in_a_whole_cli_run passes by counting firm.load calls while the file is read multiple times. A before-and-after benchmark on the same fixture would be needed to prove the timing claim."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 88,
+      "criterion": "R29",
+      "claim": "The producer's idempotency proof covers sequential reuse. Concurrent CLI starts can both pass the unused-ID check before either starts checkpointing.",
+      "repro": "In a local test, pause two cma run processes after graph.get_state for the same fresh thread and SQLite checkpoint, then release both. Both enter graph.invoke after observing an unused ID. The runner's sequential reuse coverage cannot prove single submission in this case."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 303,
+      "criterion": "R29",
+      "claim": "The cited dispatch_used test is not proven. The runner logs contain offline evidence tests and tests that inspect the hosted run reading, but no test by that name.",
+      "repro": "Search specified-3.log and invariants-5.log for dispatch_used. To prove the claim end to end, add a test that records the lock passed to hosted dispatch and compares it with the exported evidence from the same CLI run, then run python -m pytest -v tests/test_firm.py -k dispatch_used."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

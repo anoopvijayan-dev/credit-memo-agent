@@ -1,0 +1,14 @@
+ .github/workflows/evals.yml |    6 +
+ README.md                   |   10 +-
+ src/cma/cli.py              |   13 +-
+ src/cma/firm.py             |  254 ++++++++++
+ src/cma/graph.py            |  335 ++++++++++++-
+ src/cma/importers/monzo.py  |   19 +-
+ src/cma/llm.py              |   81 ++-
+ src/cma/mcp_server.py       |  140 +++++-
+ src/cma/models.py           |    4 +
+ src/cma/policy.py           |    1 +
+ tests/test_firm.py          | 1144 +++++++++++++++++++++++++++++++++++++++++++
+ tests/test_import_monzo.py  |   35 ++
+ tests/test_mcp_paths.py     |   22 +-
+ 13 files changed, 2003 insertions(+), 61 deletions(-)

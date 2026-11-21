@@ -1,0 +1,73 @@
+{
+  "task": "T17",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "src/cma/firm.py:68 defaults the lock on, and src/cma/llm.py:79 and :104 gate hosted clients and requests. src/cma/mcp_server.py:40-120 and :167 gate startup, app factories, ASGI requests and tools. Runner logs confirm that the legacy and unchanged-file resume tests passed. A resume paused before drafting can still use a different lock for hosted dispatch than the one it read at resume, at src/cma/graph.py:404 and :496-497. Tracers inherited through the runnable context also escape filtering at src/cma/graph.py:592.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:229-283 builds the rule table with an overall outcome row, masks custom policy text, preserves the shipped representation of equivalent rules, and adds only the period, placeholder account name and filtered redraft IDs. src/cma/metrics.py:295-298 renders aggregate values and methods without line evidence. src/cma/graph.py:399-406 uses this prompt on the dispatch path. The runner passed the hosted custom-policy redraft and shipped-spelling tests.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:191-283 canonicalizes shipped-rule numeric spellings, masks custom descriptions, IDs and limits, and filters redraft IDs against the tables. The date strings at :276 fall within revision 33's period exception. The runner passed the sentinel, hosted redraft, custom limit and shipped spelling cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "The runner passed the retryable-503 cases for both SDKs, both native HTTP bind cases, and the saved-app startup and refusal cases. src/cma/graph.py:496-497 now reads firm.yaml for all resumes, including legacy checkpoints. src/cma/graph.py:404 still dispatches using the original draft lock when a checkpoint resumes before a hosted draft or redraft.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 404,
+      "criterion": "R29",
+      "claim": "A resumed graph can send a hosted request after its resume reading found the lock on. The wrapper stores the effective lock for finalisation, while draft uses the original lock and the hosted client falls back to another file read. This also fails P18 and can make the resume evidence disagree with dispatch.",
+      "repro": "With an unlocked firm.yaml and a hosted client using a recording transport, invoke the graph with interrupt_before=['draft']. Turn on the lock and resume with invoke(None, cfg). After the resume wrapper reads the locked file, replace firm.yaml with an unlocked version before draft executes. The checkpoint still holds offline_lock=False, the resume passes no reading to the hosted client, and the request passes the new unlocked read at src/cma/llm.py:111."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 592,
+      "criterion": "R29",
+      "claim": "The wrapper filters only explicitly passed callbacks. LangGraph merges inherited runnable callbacks afterward, leaving an inherited LangChainTracer installed during a locked run.",
+      "repro": "Install a LangChainTracer in a parent RunnableLambda's inheritable callback manager. Have the lambda invoke the graph under the lock with an explicit thread ID and no explicit callbacks. Instrument the tracer's on_chain_start while delegating to the original method. The inherited tracer receives the child graph's start event. The runner's explicit-callback and nested-run tests supply their tracers directly to the child and do not cover this inheritance path."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/llm.py",
+      "line": 119,
+      "criterion": "P18",
+      "claim": "The producer's claim that every SDK HTTP request passes a lock check is false. Both installed SDKs follow redirects by default independently of max_retries, and the wrapper checks only once per complete call.",
+      "repro": "With firm.yaml unlocked, point either provider's base URL at a local HTTP fixture. Have the fixture answer the first POST with a 307 and a same-origin Location, then count requests to the redirect destination. The SDK issues a second POST without re-entering HostedLLM._check. The runner's one_attempt_per_lock_check cases cover retryable 503 responses only and inject clients with their own transport settings."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/firm.py",
+      "line": 199,
+      "criterion": "R29",
+      "claim": "The performance claim of one small file read per outside-run hosted request or MCP call is contradicted by the implementation. With a regular firm.yaml present, load reads its contents to hash them and then reads them again to parse YAML. The aggregate suite runtime does not establish that this adds no timing regression.",
+      "repro": "Trace opens of a regular firm.yaml during one outside-run hosted request. The first open is Path.read_bytes in _stamp at line 144 and the second is Path.read_text in _load at line 215. A controlled before-and-after benchmark would be needed to establish the timing claim."
+    }
+  ],
+  "verdict": "fail"
+}

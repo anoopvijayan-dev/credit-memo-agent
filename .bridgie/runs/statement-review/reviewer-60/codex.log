@@ -1,0 +1,54 @@
+```json
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Judged against supplied revision 12. The checkout's requirements.md:249 contains an earlier P15. src/cma/case.py:195–322 checks canonical entry bytes, chain links, recorded hashes and counts, and names the first discrepancy or incomplete entry. Lines 413–505 handle holder and reader contention, and lines 558–569 provide the sign-off integrity guard for T27. Lines 584–746 enforce writer ownership, inherited-handle refusal and expected-position conflicts. Lines 764–874 check the lock before publishing a repair or head and before each append write. The runner's specified, contracts and invariants logs confirm the named tamper, rebuilt-chain, torn-entry, duplicate-submit, contention, permission and CLI tests passed. The review also checked separate case folders, UTC timestamps, input boundaries, partial failure and CLI consumers. Currency arithmetic and data migration are outside this change. P15 fails because a shared staging filename lets a stale writer modify a published head without rechecking its lock. A recycled thread identifier can also misclassify a distinct reader as the holder.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 806,
+      "criterion": "P15",
+      "claim": "A writer can modify the published head after losing its lock. Writers use the same head staging filename, so one writer can rename the inode into place while another writer still has a writable descriptor to it. The latter's unchecked staging write then changes a file readers use.",
+      "repro": "Start with one recorded entry. Pause writer A after it appends entry 2 and opens log.jsonl.head.tmp, just before it writes the new head bytes. Remove the case lock. Through a fresh handle, let writer B acquire the new lock and complete drop_torn_entry(expected=1, by='B'). B records the repair at entry 2 and renames the shared staging inode into place. Resume A. Its write through the original descriptor overwrites B's published head before A's rename check raises CaseLocked. Verification now reports B's completed repair as broken at entry 2."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 377,
+      "criterion": "P15",
+      "claim": "A distinct thread with a recycled identifier is treated as the existing holder. It can report an unrecorded tail as incomplete while another thread's writer context still holds the case, and it can reenter that context through the same CaseLog.",
+      "repro": "Create a log with a torn tail. In thread A, enter log.writer() and retain the entered context manager outside the thread so it stays alive when A exits. On a runtime that recycles thread identifiers, start a distinct thread with A's identifier and call verify() through a fresh CaseLog for the same folder. The inode registry at line 426 recognizes it as the holder and reports the torn tail. A reader in a different thread should report the recorded prefix and that the case is being saved. Calling log.writer(wait=0) on the original object in that new thread also succeeds through line 629."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's CLI claim gives exit 0 and an 'appending' message for a held case with a torn tail. The implementation and passing contract test establish exit 4 and a 'being saved' message.",
+      "repro": "See the passing test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break in contracts-4.log and its assertions at tests/test_case_log.py:1348–1353."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1217,
+      "criterion": "P15",
+      "claim": "The producer's claim that the passing keep-landing test forces two commits on every retry and holds the lock at fallback is not_proven. The test races two threads without asserting any append count or which verification branch was reached.",
+      "repro": "Inspect the passing test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing in specified-3.log and the unsynchronized loop at tests/test_case_log.py:1208–1222. The existing stress test can be selected with python -m pytest -v tests/test_case_log.py -k healthy_log_broken_while_appends_keep_landing. Proving the claimed schedule requires a synchronized regression test that asserts both commits per attempt and lock contention at fallback."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```

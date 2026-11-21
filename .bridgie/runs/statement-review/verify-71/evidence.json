@@ -1,0 +1,117 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Reviewed revision 15. The maintained lists and directions are in src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. The loader checks exceptions at src/cma/categorise.py:425 and :433. Match length, bank-code priority, ambiguity, profile candidates and override precedence are implemented at :754, :786, :848, :855, :874 and :925. CLI selection and provenance reach the evidence through src/cma/graph.py:221 and :250 and src/cma/cli.py:229. The runner logs confirm the per-list, CLI, exception rejection, both direct containment directions, idempotency, legacy replay, rollback and both offline eval tests passed. Reviewed repeat submission, concurrent and case-local state, amount and Unicode boundaries, currency and date inputs, partial publication, authority to settle ambiguity and evidence consumers. A discarded third match can still suppress a payment cue inside a cash phrase, allowing an ambiguous credit into trading receipts.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-71/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-71/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-71/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-71/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-71/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-71/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-71/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 791,
+      "criterion": "R4",
+      "claim": "Containment uses spans from rules that are themselves discarded. A discarded gateway match can suppress a payment cue inside a surviving cash phrase, defeating the cash and payment-method exception.",
+      "repro": "In v2.yaml add FPS CASH DEPOSIT STRIPE to cash_paid_in.names and FPS CASH DEPOSIT to payment_gateways.names. Classify a positive GBP line described as FPS CASH DEPOSIT STRIPE. The longer cash phrase discards the gateway rule, but the discarded gateway span still suppresses FPS. The result is cash_deposit with v2:cash_paid_in, placing the line in trading receipts. R4 requires unexplained money in with payment_rail and cash_paid_in as candidates."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 419,
+      "criterion": "R4",
+      "claim": "Malformed rule types can escape the validator as a raw TypeError, contradicting the producer's claim that malformed rules are refused with a diagnostic naming the problem.",
+      "repro": "Set the cash_paid_in rule's id to the YAML list [cash_paid_in], then load v2. The reserved-ID membership check tries to hash the list before the collected validation error can be reported. Setting that rule's pattern to a YAML list similarly reaches the unguarded membership check at line 440."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 880,
+      "criterion": "R4",
+      "claim": "The producer's claim that shuffling rules within a stage preserves every category and figure on whole statements only holds for its tested corpus. Debit classification still depends on rule order.",
+      "repro": "Classify a £100 debit described as HMRC VAT HMRC PAYE with the shipped table, then swap hmrc_vat and hmrc_paye within the protected line_type stage and classify again. The first run selects hmrc_vat and the second selects hmrc_paye. The passing shuffle test at tests/test_rules_v2.py:1385 does not include a debit matching both rules."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The documented precedence says a profile name can settle an ambiguous credit. The implementation records the profile name as an additional candidate.",
+      "repro": "Classify FPS CREDIT CASH DEPOSIT REF JANE DOE with Jane Doe in the director profile. The line stays unexplained and records profile:director alongside payment_rail and cash_paid_in, as the passing runner test for a director named in a payment reference confirms."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 850,
+      "criterion": "R4",
+      "claim": "The runner proves the two-second categorisation assertion for one mixed 10,000-line fixture. Performance across 10,000-line inputs is unproven, including repeated equal-amount reversals.",
+      "repro": "The runner ran python -m pytest -k 10000_lines as part of its full-suite coverage. To verify the broader performance claim, add and time a 10,000-line case with 5,000 identical-payee, equal-amount debits followed by 5,000 corresponding returned-DD credits. The loop at src/cma/categorise.py:983 repeatedly slices the candidate list and scans entries already taken."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_evals_rulesets.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "Byte-compilation of tests and evals is unproven by the supplied runner results. The mechanical compile row covers src only.",
+      "repro": "Compare mechanical:2 with the producer's claimed compile scope. A passing runner row for python -m compileall -q src evals tests would prove the full claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

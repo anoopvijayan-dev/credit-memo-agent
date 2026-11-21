@@ -1,0 +1,98 @@
+{
+  "task": "T17",
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "Lock defaults on (src/cma/firm.py FirmConfig offline_lock=True); a hosted client is built only on an unlocked reading, with max_retries=0 and a per-request HTTP hook (src/cma/llm.py _require_unlocked_now, _checked_http, HostedLLM._check); MCP run paths, ASGI factories and LockCheckedASGI read the lock (src/cma/mcp_server.py); evidence records the lock (graph.py _egress). The fix for verify-224's finding was checked: stream and astream turn tracing off per step (graph.py:887-899, 927-939), and invariants-5.log:142-143 passed. Gap: under the lock only the call's config callbacks are filtered (graph.py:848), but Pregel.stream merges self.config, so a LangSmith tracer bound with graph.with_config(callbacks=...) stays in the run's callbacks (langgraph/pregel/main.py:1005-1008, 2862; _config.py:398-401). R29 says such a tracer is taken out.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "draft_prompt (graph.py) carries only Account: Applicant, the period, met.as_table and rules_table(for_prompt=True) with the overall outcome as a row; custom rules are masked unless _is_shipped matches the whole rule; redraft_ids is limited to metric ids and shipped rule ids. The P5/R30 tests in tests/test_firm.py all passed in invariants-5.log.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "test_p5_no_prompt_carries_line_level_text across every archetype, profile and hallucinate setting, plus the custom-policy masking tests (id, description, limits, referral bands, actions, spelling) and the CLI --policy sentinel test: 34 test_firm.py::test_p5 entries PASSED in invariants-5.log, none failed or skipped. The masking code in graph.py rules_table and _is_shipped matches the revision 32 and 33 scopes.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "P18 tests passed in invariants-5.log, including the with_config copy test (line 139) and the mid-stream tracing tests (142-143). The with_config test binds only tags=['copied']. A copy bound with callbacks=[LangChainTracer] keeps the tracer through Pregel's self.config merge (finding 1), so a run under the lock can be traced, which P18's revision 32 scope excludes for a LangSmith tracer.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-225/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-225/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-225/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-225/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-225/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-225/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-225/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 848,
+      "criterion": "R29",
+      "claim": "Under the offline lock, start() takes LangSmith tracers out of the per-call config only. Pregel.with_config(callbacks=[tracer]) returns a copy (which keeps the OfflineLocked class) whose self.config holds the tracer (langgraph/pregel/main.py:1000-1008). Pregel.stream then runs ensure_config(self.config, config) (main.py:2862), which merges self.config's callbacks back in (langgraph/_internal/_config.py:398-401) after the filter. invoke goes through the same stream. The LangChainTracer therefore traces every node run, statement data among the inputs, under the lock. This fails R29's 'a LangSmith tracer handed in with the run's callbacks is taken out of them' and P18. test_p18_a_graph_copied_by_with_config_keeps_the_locks_rules binds only tags, so it does not cover this. Found by reading the code; not run, because the shell was denied.",
+      "repro": "With firm.yaml offline_lock: true, monkeypatch LangChainTracer._start_trace and _persist_run to record runs, as test_firm.py does. Run: tracer = LangChainTracer(client=types.SimpleNamespace()); build(llm.FakeLLM()).with_config(callbacks=[tracer]).invoke({'statement_path': p}, {'configurable': {'thread_id': 't'}}). Recorded runs are non-empty (LangGraph:load, draft, ...). The same happens with .stream(...)."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

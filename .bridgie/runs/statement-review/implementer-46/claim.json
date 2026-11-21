@@ -1,0 +1,38 @@
+{
+  "task": "T19",
+  "claims": [
+    {
+      "text": "R3: when more than one account of a case fails reconciliation, every failing account is computed and reported. overrides.case_figures no longer re-raises at the first failure; it collects each account's ReconciliationError (tagged with account and statement) and raises CaseNotReconciled (a ReconciliationError) carrying failures[], the case's total difference and every line. The workspace API gives reconciliation.accounts[] with each account's difference and line count, and lines[] across accounts; the page names each account's difference in pence and every line, and shows no figures.",
+      "proof_cmd": "python -m pytest -v tests/test_workspace_summary.py -k \"every_account or reports_every or n_a_shows\"",
+      "proof_output": "test_one_account_that_does_not_reconcile_hides_every_account PASSED\ntest_every_account_that_does_not_reconcile_is_reported_with_its_difference_and_lines PASSED\ntest_case_figures_reports_every_account_that_does_not_reconcile PASSED\ntest_a_monthly_cell_that_is_n_a_shows_its_reason PASSED"
+    },
+    {
+      "text": "A monthly cell that is n/a renders its reason (the cell's note), escaped, beside n/a in the workspace HTML.",
+      "proof_cmd": "python -m pytest -v tests/test_workspace_summary.py -k n_a_shows",
+      "proof_output": "tests/test_workspace_summary.py::test_a_monthly_cell_that_is_n_a_shows_its_reason PASSED"
+    },
+    {
+      "text": "Lint, compile, the full suite and the contracts, invariants (P8 included) and dual_run tiers pass, and the offline evals are grounded.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && echo compile-ok; python -m pytest -q; python -m pytest -q -m contracts; python -m pytest -q -m invariants; python -m pytest -q -m dual_run; python evals/run_evals.py",
+      "proof_output": "All checks passed!\ncompile-ok\n2083 passed in 172.15s\n609 passed, 1474 deselected\n845 passed, 1238 deselected\n84 passed, 1999 deselected\n9/9 memos fully grounded; model = fake; ruleset = v1"
+    }
+  ],
+  "files_changed": [
+    "src/cma/overrides.py",
+    "src/cma/review/summary.py",
+    "tests/test_workspace_summary.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major (src/cma/overrides.py:266, R3): When more than one account of a case fails reconciliation, only the first failing account's difference and lines are reported; case_figures re-raises inside its loop.",
+      "disposition": "reproduced",
+      "evidence": "New test test_every_account_that_does_not_reconcile_is_reported_with_its_difference_and_lines (the reviewer's repro: L2 in main and X2 in savings broken) failed before the fix with only ('main','L2') reported. case_figures now continues past a failing account, collects every failure and raises overrides.CaseNotReconciled(failures); summary._not_reconciled reports reconciliation.accounts [('main',30025,1),('savings',2000,1)], lines [('main','L2'),('savings','X2')], difference_pence 32025 (the case total), and the page names both 30025 pence and 2000 pence. test_case_figures_reports_every_account_that_does_not_reconcile checks the exception's failures, lines and message. Both pass."
+    },
+    {
+      "finding": "minor (src/cma/review/summary.py:168): A monthly cell that is n/a renders as bare 'n/a'; its note is carried in the JSON but never rendered.",
+      "disposition": "reproduced",
+      "evidence": "_account_html now writes <span class=\"note\">reason</span> after n/a when the cell's value is None and it has a note, escaped through _e. test_a_monthly_cell_that_is_n_a_shows_its_reason renders a cell with a note holding markup and asserts the escaped reason is shown and no raw <b> reaches the page; it passes."
+    }
+  ],
+  "notes": "Committed as 7352b0a. For one failing account the exception keeps .account and .statement (the first failing account's), so existing callers and tests are unchanged; its message is now prefixed 'Account <key>: '. The per-account differences in the HTML are written as <p> elements so the P8 test's tag allow-list did not need widening. The reconciliation JSON adds an 'accounts' key; 'difference_pence', 'difference' and 'lines' keep their meaning, with difference_pence now the sum across failing accounts."
+}

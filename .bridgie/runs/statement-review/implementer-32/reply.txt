@@ -1,0 +1,79 @@
+I've fixed both major findings from review 3 and committed them as `e188f63`. I wrote failing tests for each finding first, and all configured checks now pass: ruff, compileall, the full suite, the contracts, invariants and dual_run markers, and the evals.
+
+- **A graph run's offline lock (R29, P18):** the graph no longer takes `run_offline_lock` or `offline_lock` from the caller's input. `build()` now takes an optional `firm_config`, the reading the CLI makes before it builds the model client. That reading is used for the graph's first run only, and every later run reads `firm.yaml` itself. The CLI still reads `firm.yaml` once per run. I kept the `run_offline_lock` field in the graph state but never read it, so older checkpoints still load.
+- **Custom rule ids (R30, P5):** the prompt's rule table now sends a rule id only if the shipped default policy uses that id. Any other id shows as "(custom id)", including ones spelt like shipped ids such as R4242. Redraft feedback drops those ids too, so a redraft can't bring one back.
+- **New proof the runner executes:**
+  - a `cma run --policy … --llm anthropic` test that records the first prompt and each redraft prompt and checks that none carries a sentinel;
+  - a test that runs the real MCP SSE and streamable-HTTP start with socket binding spied on. Under the lock nothing binds; with the lock off it reaches the bind on 127.0.0.1.
+- **Remaining minor finding:** the full-suite timing comparison has no code behind it. I recorded it as `not_reproduced` and made no timing claim.
+
+Two behaviour changes for whoever reviews this next:
+- **Custom rules can't be cited:** a hosted model can no longer cite a custom policy's rules by their [Rn] tag, because those ids never reach it. That is the cost of not sending text the policy author chose.
+- **No ASGI app for direct callers:** code that calls the MCP server's `sse_app()` or `streamable_http_app()` directly now gets a refusal even with the lock off. That came from review 1 and is unchanged here; such code has to start the server through its run methods.
+
+```json
+{
+  "task": "T17",
+  "claims": [
+    {
+      "text": "R29/P18: no graph input can set a run's offline lock. build() takes the caller's firm.yaml reading (the CLI passes the one it made before building the client) and uses it for that graph's first run only; any other run reads firm.yaml in load. run_offline_lock and offline_lock in the input are ignored. A client made while unlocked, with the lock turned on before a new run, is refused before any request whatever the input carries. The CLI still reads firm.yaml once per run.",
+      "proof_cmd": "python -m pytest -v -m invariants -k \"graph_input or used_once or runs_lock or reads_firm_yaml_once\"",
+      "proof_output": "test_p18_cli_run_reads_firm_yaml_once_and_records_what_dispatch_used PASSED; test_p18_graph_refuses_a_hosted_request_under_the_runs_lock PASSED; test_p18_graph_input_cannot_override_the_firms_lock[supplied0..2] PASSED; test_p18_a_runs_reading_is_used_once_and_never_by_a_later_run PASSED"
+    },
+    {
+      "text": "R30/P5: the prompt's rule table sends a rule id only if the shipped default policy itself uses it. Any other id is replaced by '(custom id)', including ids spelt like shipped ones (R4242, R10, R0, R12345). redraft_ids also drops any rule id the table masked, so a redraft can't bring one back.",
+      "proof_cmd": "python -m pytest -v -m invariants -k \"custom_rule_id_in or rule_id_or_description or redraft_feedback\"",
+      "proof_output": "test_p5_a_custom_rule_id_in_the_shipped_form_never_reaches_the_prompt[R4242|R10|R0|R12345|SNTL R4242] PASSED; test_p5_a_custom_policys_rule_id_or_description_never_reaches_the_prompt[id|description] PASSED; test_p5_redraft_feedback_is_only_ids_from_the_tables PASSED"
+    },
+    {
+      "text": "P5 through the CLI: `cma run --policy custom.yaml --llm anthropic` with R4242/SNTLDESC in every description, R4242 as a custom rule id and a sentinel description. The initial prompt and every redraft prompt seen by the hosted client's send carry none of them, and the test asserts that the redraft path ran.",
+      "proof_cmd": "python -m pytest -v -m invariants -k cli_custom",
+      "proof_output": "tests/test_firm.py::test_p5_cli_custom_policy_prompts_carry_no_sentinel PASSED"
+    },
+    {
+      "text": "R29/P18 MCP start: the SDK's real SSE and streamable-HTTP start, using uvicorn's own startup with socket.socket.bind spied, binds no socket under the lock. With the lock off it reaches the bind on 127.0.0.1.",
+      "proof_cmd": "python -m pytest -v -m invariants -k binds_no_socket",
+      "proof_output": "test_p18_http_start_binds_no_socket_under_the_lock[offline_lock: false/true x run_sse_async/run_streamable_http_async] 4 PASSED"
+    },
+    {
+      "text": "Configured tiers pass: ruff, compileall, full suite, contracts, invariants, dual_run and evals.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q && python -m pytest -q -m invariants && python -m pytest -q -m contracts && python -m pytest -q -m dual_run && python evals/run_evals.py",
+      "proof_output": "All checks passed!; 557 passed; 158 passed, 399 deselected; 38 passed, 519 deselected; 79 passed, 478 deselected; 9/9 memos fully grounded; model = fake"
+    }
+  ],
+  "files_changed": ["src/cma/graph.py", "src/cma/cli.py", "tests/test_firm.py"],
+  "dispositions": [
+    {
+      "finding": "major src/cma/graph.py:303 R29: A caller-supplied graph input can override the firm's offline lock and cause a hosted request in a newly started run (also P18).",
+      "disposition": "reproduced",
+      "evidence": "Reproduced by test_p18_graph_input_cannot_override_the_firms_lock, which failed with DID NOT RAISE before the fix. load no longer reads run_offline_lock (the key stays in MemoState only so old checkpoints load). The lock comes from a firm_config handed to build(), used for the first run only, or else from firm.load() at the run's start. The CLI passes its one reading to build() and no longer puts it in the input. test_p18_a_runs_reading_is_used_once_and_never_by_a_later_run shows that a later run on the same graph re-reads firm.yaml."
+    },
+    {
+      "finding": "major src/cma/graph.py:196 R30: The custom rule ID filter checks spelling alone, so a sentinel in the accepted format (R4242) reaches the hosted prompt (also P5).",
+      "disposition": "reproduced",
+      "evidence": "Reproduced by test_p5_a_custom_rule_id_in_the_shipped_form_never_reaches_the_prompt[R4242], which failed before the fix. The spelling regex is gone: rules_table(for_prompt=True) sends an id only if it is in the shipped policy's id set. Proven at the function by that test and through the CLI by test_p5_cli_custom_policy_prompts_carry_no_sentinel."
+    },
+    {
+      "finding": "minor src/cma/graph.py:204 R30: Redrafts can reintroduce a custom policy ID that the initial rule table masked.",
+      "disposition": "reproduced",
+      "evidence": "redraft_ids now intersects with metric ids and only those rule ids the shipped policy uses, which are the ids the table shows. test_p5_a_custom_rule_id_in_the_shipped_form_never_reaches_the_prompt[R12345] adds a wrong-limit [R12345] citation and asserts the id is in neither the redraft ids nor the redraft prompt. The CLI test covers the same for R4242."
+    },
+    {
+      "finding": "minor src/cma/mcp_server.py:70 R29: The no-ASGI-app claim is broader than the proof; the bind claim rested on a scratchpad probe the runner did not run.",
+      "disposition": "reproduced",
+      "evidence": "Added the runner-marked invariant test_p18_http_start_binds_no_socket_under_the_lock. It runs the real SDK SSE and streamable-HTTP start through uvicorn's own startup, with socket.socket.bind spied. No bind happens under the lock, and the bind on 127.0.0.1 is reached with the lock off. Refusing sse_app()/streamable_http_app() to direct callers when the lock is off is deliberate, from review 1 (a saved app can listen before any lock check). This claim makes no wider statement than that; see notes."
+    },
+    {
+      "finding": "minor tests/test_firm.py:636 R30: The cited custom-policy CLI prompt capture was not executed by the runner; the named tests call draft_prompt directly.",
+      "disposition": "reproduced",
+      "evidence": "Added the invariants-marked test_p5_cli_custom_policy_prompts_carry_no_sentinel. It invokes `cma run --policy ... --llm anthropic`, records the initial prompt and each redraft prompt at the hosted client's _send, and asserts that a redraft happened."
+    },
+    {
+      "finding": "minor src/cma/graph.py:185 R30: The claim that full-suite time was unchanged in scale has no before-change measurement.",
+      "disposition": "not_reproduced",
+      "evidence": "This is about the old claim's wording, not about code. This claim makes no timing statement, so nothing is left to prove."
+    }
+  ],
+  "notes": "build() gains an optional firm_config keyword (additive). Existing build(llm, checkpointer) callers keep working and now read firm.yaml at each run's start. MemoState.run_offline_lock is kept but never read, so checkpoints written before this change still load. Under R53, embedding code that called server.sse_app()/streamable_http_app() directly with the lock off now gets NoASGIApp; it must start through server.run()/run_*_async. That change was made deliberately in review 1 and is unchanged here. A custom policy's rules show as '(custom id)' in the prompt, so a hosted model can't cite them by [Rn]. That is the cost of not sending free text the policy author chose."
+}
+```

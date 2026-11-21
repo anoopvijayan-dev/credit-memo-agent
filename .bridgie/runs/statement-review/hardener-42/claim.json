@@ -1,0 +1,69 @@
+{
+  "task": "T28",
+  "claims": [
+    {
+      "text": "Lint (gap closed): ruff failed on an unsorted import block in src/cma/importers/monzo.py:31 (I001); fixed with ruff --fix, committed as 6b80972, and ruff now passes.",
+      "proof_cmd": "ruff check src tests",
+      "proof_output": "All checks passed!"
+    },
+    {
+      "text": "Compile tier passes on src.",
+      "proof_cmd": "python -m compileall -q src && echo ok",
+      "proof_output": "ok"
+    },
+    {
+      "text": "Full suite passes at f213416 (the lint fix after it changes import formatting only); the importer-contract file, the MCP, case-store, CLI and Monzo import tests pass again after the fix.",
+      "proof_cmd": "python -m pytest -q ; python -m pytest -q tests/test_mcp_paths.py tests/test_case_store.py tests/test_cli.py tests/test_import_monzo.py tests/test_importer_contract.py",
+      "proof_output": "2032 passed in 163.35s ; 168 passed in 16.84s"
+    },
+    {
+      "text": "Contract tier for T28: Monzo golden output unchanged, the shared walk, output checked by ingest.load_csv, and refusals by line with no cell value, through monzo.convert, `cma import monzo` and `cma case import`.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_importer_contract.py",
+      "proof_output": "31 passed in 1.02s"
+    },
+    {
+      "text": "Golden files really are the importer's output before the extraction: the importer from c831ff0 (before the shared walk), run on the committed golden exports, gives byte-identical statements and identical ImportResult fields.",
+      "proof_cmd": "git archive c831ff0 src | tar -x -C $SCRATCH/pre; python -I -c 'sys.path.insert(0,\"$SCRATCH/pre/src\"); ... monzo.convert(golden export) vs *_statement.golden and results.json'",
+      "proof_output": "personal bytes_equal True result_equal True\nbusiness bytes_equal True result_equal True"
+    },
+    {
+      "text": "Failure modes / partial failure: contract.write_statement writes the output only after ingest.load_csv accepts its bytes, so a refused import writes nothing (test_an_output_the_loader_would_refuse_is_never_written, and each BAD_ROWS case asserts o.csv does not exist). No external calls are added, so timeouts and retries do not apply.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_importer_contract.py",
+      "proof_output": "31 passed in 1.02s"
+    },
+    {
+      "text": "Idempotency: `cma case import` is still keyed by file hash; re-importing the same file leaves the case unchanged (R39).",
+      "proof_cmd": "python -m pytest -q tests -k 'again or twice or idempot or same_file'",
+      "proof_output": "38 passed, 1994 deselected in 8.98s (includes tests/test_case_store.py::test_importing_the_same_file_again_leaves_the_case_unchanged)"
+    },
+    {
+      "text": "Security, input at the boundary: no Monzo row-level refusal interpolates a cell any more. The only shown() left quotes the person's own --opening-balance option (line 0), and every other raise names a line, a field or a column name (but see notes on header names).",
+      "proof_cmd": "grep -n \"shown(\\|{tid}\" src/cma/importers/monzo.py",
+      "proof_output": "108:    at = f\"line {line}: {field}\" if line else f\"{field} {shown(raw)}\""
+    },
+    {
+      "text": "Security, authz on new entry points: none added. The contract is a library module, and the only callers of its refusal type are the two existing CLI commands and the MCP server, which run as the local OS user with the case root's owner-only permissions (R31) unchanged. No new dependency: contract.py imports only the stdlib and cma.",
+      "proof_cmd": "grep -rn \"MonzoImportError\\|ImportRefused\\|refusal_parts\\|monzo.convert\" src --include=*.py | grep -v 'importers/monzo.py\\|importers/contract.py'",
+      "proof_output": "src/cma/cli.py:454-455 (import monzo); src/cma/mcp_server.py:181 (refusal_parts); src/cma/ingest.py:64 (definition); src/cma/store.py:577-578, 589 (case import)"
+    },
+    {
+      "text": "Data/migration: no stored format changes. The five-column output is byte-identical (golden claim), MonzoImportError subclasses ImportRefused so existing `except MonzoImportError` keeps working, and rollback is a revert with no data repair. Not applicable: migrations and backfill (no database or case data change).",
+      "proof_cmd": "python -m pytest -q tests/test_importer_contract.py::test_monzo_import_error_is_an_import_refusal",
+      "proof_output": "1 passed"
+    },
+    {
+      "text": "Performance: not applicable beyond what was already there. The walk is the same O(n) running_balances, plus one ingest.load_csv pass over the output before writing. Statements are small and no hot path is added.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_importer_contract.py",
+      "proof_output": "31 passed in 1.02s"
+    },
+    {
+      "text": "Observability/operability: not applicable. It is a local CLI with no telemetry by design, and the signal is the refusal message and exit 2 (asserted in test_cma_import_monzo_and_cma_case_import_refuse_by_line). No flag is needed, since output is byte-identical, and rollback is a revert.",
+      "proof_cmd": "python -m pytest -q tests/test_importer_contract.py -k refuse_by_line",
+      "proof_output": "passed (part of the 31 contract passes)"
+    }
+  ],
+  "files_changed": [
+    "src/cma/importers/monzo.py"
+  ],
+  "notes": "Gaps for the owner, left unchanged because each needs a decision:\n(1) A duplicated header column is refused naming the column (monzo.py:179 and ingest.py:501; the tests at tests/test_money_in.py:726/732 assert the name). A probe header with ZQXJ twice gives 'column(s) named more than once: ZQXJ'. Whether header names count as 'cell values' under the importer contract is a design call. `cma case import` of a CSV already drops them through refusal_parts.\n(2) Header-level CsvRecordError texts (ingest.py:288 and :411) include the csv module's own exception text in brackets. That is reader text, not a cell, but it was not audited for echoing input.\n(3) contract.write_statement writes dst in place (open 'wb'), as the importer did before, so a crash mid-write can leave a partial file at --out. The loader check happens before the write, so nothing refused is ever written. A temp-and-rename would be new behaviour.\n(4) Changed wording, owner-visible: Monzo refusals no longer quote cells (amount, date, currency, Transaction ID, walked or Monzo balance), and the disagreeing-opening-balance refusal no longer names the first Transaction ID. tests/test_money_in.py was updated to match.\n(5) The golden-unchanged proof against c831ff0 was run from the scratchpad, not by a configured runner tier. The runner's contract tier proves it against the committed golden files only."
+}

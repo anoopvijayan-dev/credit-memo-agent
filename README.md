@@ -51,12 +51,57 @@ cma resume case-7 --checkpoint-db private/reviews.sqlite
 # (git-ignored, as are *.csv, memo files, evidence files and databases anywhere).
 cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out private/mine.csv
 
-# Choose the categorisation table (src/cma/rules/<id>.yaml; default v1). v1 is the
-# original table, frozen; an unknown id is refused. The evidence file records the
-# table's id and hash.
-CMA_RULESET=v1 cma run examples/cafe_stretched.csv
+# A case: a folder under the case root (CMA_HOME, default private/cma; owner-only, and
+# refused inside a git tree that does not ignore it). Each command is logged in the case.
+# A root inside a OneDrive, Dropbox, Google Drive or iCloud Drive folder gets a warning
+# on stderr before the case is made, recorded in the case log: keep cases on a local disk.
+cma case new --demo --label "Cafe trial"          # prints a random case id
+cma case profile <id> --director "Jane Doe" --own-account "ACME HOLDINGS" --proposed-repayment 1500
+cma case import <id> private/statement.csv --format csv
+cma case import <id> "private/Monzo Data Export.csv" --format monzo --account monzo --opening-balance 123.45
 
-# Use a real model instead of the offline one.
+# Correct one line's category (only the category; one valid for the line's direction),
+# with a reason and your typed name. The override goes to overrides.jsonl and the case
+# log with your operating-system user and the UTC time. `cma case figures` recomputes
+# every figure from the statements and the whole override log and marks with * each one
+# that rests on an overridden line. An override whose line is gone, or whose statement
+# changed since it was recorded, is stale and not applied until you confirm or drop it.
+cma case override <id> L42 director_funding --reason "director's own transfer" --name "Pat"
+cma case overrides <id>                           # applied, stale, superseded or dropped
+cma case figures <id>
+cma case resolve-override <id> 3 --confirm --name "Pat"   # or --drop
+
+# Open the review workspace for a case: a page served on 127.0.0.1 only, from the next
+# free port from 8765 (--port to choose another). Each start prints a URL with a new
+# random token; a request without it, or whose Host is not 127.0.0.1 and that port, is
+# refused. The page loads only files bundled in the package. Ctrl-C stops it.
+cma review <id>                                   # --no-browser to only print the URL
+
+# Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
+# first entry that was changed, removed, reordered or left half written.
+cma case check private/cma/cases/<id>
+
+# Delete every file of a case (asks first; --yes skips the question). The case root's
+# purge_ledger.jsonl gains one line with only the case id, the UTC time and your
+# operating-system user. A purge stopped part-way is finished by running it again.
+cma case purge <id>
+
+# Choose the categorisation table (src/cma/rules/<id>.yaml; default v1). v1 is the
+# original table, frozen; v2 adds real UK acquirers, gateways, marketplaces, delivery
+# platforms, lenders and merchant cash advance providers, own pots and savings, cash
+# paid in (counted as trading receipts), cash-withdrawal wording, HMRC repayments,
+# refunds and explained non-trading credits. An unknown id is refused. The evidence
+# file records the table's id and hash, and under "lines" each line's id, category and
+# the rule that set it (no descriptions). CMA_RULESET=v1 is the rollback.
+CMA_RULESET=v2 cma run examples/cafe_stretched.csv
+
+# Use a real model instead of the offline one. The offline lock in firm.yaml (under
+# CMA_HOME, default private/cma) is on by default and refuses hosted models and the MCP
+# server; turn it off on purpose first. The prompt still carries only the tables.
+# Edit the file the tool reads, keeping its other settings: open it in an editor and set
+#   offline_lock: false
+# (create it with just that line if it does not exist yet).
+mkdir -p "${CMA_HOME:-private/cma}" && ${EDITOR:-nano} "${CMA_HOME:-private/cma}/firm.yaml"
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
 cma run examples/cafe_stretched.csv --llm anthropic
 ```
@@ -71,13 +116,14 @@ example.
 | Synthetic data | `synth.py` | Three business archetypes (café, trades, e-commerce) × three risk profiles (good, stretched, poor). Seeded. Writes the ground truth next to each statement. |
 | Ingest | `ingest.py` | CSV in: `id, date, description, amount, balance`. Refuses duplicate ids, non-ISO or future dates, out-of-order dates, loose amounts and a broken balance chain; reads newest-first files. |
 | Import | `importers/monzo.py` | Monzo export → statement CSV, locally. Monzo Flex is read as a loan. |
-| Categoriser | `categorise.py` + `cma/rules/v1.yaml` | Ordered regex rules, direction-aware, kept as validated data and chosen by `CMA_RULESET`. A transfer in is revenue only with an invoice reference. Returned DDs are linked to the debit they undo. Unmatched lines are `OTHER`, never guessed. |
-| Metrics | `metrics.py` | Sixteen figures (revenue, trend, lowest balance, days overdrawn, returned DDs, debt service cover after drawings, VAT timeliness by stagger group, non-trading money in…). Each carries the transaction ids it came from; a figure that can't be computed is n/a with the reason, never a placeholder. |
+| Categoriser | `categorise.py` + `cma/rules/v1.yaml`, `v2.yaml` | Ordered regex rules and name lists, direction-aware, kept as validated data and chosen by `CMA_RULESET`. Precedence: per-line override, protected rules (the line-type cues: returned DD, own-pot moves, HMRC, refunds; then lenders, director, capital introduced, shareholder, generic loan wording), profile names, an ambiguous verdict, firm rules, the rest of the table, the default; each line records its rule id. Under v2 a credit whose matching rules point to two or more money-in buckets (cues first; names only when no cue matches), or that has a payment rail with cash paid-in wording, is ambiguous: it stays `OTHER` (unexplained, never trading receipts) and records `v2:conflict:` with every rule it matched in either stage, the rail included, until a person overrides it or the profile names the payer. Inside one bucket the table's `category_order` picks the category (cash deposit, customer transfer, card settlement; returned payment, refund), never rule order. Names match as whole words in any script. A transfer in is revenue only with an invoice reference. Returned DDs are linked to the debit they undo. Unmatched lines are `OTHER`, never guessed. |
+| Metrics | `metrics.py` | Twenty-eight figures (revenue, trend, lowest balance, days overdrawn, returned DDs, debt service cover after drawings, VAT timeliness by stagger group, non-trading money in (M16), total money in (M17), cash inside trading receipts (M18), the seven other money-in buckets (M19-M25), the unexplained share (M26), average end-of-day balance (M27) and debt service cover including a proposed facility (M28, n/a with the reason in `cma run`, which has no case profile)…), added up in integer pence. Each carries the transaction ids it came from; a figure that can't be computed is n/a with the reason, never a placeholder. If the money-in buckets do not add up to total money in to the penny, no figures are shown: `cma run` exits 6 naming the difference in pence and the lines. |
+| Indicators | `indicators.py` + `cma/thresholds/indicators.yaml` | Eight risk indicators (a large single credit, a cash deposit at or above the single-deposit limit, a cash-heavy month, cash paid back in after a similar withdrawal, gambling payments, returned direct debits, runs of overdrawn days, irregular credits from a named acquirer), compared in pence and written into the evidence record, each with its lines and the thresholds that fired. The thresholds are illustrative; `cma run --thresholds FILE` takes a firm's own, and a malformed file is refused naming the line. |
 | Policy | `cma/policies/uk_sme_default.yaml` | Nine illustrative rules with pass / refer / fail, and what a missing figure means. Validated on load. Edit the YAML, not the code. |
 | Draft | `graph.py` + `llm.py` | The model gets the metrics table and the policy table, nothing else, and must tag every figure ([Mn]) and threshold ([Rn]). |
 | Guard | `guard.py` | Reads every number in the memo, in digits or words, back against the table: value at the precision written, unit, sign, and the tag right after it. |
 | Review | `graph.py` | LangGraph `interrupt()`; resumes only with a named reviewer's decision. The final memo carries an appendix of every figure, rule, the model and file hashes. |
-| MCP server | `mcp_server.py` | Exposes metrics, policy and evidence lookup as tools for any MCP client; reads only .csv/.yaml under `CMA_DATA_DIR`. |
+| MCP server | `mcp_server.py` | Exposes metrics, policy and evidence lookup as tools for any MCP client; reads only .csv/.yaml under `CMA_DATA_DIR`; refuses to start while the offline lock is on. |
 | Evals | `evals/run_evals.py` | Runs all nine cases, reports grounding rate, redrafts and agreement with ground truth on nine metrics. Fails CI if any metric disagrees with truth or the offline memo is ungrounded. |
 
 ## Evaluation
@@ -131,6 +177,9 @@ tests named after each finding.
 - The categoriser knows the synthetic acquirer names. Card revenue from a real
   acquirer it doesn't recognise lands in M16 and refers the case until a rule is added.
 - Policy thresholds are illustrative. They are not any lender's real policy.
+- The cloud-sync warning knows each client's own folder names, the OneDrive
+  variables Windows sets and Dropbox's info file. A folder synced under any other
+  name, or a network share, is not detected.
 
 ## Data
 

@@ -1,0 +1,109 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped the shipped lists to src/cma/rules/v2.yaml:74,118,137,146,155,163,254,277,304,339,356,373,394. Traced bucket precedence and candidate recording through src/cma/categorise.py:545,595,659 and CLI provenance through src/cma/graph.py:221,250. The full runner log confirms the list cases and v2 CLI test passed. Reviewed repeat categorisation, per-call state and concurrent table selection, sign and Unicode boundaries, currency and date handling, partial failure, override and firm-rule precedence, profile isolation, and evidence consumers and rollback. Two accepted table edits violate R4's ambiguity rules, as detailed below.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-51/specified-3.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-51/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-51/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-51/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-51/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-51/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-51/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-51/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 304,
+      "criterion": "R4",
+      "claim": "The validator still lets ordinary returned-payment wording acquire the bank-code exception. The passing test only tries to set the flag on a rule in the refund category.",
+      "repro": "Add pattern '^RETURNED DD' and bank_code: true to the existing returned_payment rule, keeping its names list. The table validates, but a positive 'HMRC | RETURNED DD' becomes v2:returned_payment because the names branch matches mid-line and the verdict trusts the rule flag. R4 requires an ambiguous credit with hmrc_repayment and returned_payment candidates."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 541,
+      "criterion": "R4",
+      "claim": "The span scan finds overlapping matches at different starts, but captures only the first successful alternative at a given start. An accepted mixed pattern-and-names rule can therefore miss a longer listed phrase and report a false conflict.",
+      "repro": "Add pattern 'REFUND' and the name 'REFUND TO SAVINGS' to the shipped refunds rule, retaining its existing names. Classify a positive 'REFUND TO SAVINGS'. The regex branch comes first and supplies only the REFUND span, so the own_pots_savings match survives and the line becomes ambiguous. The longer listed refund phrase contains the own-account cue and should decide the line."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The claimed precedence documentation tells readers that a profile name can settle an ambiguous credit and omits own-account pairing as a way to settle it.",
+      "repro": "Compare the categoriser row with R4 and src/cma/categorise.py:673. With Jane Doe in the profile, 'FPS CREDIT CASH DEPOSIT REF JANE DOE' remains unexplained and gains a profile:director candidate."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1382,
+      "criterion": "R4",
+      "claim": "The passing shuffle test covers its fixtures. The broader claim that reordering within a stage preserves every category on whole statements is false for debits.",
+      "repro": "Categorise a £100 debit described as 'PAYROLL RENT' with the shipped order, then swap the payroll and rent rules within the names stage. First-match processing at src/cma/categorise.py:637 changes the debit from payroll to rent. R4 does not require debit order independence."
+    },
+    {
+      "severity": "minor",
+      "file": "pyproject.toml",
+      "line": 41,
+      "criterion": "R4",
+      "claim": "The producer's claim that every module compiled is not proven for evals and tests. The compile runner row covers src only.",
+      "repro": "Compare mechanical:2 with the claimed compile command. A passing runner row for `python -m compileall -q src evals tests` would establish the broader claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

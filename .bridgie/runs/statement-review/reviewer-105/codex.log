@@ -1,0 +1,70 @@
+```json
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped recognition and direction to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest-match filtering, bank-code priority, cash and payment-method ambiguity, profile candidates, and override and firm-rule precedence at src/cma/categorise.py:1033–1240, with the unexplained bucket in src/cma/models.py:65. Traced the digest exemption, changed-v1 refusal, repeated keys and matcher validation at src/cma/categorise.py:397–623,794–806,869–897. Reviewed double submission, concurrent decisions and partial output failure at src/cma/cli.py:146,228–229,240–256, amount boundaries and date-only ingestion at src/cma/categorise.py:910–913 and src/cma/ingest.py:42,100,128, ruleset and MCP path scope at src/cma/categorise.py:869–873 and src/cma/mcp_server.py:37–46, and case-local inputs and changed-contract consumers at src/cma/categorise.py:1321–1336, src/cma/graph.py:188–223,250–253 and src/cma/mcp_server.py:74–104. The runner logs show table-driven provenance, CLI evidence, idempotency, historical replay and both offline evals passing. R4 fails because earlier repeated regex values, malformed alternatives and malformed repeated table values can still escape their individual diagnostics.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 592,
+      "criterion": "R4",
+      "claim": "The compilation and matcher-building loop runs after the variant loop and sees only its final variant. Earlier repeated regex values can fail raw compilation or fail only when wrapped, with neither fault named.",
+      "repro": "In the shipped v2 YAML, replace cash_paid_in's names with two pattern keys, first pattern: '(' and then pattern: 'CASH DEPOSIT'. The refusal names the repeated key but omits the first value's compile error. Repeat with '(?i)CASH DEPOSIT' first and the refusal omits the wrapped-matcher failure. The passed tests at tests/test_rules_v2.py:2263 and :2309 both put the faulty value last."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 441,
+      "criterion": "R4",
+      "claim": "Rule field validation checks the duplicate-key placeholder instead of each supplied value. A forbidden field value can therefore disappear from the refusal.",
+      "repro": "Give cash_paid_in two category keys, category: cash_deposit and category: nowhere. The refusal names the duplicate and says its placeholder is not a non-empty string. It omits the diagnostic that 'nowhere' is not a category, which the same value gets when supplied once."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 423,
+      "criterion": "R4",
+      "claim": "Flattening repeated rules keys discards every non-list value and erases empty lists. The validator therefore misses faults in a supplied value whenever another value provides a nonempty list.",
+      "repro": "Add a top-level rules: [] before the shipped v2 rules list, then load v2. The refusal names the repeated key but omits the empty-list fault. With rules: [] as the sole rules value, the refusal includes 'no rules'."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The claimed precedence documentation says a profile name can settle an ambiguous credit. The implementation keeps the ambiguity and records the profile match as another candidate.",
+      "repro": "Compare the categoriser row with a £900 credit described as FPS CASH DEPOSIT REF JANE DOE and Jane Doe in the director profile. The classifier returns OTHER with v2:conflict:payment_rail+cash_paid_in+profile:director."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "Compilation of every module in the producer's claimed scope is unproven. The runner's compileall row covers src only.",
+      "repro": "Compare mechanical:2 with the producer's scope of src, evals and tests. A runner row for python -m compileall -q src evals tests would prove the full compilation claim."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 850,
+      "criterion": "R4",
+      "claim": "The runner proves that the categoriser was under two seconds on the test fixture. The producer's reported 0.69-second timing is unproven because the passed test does not emit its measured interval.",
+      "repro": "Read specified-3.log:614 and the test body. To prove the precise timing, have the runner execute python -m pytest -v -s tests/test_rules_v2.py -k 10000_lines with the test emitting its measured categorisation interval."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```

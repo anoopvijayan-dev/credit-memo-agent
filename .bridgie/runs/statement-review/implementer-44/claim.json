@@ -1,0 +1,16 @@
+{
+  "task": "T32",
+  "claims": [
+    {"text": "P9: importing the same file (csv or monzo) a second time, under the same or another account key, leaves every file in the case folder byte-identical and the case log head unchanged (R39).",
+     "proof_cmd": "python -m pytest -q -m invariants tests/test_case_store.py",
+     "proof_output": "2 passed, 55 deselected in 1.62s"},
+    {"text": "R40: a new account that overlaps an existing account in period, where more than half of its lines dated in the overlap match one of that account's lines on (date, signed pence), is refused as 'probably the same account imported twice', exit 2 from `cma case import`, quoting no cell's value, and the case and log head stay as they were. A partial match, the same pairs in a period that does not overlap, and own-account transfers with opposite signs are all still added.",
+     "proof_cmd": "python -m pytest -q -m contracts tests/test_case_store.py",
+     "proof_output": "55 passed, 2 deselected in 1.57s"},
+    {"text": "The full suite passes, and ruff is clean on src and tests.",
+     "proof_cmd": "ruff check src tests; python -m pytest -q",
+     "proof_output": "All checks passed!\n2038 passed in 146.10s (0:02:26)"}
+  ],
+  "files_changed": ["src/cma/store.py", "tests/test_case_store.py"],
+  "notes": "R39 was already built: import_file returns already=True with nothing written when the log holds an import of the same input hash. T32 adds the P9 property test for it. R40 is store._same_account, called inside _recorded while the case is held, after the R39 and same-account-key checks and before any file is written. It reads each account the log's import entries name from statements/<account>.csv, and skips one it cannot read. Pence come from metrics.pence, so the figures layer does the conversion. Choice: 'most of its pairs' is counted over the new statement's lines dated within the overlap of the two periods, as a multiset matched one-to-one. Under this reading, the same account exported over two shifted periods (Jan-Mar and Feb-Apr) is caught. There is no minimum count, so a one-line overlap that matches is refused. Existing test test_a_second_statement_for_one_account_is_refused imported an exact copy of the main statement as 'savings', which R40 now refuses. I changed its first amount (500.00 to 75.00) so the copy is a different account; the test's intent is unchanged. The design's failure-mode row for R39 says 'the log notes it was already imported', but P9 requires the same log head, so nothing is appended (as the build already did). `ruff check .` reports 14 errors, all in other runs' scripts under .bridgie/runs (implementer-02, -05), not in this change."
+}

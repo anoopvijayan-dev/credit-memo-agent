@@ -1,0 +1,14 @@
+/* The review workspace page (C5). Everything it needs is in the package. */
+:root { color-scheme: light dark; }
+body { margin: 0 auto; max-width: 72rem; padding: 1rem; font-family: system-ui, sans-serif; line-height: 1.4; }
+h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+#case { margin: 0 0 1rem; }
+h2 { font-size: 1.15rem; margin: 1.5rem 0 0.25rem; }
+h3 { font-size: 1rem; margin: 1rem 0 0.25rem; }
+table { border-collapse: collapse; width: 100%; margin: 0 0 0.75rem; font-size: 0.9rem; }
+th, td { border-bottom: 1px solid #8884; padding: 0.2rem 0.5rem; text-align: left; vertical-align: top; }
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.within td:nth-child(2) { padding-left: 1.5rem; font-style: italic; }
+tr.total td { font-weight: 600; border-top: 2px solid #8888; }
+.overridden, .part { font-size: 0.8rem; opacity: 0.75; }
+.refusal { border: 2px solid #c33; padding: 0.5rem 1rem; }

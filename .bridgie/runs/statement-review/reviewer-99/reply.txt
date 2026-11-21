@@ -1,0 +1,70 @@
+```json
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped the shipped lists to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest alternatives and phrase containment at src/cma/categorise.py:980,1002, bank-code and cash conflicts at :1088, and override, profile, firm-rule and candidate precedence at :1119,1155. Category.OTHER maps to unexplained at src/cma/models.py:65. Traced repeated and concurrent submissions through the checkpoint check at src/cma/cli.py:77,84, partial output failure and evidence consumers at :229 and src/cma/graph.py:188,221, signed GBP and date-only input at src/cma/ingest.py:100,108,127, and MCP path scope and case-local categorisation at src/cma/mcp_server.py:37,77,84 and src/cma/categorise.py:1266. The runner's full log confirms table-driven provenance, CLI evidence, idempotency, rollback, historical checkpoint replay and both offline evals. R4 fails because a repeated pattern field masks its forbidden exception, a non-v1 table can still select frozen matcher checks, and transaction-specific matcher compilation remains in the matching path.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 728,
+      "criterion": "R4",
+      "claim": "Duplicate-field recovery discards the pattern values before exception validation. A changed v1 can therefore carry a forbidden exception without the refusal naming it.",
+      "repro": "In a copy of packaged v1 that keeps frozen: true, add a second pattern key to card_settlement with the value 'CARD SETTLEMENT$'. In a fresh process select v1. The refusal leads with the changed-table message and names the repeated pattern key, but it never reports card_settlement's forbidden anchor because the duplicate marker has replaced both patterns."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 563,
+      "criterion": "R4",
+      "claim": "A non-v1 table's frozen flag still selects the frozen matcher build during validation. The stage and category-order fixes do not make matcher validation equivalent to the maintained-list path.",
+      "repro": "In packaged v2, replace cash_paid_in's names with the single-quoted pattern '[A\\b]'. The raw regex compiles because backspace is valid inside a character class, but the maintained matcher expands the class's \\b as a word boundary and fails to compile. Load with frozen: false to get the rule-specific matcher error. Change only frozen to true and load again in a fresh process. The raw matcher is checked instead and the refusal reports the missing pinned hash without naming the cash rule's matcher fault."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 993,
+      "criterion": "R4",
+      "claim": "Load-time validation compiles the forced-end regex only with a remaining length of zero. Matching still compiles a new regex for each previously unseen positive remaining length.",
+      "repro": "Use a maintained table with a bank-code rule, a rail named FPS and a credit rule with pattern 'AB|ABC'. Trace _ending_at arguments and re.compile while loading the table and classifying 'FPS ABC XYZ' as a credit. Load checks rest=0 at line 947. The credit first compiles the forced-end matcher for rest=4. The existing test at tests/test_rules_v2.py:2201 asserts only that loading makes a call."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README says a profile name can settle an ambiguous credit and omits cheque wording from its cash-conflict description.",
+      "repro": "Classify a positive 'FPS CASH DEPOSIT JANE DOE' line with Jane Doe in the director profile. The credit stays unexplained and adds profile:director as a candidate. A positive 'CHEQUE CASH DEPOSIT' line also stays unexplained with a conflict."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 1135,
+      "criterion": "R4",
+      "claim": "The producer's whole-statement shuffle claim extends beyond the fixture. Debit categories can change when two rules in the same stage and protection group both match.",
+      "repro": "Categorise a debit described as 'PAYROLL RENT' under v2, then swap just the payroll and rent rules and categorise it again. Both are unprotected names rules. The first order yields payroll and the second yields rent. The shuffle fixture at tests/test_rules_v2.py:1387 does not include that collision."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "The compileall claim for src, evals and tests is not proven by the runner. The recorded compile command covers src only.",
+      "repro": "Compare mechanical:2 with the producer's command. A passing runner row for 'python -m compileall -q src evals tests' would prove the broader claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```

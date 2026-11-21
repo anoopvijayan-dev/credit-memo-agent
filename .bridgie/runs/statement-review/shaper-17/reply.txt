@@ -1,0 +1,339 @@
+Revision 17 is ready, but I made one deviation from what you asked in D148, and it needs your decision. Nothing outside the run directory was written. The edits are in the JSON below; I couldn't run anything to apply them, but each `old` string was checked to occur exactly once in the current file.
+
+**The deviation.** D148 asks R42 to say the take-back checks only that the head record is still the save's own, which is what T12's 0d339cc builds. Written that way, R42 breaks its own promise that a log reading intact holds every save that was told "recorded". Here is how, under lock-file interference:
+
+1. Save A writes its line and passes its re-check, and then the case lock file is replaced.
+2. Repair B takes the new lock and finds A's line torn. A person confirms the drop, and B renames the repaired log.
+3. A's head record lands, A's read-back fails, and A's take-back finds the head record still A's own.
+4. B's head record lands, B reads back an intact log, and B is told it was recorded.
+5. A's take-back then puts back the older head record. B's entry now looks like a torn write, and once someone confirms dropping it, the log reads intact without a save that was told it was recorded.
+
+With the lock re-check kept, step 5 finds the replaced lock and the take-back is not made. The save then answers "not confirmed", which also settles verify-72's third finding. So I kept the re-check in R42 and raised it as the one question.
+
+**What revision 17 changes** (ids, forms and risk tags unchanged):
+- **R4 (D142):** the set-aside rule is judged match by match, from the longest match down. A match that is set aside counts for nothing, even when its rule counts by another match elsewhere in the line. verify-73's case, `FPS CASH DEPOSIT STRIPE | STRIPE`, is now ambiguous, with the rail, the cash rule and the gateway as candidates.
+- **R42 and P15 (D143):** a save has a third answer, "not confirmed", when its take-back is not made. It asks for the case log to be checked before anything else is saved.
+- **R43 and P15 (D148, D144):** each kind of reader now has named lock files its read depends on. A holder's read depends on its case lock and the gate it passed, and a busy-gate read depends on the case lock it holds. Interference before a read is stated as something no reader can know about.
+
+**Build impact:**
+- **T03:** 4b3b21c already does what R4 now says. Its loop reaches the same answer as settling from the longest match down. Nothing more is needed for R4.
+- **T12:** if you keep my default, the take-back has to re-check the lock files again (0d339cc turned that check off). The test at `tests/test_case_log.py:2401` would then expect "not confirmed".
+
+D146 and D147, the unblocks for T12 and T03, are still pending.
+
+```json
+{
+  "seat": "shaper",
+  "summary_md": "Revision 17 writes D142-D144 into R4, R42, R43 and P15; no id, form or risk tag changes.\nR4: the set-aside rule is judged match by match, from the longest down; FPS CASH DEPOSIT STRIPE | STRIPE is ambiguous (verify-73; T03 4b3b21c builds it).\nR42/P15: a save whose head record is not taken back answers not confirmed (D143). R43/P15: a holder's read and a busy-gate read count only while their lock files are the case's, and interference before a read is outside what a reader can know (D144; T12 0d339cc, 3076547).\nNot written: D148's 'the take-back checks only the head record'. Under lock-file interference it lets a take-back unrecord a repair told recorded, against R42's own guarantee. R42 keeps the lock re-check, which answers not confirmed and also settles verify-72's third finding. One question.\nBuild impact: none for T03's R4; under the default, T12 turns the take-back's lock re-check back on and changes one test.",
+  "questions": [
+    {
+      "context": "D148 asks R42 to say that the take-back checks only that the head record is still the save's own, as T12's 0d339cc builds. Written so, R42 contradicts its own guarantee under lock-file interference. Save A passes its re-check before its head rename, and the case lock file is replaced. Repair B takes the new lock and finds A's line torn; a person confirms dropping it; B renames the repaired log and passes its re-check before its head rename. A's head record lands, A's read-back finds its entry gone, and the take-back's head check passes. B's head record lands, and B reads back an intact log and is told recorded. The take-back's rename then puts back the older head record. B's entry is now past the recorded entries as a torn write, and a confirmed drop leaves an intact log without a save told recorded. A take-back that re-checks the lock files finds the replaced case lock and is not made, so A is not confirmed (D143), which also answers verify-72's third finding. Revision 17 keeps that re-check. Which should R42 say?",
+      "options": [
+        "Keep the lock re-check on the take-back, as on every head rename; a take-back it stops answers not confirmed (design default; R42 stays satisfiable; T12 turns one check back on and changes the test at tests/test_case_log.py:2401 before its review)",
+        "Check only the head record, as D148 asks and 0d339cc builds, and write into R42's guarantee that under lock-file interference a take-back can leave the entry of a repair told recorded past the recorded entries, where a confirmed drop then removes it"
+      ],
+      "allow_free_text": true
+    }
+  ],
+  "proposals": [
+    {
+      "kind": "task",
+      "text": "T12, before its review (D146): if the owner keeps revision 17's default, the take-back re-checks both case lock files again before its rename (0d339cc turned it off), the test at tests/test_case_log.py:2401 expects not confirmed, and a p15 test schedules a repair whose head record lands between the take-back's head check and its rename, asserting the log never reads intact without the repair's save. Name the take-back tests (:2275, :2401, :2423) and the eight added since review 20 p15."
+    },
+    {
+      "kind": "task",
+      "text": "T03, before its review (D147): no R4 change is needed for revision 17, since 4b3b21c builds D142. Fix the recurring minors: README.md:78 (thirteen reviews), the TypeError for an unhashable id or a list pattern (:441, :469), and RETURNED DD reversal linking (:997)."
+    },
+    {
+      "kind": "test",
+      "text": "P15: a schedule in which a repair under lock-file interference publishes its head record between a take-back's head check and its rename; the log must read broken, or intact with the repair's save, never intact without it."
+    },
+    {
+      "kind": "gotcha",
+      "text": "2026-11-20 Before removing a check to answer a review finding, replay the schedules that check closed. When the requirement already gives the refused step an honest answer (a third outcome such as not confirmed), keep the check."
+    }
+  ],
+  "edits": {
+    "requirements.md": [
+      {
+        "old": "Revision 16, after D141 (changes requested",
+        "new": "Revision 17, after D148 (changes requested under the owner's standing approval of 2026-11-19, after T12's twenty-fourth review, verify-72, and T03's twenty-third, verify-73; the owner had answered revision 16's questions as D142 to D144). R4, R42, R43 and P15 change; their ids, forms and risk tags do not. R4 now says that a match set aside inside a longer listed phrase sets nothing aside even when its rule counts by another match elsewhere in the line. Matches are settled from the longest down, so whether a match counts rests only on the longer matches that hold it, and a rule counts, and is among the candidates, where any match of its own counts (D142). With FPS CASH DEPOSIT STRIPE listed as a cash paid-in phrase and FPS CASH DEPOSIT and STRIPE as a gateway's names, FPS CASH DEPOSIT STRIPE | STRIPE is ambiguous, with the rail, the cash paid-in rule and the gateway as its candidates, not a cash deposit (verify-73). R42 and P15 now name a third answer, not confirmed, for a save whose read-back fails and whose head record is not then taken back. Such a save is neither recorded nor not recorded, and asks for the case log to be checked before anything else is saved, which shows whether its entry is among the recorded entries (D143). So that the two answers do not meet, R42's and P15's 'a writer refused after its line' now reads 'refused after its line and before its head record is published', and a repair may remove the entry of a save reported as not confirmed as it may one reported as not recorded. R43 and P15 now say which lock files each reader counts on. A reader that holds the case, sign-off included, counts on the case lock it holds and the gate it passed, and across a removed or replaced one it reads again as a reader that does not hold the case. A reader that finds the gate busy counts on the case lock it holds shared, and any other reader on the gate it holds and the case lock behind it (D148, after verify-72). They also say that lock-file interference beyond a read across such a lock file is outside what a reader can know, and that a check made after it stops gives the true answer (D144). One term, not confirmed, is new. D148 also asks R42 to say that the take-back checks only that the head record is still the save's own, as T12's 0d339cc builds. Revision 17 does not write that clause, because R42 would then contradict its own guarantee that, under lock-file interference, a log that reads intact holds every save told recorded. In this schedule it fails. A save passes its re-check before its head rename, and the case lock file is replaced. A repair takes the new lock, finds the save's line torn and, once a person confirms it, renames the repaired log and passes its re-check before its head rename. The save's head record lands, its read-back finds its entry gone, and the take-back finds the head record its own. The repair's head record lands, the repair reads back an intact log and is told recorded, and the take-back's rename puts back the older head record. The repair's entry is then past the recorded entries as a torn write, and once a person confirms dropping it, the log reads intact without a save told recorded. A take-back that re-checks the lock files first, as every head rename does, finds the replaced case lock and is not made; the save is then not confirmed, which also answers verify-72's third finding. R42 therefore keeps the take-back's rename among the steps a writer re-checks both case lock files before, and revision 17 asks the owner. Every other requirement, property, term and id is as revision 16 left it.\n\nRevision 16, after D141 (changes requested"
+      },
+      {
+        "old": "the repair records who confirmed it in an entry of its own, so it is a save.",
+        "new": "the repair records who confirmed it in an entry of its own, so it is a save. *Not confirmed* (revision 17): what a save's writer is told when the save's read-back failed and its head record was not then taken back: neither that the save was recorded nor that it was not. The case log, once checked, shows whether the save's entry is among the recorded entries."
+      },
+      {
+        "old": "a match set aside inside a longer listed phrase sets nothing aside (with FPS CASH DEPOSIT STRIPE listed as a cash paid-in phrase and FPS CASH DEPOSIT as a gateway's name, the gateway's match is set aside inside the cash phrase and sets nothing aside, and the cash phrase does not take in the rail, so the rail counts and FPS CASH DEPOSIT STRIPE is ambiguous, not a cash deposit).",
+        "new": "a match set aside inside a longer listed phrase sets nothing aside, even when its rule counts by another match elsewhere in the line. Matches are settled from the longest down, so whether a match counts rests only on the longer matches that hold it, and a rule counts, and is among the candidates, where any match of its own counts (with FPS CASH DEPOSIT STRIPE listed as a cash paid-in phrase and FPS CASH DEPOSIT as a gateway's name, the gateway's match is set aside inside the cash phrase and sets nothing aside, and the cash phrase does not take in the rail, so the rail counts and FPS CASH DEPOSIT STRIPE is ambiguous, not a cash deposit; with STRIPE also a gateway's name, FPS CASH DEPOSIT STRIPE | STRIPE is ambiguous too, though the trailing STRIPE keeps the gateway counting, and its candidates are the rail, the cash paid-in rule and the gateway)."
+      },
+      {
+        "old": "only a match that itself counts can set another aside).",
+        "new": "only a match that itself counts can set another aside); D142 and D148 (revision 17: a match set aside sets nothing aside even where its rule counts by another match; matches are settled from the longest down)."
+      },
+      {
+        "old": "otherwise THE SYSTEM SHALL report the save as not recorded. IF that read-back fails, THEN THE SYSTEM SHALL take back the head record the save published, when that head record is still the save's own, by putting back the head record the save's check read, so that the save's entry is past the recorded entries, as a crash leaves it; a head record that another writer has published since is not the save's own, and THE SYSTEM SHALL leave it as it is.",
+        "new": "otherwise THE SYSTEM SHALL report the save as not recorded or, where this requirement says so, as not confirmed. IF that read-back fails, THEN THE SYSTEM SHALL take back the head record the save published, when that head record is still the save's own, by putting back the head record the save's check read, so that the save's entry is past the recorded entries, as a crash leaves it, and SHALL report the save as not recorded; a head record that another writer has published since is not the save's own, and THE SYSTEM SHALL leave it as it is. The take-back's rename publishes a head record, so immediately before it THE SYSTEM SHALL re-check both case lock files, as before every step that changes a file a reader reads (scope below), and that the head record is still the save's own. IF the take-back is not made, because the head record is no longer the save's own, a case lock file was removed or replaced, or the head record cannot be read or renamed, THEN THE SYSTEM SHALL report the save as not confirmed, neither recorded nor not recorded, and SHALL ask for the case log to be checked before anything else is saved; the check shows whether the save's entry is among the recorded entries."
+      },
+      {
+        "old": "Scope (revision 10; the steps named in revision 12; the repair boundary in revision 13; both lock files in revision 15):",
+        "new": "Scope (revision 10; the steps named in revision 12; the repair boundary in revision 13; both lock files in revision 15; the take-back in revision 17):"
+      },
+      {
+        "old": "and each rename that publishes a head record or a repaired log; writing a temporary file that nobody reads is not such a step. A writer refused after its line SHALL report its save as not recorded; its entry stays past the recorded entries, as a crash leaves it.",
+        "new": "and each rename that publishes a head record or a repaired log, a take-back's included; writing a temporary file that nobody reads is not such a step. A writer refused after its line and before its head record is published SHALL report its save as not recorded; its entry stays past the recorded entries, as a crash leaves it. A writer whose take-back is refused SHALL report its save as not confirmed, as above."
+      },
+      {
+        "old": "removes the entry of a save reported as not recorded, an intact log without that entry is within this guarantee",
+        "new": "removes the entry of a save reported as not recorded or not confirmed, an intact log without that entry is within this guarantee"
+      },
+      {
+        "old": "D141 (revision 16: a save whose read-back fails takes back the head record it published, when that head record is still its own).",
+        "new": "D141 (revision 16: a save whose read-back fails takes back the head record it published, when that head record is still its own); D143 and D148 (revision 17: a save whose take-back is not made is not confirmed; the take-back's rename stays among the steps a writer re-checks both case lock files before, a question to the owner)."
+      },
+      {
+        "old": "A reader's read SHALL count only while the lock files the reader holds through it, the gate, the case lock or both, are still the case's lock files. IF either of them was removed or replaced during the read, THEN the reader SHALL take the read again and SHALL claim nothing from the read across it; IF that happens on every attempt within its retries, THEN the reader SHALL claim nothing about any entry.",
+        "new": "A reader's read SHALL count only while the lock files it counts on are still the case's lock files. A reader that holds the case, sign-off included, counts on the case lock it holds and the gate it passed to take the case; a reader that finds the gate busy and holds the case lock shared counts on that case lock; and any other reader counts on the gate it holds through the read and on the case lock behind it, whether it holds that case lock shared or finds it held. IF one of them was removed or replaced during the read, THEN the reader SHALL take the read again, as a reader that does not hold the case if it held the case, and SHALL claim nothing from the read across it; IF that happens on every attempt within its retries, THEN the reader SHALL claim nothing about any entry.\nScope (revision 17): beyond a read across a lock file the reader counts on, lock-file interference is outside what a reader can know. A lock file removed or replaced before the reader's read leaves the lock files the reader counts on the case's, while a writer that passed the old gate can still take the case through it, so the reader may report being saved over an entry another writer left incomplete, or report a live append as incomplete. A check made after the interference stops gives the true answer."
+      },
+      {
+        "old": "D141 (revision 16: a read counts only while the lock files the reader holds are still the case's).",
+        "new": "D141 (revision 16: a read counts only while the lock files the reader holds are still the case's); D144 and D148 (revision 17: the lock files a holder's read and a busy-gate read count on; lock-file interference beyond a read across them is outside what a reader can know)."
+      },
+      {
+        "old": "A reader's read SHALL count only while the lock files it holds through the read, the gate, the case lock or both, are still the case's lock files: a read across one that was removed or replaced SHALL be taken again and nothing SHALL be claimed from it, and with every attempt within the retries read so, nothing SHALL be claimed about any entry.",
+        "new": "A reader's read SHALL count only while the lock files it counts on are still the case's lock files: the case lock it holds and the gate it passed, for the holder of the case, sign-off included; the case lock it holds shared, for a reader that finds the gate busy; and the gate it holds through the read and the case lock behind it, for any other reader. A read across one that was removed or replaced SHALL be taken again, by the holder as a reader that does not hold the case, and nothing SHALL be claimed from it, and with every attempt within the retries read so, nothing SHALL be claimed about any entry. Lock-file interference beyond a read across a lock file the reader counts on is outside what a reader can know; a check made after it stops gives the true answer."
+      },
+      {
+        "old": "Scope (revision 10; the steps named in revision 12; the repair boundary in revision 13):",
+        "new": "Scope (revision 10; the steps named in revision 12; the repair boundary in revision 13; the take-back and its third answer in revision 17):"
+      },
+      {
+        "old": "and each rename that publishes a head record or a repaired log; writing a temporary file that nobody reads is not such a step) and SHALL refuse the step if the case lock file was removed or replaced. A writer refused after its line SHALL report its save as not recorded, and its entry stays past the recorded entries, as a crash leaves it.",
+        "new": "and each rename that publishes a head record or a repaired log, a take-back's included; writing a temporary file that nobody reads is not such a step) and SHALL refuse the step if the case lock file was removed or replaced. A writer refused after its line and before its head record is published SHALL report its save as not recorded, and its entry stays past the recorded entries, as a crash leaves it. A save whose read-back fails SHALL take back the head record it published while that head record is still its own, so that its entry stays past the recorded entries and the save is reported as not recorded; a save whose take-back is not made SHALL be reported as not confirmed, neither recorded nor not recorded, and SHALL ask for the case log to be checked before anything else is saved."
+      },
+      {
+        "old": "a log that lacks only the entry of a save reported as not recorded, which the next holder's repair removed once a person confirmed it, is within the guarantee.",
+        "new": "a log that lacks only the entry of a save reported as not recorded or not confirmed, which the next holder's repair removed once a person confirmed it, is within the guarantee."
+      }
+    ],
+    "design.md": [
+      {
+        "old": "Revision 16, 2026-11-20, after D141 (changes requested under the owner's standing approval of 2026-11-19, after T12's twenty-third review, verify-70, and T03's twenty-second, verify-71). What changed from revision 15, keeping every id.",
+        "new": "Revision 17, 2026-11-20, after D148 (changes requested under the owner's standing approval of 2026-11-19, after T12's twenty-fourth review, verify-72, and T03's twenty-third, verify-73). What changed from revision 16, keeping every id. R4 now says that the set-aside rule is judged match by match, from the longest down: a match set aside inside a longer phrase sets nothing aside even where its rule counts by another match, and a rule counts where any match of its own counts (D142, the owner's answer to revision 16's first question). R42 and P15 now name a third answer for a save, not confirmed, when its read-back fails and its head record is not then taken back (D143). R43 and P15 now say which lock files each reader counts on, so that a holder's read and a busy-gate read count only while theirs are still the case's (D148, after verify-72). They also say that lock-file interference beyond a read across such a lock file is outside what a reader can know, and that a check made after it stops gives the true answer (D144). No other requirement changes. The owner built these before this revision, and none is reviewed yet: T03's 4b3b21c, and T12's 0d339cc and 3076547. D148 also asks R42 to say that the take-back checks only that the head record is still the save's own, as 0d339cc builds. Revision 17 does not write that clause: under lock-file interference it lets a take-back unrecord a repair that was told it was recorded, which R42's own guarantee rules out (Context, T12's twenty-fourth review). R42 keeps the take-back among the steps a writer re-checks both lock files before, a take-back that re-check stops answers not confirmed, and revision 17 asks the owner. The design takes in verify-72 and verify-73 and D142 to D148. The changes are in this header, Context, Options considered, C1's verdict step 1, C3, C5, the traceability table, Out of scope, Consequences, the perspective check, the case log contract, the workspace API, Failure modes, Migration, Rollout, Observability and Consumer trace items 17, 19, 20 and 23.\n\nRevision 16, 2026-11-20, after D141 (changes requested under the owner's standing approval of 2026-11-19, after T12's twenty-third review, verify-70, and T03's twenty-second, verify-71). What changed from revision 15, keeping every id."
+      },
+      {
+        "old": "It asks three questions those commits leave open: whether R4's set-aside rule is judged match by match or rule by rule; what a save reports when its head record cannot be taken back; and whether R43 and P15 should say that a lock file replaced before a read is outside what a reader can know. The changes are in this header, Context, Options considered, C1's verdict steps, tie-breaks and table validation, C3, C5, the traceability table, Out of scope, Consequences, the perspective check, Data changes, the case log contract, the workspace API, Failure modes, Migration, Rollout, Observability and Consumer trace items 17, 19, 20 and 23.",
+        "new": "It asked the three questions that D142 to D144 answered."
+      },
+      {
+        "old": "- The lesson is D108's, in R4: a reviewer reads a requirement's noun at the grain the requirement defines it, and R4 defines a match at one start.",
+        "new": "- The lesson is D108's, in R4: a reviewer reads a requirement's noun at the grain the requirement defines it, and R4 defines a match at one start.\n\n**What the owner decided on revision 16** (D142-D145, D148, 2026-11-20)\n- D142 answered revision 16's first question with its default: R4's set-aside rule is judged match by match. A match set aside inside a longer phrase sets nothing aside, even when its rule counts by another match, and matches are settled from the longest down. The owner built it in 4b3b21c (the section after next).\n- D143 answered the second with its default: a save whose read-back fails and whose head record cannot be taken back is not confirmed, neither recorded nor not recorded, and asks for the case log to be checked. The owner built it in 3076547 (SaveNotConfirmed).\n- D144 answered the third with its default: R43 and P15 say that, beyond a read across a lock file the reader holds, lock-file interference is outside what a reader can know, and that a check made after it stops gives the true answer. It needs no build change.\n- D145 approved revision 16. D148: write D142 to D144 into the requirements. State in R43 that a holder's read and a busy-gate read count only while the lock files are still the case's, and in R42 that the take-back checks only that the head record is still the save's own (0d339cc). Keep everything else in revision 16. Revision 17 writes all of it but the take-back clause, which would contradict R42's guarantee (next section), and asks the owner about that clause.\n\n**What T12's twenty-fourth review showed** (verify-72; D146, D148, 2026-11-20)\n- verify-72, T12's twenty-fourth review, judged the owner's f5436bb against revision 16 and failed P15 on three majors. First, the read revision 16 named as open: a check that found the gate busy and held the case lock shared returned its read without comparing that lock file with its path. With the case lock replaced during the read and entry 2 appended under the new one, the check reported entry 2 missing (src/cma/case.py:530 there). Second, a reader that held the case returned its read without comparing the lock files it took. With the case lock replaced during the read and entry 2 appended through another handle under the new one, the holder reported entry 2 missing from its stale read (:459 there). Third, the take-back reused the head record's publication, whose lock re-check refused it. With the gate replaced just after a save's head record was published and a one-shot read error in the read-back, the save said it was not recorded, and a fresh check read the log intact with its entry, which no repair could drop (:1006 there). Three minors recur: the producer claimed exit 0 with 'appending' for a held torn tail, where the contract test expects exit 4 and 'being saved'; the stress test does not force the interleaving claimed for it; and the claim's suite totals and diff-stat describe an earlier patch.\n- The owner built 0d339cc and then 3076547, neither yet reviewed; D146, the unblock, is pending. In 0d339cc a holder's read counts only while the case lock it holds and the gate it passed are still the case's, and otherwise goes on as any other reader's. The busy-gate read compares the case lock it holds with its path, and the take-back checks only that the head record is still the save's own, whatever the lock files. In 3076547 a save whose take-back is not made, because the head record is no longer its own or cannot be read or renamed, raises SaveNotConfirmed. Four tests mark them: a busy-gate read and a holder's read across a replaced case lock, each taken again (tests/test_case_log.py:2355 and :2380, named p15), a take-back made through a replaced lock file (:2401), and a take-back not made, answering not confirmed (:2423); the last two are marked invariants but not named p15.\n- The first finding is R43 as revision 16 wrote it. The second turns on which lock files a holder holds: it holds the case lock and passed the gate, and D148 writes both into R43.\n- D143 alone answers the third finding. With the take-back's lock re-check kept, verify-72's schedule ends with the save not confirmed, which P15 allows since revision 17, and the case log check then shows its entry among the recorded entries. 0d339cc goes further and drops the re-check, which reopens a schedule the re-check closed:\n  - A writes its line and passes its re-check before its head rename. The case lock file is replaced.\n  - B takes the new lock and finds A's line torn. A person confirms dropping it, and B renames the repaired log and passes its re-check before its head rename, since the head record still lists what both checks read.\n  - A's head record lands. A's read-back finds its entry gone, and its take-back's check finds A's head record.\n  - B's head record lands over A's. B reads back an intact log that holds its drop entry and is told recorded.\n  - The take-back's rename then puts back the head record A's check read. B's drop entry lies past the recorded entries as a torn write, and once a person confirms dropping it, the log reads intact without a save told recorded, which R42 rules out.\n  With the re-check, the take-back finds the replaced case lock and is not made; A is not confirmed, and the log reads intact with B's save. Revision 17 keeps the re-check and asks the owner (Options considered).\n- Still open at 3076547. A failed staging write or fsync of a head record or a repaired log still leaves its temporary file (src/cma/case.py:966-971, :906-911). A refusal in the second call of a short write of the line still says nothing was written, though part of the line is on disk (:1008, :797-798). Eleven tests added since review 20 are marked invariants but not named p15 (tests/test_case_log.py:2070-2423), which the project's gotcha asks for.\n- The lesson is revision 10's, turned round: a check removed to answer one schedule can reopen the one it closed. Where a requirement already gives the refused step an honest answer, the check stays.\n\n**What T03's twenty-third review showed** (verify-73; D142, D147, D148, 2026-11-20)\n- verify-73, T03's twenty-third review, judged the owner's 5c9a5bd and 2c72469 against revision 16 and failed R4 on one major, the corner revision 16 asked about. With FPS CASH DEPOSIT STRIPE added to the cash list and FPS CASH DEPOSIT to the gateway list beside STRIPE, FPS CASH DEPOSIT STRIPE | STRIPE was a cash deposit recorded as v2:cash_paid_in, in trading receipts. The trailing STRIPE kept the gateway counting, so its FPS CASH DEPOSIT, set aside inside the cash phrase, still set aside the rail (src/cma/categorise.py:820 there). The reviewer expects the credit unexplained, with the rail, the cash rule and the gateway as candidates. Four minors, all recurring. README.md:78 still says naming the payer in the profile can clear an ambiguous credit, the thirteenth review to find it. The producer claimed the rule-order shuffle for debits, which take the first protected match by design (IWOCA DIVIDEND). An unhashable rule id raises a TypeError (:441). And the claim's compileall covers evals and tests, which the runner does not compile.\n- D142 took revision 16's default, and the owner built it in 4b3b21c, not yet reviewed; D147, the unblock, is pending. Each occurrence counts on its own: an occurrence is set aside when it lies inside a strictly longer occurrence of another rule that itself counts, the bank's code and the cash and payment-method pair exempt as before, and a rule counts while any occurrence of it does (credit_matches, src/cma/categorise.py:805-844 there). It repeats the filter over the occurrences until the set it keeps stops changing, rather than sorting them by length. Since an occurrence's standing rests only on strictly longer occurrences, the repetition reaches the one answer that settling from the longest down gives. One test marks it: with XYZ FPS a gateway's name and XYZ FPS CASH DEPOSIT a cash phrase, XYZ FPS CASH DEPOSIT REF XYZ FPS is ambiguous, with the rail and the cash rule among its candidates (tests/test_rules_v2.py:1910). No shipped phrase holds both cash wording and a payment-method cue, so no shipped verdict moves.\n- D148: write D142 into R4, keeping everything else; revision 17 does that.\n- Still open at 4b3b21c: README.md:78; the TypeError for an id or a pattern given as a list (:441, :469); RETURNED DD reversal linking, whose bank prefixes (:997) still hold UNPAID DD but not RETURNED DD; and the reversal-linking time, which T22's timed recompute (R52) should include.\n- The lesson is revision 16's, finished: a match's standing is its own, and the rule it belongs to lends it none."
+      },
+      {
+        "old": "credit_verdict is :887-906, _classify_credit :954-986, reversal linking :1007-1032 and the round-trip pass :1038-1062.",
+        "new": "credit_verdict is :887-906, _classify_credit :954-986, reversal linking :1007-1032 and the round-trip pass :1038-1062. At 4b3b21c (the owner's review-23 fix, not yet reviewed) the lines up to credit_matches are as at 2c72469. credit_matches is :805-844 and settles occurrence by occurrence (:815-843), and every line after it moves by 5: credit_verdict is :892-911, _classify_credit :959-991, reversal linking :1012-1037 and the round-trip pass :1043-1067."
+      },
+      {
+        "old": "The integration branch (6573a9d) has no case log and no profile names yet.",
+        "new": "At 3076547 (the owner's review-24 fix, 0d339cc, and D143's answer, neither yet reviewed), a holder's read counts only while the case lock it holds and the gate it passed are still the case's, and otherwise goes on as any other reader's (verify, :451-482). The read a busy-gate check takes holding the case lock alone compares that lock file with its path (:553-558). _publish (:1017-1049) takes back its head record checking only that the head record is still its own, whatever the lock files (:1032-1042), and raises SaveNotConfirmed (:107-110) when the take-back is not made (:1043-1047). The integration branch (4709d5f) has no case log and no profile names yet."
+      },
+      {
+        "old": "its grain a design default, asked).**",
+        "new": "its grain D142, in R4 since revision 17).**"
+      },
+      {
+        "old": "*Between (ii) and (iii), design default: (iii)*, asked in revision 16.",
+        "new": "*Between (ii) and (iii), chose (iii)*, the owner's answer (D142), which R4 says since revision 17 (D148) and 4b3b21c builds; verify-73 then failed 2c72469 on (ii)'s corner, with FPS CASH DEPOSIT STRIPE | STRIPE."
+      },
+      {
+        "old": "What (iii) costs: credit_matches settles matches in order of length instead of rules in rounds, one sort of the matches a line makes.",
+        "new": "What (iii) costs: credit_matches settles matches instead of rules. 4b3b21c repeats its filter over the matches until the set it keeps stops changing, rather than sorting them by length; since a match's standing rests only on strictly longer matches, the repetition reaches the one answer that settling from the longest down gives."
+      },
+      {
+        "old": "is not yet compared (src/cma/case.py:527-533), and T12 adds it before its review.",
+        "new": "was not compared (src/cma/case.py:527-533), nor was a holder's own read; verify-72 failed both, and 0d339cc compares both (R43 since revision 17)."
+      },
+      {
+        "old": "and a take-back that can itself fail, which the next sub-decision asks about.",
+        "new": "and a take-back that can itself fail, which the next two sub-decisions take up."
+      },
+      {
+        "old": "**Sub-decision: a take-back that cannot be made (revision 16; design default, asked).**",
+        "new": "**Sub-decision: a take-back that cannot be made (revision 16; D143, in R42 and P15 since revision 17).**"
+      },
+      {
+        "old": "*Design default: (i)*, asked in revision 16. (ii) lost because the tool would tell a person",
+        "new": "*Chose (i)*, the owner's answer (D143), which R42 and P15 say since revision 17 (D148) and 3076547 builds as SaveNotConfirmed. (ii) lost because the tool would tell a person"
+      },
+      {
+        "old": "**Sub-decision: a writer that takes the case through a gate replaced before the read (revision 16; design default, asked).**",
+        "new": "**Sub-decision: what a take-back checks before its rename (revision 17, after verify-72; D148 asks for the head record alone; design default, asked).** The take-back is a head rename (revision 16). verify-72 replaced the gate after a save published its head record and failed the read-back with a one-shot read error. f5436bb's take-back re-checked the lock files and refused, and the save said it was not recorded while its head record listed its entry. (i) Re-check both lock files and the head record before the take-back's rename, as before every head rename, and answer not confirmed when either check stops it (D143); verify-72's schedule then ends not confirmed. (ii) Check only that the head record is still the save's own, whatever the lock files, as 0d339cc builds and D148 asks R42 to say. (iii) Make no take-back, and answer not confirmed whenever a read-back fails. *Design default: (i)*, asked in revision 17. (ii) loses to the schedule in Context (T12's twenty-fourth review). A repair that checked before the save's head record landed publishes its own head record after the take-back's check and is told recorded; the take-back then lands over it, and a later confirmed drop leaves an intact log without that repair's save. R42 rules that out, so (ii) would need a second exception in R42's guarantee, beside D124's. Under (i) the repair holds the case only through a replaced case lock, which the take-back's re-check finds. A writer that takes the case after that re-check checked a head record that lists the save's entry, so its own entry follows that entry. A take-back that then lands over its head record leaves two or more entries past the recorded ones, and the log reads broken, never intact. (iii) lost because a read error alone, with no interference, would leave the save not confirmed where a take-back makes it plainly not recorded. What (i) costs: under interference, a failed read-back after a lock file was replaced answers not confirmed, and the person checks the case log before saving again. T12 turns the lock re-check back on for the take-back, and its test that a take-back goes through a replaced lock file (tests/test_case_log.py:2401) expects not confirmed instead.\n\n**Sub-decision: a writer that takes the case through a gate replaced before the read (revision 16; D144, in R43 and P15 since revision 17).**"
+      },
+      {
+        "old": "*Design default: (i)*, asked in revision 16. (iii) lost because R43 and P15 say when",
+        "new": "*Chose (i)*, the owner's answer (D144), which R43 and P15 say since revision 17 (D148). (iii) lost because R43 and P15 say when"
+      },
+      {
+        "old": "As the revision 16 default, this is settled match by match, from the longest down: each match's standing rests only on longer matches, so there is one answer, and a rule counts where any match of its own counts. 5c9a5bd settles it rule by rule instead (Options considered).",
+        "new": "It is settled match by match, from the longest down (D142; R4 since revision 17). Each match's standing rests only on longer matches, so there is one answer; a match set aside sets nothing aside even where its rule counts by another match; and a rule counts, and is a candidate, where any match of its own counts. 5c9a5bd settled it rule by rule, which verify-73 failed with FPS CASH DEPOSIT STRIPE | STRIPE; 4b3b21c settles it by match."
+      },
+      {
+        "old": "reads once and judges the whole log: a changed, removed or reordered entry is broken and an incomplete last entry is incomplete, each named.",
+        "new": "reads once and judges the whole log: a changed, removed or reordered entry is broken and an incomplete last entry is incomplete, each named. That read counts only while the case lock the holder holds and the gate it passed are still the case's; across a removed or replaced one, the holder reads again as any other reader below (R43 since revision 17, after verify-72; 0d339cc)."
+      },
+      {
+        "old": "(revision 16; at f5436bb this one read is not yet compared, Context).",
+        "new": "(revision 16; R43 says so since revision 17, after verify-72, and 0d339cc compares it)."
+      },
+      {
+        "old": "Revision 16 asks whether R43 and P15 should say that this is outside what a reader can know (Options considered).",
+        "new": "R43 and P15 say since revision 17 that, beyond a read across a lock file the reader counts on, such interference is outside what a reader can know, and that a check made after it stops gives the true answer (D144)."
+      },
+      {
+        "old": "the take-back is a head rename, re-checked as every head rename is. Its entry is then past the recorded entries, as a crash leaves it, and the next holder confirms dropping it. A head record another writer has published since is left alone. A take-back that cannot be made leaves the entry among the recorded entries; revision 16 asks what the save then reports (Options considered).",
+        "new": "the take-back is a head rename, re-checked as every head rename is (the revision 17 default; D148 asks for the head record alone, and revision 17 asks the owner, Options considered). Its entry is then past the recorded entries, as a crash leaves it, and the next holder confirms dropping it. A head record another writer has published since is left alone. Suppose the take-back is not made, because the head record is no longer the save's own, a lock file was removed or replaced, or the head record cannot be read or renamed. The entry then stays where it is, and the save is reported as not confirmed, neither recorded nor not recorded, with a request to check the case log, which shows whether the entry is among the recorded entries (D143; R42 and P15 since revision 17)."
+      },
+      {
+        "old": "or report being saved over an entry a crash left; a check after the interference stops gives the true answer.",
+        "new": "or report being saved over an entry a crash left; a check after the interference stops gives the true answer, as R43 and P15 say since revision 17 (D144).\n    - A writer that takes the case after a take-back's re-check checked a head record that lists the save's entry, so its own entry follows that entry. A take-back that lands over its head record leaves two or more entries past the recorded ones, and the log reads broken, never intact (revision 17)."
+      },
+      {
+        "old": "A save whose read-back failed says the save was not recorded; one whose head record could not then be taken back says so and asks the underwriter to check the case before saving again (R42 since revision 16).",
+        "new": "A save whose read-back failed says the save was not recorded; one whose head record was not then taken back says that whether the save was recorded is not confirmed, and asks the underwriter to check the case before saving again (R42 since revision 17, D143)."
+      },
+      {
+        "old": "and the take-back when it fails, the repair's re-check, a reader's read taken again across a changed lock file, the lock files as the tool's own)",
+        "new": "and the take-back when it fails, with the not-confirmed answer when it is not made, the repair's re-check, a reader's read taken again across a changed lock file, a holder's and a busy-gate read included, the lock files as the tool's own)"
+      },
+      {
+        "old": "A reader takes a read again only when a lock file it holds was removed or replaced during it (revision 16).",
+        "new": "A reader takes a read again only when a lock file it counts on was removed or replaced during it (revision 16; a holder's and a busy-gate read since revision 17); beyond that, interference is outside what a reader can know, and a check after it stops gives the true answer (D144)."
+      },
+      {
+        "old": "so both tasks are judged on text that says what 5c9a5bd, 2c72469 and f5436bb build.",
+        "new": "so both tasks are judged on text that says what 5c9a5bd, 2c72469 and f5436bb build. Since revision 17 R4 says that the set-aside rule is judged match by match (D142). R42 and P15 say that a save whose take-back is not made is not confirmed (D143). R43 and P15 say that a holder's and a busy-gate read count only while their lock files are the case's, and that interference before a read is outside what a reader can know (D144). So both tasks are judged on text that says what 4b3b21c, 0d339cc and 3076547 build, apart from the take-back's lock re-check, which revision 17 keeps and asks about."
+      },
+      {
+        "old": "Since revision 16 a save told not recorded leaves its entry where the next holder can drop it, and a reader re-reads when a lock file it holds changes under it (D141).",
+        "new": "Since revision 16 a save told not recorded leaves its entry where the next holder can drop it, and a reader re-reads when a lock file it holds changes under it (D141). Since revision 17 a save whose head record is not taken back says it is not confirmed instead of not recorded, so the tool never tells a person a save was not recorded while the log holds it (D143)."
+      },
+      {
+        "old": "the owner's review-22 fix (5c9a5bd) and D137's check (2c72469) wait for their review, D140 is pending, and revision 16 asks one question about R4's text that the review may test",
+        "new": "verify-73 failed 5c9a5bd and 2c72469 on the corner revision 16 asked about, the owner's review-23 fix (4b3b21c) waits for its review, and D147 is pending"
+      },
+      {
+        "old": "the owner's review-23 fix (f5436bb) waits for its review, D139 is pending, revision 16 asks two questions about R42, R43 and P15, and the busy-gate read, the temporary files failed staging writes leave and the p15 test names are still open",
+        "new": "verify-72 failed f5436bb, the owner's review-24 fix (0d339cc) and D143's answer (3076547) wait for their review, D146 is pending, revision 17 asks one question about the take-back's lock re-check, which T12 turns back on under the default, and the temporary files failed staging writes leave and the p15 test names are still open"
+      },
+      {
+        "old": "one whose take-back also fails leaves the entry among them, and `cma case check` shows which.",
+        "new": "one whose take-back is not made is reported as not confirmed (D143), and `cma case check` shows whether its entry is among the recorded entries."
+      },
+      {
+        "old": "and R43 and P15 to state one more limit; it adds no component.",
+        "new": "and R43 and P15 to state one more limit; it adds no component. Revision 17 writes D142 to D144 into R4, R42, R43 and P15, which 4b3b21c, 0d339cc and 3076547 build. It keeps the lock re-check on the take-back, which asks T12 to turn one check back on, and it adds no component."
+      },
+      {
+        "old": "A read counts only while the lock files the reader holds are still the case's (revision 16).",
+        "new": "A read counts only while the lock files the reader counts on are still the case's, a holder's own read and a busy-gate read included (revisions 16 and 17); interference before a read is outside what a reader can know."
+      },
+      {
+        "old": "and revision 16's defaults: R4's set-aside rule judged by match, and a save whose take-back fails reported as not confirmed.",
+        "new": "D142's set-aside rule judged by match, D143's not-confirmed answer, and revision 17's default that the take-back re-checks the lock files, which answers not confirmed more often under interference."
+      },
+      {
+        "old": "takes its head record back, so its entry is past the recorded entries (revision 16).",
+        "new": "takes its head record back, so its entry is past the recorded entries (revision 16), and one whose take-back is not made is not confirmed, which a check of the case log settles (revision 17)."
+      },
+      {
+        "old": "and, as the revision 16 default, a set-aside match of a rule that counts by another match that hides nothing either;",
+        "new": "and, since D142, a set-aside match of a rule that counts by another match that hides nothing either (4b3b21c has it);"
+      },
+      {
+        "old": "a busy-gate read across a replaced case lock and a take-back that fails are still to add.",
+        "new": "since revision 17 they include a busy-gate read and a holder's read across a replaced case lock (0d339cc, both named p15) and a take-back that is not made, answering not confirmed (3076547, not yet named p15). As the revision 17 default they also include a take-back that a replaced lock file stops, answering not confirmed, and the schedule in which a take-back without that re-check would unrecord a repair told recorded. 0d339cc's test that a take-back goes through a replaced lock file (tests/test_case_log.py:2401) changes with that default."
+      },
+      {
+        "old": "as the revision 16 default, one whose take-back cannot be made says the save is not confirmed and asks for the case log to be checked.",
+        "new": "one whose take-back is not made, because its head record is no longer its own, a lock file was removed or replaced, or the head record cannot be read or renamed, says the save is not confirmed and asks for the case log to be checked (D143; R42 since revision 17). The take-back re-checks both lock files and the head record before its rename, as every head rename does (the revision 17 default; Options considered)."
+      },
+      {
+        "old": "a read across one removed or replaced is taken again, and with every attempt so, the reader claims nothing (R43 since revision 16).",
+        "new": "a read across one removed or replaced is taken again, and with every attempt so, the reader claims nothing (R43 since revision 16). The holder's read counts on the case lock it holds and the gate it passed, and a check that found the gate busy and holds the case lock alone counts on that case lock (R43 since revision 17). Lock-file interference before a read is outside what a reader can know, and a check after it stops gives the true answer (D144)."
+      },
+      {
+        "old": "(R42 since revision 16); as the revision 16 default, one whose take-back cannot be made is reported as not confirmed.",
+        "new": "(R42 since revision 16); one whose take-back is not made is reported as not confirmed (R42 since revision 17)."
+      },
+      {
+        "old": "Design default since revision 16: settled by match, so the gateway's STRIPE CASH DEPOSIT",
+        "new": "Settled by match (D142; R4 since revision 17; 4b3b21c), so the gateway's STRIPE CASH DEPOSIT"
+      },
+      {
+        "old": "and the credit is a card settlement in trading receipts; revision 16 asks the owner | R4 |",
+        "new": "and the credit is a card settlement in trading receipts | R4 |\n| A gateway phrase inside a cash phrase belongs to a gateway whose other name stands elsewhere in the line (FPS CASH DEPOSIT STRIPE on the cash list, FPS CASH DEPOSIT and STRIPE on the gateway list; FPS CASH DEPOSIT STRIPE \\| STRIPE; verify-73) | The gateway's FPS CASH DEPOSIT is set aside inside the cash phrase and sets nothing aside, though the trailing STRIPE keeps the gateway counting. The rail counts, so the credit is ambiguous, with the rail, the cash paid-in rule and the gateway as candidates (D142; R4 since revision 17; 4b3b21c). At 2c72469 the set-aside match hid the rail, and the credit was a cash deposit in trading receipts and M18 | R4, R55 |"
+      },
+      {
+        "old": "At f5436bb the read a busy-gate check takes holding the case lock alone is not yet compared (src/cma/case.py:527-533) | R43, P15 |",
+        "new": "The read a busy-gate check takes holding the case lock alone counts the same way (R43 since revision 17; 0d339cc). At f5436bb it was not compared, and with the case lock replaced and entry 2 appended under the new one, the check reported entry 2 missing (verify-72) | R43, P15 |\n| A writer that holds the case reads its log, and the case lock file is replaced during the read while another handle appends under the new one (verify-72) | The read counts only while the case lock the holder holds and the gate it passed are still the case's. The holder finds the lock replaced and reads again as any other reader, so it never reports the new entry missing from a stale read (R43 and P15 since revision 17; 0d339cc). Its own next step refuses (R42). At f5436bb the holder returned its stale read | R43, P15 |"
+      },
+      {
+        "old": "| The take-back itself fails (the head record cannot be read or renamed, or a lock file was replaced) | At f5436bb the save says it was not recorded and that its head record could not be taken back, and asks for the case log to be checked before anything else is saved; its entry stays among the recorded entries. Design default since revision 16: the save is reported as not confirmed, neither recorded nor not recorded; revision 16 asks the owner | R42, P15 |",
+        "new": "| The take-back is not made (the head record is no longer the save's own, cannot be read or renamed, or a lock file was replaced) | The save is reported as not confirmed, neither recorded nor not recorded, and asks for the case log to be checked before anything else is saved; the check shows whether its entry is among the recorded entries (D143; R42 and P15 since revision 17; 3076547). At f5436bb it said not recorded, though its entry could stay among the recorded entries | R42, P15 |\n| A save's read-back fails just after a lock file is replaced (verify-72: the gate replaced after the head record was published, then a one-shot read error) | Under the revision 17 default, the take-back re-checks both lock files, finds the gate replaced and is not made. The save is not confirmed, and a check shows its entry among the recorded entries. At f5436bb the same refusal said not recorded, which was verify-72's third finding. At 3076547 the take-back checks only the head record and is made, and the save is not recorded | R42, P15 |\n| A take-back passes its check of the head record, and a repair that took the case through a replaced case lock, and checked before the save's head record landed, publishes its head record before the take-back's rename (the schedule in Context) | Under the revision 17 default, the take-back's re-check finds the replaced case lock and the take-back is not made. The save is not confirmed, and the log reads intact with the repair's save. At 3076547 the take-back checks only the head record and lands over the repair's head record. The repair, told recorded, then has its entry past the recorded entries, and a confirmed drop leaves an intact log without it; revision 17 asks the owner | R42, P15 |\n| A writer takes the case after a take-back's re-check and publishes its head record before the take-back's rename lands | That writer checked a head record that lists the save's entry, so its own entry follows it. The take-back leaves two or more entries past the recorded entries, and the log reads broken, never intact | R42, R43, P15 |"
+      },
+      {
+        "old": "a check after the interference stops gives the true answer. Revision 16 asks whether R43 and P15 should say so | R43, P15 |",
+        "new": "a check after the interference stops gives the true answer, as R43 and P15 say since revision 17 (D144) | R43, P15 |"
+      },
+      {
+        "old": "A head record taken back is the one the save's check read, so it leaves the torn tail a crash leaves, which the existing repair drops.",
+        "new": "A head record taken back is the one the save's check read, so it leaves the torn tail a crash leaves, which the existing repair drops.\n- Requirements (revision 17, D148): R4, R42, R43 and P15 say what D142 to D144 decided and 4b3b21c, 0d339cc and 3076547 build, so no log format, stored data or committed figure changes. The set-aside rule by match moves no shipped verdict, for revision 16's reason. The take-back's lock re-check, the revision 17 default, is one check in T12 and changes no stored data."
+      },
+      {
+        "old": "the table-edit cases from verify-50 to verify-71;",
+        "new": "the table-edit cases from verify-50 to verify-73;"
+      },
+      {
+        "old": "A save whose head record could not be taken back after a failed read-back says so and asks for the case log to be checked before anything else is saved (R42 since revision 16).",
+        "new": "A save whose head record was not taken back after a failed read-back says that whether it was recorded is not confirmed, and asks for the case log to be checked before anything else is saved (R42 since revision 17, D143)."
+      },
+      {
+        "old": "Each worktree sits under .bridgie/worktrees but is a checkout of its task branch",
+        "new": "- For revision 17, item 20 was searched again in the T12 worktree (branch at 3076547), with SaveNotConfirmed added to its pattern, and item 23 in the T03 worktree (branch at 4b3b21c), both with the owner. Both searches used ripgrep through the Grep tool over src, tests, evals and README.md, and the code cited in Context was read at 3076547 and 4b3b21c in the worktrees. The patterns in items 17, 20 and 23 were also searched from the repository root at 4709d5f on the integration branch, with the same tool and the same .bridgie exclusion, together with SaveNotConfirmed, _one_save, _has_anchor, _has_lookaround, _rail_and_cash, survivors and inside_longer: items 17 and 23 find nothing, and item 20 finds the same test name.\nEach worktree sits under .bridgie/worktrees but is a checkout of its task branch"
+      },
+      {
+        "old": "and revision 16's take-back after a failed read-back and a read taken again across a changed lock file (D141, after verify-70).",
+        "new": "and revision 16's take-back after a failed read-back and a read taken again across a changed lock file (D141, after verify-70), and revision 17's not-confirmed answer and the holder's and busy-gate reads (D143, D148, after verify-72)."
+      },
+      {
+        "old": "at 4b4030b for revision 15 or at 6573a9d for revision 16.",
+        "new": "at 4b4030b for revision 15, at 6573a9d for revision 16 or at 4709d5f for revision 17."
+      },
+      {
+        "old": "and :931-933 at 78556a7 and :974-976 at 2c72469.",
+        "new": "and :931-933 at 78556a7 and :974-976 at 2c72469, and :979-981 at 4b3b21c."
+      },
+      {
+        "old": "In the T03 worktree at 2c72469, reversal linking is",
+        "new": "In the T03 worktree at 2c72469 (five lines later at 4b3b21c), reversal linking is"
+      },
+      {
+        "old": "Its two tests are tests/test_case_log.py:2275, marked invariants but not named p15, and :2297, named p15.",
+        "new": "Its two tests are tests/test_case_log.py:2275, marked invariants but not named p15, and :2297, named p15. At 3076547 (the owner's review-24 fix, 0d339cc, and D143's answer, neither yet reviewed) the same pattern with SaveNotConfirmed added finds 395 matches in the same three files (src/cma/case.py 115, src/cma/cli.py 4, tests/test_case_log.py 276). A holder's read is compared with the lock files it took (:454-482), and the read a busy-gate check takes holding the case lock alone with its path (:553-558). _publish (:1017-1049) takes back its head record checking only that it is still its own, whatever the lock files (:1032-1042), and raises SaveNotConfirmed (:107-110) when the take-back is not made (:1043-1047). Its four tests are tests/test_case_log.py:2355 and :2380, named p15, and :2401 and :2423, marked invariants but not named p15. Under the revision 17 default the take-back re-checks both lock files again, and :2401 changes with it."
+      },
+      {
+        "old": "On the integration branch at 4b4030b, and at 6573a9d for revision 16, this pattern finds only",
+        "new": "On the integration branch at 4b4030b, at 6573a9d for revision 16 and at 4709d5f for revision 17, this pattern finds only"
+      },
+      {
+        "old": "The anchor refusal has five cases in one test (tests/test_rules_v2.py:1896) and the set-aside rule one test (:1879).",
+        "new": "The anchor refusal has five cases in one test (tests/test_rules_v2.py:1896) and the set-aside rule one test (:1879). At 4b3b21c (the owner's review-23 fix, not yet reviewed) the same pattern finds 57 matches in the same three files (src/cma/categorise.py 34, src/cma/rules/v2.yaml 1, tests/test_rules_v2.py 22). Its lines are as at 2c72469 up to credit_matches, which is :805-844 and settles occurrence by occurrence (:815-843; D142, R4 since revision 17). The lines after it move by 5, and the bank's code at step 2 is :898. Its test is tests/test_rules_v2.py:1910."
+      },
+      {
+        "old": "On the integration branch at 4b4030b, and at 6573a9d for revision 16, the same pattern finds nothing",
+        "new": "On the integration branch at 4b4030b, at 6573a9d for revision 16 and at 4709d5f for revision 17, the same pattern finds nothing"
+      }
+    ]
+  }
+}
+```

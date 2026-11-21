@@ -1,0 +1,151 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to eight buckets. src/cma/metrics.py:405 and :480 build the partition, GBP values and evidence. src/cma/graph.py:258 and src/cma/mcp_server.py:80 consume the same computation. The runner passed the named bucket breakdown and MCP contract tests.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:56 and :151 enforce the exact-text and directional limits. src/cma/importers/monzo.py:72 and :197 enforce them for Monzo GBP rows, and src/cma/cli.py:309 passes the opening balance as text. src/cma/metrics.py:427 handles an unrepresentable M3. src/cma/graph.py:172 and src/cma/cli.py:292 display exact money values, while src/cma/metrics.py:516 and src/cma/policy.py:107 retain the prose convention. The runner passed the named boundary, display and opening-balance tests.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:491 tests partition membership and the signed difference, and src/cma/cli.py:99 reports the failure. The runner passed the CLI and MCP refusal contracts and the minimum-date regression. The closing-balance loop at src/cma/metrics.py:232 still overflows at date.max before the partition check at :414.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/models.py:66 maps OTHER to unexplained, and src/cma/metrics.py:276 excludes it from trading receipts. The runner passed the named unmatched-credit tests in both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:405 and :491 check the bucket total and one membership per credit id. M18 is calculated separately at :419 and :483. The runner passed both named P1 tests, including reconciliation of large reported GBP values.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:345 records the M9 credit split by the offset cap, :354 and :469 omit M10 evidence when exact debt service is zero, :295–301 preserve M5 and M6 evidence selection, and :445–490 bind the T04 sums, outflows and shares to their inputs. The runner passed the named P2 tests and the legacy evidence comparisons at tests/test_previous_release.py:129. Monthly cells and M27–M28 are outside the T04 implementation.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 preserve the unmatched-credit default, and src/cma/metrics.py:71 and :407 send it to M25. The runner passed all three named P6 cases, including the unknown payer under both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-135/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-135/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-135/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-135/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-135/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-135/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-135/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 232,
+      "criterion": "R3",
+      "claim": "The closing-balance loop advances one day after processing its last date. A statement ending at the maximum supported date raises OverflowError before reconciliation can name its missing credit and the difference.",
+      "repro": "Call metrics.compute with a Statement containing one £5.00 credit L1 dated date.max, balance £5.00 and category None. The date increment raises OverflowError. The required result is ReconciliationError naming L1 and 500 pence."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 138,
+      "criterion": null,
+      "claim": "The additive-only compatibility claim misses an existing Monzo CLI input form. Passing the option directly to the plain-money parser rejects an exact opening balance with trailing decimal zeroes.",
+      "repro": "Give cma import monzo a GBP export with a £10.00 transaction and no Balance column, and pass --opening-balance 100.050. The previous float option accepted it and reconstructed £110.05. The current parser rejects 100.050."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 269,
+      "criterion": null,
+      "claim": "The historical scratchpad proof is not_proven. In particular, the current large-credit test checks conversion helpers, while the claim says the whole credit was counted and reported. The repeated-compute probe also has no runner result.",
+      "repro": "Check the configured runner commands for PYTHONPATH=src python scratchpad/probe.py. No result row ran it, and the script is absent from this worktree. That command with the supplied script, or runner-executed equivalent tests asserting the full metric result and repeat equality, would prove the probe claims."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 8,
+      "criterion": null,
+      "claim": "The producer's no-ceiling statement is accurate only for the figures-layer helper. It is false for imported statements under the current requirement.",
+      "repro": "Compare tests/test_money_in.py:269, which calls pence and _gbp, with the passing import contract at tests/test_money_in.py:397. Submit a CSV credit and balance of £10,000,000,000,000.01. src/cma/ingest.py:62 refuses it as required."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2371,
+      "criterion": null,
+      "claim": "The producer note that the committed sample lacks evidence_note and was not regenerated is stale.",
+      "repro": "Search the checked-in example for evidence_note and decided_at. The sample already includes the field, M17–M26 and the regenerated approval timestamp."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

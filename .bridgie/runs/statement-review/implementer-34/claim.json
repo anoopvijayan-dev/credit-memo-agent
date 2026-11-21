@@ -1,0 +1,34 @@
+{
+  "task": "T07",
+  "claims": [
+    {
+      "text": "M27 (R12, P2) averages the close of every calendar day from the first line to the last, a day with no lines carrying the close before it, in integer pence rounded half to even, and cites the line that set each of those closes (hand-computed fixtures with carried-over days: 1-5 Jan closes 70,70,70,-30,20 -> 40.00 citing L2,L3,L4; a 29-day carried gap -> 20.00; half-penny means round to even; agrees with the monthly cells' closes across a month boundary). M28 (R13, P2) adds an optional proposed monthly repayment, read exactly and refused unless a positive whole number of pence below the import limit, for the exact length of the period in months (period_days*48/1461, as M3 counts months), to existing debt service, kept in integers: 2,000.00 / (400.00 + 600.00*1440/1461) = 2.0174; with no existing debt 3.3819 while M10 is n/a. With no proposed repayment M28 is n/a with the reason and cites nothing.",
+      "proof_cmd": "python -m pytest -q tests/test_m27_m28.py",
+      "proof_output": "24 passed in 0.60s"
+    },
+    {
+      "text": "The P2 tests for M27 and M28 are marked invariants and named p2; the contract tests (n/a reason, refusals, id order M1..M28, statement unchanged, cma run evidence and appendix, committed example) are marked contracts.",
+      "proof_cmd": "python -m pytest -q -m invariants tests/test_m27_m28.py; python -m pytest -q -m contracts tests/test_m27_m28.py",
+      "proof_output": "13 passed, 11 deselected in 0.53s\n11 passed, 13 deselected in 0.54s"
+    },
+    {
+      "text": "cma run, which has no case profile, writes M27 and M28 into its evidence record and appendix: M28 n/a with the reason 'No proposed monthly repayment was given: it comes from the case profile, and this statement has none...' and no evidence lines (test_cma_run_has_no_profile_so_its_evidence_shows_m28_na_with_the_reason_and_m27). The committed example was regenerated with cma run and its M27/M28 equal what the code computes from its lines (M27 £2,570.75 citing 287 lines, M28 n/a).",
+      "proof_cmd": "python -m pytest -q tests/test_m27_m28.py -k 'cma_run or committed_example'",
+      "proof_output": "2 passed (within the 24 passed above)"
+    },
+    {
+      "text": "Lint, compile, the full suite, the marker tiers and the offline evals pass.",
+      "proof_cmd": "ruff check src tests; python -m compileall -q src evals tests; python -m pytest -q; python -m pytest -q -m invariants; python -m pytest -q -m contracts; python -m pytest -q -m dual_run; python evals/run_evals.py",
+      "proof_output": "All checks passed!\ncompiled\n1346 passed in 99.61s\n463 passed, 883 deselected\n353 passed, 993 deselected\n84 passed, 1262 deselected\n9/9 memos fully grounded; model = fake; ruleset = v1"
+    }
+  ],
+  "files_changed": [
+    "src/cma/metrics.py",
+    "src/cma/mcp_server.py",
+    "tests/test_m27_m28.py",
+    "tests/test_money_in.py",
+    "examples/cafe_stretched.memo.md",
+    "examples/cafe_stretched.memo.evidence.json"
+  ],
+  "notes": "Committed as d287656 on the task branch. compute() gains an optional keyword proposed_repayment (pounds as text, Decimal, int or float, read exactly through limit_pence); no caller passes it yet because the case profile (T13) does not exist, so every current path (cma run, MCP, cma resume refresh) gives M28 n/a with the reason, as the task title asks. 'For each month of the period' is read as the exact length of the period in months, the convention M3 uses, so the figure has no jump at a rounding edge of M1; a reviewer who reads it as M1's whole months should say so. M28's evidence is the same lines as M10's (operating cash flow, drawings, debt service) in statement order. M27 always cites its closes, even in the defensive n/a branch (a float that cannot carry the pence, which the loader's import limit already prevents). Two existing tests in tests/test_money_in.py pinned the figure list to M1..M26 and were extended to M1..M28 (one renamed to ..._m17_to_m28); the MCP docstring says M1..M28. The committed example was regenerated with cma run (offline model), so its approval timestamp changed too; the evidence record's statement path was set back to the repo-relative examples/cafe_stretched.csv. I ran pip install -e '.[dev,mcp,durable,llm]' as the gotcha asks, which reinstalled the package from this worktree."
+}

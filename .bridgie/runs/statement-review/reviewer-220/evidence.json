@@ -1,0 +1,59 @@
+{
+  "task": "T17",
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "Lock defaults on (src/cma/firm.py FirmConfig offline_lock=True); hosted clients built only on an unlocked reading, max_retries=0, per-request HTTP hook (src/cma/llm.py _require_unlocked_now, _checked_http, HostedLLM._check); MCP run paths, ASGI factories and LockCheckedASGI read the lock (src/cma/mcp_server.py); evidence records offline_lock/resume locks (src/cma/graph.py _egress). verify-222's tracing_v2_enabled gap is closed for a context entered before the run starts (graph.py:598-604, 720; invariants-5.log:140-141 passed for invoke and stream). Gap: tracing is turned off only once, at the stream generator's first step (graph.py:746-757), so a caller that enters tracing_v2_enabled() or langsmith.tracing_context(enabled=True) between stream steps re-enables LangSmith tracing for the later steps of a run under the lock (finding 1).",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "draft_prompt (src/cma/graph.py) writes the placeholder account name, the period, met.as_table (src/cma/metrics.py:295-299: id, name, value, fixed method sentences at metrics.py:128-290) and rules_table(for_prompt=True), which masks any rule that is not the shipped rule whole (_is_shipped, including on_fail/when_missing and bands) and re-spells shipped limits; the policy name and the overall-outcome line are gone, and the outcome is a table row. The redraft line carries only metric ids and shipped rule ids (redraft_ids); the guard's findings never reach a prompt. test_p5_* tests passed in invariants-5.log.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "test_p5_no_prompt_carries_line_level_text (every archetype, profile and hallucinate setting), the custom-id, description, limits, bands, actions, spelling and CLI --policy tests passed (invariants-5.log). The prompt holds only tool text and case-decided values per revisions 32 and 33; nothing description- or profile-derived was found in as_table methods or in the rule details for shipped rules.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "P18 tests passed (invariants-5.log), including the with_config copy test and the tracing_v2 context tests. P18 validates R29's revision 32 scope that a run under the lock is untraced; a locked stream whose caller re-enters a tracing context between steps is traced (finding 1), so the property does not hold for every run under the lock.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 748,
+      "criterion": "R29",
+      "claim": "Under the offline lock, the stream and astream wrappers clear tracing_v2_callback_var and enter langsmith.tracing_context(enabled=False) once, in the generator's first step (start() at graph.py:748, 720; graph.py:751). A sync or async generator runs in its caller's context, and LangGraph copies the caller's current context for each step (langgraph/pregel/_executor.py:72-79). A caller that enters tracing_v2_enabled() between two next() calls therefore sets tracing_v2_callback_var again for the later steps. _tracing_v2_is_enabled() then returns True (langchain_core/tracers/context.py:141-144), and _configure adds that tracer to each node's callback manager, since the filter left no LangChainTracer there (langchain_core/callbacks/manager.py:2483-2515). The later node runs, with the state and statement data as inputs, are exported to LangSmith. A caller's langsmith.tracing_context(enabled=True) entered mid-stream has the same effect. This fails R29's 'a run under the lock is untraced: LangSmith's own tracing is off whatever the environment says' and P18. Verdict PLAUSIBLE: found from the sources, not run, because the shell was denied.",
+      "repro": "firm.yaml 'offline_lock: true'; patch LangChainTracer._start_trace/_persist_run to record run names, as test_p18_a_callers_tracing_v2_context_does_not_trace_a_run_under_the_lock does; gen = build(llm.FakeLLM()).stream({'statement_path': p}, {'configurable': {'thread_id': 't'}}); next(gen); with tracing_v2_enabled(client=types.SimpleNamespace()): list(gen). Expected names == []; the sources say node runs of the later steps (draft, guard, review) are recorded.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": null,
+      "line": null,
+      "criterion": "R29",
+      "claim": "The claim cites proof outputs ('557 passed', '93 passed', '16 passed') that do not match the runner's results (601 passed in the full suite; 198 in the invariants tier), and its Observability claim cites a test selector 'dispatch_used' that matches no test in tests/test_firm.py. Those claims are proven only as far as the runner's own tiers show; the evidence-recording behaviour is covered by test_p18_evidence_records_offline_mode and the resume-lock tests, which passed.",
+      "repro": "grep -n dispatch_used tests/test_firm.py returns nothing; compare claim.json proof_output with specified-3.log and invariants-5.log totals.",
+      "disposition": null
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

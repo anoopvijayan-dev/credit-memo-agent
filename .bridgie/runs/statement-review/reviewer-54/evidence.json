@@ -1,0 +1,60 @@
+{
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:195–322 validates canonical bytes, chain links, the recorded head and the first bad entry. Lines 413–456 handle same-thread aliases, free reads and writer handoff. Lines 565–689 enforce writer exclusion and reject inherited write handles. Lines 731–828 cover stale double submits, torn writes and recovery. The CLI consumes the verification result at src/cma/cli.py:318–338. Sign-off integration is scoped to T27 and has an integrity gate at src/cma/case.py:549–561. The runner logs show the named tamper, rebuilt-chain, concurrency and recovery cases passed. Boundary checks cover empty and malformed records, timestamps use UTC, the log performs no currency arithmetic, and local case paths scope the data. Two gaps remain: gate contention can suppress a stable diagnosis, and the head commit skips the lock recheck required by revision 10.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 483,
+      "criterion": "P15",
+      "claim": "When both the gate and case lock are contended, verify skips the recorded entries on every retry even if the head is stable. It can therefore hide corruption that P15 requires it to name.",
+      "repro": "Create a case with two recorded entries and change entry 1 without updating the head. Have writer A hold the case without writing. Pause writer B immediately after it acquires the gate and before it attempts the case lock. Keep both paused through a check. The CLI exits 4 with nothing checked. The head stayed stable throughout and entry 1 should be reported broken."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 828,
+      "criterion": "P15",
+      "claim": "The append checks lock identity before preparing the line, then commits the head without rechecking. A writer can publish a new head after its case lock has been replaced between those two writes.",
+      "repro": "On a case with one recorded entry, pause an append after it fsyncs entry 2 and closes the log descriptor, immediately before it calls _write_head. Replace log.jsonl.lock and resume the append. The head advances and the append succeeds even though the lock file had already been replaced before the head write began."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer claims the CLI exits 0 and says 'appending' while another writer holds the case over a torn tail. The passing contract test proves exit 4 with 'being saved'.",
+      "repro": "See the passed test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break in contracts-4.log. Its assertions require exit 4 and a recorded-entry count while the writer holds the case, followed by exit 3 naming the incomplete entry after release."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 318,
+      "criterion": "P15",
+      "claim": "The producer's owner-only authorization claim is broader than the implementation and its file-mode test. The CLI checks that the path is a directory and relies on OS access permissions.",
+      "repro": "Give a second local user read and directory traversal access to a case and its log sidecars, then run cma case check FOLDER as that user. The command can report the case's count and head hash despite the caller having a different UID from the owner."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1202,
+      "criterion": "P15",
+      "claim": "The cited stress test passed, but it does not prove the producer's claim that it forces two commits per retry and a held lock at the fallback. The test starts a background writer and never synchronizes it with the reader's retry steps.",
+      "repro": "Read test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing and its PASSED row in specified-3.log. A regression test would need to coordinate two commits on each retry and assert that the contended fallback was exercised before checking its result."
+    }
+  ],
+  "verdict": "fail"
+}

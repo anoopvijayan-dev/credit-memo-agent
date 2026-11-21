@@ -1,0 +1,60 @@
+{
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed HEAD 2861fd7 against requirements.md:309. Strict UTF-8 canonical hashing, head comparison, first-bad-entry naming and torn-tail detection are at src/cma/case.py:177–365. Holder recognition across path aliases, steady reads, retry exhaustion and the sign-off guard are at src/cma/case.py:460–686. Writer exclusion, inherited-handle refusal, nested saves and expected-position conflicts are at src/cma/case.py:690–952. Save rechecks, short writes, publication, read-back and take-back are at src/cma/case.py:954–1202. Checked duplicate submissions, concurrent updates, empty and malformed inputs, Unicode, nesting boundaries, UTC timestamps, partial failure, OS permissions, case-folder isolation and the CLI consumer at src/cma/cli.py:309–338. The diff introduces no currency arithmetic or database migration. Runner logs confirm 499 full-suite passes, 182 invariant passes and 13 contract passes, including the named CLI tamper, rebuilt-chain, torn-tail and duplicate-submit cases. The holder gate check and nested-save guard fail P15. This review used repository reads and runner logs.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 487,
+      "criterion": "P15",
+      "claim": "A holder accepts a read across replacement of the gate it passed. The pre-read and post-read checks inspect only the case lock, although P15 requires both files.",
+      "repro": "Create a valid log and enter log.writer(). During the holder's first _check call, atomically replace log.jsonl.gate with a fresh inode while leaving log.jsonl.lock untouched. Count the reads. verify() returns the first check as intact. P15 requires discarding that read and retrying as a non-holder. The gate scenario in tests/test_case_log.py:2967 currently asserts the opposite behavior."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 853,
+      "criterion": "P15",
+      "claim": "The nested-save guard checks membership and registers the save in separate operations under a reentrant lock. A same-thread signal handler between those operations can commit a nested save.",
+      "repro": "Start with one recorded entry and hold log.writer() on the main thread. Begin an outer append with expected=1. Use a one-shot trace hook at line 853 to deliver a signal whose handler calls append on the same object with expected=1. The handler reenters the lock, finds the save marker absent and records entry 2. The outer append then raises LogConflict. P15 requires refusing the nested append before it writes."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's CLI contract claim gives exit 0 and 'appending' for a held torn tail. The implementation and the passing contract test both require exit 4 and 'being saved'.",
+      "repro": "Read test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break in tests/test_case_log.py and its PASSED row in contracts-4.log. The assertion at line 1361 is exit 4. Once the holder releases the lock, the test expects exit 3 at entry 3."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 318,
+      "criterion": "P15",
+      "claim": "The producer's owner-only authorization claim exceeds the evidence. The CLI accepts any directory with OS-readable log files. The permissions test covers newly created files and does not establish an owner check.",
+      "repro": "Use a valid case owned by another local account and grant the invoking account directory traversal and read access to its log, head and lock files. Run cma case check on the folder. The directory check and file reads succeed without comparing the invoking account to the folder owner."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 1042,
+      "criterion": "P15",
+      "claim": "A staging write or sync failure leaves an orphaned temporary file. Repair staging has the same gap at src/cma/case.py:978 and can leave a partial duplicate of the case log.",
+      "repro": "On an existing log, inject an OSError from os.fsync on the staged head file after its bytes have been written. The append raises SaveNotRecorded, but a log.jsonl.head.*.tmp file remains because the unlink handler begins after the staging block. For a repair, inject the same failure while syncing the staged replacement log and inspect log.jsonl.*.tmp."
+    }
+  ],
+  "verdict": "fail"
+}

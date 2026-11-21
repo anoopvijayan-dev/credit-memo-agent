@@ -1,0 +1,117 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest alternatives and phrase containment through src/cma/categorise.py:969,991, bank-code and cash conflicts through :1078, and both-stage candidates, profile names, firm rules and overrides through :1107,1145. Category.OTHER maps to unexplained in src/cma/models.py:54. Traced CLI selection and refusal before checkpoint creation at src/cma/cli.py:77, repeat submission at :84, evidence output at :229, checkpoint replay and graph categorisation at src/cma/graph.py:188,210,250, case-local inputs and in-place recomputation at src/cma/categorise.py:1256, signed GBP and date-only input at src/cma/ingest.py:100,108,127, and MCP path scope and consumers at src/cma/mcp_server.py:37,77,84. The runner logs confirm table-driven provenance, v2 CLI evidence, idempotency, rollback, checkpoint replay, both offline evals and the 10,000-line fixture. The prior !!str collection failure is covered by passing runner cases. R4 still fails because duplicate keys inside a malformed field suppress independent faults, a non-v1 table can select frozen validation for some checks, and one matcher form is compiled only when a transaction uses it.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-97/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-97/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-97/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-97/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-97/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-97/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-97/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 742,
+      "criterion": "R4",
+      "claim": "A duplicate key inside a malformed rule field aborts YAML construction before the validator can name the field and collect independent rule faults.",
+      "repro": "In a copy of v2.yaml, replace cash_paid_in's names value with `{x: 1, x: 2}` and add `unless: FPS` to explained_non_trading. Load v2 in a fresh process. The duplicate-key refusal escapes construction at line 742. It gives YAML marks but omits the cash_paid_in names diagnostic and the explained_non_trading exception."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 635,
+      "criterion": "R4",
+      "claim": "A non-v1 table's frozen flag still selects frozen validation for category order and cue fields. R4 requires these tables to be checked as maintained lists.",
+      "repro": "In a copy of v2.yaml, set `frozen: true`, delete `category_order`, and add `unless: FPS` to cash_paid_in. Load v2 in a fresh process. The refusal names the forbidden exception and spuriously reports missing categories on payment_rail and cheque via line 430. It omits the missing category order for the trading and refunds buckets because line 637 exits the check."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 966,
+      "criterion": "R4",
+      "claim": "The matcher that forces a pattern to end at a particular position is compiled on transaction input. Table validation builds the span matcher and stores the longest-match source, leaving this form unchecked at load.",
+      "repro": "In a fresh process, load v2 and classify a positive `STRIPE INV 17 LTD` line while tracing calls to `_ending_at`. The invoice pattern has a variable-width repeat and first ends before ` LTD`, so `_spans` calls `_ending_at` and compiles the remaining-length lookahead for the first time during classification. R4 explicitly requires every matcher form to be built during table checking."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The claimed README documentation gives the wrong precedence for ambiguous credits and says that a profile name can settle them.",
+      "repro": "Compare the README row with src/cma/categorise.py:1145. A positive `FPS CASH DEPOSIT JANE DOE` credit with Jane Doe in the director profile stays unexplained, and `profile:director` is appended to the conflict candidates."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 1114,
+      "criterion": "R4",
+      "claim": "The rule-shuffling test supports the sampled statements. It does not establish the broader claim that shuffling rules within each stage changes no category or figure.",
+      "repro": "Classify a debit described as `IWOCA DIRECTOR DRAWINGS`. Then move owner_drawings ahead of lender_repayment within the protected names stage and classify the same debit. Both rules match, and the first-match loop changes the result from loan_repayment to owner_drawings. This finding concerns the producer claim because R4's order-independent conflict policy applies to credits."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 29,
+      "criterion": "R4",
+      "claim": "Compilation of every module in the producer's stated scope is not proven. The runner's compilation row covers src only.",
+      "repro": "Compare mechanical:2, `python -m compileall -q src`, with the producer's broader claim. A passing runner row for `python -m compileall -q src evals tests` would prove it."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

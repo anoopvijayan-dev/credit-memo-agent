@@ -1,0 +1,117 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest-match containment, bank-code and cash/payment-method precedence, both-stage candidates, and profile, firm-rule and per-line override precedence through src/cma/categorise.py:907,927,1014,1043,1081. Traced per-line provenance, legacy replay and CLI/MCP consumers through src/cma/categorise.py:1192, src/cma/graph.py:188,210,250, src/cma/cli.py:77,188,229 and src/cma/mcp_server.py:77,84. Reviewed repeat submission, concurrent invocations on separate statements, signed amounts and Unicode boundaries, GBP minor units and date-only ingestion, failure before checkpoint creation, ruleset selection, case-local inputs, and rollback. The runner log confirms the per-list, CLI v2, idempotency, checkpoint and dual-ruleset eval tests ran and passed. R4 fails because malformed YAML rule values can still load or suppress other rule diagnostics, and a changed frozen v1 can omit an anchor diagnostic for a debit-only copy of the bank code.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-89/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-89/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-89/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-89/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-89/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-89/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-89/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 731,
+      "criterion": "R4",
+      "claim": "A failed YAML scalar conversion becomes ordinary text. A malformed rule field can therefore pass schema and matcher checks and affect categorisation.",
+      "repro": "Replace the shipped cash_paid_in names field with `pattern: !!int CASH`. PyYAML's integer conversion fails, the fallback returns the string CASH, and validation accepts it as a regex. Load v2 and classify a positive line described as CASH. The malformed table loads and the line receives v2:cash_paid_in."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 735,
+      "criterion": "R4",
+      "claim": "An invalid explicitly tagged boolean aborts YAML construction before the loader can name its rule and field or report independent rule faults.",
+      "repro": "Set cash_paid_in's `protected: !!bool maybe` and add `unless: FPS` to payment_gateways. Load v2. The inherited PyYAML boolean constructor raises KeyError, and load_ruleset reports a generic malformed value. The refusal omits both cash_paid_in's protected diagnostic and payment_gateways' forbidden unless."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 372,
+      "criterion": "R4",
+      "claim": "A changed v1 that retains frozen: true can reuse the bank-code anchor on a debit-only rule without that rule's anchor being named. The exemption checks the text and category and ignores direction.",
+      "repro": "Keep the original returned_dd rule in v1 and append a rule with id debit_only_copy, the same pattern and category, and direction: out. Load v1 with a cold cache. The changed-table refusal omits debit_only_copy's anchor even though that copy cannot settle any credit."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The documented precedence says a profile name can settle an ambiguous credit. The categoriser keeps it unexplained and records the profile name as an additional candidate.",
+      "repro": "Classify the positive v2 line `FPS CREDIT CASH DEPOSIT REF JANE DOE` with JANE DOE in ProfileNames.directors. The result is other with `v2:conflict:payment_rail+cash_paid_in+profile:director`, contrary to the README."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 850,
+      "criterion": "R4",
+      "claim": "The runner confirms the timing test passed on one generated 10,000-line mixture. The claim that v2 categorisation stays within two seconds for 10,000 lines more generally is unproven.",
+      "repro": "Inspect the passing timing test. It measures one fixed mixture and omits statements dominated by long descriptions with multiple overlapping rule hits. To prove a broader timing claim, add those inputs to the timing coverage and have the runner execute `python -m pytest -v tests/test_rules_v2.py -k 10000_lines` on the target hardware."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 30,
+      "criterion": "R4",
+      "claim": "The claimed standalone compile gate for src, evals and tests is only partially supported by the runner. Its compileall row covers src.",
+      "repro": "Compare mechanical-2.log and its command with the claimed proof. Have the runner execute `python -m compileall -q src evals tests` to verify the full compile gate."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

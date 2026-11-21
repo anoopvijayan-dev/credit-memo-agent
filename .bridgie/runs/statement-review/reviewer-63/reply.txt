@@ -1,0 +1,78 @@
+```json
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped maintained lists to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest-match filtering to src/cma/categorise.py:704–743, bank-code and ambiguity decisions to :780–795, overrides to :808, and profile candidates and firm-rule exclusion to :854–875. Own-account pairing is separately assigned to R8. Traced CMA_RULESET selection and per-line evidence through src/cma/graph.py:219–223,250–253 and src/cma/cli.py:229. The runner passed the per-list provenance tests and v2 CLI contracts. Reviewed repeat categorisation, concurrent use, sign and malformed-input boundaries, currency and date handling at ingest, failure paths, override and profile scope, rollback, and evidence consumers. Valid table edits can still bypass rail-plus-cash ambiguity, defeat longest-phrase filtering, or produce indistinguishable rule provenance.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 790,
+      "criterion": "R4",
+      "claim": "The rail-plus-cash check looks only at cash matches from the names stage. The validator accepts cash wording as a bucketed line-type rule, allowing a rail and cash match to be counted as trading receipts.",
+      "repro": "In a copy of v2.yaml, move cash_paid_in immediately before payment_rail and set stage: line_type and protected: true. Classify a +200.00 credit described as FPS CASH DEPOSIT. Both rules match, but the verdict is cash_deposit. R4 requires unexplained money in with both rule IDs as candidates."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 721,
+      "criterion": "R4",
+      "claim": "An accepted lookahead-only pattern counts as a hit but has no recorded span, so the longer-phrase filter cannot suppress it.",
+      "repro": "Change payment_rail to use the pattern '(?=FASTER PAYMENT)' in place of its names and add ACME FASTER PAYMENT LTD to the gateway names. Classify a +200.00 credit described as ACME FASTER PAYMENT LTD CASH DEPOSIT. The zero-width rail hit inside the gateway phrase survives because the span is discarded at line 721 and the empty span list fails the containment check at line 738. The credit becomes ambiguous even though only the longer gateway phrase and the cash wording should count, both in the trading bucket."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 392,
+      "criterion": "R4",
+      "claim": "Rule IDs can collide with the reserved fallback and round-trip provenance IDs, so the evidence cannot always identify which decision set the category.",
+      "repro": "Add a names-stage credit rule with id: default, names: [ACME TEST], and category: other to v2.yaml. A +100.00 ACME TEST credit and a +100.00 unmatched UNKNOWN PAYER credit both record category other and rule_id v2:default. Only the first matched the configured rule."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 396,
+      "criterion": "R4",
+      "claim": "The claim that malformed tables are refused with a named validation error misses non-string patterns that are unhashable.",
+      "repro": "Set the invoice_transfer pattern to the YAML list [INV] and invoke cma run with CMA_RULESET=v2. The validator collects a type error, then raises TypeError on the bank-code set lookup before it can report the rule validation error."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1385,
+      "criterion": "R4",
+      "claim": "The passing shuffle test supports its sampled statements. The producer's broader claim that reordering rules within a stage changes no category is false for debits, which use first-match order.",
+      "repro": "Classify a -100.00 PAYROLL RENT debit with the shipped table, then swap the unprotected payroll and rent rules. The category changes from payroll to rent. R4's ambiguity and alternative-order clauses govern credits, so this finding concerns the broader claim."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The claimed precedence documentation says a profile name can settle an ambiguous credit and omits cheque wording from the cash conflict. These instructions contradict R4 and the shipped categoriser.",
+      "repro": "Compare the README with a +900.00 FPS CASH DEPOSIT JANE DOE credit using Jane Doe as a profile director and a +900.00 CHEQUE CASH DEPOSIT credit. The first stays ambiguous and gains a director candidate. The second is ambiguous with cheque and cash candidates."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 27,
+      "criterion": null,
+      "claim": "The claim that every module compiled is not_proven for evals and tests. The runner's compile gate covered src, while pytest and the eval runs prove execution of the modules they loaded.",
+      "repro": "Compare mechanical-2.log and its configured command with the producer's compile claim. Run python -m compileall -q src evals tests in a runner tier to prove the claimed scope."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```
