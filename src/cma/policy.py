@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from .metrics import compare, limit_pence
+from .metrics import compare, float_pence, limit_pence
 from .models import Metric, PolicyResult, RuleOutcome, RuleResult
 
 OPS = {">=": operator.ge, "<=": operator.le, ">": operator.gt, "<": operator.lt, "==": operator.eq}
@@ -31,11 +31,30 @@ def default_policy_text() -> str:
     return resources.files("cma.policies").joinpath(DEFAULT_POLICY_NAME).read_text()
 
 
+class _Written(float):
+    """A number from a policy file that keeps the text it was written as, so a money limit is
+    checked as written, never as the float YAML rounds it to (T04 review 59)."""
+    text: str
+
+
+class _PolicyLoader(yaml.SafeLoader):
+    pass
+
+
+def _written_float(loader, node):
+    v = _Written(yaml.SafeLoader.construct_yaml_float(loader, node))
+    v.text = node.value
+    return v
+
+
+_PolicyLoader.add_constructor("tag:yaml.org,2002:float", _written_float)
+
+
 def load_policy(path: Path | None = None) -> dict:
     source = str(path or f"cma/policies/{DEFAULT_POLICY_NAME}")
     try:
         text = Path(path).read_text() if path else default_policy_text()
-        policy = yaml.safe_load(text)
+        policy = yaml.load(text, Loader=_PolicyLoader)
     except FileNotFoundError as e:
         raise PolicyError(f"{source}: no such file") from e
     except (OSError, UnicodeDecodeError) as e:  # a directory, no permission, not UTF-8 (T04 review 21)
@@ -159,6 +178,12 @@ def _from_stored(stored: PolicyResult, before: list[Metric], now: list[Metric]) 
             # compared in pence, so only the policy can say (T04 review 58).
             raise OutcomeUnknown(f"{r.metric_id}, which rule {r.rule_id} reads, changed and its stored "
                                  "limit is not a whole number of pence")
+        if r.unit == "GBP" and old is not None and old.value is not None and float_pence(old.value) is None:
+            # A stored money figure from an earlier release's float arithmetic that is not whole
+            # pence: its band is never found by a comparison in fractions of a penny, so only the
+            # policy can say (T04 review 59).
+            raise OutcomeUnknown(f"{r.metric_id}, which rule {r.rule_id} reads, changed and its stored "
+                                 "value is not a whole number of pence")
         was, will = _band(r, old.value if old else None), _band(r, new.value)
         if will[0] == "missing" or (will[0] == "fail" and was[0] != "fail"):
             raise OutcomeUnknown(f"{r.metric_id}, which rule {r.rule_id} reads, now "

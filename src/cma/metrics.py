@@ -134,23 +134,29 @@ def running_balances(opening: int, amounts) -> list[int]:
 
 def limit_pence(limit: float) -> int | None:
     """A money limit's whole pence, read exactly from the decimal it is written as; None if it
-    is not a whole number of pence (T04 review 58)."""
-    return text_pence(repr(limit) if isinstance(limit, float) else str(limit))
+    is not a whole number of pence (T04 review 58). A limit read from a policy file carries
+    the text it was written as (policy.load_policy), which is read, not the float YAML parsed
+    it to, so no fraction of a penny is rounded away before it is checked (T04 review 59)."""
+    text = getattr(limit, "text", None)
+    if text is None:
+        text = repr(limit) if isinstance(limit, float) else str(limit)
+    return text_pence(text)
 
 
 def compare(value: float, op: str, limit: float, unit: str) -> bool:
-    """`value op limit` for a figure and a policy limit. A money figure is compared in pence
-    here in the figures layer, never as binary floats (R2, T04 reviews 57 and 58): the limit
-    as the whole pence a policy is checked to give it, the figure as the exact pence its
-    decimal says (an average, M3, can hold a fraction of a penny). Any other figure is
-    compared as the number it is."""
+    """`value op limit` for a figure and a policy limit. A money figure is compared in whole
+    pence here in the figures layer, never as binary floats or fractions of a penny (R2, T04
+    reviews 57 to 59): the limit as the whole pence a policy is checked to give it, the figure
+    as the whole pence every money figure is computed in (M3 included). A money figure or
+    limit that is not whole pence, as a stored figure from an earlier release can be, is
+    refused, never compared. Any other figure is compared as the number it is."""
     if unit == "GBP":
         b = limit_pence(limit)
         if b is None:
             raise ValueError(f"money limit {limit!r} is not a whole number of pence")
         a = float_pence(value)
         if a is None:
-            a = Decimal(repr(float(value))) * 100
+            raise ValueError(f"money figure {value!r} is not a whole number of pence")
     else:
         a, b = value, limit
     return {">=": a >= b, "<=": a <= b, ">": a > b, "<": a < b, "==": a == b}[op]

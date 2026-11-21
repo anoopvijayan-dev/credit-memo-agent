@@ -146,16 +146,49 @@ def test_a_money_limit_that_is_not_whole_pence_is_refused(key, limit):
 
 
 @pytest.mark.contracts
-def test_money_figures_are_compared_with_their_limits_in_pence():
-    """T04 review 58 / R2: money is compared in pence in the figures layer; an average holding a
-    fraction of a penny is compared exactly, and a limit that is not whole pence never is."""
+def test_money_figures_are_compared_with_their_limits_in_whole_pence():
+    """T04 reviews 58 and 59 / R2: money is compared in whole pence in the figures layer; a money
+    figure or limit that is not whole pence is refused, never compared in fractions of a penny."""
     from cma import metrics
 
     assert metrics.compare(1000.0, ">=", 1000, "GBP") and not metrics.compare(999.99, ">=", 1000, "GBP")
-    assert metrics.compare(0.1 + 0.2, ">", 0.3, "GBP")  # 30.000000000000004 pence, exactly
-    assert metrics.compare(1000.004, "<", 1000.01, "GBP") and metrics.compare(1000.004, ">", 1000, "GBP")
-    with pytest.raises(ValueError, match="not a whole number of pence"):
+    assert metrics.compare(0.3, "==", 0.3, "GBP") and metrics.compare(1000.01, ">", 1000, "GBP")
+    with pytest.raises(ValueError, match=r"money limit .* not a whole number of pence"):
         metrics.compare(1.0, ">=", 0.005, "GBP")
+    with pytest.raises(ValueError, match=r"money figure .* not a whole number of pence"):
+        metrics.compare(0.1 + 0.2, ">", 0.3, "GBP")
+    assert metrics.compare(0.1 + 0.2, ">", 0.3, "ratio")  # not money: compared as the number it is
+
+
+@pytest.mark.contracts
+def test_a_money_limit_is_checked_as_written_in_the_policy_file(tmp_path):
+    """T04 review 59 / R2: YAML parsed 1000.00000000000001 to the float 1000.0, so a limit written
+    with a fraction of a penny passed the whole-pence check; the written text is checked."""
+    from cma import policy as pol
+
+    f = tmp_path / "p.yaml"
+    f.write_text("name: p\nrules:\n  - id: R1\n    description: revenue\n    metric: M2\n    op: '>='\n"
+                 "    threshold: 1000.00000000000001\n    on_fail: refer\n")
+    loaded = pol.load_policy(f)
+    assert loaded["rules"][0]["threshold"] == 1000.0  # what YAML parses it to
+    with pytest.raises(pol.PolicyError, match="must be a whole number of pence"):
+        pol.evaluate([_money(1000.0)], loaded)
+    f.write_text(f.read_text().replace("1000.00000000000001", "1000.50"))
+    assert pol.evaluate([_money(1000.5)], pol.load_policy(f)).rules[0].outcome.value == "pass"
+
+
+def test_a_stored_money_figure_that_is_not_whole_pence_is_not_replayed():
+    """T04 review 59 / R2, R53: a stored figure from an earlier release's float arithmetic can be a
+    fraction of a penny; its band would need a comparison in fractions of a penny, so only the
+    policy can say."""
+    from cma import policy as pol
+    from cma.models import PolicyResult, RuleOutcome, RuleResult
+
+    rule = RuleResult(rule_id="R1", description="revenue", metric_id="M2", requirement="r", outcome=RuleOutcome.PASS,
+                      detail="d", op=">=", threshold=1000.0, unit="GBP")
+    stored = PolicyResult(policy_name="p", policy_sha256="", rules=[rule], overall=RuleOutcome.PASS)
+    with pytest.raises(pol.OutcomeUnknown, match="stored value is not a whole number of pence"):
+        pol.reevaluate(stored, [_money(2000.0000001)], [_money(2001.0)])
 
 
 def test_a_stored_money_limit_that_is_not_whole_pence_is_not_replayed():
