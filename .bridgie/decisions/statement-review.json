@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 285,
+  "next_id": 286,
   "decisions": [
     {
       "id": "D1",
@@ -5714,6 +5714,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T00:03:34.509Z"
+    },
+    {
+      "id": "D285",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (src/cma/firm.py:66 defaults the lock on. src/cma/cli.py:79-86 reads it once before building the client, src/cma/graph.py:263-278 records the dispatch value, and src/cma/mcp_server.py:40-78 gates startup and ASGI creation. The hosted API accepts an unchecked authorization override at src/cma/llm.py:98-110, and the CLI graph invocation at src/cma/cli.py:92 can send remote traces under the lock.); P18 fail (invariants-5.log confirms the graph-input override cases, sequential graph reuse, 503 retry checks, MCP entry points and real HTTP bind-spy cases. src/cma/llm.py:92-110 and :131-135 still let a direct hosted caller authorize construction or dispatch without a current firm configuration reading.); major: The public hosted API trusts caller-supplied authorization. Direct dispatch accepts a bare boolean, and both constructors accept an unlocked configuration object without checking whether it came from the current run. at src/cma/llm.py:98; major: The offline CLI can still export LangGraph traces. The lock gates the hosted model and MCP but leaves the graph's environment-driven LangSmith callback enabled, including for graph nodes that process statement data. at src/cma/cli.py:92; major: The producer's API compatibility claim omits the removal of both standalone ASGI factories when the lock is off. Existing embedders now fail at app construction. at src/cma/mcp_server.py:70; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T00:06:35.103Z"
     }
   ]
 }
