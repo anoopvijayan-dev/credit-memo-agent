@@ -335,3 +335,32 @@ def test_cma_review_refuses_an_unknown_case(home):
     result = CliRunner().invoke(app, ["review", "0123456789abcdef", "--no-browser"])
     assert result.exit_code == 2
     assert "no case" in result.output
+
+
+def test_the_port_is_claimed_alone_where_the_platform_allows_it(monkeypatch):
+    """R33: on Windows a socket bound without SO_EXCLUSIVEADDRUSE can be bound again by another
+    program, which would take requests meant for the workspace; the server claims its port
+    alone wherever the platform has the option."""
+    import socket as socketmod
+
+    from cma.review import server
+
+    calls = []
+
+    class Sock:
+        def setsockopt(self, *args):
+            calls.append(args)
+
+    monkeypatch.setattr(socketmod, "SO_EXCLUSIVEADDRUSE", 0x7FFF_FFFB, raising=False)
+    server._claim_port_alone(Sock())
+    assert calls == [(socketmod.SOL_SOCKET, 0x7FFF_FFFB, 1)]
+    monkeypatch.delattr(socketmod, "SO_EXCLUSIVEADDRUSE")
+    calls.clear()
+    server._claim_port_alone(Sock())
+    assert calls == []
+    # Here (no such option), a server still binds and serves as before.
+    srv = server._bind(0)
+    try:
+        assert srv.server_address[0] == server.LOOPBACK
+    finally:
+        srv.server_close()

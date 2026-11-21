@@ -24,6 +24,7 @@ import errno
 import hmac
 import json
 import secrets
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
@@ -152,6 +153,19 @@ class _Handler(BaseHTTPRequestHandler):
 class _HTTPServer(ThreadingHTTPServer):
     allow_reuse_address = False  # never share a port another listener holds
     daemon_threads = True
+
+    def server_bind(self) -> None:
+        # On Windows a port bound without SO_EXCLUSIVEADDRUSE can be bound again by another
+        # program on this machine, which would then take requests meant for the workspace,
+        # its token among them. Elsewhere a second listener needs both sockets to agree.
+        _claim_port_alone(self.socket)
+        super().server_bind()
+
+
+def _claim_port_alone(sock) -> None:
+    option = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+    if option is not None:  # Windows only
+        sock.setsockopt(socket.SOL_SOCKET, option, 1)
 
 
 class ReviewServer:
