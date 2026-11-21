@@ -1,0 +1,101 @@
+{
+  "task": "T14",
+  "criteria": [
+    {
+      "id": "R32",
+      "tier": "adversarial",
+      "check": "store.new_case (src/cma/store.py:443-490) resolves the root, refuses a git tree first, calls sync_folder (store.py:182-207) and gives the warning through warn/SyncFolderWarning before ensure_root makes anything (store.py:454-463), then appends sync_folder_warning as log entry 2 under the same writer as case_created (store.py:483-487), removing the folder if that append fails (store.py:488-490). The only production caller, `cma case new` (src/cma/cli.py:500-515), prints the warning to stderr through rich escape. Per-client path fixtures (POSIX, Windows, OneDrive env vars, Dropbox info.json, symlink, lookalike names) and the end-to-end CLI tests ran and passed in specified-3.log and contracts-4.log, including test_the_warning_comes_before_the_case_root_itself_is_made and test_case_new_in_a_synced_folder_warns_first_and_logs_the_warning for all four clients.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-228/specified-3.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-231/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-231/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-231/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-231/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-231/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-231/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-231/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/store.py",
+      "line": 454,
+      "criterion": "R32",
+      "claim": "new_case resolves the case root before calling sync_folder, and the Dropbox info.json roots and OneDrive env roots are never resolved (store.py:195-196). If one of those configured roots runs through a symlink, a resolved root inside it does not match, and its resolved name may not be a client name. So the sync_folder docstring's 'a symlink is followed' covers only a symlinked case root, not a symlinked sync root.",
+      "repro": "On Linux, make ~/Dropbox a symlink to /data/dbx, have ~/.dropbox/info.json name {\"personal\":{\"path\":\"/home/ann/Dropbox\"}}, and set CMA_HOME=~/Dropbox/cma. firm.case_root() returns /data/dbx/cma. _within(/data/dbx/cma, /home/ann/Dropbox) is False, and no part of /data/dbx/cma is a client name, so `cma case new` makes the case with no warning and no sync_folder_warning entry."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/store.py",
+      "line": 163,
+      "criterion": "R32",
+      "claim": "_dropbox_roots catches only OSError and ValueError. A deeply nested info.json raises RecursionError from json.loads, which then escapes `cma case new` as a raw error, though the comment says an unreadable file 'names nothing'. Path.home() (store.py:188) is also unguarded and raises RuntimeError when HOME is unset and there is no passwd entry.",
+      "repro": "Write ~/.dropbox/info.json as '[' * 100000 + ']' * 100000, then run `cma case new`. json.loads raises RecursionError, which is not caught at store.py:165-166, so the command fails instead of creating the case."
+    },
+    {
+      "severity": "minor",
+      "file": null,
+      "line": null,
+      "criterion": "R32",
+      "claim": "claim.json is inaccurate in places. files_changed lists only README.md and tests/test_sync_folder.py, but the diff also changes src/cma/store.py and src/cma/cli.py. Note (5) says ensure_root makes the root and cases/ before the warning, but commit 1304c14 changed that and the code now warns first (store.py:451-463). The 0.17 ms performance claim comes from an ad-hoc command that the runner did not run, so it is unproven.",
+      "repro": "Compare claim.json files_changed and notes with `git diff e7c6b17 --stat` and store.py:451-463. No runner tier log contains the perf_counter command."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_sync_folder.py",
+      "line": 51,
+      "criterion": "R32",
+      "claim": "Detection goes by folder name only, so a folder that a client syncs in place under an ordinary name is missed. The tests even fix one such path as not synced: /Users/ann/Documents/cases (NOT_SYNCED). On macOS, iCloud Drive's 'Desktop & Documents Folders' option syncs ~/Documents, and the default case root is cwd/private/cma. The README's known limits cover this only as 'a folder synced under any other name'.",
+      "repro": "On a Mac with iCloud Desktop & Documents turned on, run `cma case new` from ~/Documents/project with CMA_HOME unset. The root /Users/<u>/Documents/project/private/cma contains no client name, so there is no warning and no log entry, yet iCloud uploads the case."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
