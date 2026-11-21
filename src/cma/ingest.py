@@ -478,72 +478,50 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
     extra_amounts: list[int] = []  # a readable amount in a record that cannot be read whole
     parsed: list[tuple[int, str, date | None, str, float | None, float | None]] = []
     seen: dict[str, int] = {}
-    # Date order and the running balance are checked as each record is read (revision 30,
-    # T04 review 54), both ways at once: which way the file runs (newest first or oldest
-    # first) is known from its first and last dates only, so the problems of each way are
-    # kept and the way the file runs decides which are reported.
-    order = {"up": [], "down": []}  # out-of-order dates, read oldest first or newest first
-    chain = {"up": [], "down": []}  # balances that do not follow, either way
-    last = {"dated": None, "balanced": None}  # the latest record with a date, with a balance
-
-    def follow(line: int, d: date | None, amount: float | None, balance: float | None) -> None:
-        if d is not None:
-            if last["dated"] is not None:
-                before_line, before = last["dated"]
-                if d < before:
-                    order["up"].append(f"line {line}: date {d} is out of order (after {before})")
-                if before < d:
-                    order["down"].append(f"line {before_line}: date {before} is out of order (after {d})")
-            last["dated"] = (line, d)
-        if balance is not None:
-            if last["balanced"] is not None:
-                before_line, before_amount, before_balance = last["balanced"]
-                if amount is not None and not follows(float_pence(before_balance), float_pence(amount),
-                                                      float_pence(balance)):
-                    chain["up"].append(
-                        f"line {line}: running balance {balance:.2f} does not follow from previous "
-                        f"{before_balance:.2f} {'+' if amount >= 0 else '-'} {abs(amount):.2f}")
-                if before_amount is not None and not follows(float_pence(balance), float_pence(before_amount),
-                                                             float_pence(before_balance)):
-                    chain["down"].append(
-                        f"line {before_line}: running balance {before_balance:.2f} does not follow from previous "
-                        f"{balance:.2f} {'+' if before_amount >= 0 else '-'} {abs(before_amount):.2f}")
-            last["balanced"] = (line, amount, balance)
-
-    def check(i: int, r: dict) -> None:
+    def check(i: int, r: dict, readable: set | None = None) -> None:
         """One record's own values, checked as it is read; i is its line in the file, blank
-        lines counted."""
-        if None in r:
+        lines counted. `readable`: for a record that cannot be read whole, the fields that
+        can be, each checked as in a whole record (T04 review 56); such a record is not
+        kept as a transaction."""
+        whole = readable is None
+        can = (lambda f: True) if whole else (lambda f: f in readable)
+        if whole and None in r:
             add("line", f"line {i}: more fields than the header has columns")
-        tid = (r["id"] or "").strip()
-        if not tid:
-            add("line", f"line {i}: empty id")
-        elif tid in seen:
-            add("line", f"line {i}: duplicate id {tid} (first on line {seen[tid]})")
-        else:
-            seen[tid] = i
-        raw_date = (r["date"] or "").strip()
-        try:
-            d = date.fromisoformat(raw_date)
-            if len(raw_date) != 10:
-                raise ValueError
-        except ValueError:
-            add("line", f"line {i}: date {r['date']!r} is not YYYY-MM-DD")
-            d = None
-        if d and d > today:
-            add("line", f"line {i}: date {d} is in the future")
-        amount, balance = _number(r["amount"]), _number(r["balance"])
-        for field, value, raw in (("amount", amount, r["amount"]), ("balance", balance, r["balance"])):
-            if value is None and _over_limit(raw):
+        tid = (r["id"] or "").strip() if can("id") else ""
+        if can("id"):
+            if not tid:
+                add("line", f"line {i}: empty id")
+            elif tid in seen:
+                add("line", f"line {i}: duplicate id {tid} (first on line {seen[tid]})")
+            else:
+                seen[tid] = i
+        d = None
+        if can("date"):
+            raw_date = (r["date"] or "").strip()
+            try:
+                d = date.fromisoformat(raw_date)
+                if len(raw_date) != 10:
+                    raise ValueError
+            except ValueError:
+                add("line", f"line {i}: date {r['date']!r} is not YYYY-MM-DD")
+                d = None
+            if d and d > today:
+                add("line", f"line {i}: date {d} is in the future")
+        values = {}
+        for field, example in (("amount", "-1150.00"), ("balance", "2304.17")):
+            if not can(field):
+                continue
+            raw = r[field]
+            values[field] = _number(raw)
+            if values[field] is None and _over_limit(raw):
                 add("limit", f"line {i}: {field} {shown(raw)} is {AT_LIMIT}; no figure could be reported to the penny")
-        if amount is None and not _over_limit(r["amount"]):
-            add("line", f"line {i}: amount {shown(r['amount'])} is not a plain number like -1150.00 "
-                            "(under £10,000,000,000,000)")
-        if balance is None and not _over_limit(r["balance"]):
-            add("line", f"line {i}: balance {shown(r['balance'])} is not a plain number like 2304.17 "
-                            "(under £10,000,000,000,000)")
-        parsed.append((i, tid, d, (r["description"] or "").strip(), amount, balance))
-        follow(i, d, amount, balance)
+            elif values[field] is None:
+                add("line", f"line {i}: {field} {shown(raw)} is not a plain number like {example} "
+                                "(under £10,000,000,000,000)")
+        if whole:
+            parsed.append((i, tid, d, (r["description"] or "").strip(), values["amount"], values["balance"]))
+        elif values.get("amount") is not None:
+            extra_amounts.append(float_pence(values["amount"]))  # it still counts toward the flows
 
     any_record = False
     for line, row, problem in records:
@@ -560,29 +538,35 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         if row is not None and set(REQUIRED) <= problem.readable:
             check(line, row)
         elif row is not None:
-            for field in ("amount", "balance"):
-                raw = row.get(field)
-                if field not in problem.readable:
-                    continue
-                if _over_limit(raw):
-                    add("limit", f"line {line}: {field} {shown(raw)} is {AT_LIMIT}; no figure could "
-                        "be reported to the penny")
-                elif field == "amount" and (value := _number(raw)) is not None:
-                    extra_amounts.append(float_pence(value))
+            check(line, row, problem.readable)
         break
     if not any_record:
         raise StatementError(path, ["no transactions"])
 
     # Banks export newest first or oldest first. Decide from the dates, then insist
     # the whole file runs one way.
+    # Checks that relate records to one another are made once reading has stopped (revision
+    # 31): which way the file runs, decided from its dates, whether the dates keep to it, and
+    # whether each balance follows from the one before.
     dates = [d for _, _, d, _, _, _ in parsed if d]
-    way = "down" if dates and dates[0] > dates[-1] else "up"
-    if way == "down":
+    if dates and dates[0] > dates[-1]:
         parsed.reverse()
-    for text in (order[way] if way == "up" else reversed(order[way])):
-        add("line", text)
-    for text in (chain[way] if way == "up" else reversed(chain[way])):
-        add("line", text)
+    prev_date: date | None = None
+    for line, _, d, _, _, _ in parsed:
+        if d and prev_date and d < prev_date:
+            add("line", f"line {line}: date {d} is out of order (after {prev_date})")
+        prev_date = d or prev_date
+
+    prev_balance: float | None = None
+    for line, _, _, _, amount, balance in parsed:
+        if None not in (amount, balance, prev_balance) and not follows(
+                float_pence(prev_balance), float_pence(amount), float_pence(balance)):
+            add("line",
+                f"line {line}: running balance {balance:.2f} does not follow from previous {prev_balance:.2f} "
+                f"{'+' if amount >= 0 else '-'} {abs(amount):.2f}"
+            )
+        if balance is not None:
+            prev_balance = balance
 
     for name in flows_at_limit([float_pence(a) for _, _, _, _, a, _ in parsed if a is not None] + extra_amounts):
         add("flow", f"{name} totals {AT_LIMIT}: no figure could be reported to the penny")  # each named

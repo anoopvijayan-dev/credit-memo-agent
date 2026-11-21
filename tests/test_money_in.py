@@ -1624,57 +1624,6 @@ def test_a_foreign_row_with_a_bad_byte_left_open_stops_the_import(tmp_path):
 
 
 @pytest.mark.contracts
-def test_the_running_balance_is_checked_as_each_record_is_read(tmp_path, monkeypatch):
-    """T04 review 54: the running balance was checked only once every record had been read."""
-    reads = [0]
-    at_first = []
-    real_next, real_follows = ingest._Feed.__next__, ingest.follows
-
-    def counted(self):
-        reads[0] += 1
-        return real_next(self)
-
-    def watched(*a):
-        if not at_first:
-            at_first.append(reads[0])
-        return real_follows(*a)
-
-    monkeypatch.setattr(ingest._Feed, "__next__", counted)
-    monkeypatch.setattr(ingest, "follows", watched)
-    rows = [f"T{k},2026-01-01,A,1.00,{k + 1}.00" for k in range(5000)]
-    csv = tmp_path / "s.csv"
-    csv.write_text("id,date,description,amount,balance\n" + "\n".join(rows) + "\n")
-    ingest.load_csv(csv, today=date(2026, 6, 1))
-    assert at_first and at_first[0] <= 4
-
-
-@pytest.mark.contracts
-def test_both_balance_checks_run_with_no_second_record_read_ahead(tmp_path, monkeypatch):
-    """T04 review 55: each record was held back until the next was read, so the newest-first
-    balance check ran two records ahead. Records are handed out as read: both checks between
-    the first two records run when the second is read (header, two records: three lines)."""
-    reads = [0]
-    calls = []
-    real_next, real_follows = ingest._Feed.__next__, ingest.follows
-
-    def counted(self):
-        reads[0] += 1
-        return real_next(self)
-
-    def watched(*a):
-        calls.append(reads[0])
-        return real_follows(*a)
-
-    monkeypatch.setattr(ingest._Feed, "__next__", counted)
-    monkeypatch.setattr(ingest, "follows", watched)
-    rows = [f"T{k},2026-01-{k + 1:02d},A,1.00,{k + 1}.00" for k in range(20)]
-    csv = tmp_path / "s.csv"
-    csv.write_text("id,date,description,amount,balance\n" + "\n".join(rows) + "\n")
-    ingest.load_csv(csv, today=date(2026, 6, 1))
-    assert len(calls) >= 2 and calls[1] <= 2  # header, then the two records
-
-
-@pytest.mark.contracts
 def test_a_bad_byte_under_a_repeated_blank_column_is_still_found(tmp_path):
     """T04 review 55: two blank header names collapse in a row's dict, so a clean cell under the
     second hid a bad byte under the first; bad bytes are found by the record's own cells."""
@@ -1682,3 +1631,42 @@ def test_a_bad_byte_under_a_repeated_blank_column_is_still_found(tmp_path):
     csv.write_bytes(b"id,date,description,amount,balance,,\nT1,2026-01-01,A,1.00,1.00,CAF\xe9,clean\n")
     with pytest.raises(ingest.StatementError, match="line 2: not UTF-8"):
         ingest.load_csv(csv, today=date(2026, 6, 1))
+
+
+
+@pytest.mark.contracts
+def test_records_are_related_to_one_another_once_reading_has_stopped(tmp_path, monkeypatch):
+    """Revision 31 (T04 review 56): date order and the running balance relate records to one
+    another, and are checked from the records read once reading has stopped, never during
+    it; each record's own values are checked as it is read."""
+    reads = [0]
+    at_balance, at_value = [], []
+    real_next, real_follows, real_number = ingest._Feed.__next__, ingest.follows, ingest._number
+
+    def counted(self):
+        reads[0] += 1
+        return real_next(self)
+
+    monkeypatch.setattr(ingest._Feed, "__next__", counted)
+    monkeypatch.setattr(ingest, "follows", lambda *a: at_balance.append(reads[0]) or real_follows(*a))
+    monkeypatch.setattr(ingest, "_number", lambda raw: at_value.append(reads[0]) or real_number(raw))
+    rows = [f"T{k},2026-01-01,A,1.00,{k + 1}.00" for k in range(50)]
+    csv = tmp_path / "s.csv"
+    csv.write_text("id,date,description,amount,balance\n" + "\n".join(rows) + "\n")
+    ingest.load_csv(csv, today=date(2026, 6, 1))
+    assert at_value[0] <= 2 and at_balance and min(at_balance) == 51
+
+
+@pytest.mark.contracts
+def test_every_readable_field_of_a_record_that_cannot_be_read_whole_is_checked(tmp_path):
+    """T04 review 56: a record with a field too long to read had only its money cells checked;
+    its readable id, date, amount and balance are each checked as in a whole record."""
+    csv = tmp_path / "s.csv"
+    csv.write_text("id,date,amount,balance,description\nT1,2026-01-01,1.00,1.00,A\n"
+                   "T1,2026-13-01,x,y," + "D" * 200_000 + "\n")
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    shown = str(e.value)
+    assert "line 3: a field is too long to read (description)" in shown
+    assert "line 3: duplicate id T1" in shown and "line 3: date '2026-13-01' is not YYYY-MM-DD" in shown
+    assert "line 3: amount 'x' is not a plain number" in shown and "line 3: balance 'y' is not a plain number" in shown
