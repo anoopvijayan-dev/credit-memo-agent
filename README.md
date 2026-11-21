@@ -51,6 +51,10 @@ cma resume case-7 --checkpoint-db private/reviews.sqlite
 # (git-ignored, as are *.csv, memo files, evidence files and databases anywhere).
 cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out private/mine.csv
 
+# Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
+# first entry that was changed, removed, reordered or left half written.
+cma case check private/cma/cases/<id>
+
 # Choose the categorisation table (src/cma/rules/<id>.yaml; default v1). v1 is the
 # original table, frozen; v2 adds real UK acquirers, gateways, marketplaces, delivery
 # platforms, lenders and merchant cash advance providers, own pots and savings, cash
