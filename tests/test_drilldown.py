@@ -359,3 +359,74 @@ def test_p8_the_lines_page_holds_description_text_only_escaped(home, tmp_path, s
     page = page.decode()
     assert status == 200 and desc not in page and escape(desc, quote=True) in page
     assert _lines(srv, figure="M25")["lines"][1]["description"] == desc
+
+
+# --- hardening: the new entry points' checks, and a share's inputs ---------------------------
+
+
+def _raw(srv, path, headers):
+    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=10)
+    try:
+        conn.request("GET", path, headers=headers)
+        r = conn.getresponse()
+        return r.status, r.read()
+    finally:
+        conn.close()
+
+
+@pytest.mark.contracts
+def test_the_lines_entry_points_refuse_a_request_without_the_token_or_the_loopback_host(home, tmp_path, serve):
+    case_id, _ = _case(tmp_path)
+    srv = serve(case_id)
+    host = f"127.0.0.1:{srv.port}"
+    for path in ("/lines?figure=M2", "/api/lines?figure=M2"):
+        assert _raw(srv, path, {"Host": host})[0] == 403  # no token
+        assert _raw(srv, path, {"Host": host, "X-CMA-Token": "wrong"})[0] == 403
+        assert _raw(srv, path, {"Host": "evil.example", "X-CMA-Token": srv.token})[0] == 403
+        assert _raw(srv, path + f"&token={srv.token}", {"Host": host, "Origin": "http://evil.example"})[0] == 403
+        status, _ = _raw(srv, path + f"&token={srv.token}", {"Host": host})
+        assert status == 200
+
+
+@pytest.mark.contracts
+def test_an_unforeseen_failure_in_the_lines_is_answered_500_naming_nothing(home, tmp_path, serve, monkeypatch):
+    from cma.review import drilldown
+
+    case_id, _ = _case(tmp_path)
+    srv = serve(case_id)
+
+    def boom(*a, **k):
+        raise RuntimeError("CARD SETTLEMENT STRIPE secret")
+
+    monkeypatch.setattr(drilldown, "lines_behind", boom)
+    for path in ("/lines?figure=M2", "/api/lines?figure=M2"):
+        status, _, body = _get(srv, path)
+        assert status == 500 and b"STRIPE" not in body
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("seed", range(10))
+def test_p2_a_share_s_inputs_give_the_figure(home, tmp_path, serve, seed):
+    rng = random.Random(seed)
+    words = ["FPS CREDIT ACME LTD INV 1", "FPS CREDIT BETA LTD INV 2", "FPS CREDIT GAMMA LTD INV 3",
+             "STRIPE PAYOUT", "XQZ 4471", "IWOCA LOAN", "PAYPAL REFUND", "INTEREST PAID"]
+    out = io.StringIO()
+    w = csv.writer(out, lineterminator="\n")
+    w.writerow(["id", "date", "description", "amount", "balance"])
+    balance = 0
+    for n in range(rng.randint(2, 20)):
+        p = rng.randint(1, 500_000)
+        balance += p
+        w.writerow([f"L{n + 1}", f"2026-01-{n + 1:02d}", rng.choice(words), f"{p / 100:.2f}", f"{balance / 100:.2f}"])
+    case_id, folder = _case(tmp_path, out.getvalue())
+    srv = serve(case_id)
+    by = {m.id: m for m in overrides.case_figures(folder)["main"].metrics}
+    for fid in ("M15", "M16", "M26"):
+        m = by[fid]
+        d = _lines(srv, figure=fid)
+        money = [i for i in d["inputs"] if i.get("figure") is None]
+        if m.value is None or not m.evidence:
+            continue
+        num, den = _pence(money[0]["display"]), _pence(money[-1]["display"])
+        assert den == metrics.lines_total(overrides.case_figures(folder)["main"].statement, m.evidence)
+        assert metrics._ratio(num, den, 2, 100) == m.value
