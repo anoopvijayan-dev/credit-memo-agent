@@ -1,0 +1,944 @@
+diff --git a/README.md b/README.md
+index 8f19be8..cb5969b 100644
+--- a/README.md
++++ b/README.md
+@@ -93,6 +93,15 @@ cma case resolve-override <id> 3 --confirm --name "Pat"   # or --drop
+ # the page comes back with the figures, indicators and policy check recomputed.
+ cma review <id>                                   # --no-browser to only print the URL
+ 
++# Preview the pack before sign-off: the memo-ready sections in the order of the memo field
++# map (by default the 13 fields in src/cma/memo_fields/memo_fields.yaml; a firm's own
++# memo_fields.yaml at the case root replaces it), each figure followed by its id, fields
++# with no figure marked for the underwriter and left empty, the illustrative policy check
++# (label first) while show_policy_verdict is on, the demo stamp on a demo case, the
++# grounding guard's verdict and the snapshot hash a sign-off is bound to. It writes no
++# file, only a preview entry in the case log. Exit 1 when the text fails the guard.
++cma case preview <id>
++
+ # Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
+ # first entry that was changed, removed, reordered or left half written.
+ cma case check private/cma/cases/<id>
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index ec17c0d..c5c7a0f 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -673,6 +673,40 @@ def case_figures(case_id: str = typer.Argument(..., metavar="CASE", help="The ca
+                           f"({s.why}); not applied until confirmed or dropped")
+ 
+ 
++@case_app.command("preview")
++def case_preview(case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed.")):
++    """Print the pack's memo sections, in the memo field map's order, the policy check while
++    show_policy_verdict is on, the grounding guard's verdict and the snapshot hash a sign-off
++    will be bound to (R22, R26, R28). Writes no file: only a preview entry in the case log.
++    Exit 1 when the text fails the grounding guard, 2 when the case cannot be previewed."""
++    from . import pack, store
++
++    with _case_errors():
++        folder = store.case_folder(case_id)
++        try:
++            p = pack.build_preview(folder, case_id)
++        except ReconciliationError as e:  # R3: no figures, so no sections
++            console.print(f"[red]Refused.[/red] {escape(str(e))}")
++            raise typer.Exit(code=2) from None
++        except (pack.FieldMapError, pack.PreviewError, StatementError, AmountError, RulesetError,
++                ThresholdsError, PolicyError) as e:
++            console.print(f"[red]Refused.[/red] {escape(str(e))}; nothing was recorded.")
++            raise typer.Exit(code=2) from None
++    # The text quotes the case's own figures only; printed as it is, never read as markup.
++    console.print(p.text, markup=False, highlight=False, soft_wrap=True)
++    if not p.grounded:
++        console.print("[red]The text fails the grounding guard[/red]; no pack can be signed off from "
++                      "this preview (R28):")
++        for account, number, why in p.findings():
++            console.print(f"  account {escape(account)}: {escape(number or '-')}: {escape(why)}", markup=True)
++    else:
++        console.print("Grounding guard: every number is a figure or a policy threshold, with its id.")
++    console.print(f"snapshot {p.snapshot}")
++    console.print(f"recorded as case log entry {p.position}; nothing else was written")
++    if not p.grounded:
++        raise typer.Exit(code=1)
++
++
+ @case_app.command("purge")
+ def case_purge(
+     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
+diff --git a/src/cma/memo_fields/__init__.py b/src/cma/memo_fields/__init__.py
+new file mode 100644
+index 0000000..58e9855
+--- /dev/null
++++ b/src/cma/memo_fields/__init__.py
+@@ -0,0 +1 @@
++"""The packaged memo field map (memo_fields.yaml): the reply's 13 fields, which a firm can replace."""
+diff --git a/src/cma/memo_fields/memo_fields.yaml b/src/cma/memo_fields/memo_fields.yaml
+new file mode 100644
+index 0000000..d955e67
+--- /dev/null
++++ b/src/cma/memo_fields/memo_fields.yaml
+@@ -0,0 +1,89 @@
++# The memo field map (R26, R27): the fields of the credit memo the pack's sections follow,
++# in this order. By default, the 13 fields the underwriter listed in the reply of 2026-11-16.
++# A firm can replace this file with its own memo_fields.yaml at the case root (or the path
++# firm.yaml names).
++#
++# Fields per entry:
++#   id        a short key: lower-case letters and _
++#   title     the field's name, as the section heading
++#   figures   the figure ids the field shows (M1 to M28); none means the field is left
++#             empty and marked for the underwriter (R27)
++#   template  one or more sentences; {Mn} is replaced by the figure as the memo quotes it,
++#             followed by its id ("£55,000 [M2]"), and {period_start} / {period_end} by the
++#             statement's first and last dates. Every figure listed is used, and nothing else.
++# Write no numbers in a template: the grounding guard reads every number in the pack's
++# text, and a number that is not a figure with its id stops the pack (R28).
++# The recommendation, credit history and key risks are judgement fields: they never map a
++# figure, whatever the policy check shows (R24).
++
++name: reply_2026_11_16
++fields:
++  - id: business_details
++    title: Business details
++
++  - id: loan_request
++    title: Loan request
++
++  - id: trading_history
++    title: Trading history
++    figures: [M1, M4]
++    template: >-
++      The statements run from {period_start} to {period_end}, covering {M1} months. Revenue
++      moved {M4}, comparing the latest quarter with the earliest.
++
++  - id: monthly_turnover
++    title: Monthly turnover and credits
++    figures: [M2, M18, M3, M17, M25, M26]
++    template: >-
++      Total revenue was {M2}, including cash deposits of {M18}, and averaged {M3} a month.
++      Total money in was {M17}, of which {M25} is unexplained, {M26} of money in.
++
++  - id: balances
++    title: Average and minimum balances
++    figures: [M27, M5, M6]
++    template: >-
++      The average end-of-day balance was {M27} and the lowest balance {M5}. The account
++      closed overdrawn on {M6} days.
++
++  - id: existing_commitments
++    title: Existing commitments
++    figures: [M8, M21]
++    template: >-
++      Loan and merchant cash advance repayments totalled {M8}, and lending drawdowns paid in
++      totalled {M21}.
++
++  - id: returned_direct_debits
++    title: Returned direct debits
++    figures: [M7]
++    template: >-
++      Returned direct debits in the period: {M7}.
++
++  - id: vat_and_hmrc
++    title: VAT and HMRC
++    figures: [M12, M13, M14, M23]
++    template: >-
++      VAT paid was {M12}, with {M13} late or missed VAT payments. PAYE paid was {M14}, and
++      HMRC repayments received were {M23}.
++
++  - id: director_loans_and_transfers
++    title: Director loans and transfers between the business's accounts
++    figures: [M20, M11, M19]
++    template: >-
++      Director and shareholder funding paid in was {M20}, and owner drawings were {M11}.
++      Own-account transfers in were {M19}.
++
++  - id: credit_history
++    title: Credit history
++
++  - id: affordability
++    title: Affordability
++    figures: [M9, M10, M28]
++    template: >-
++      Net operating cash flow was {M9}, giving debt service cover after owner drawings of
++      {M10}. Including the proposed facility, debt service cover is {M28}.
++
++  - id: key_risks
++    title: Key risks
++
++  - id: recommendation
++    title: Recommendation
+diff --git a/src/cma/pack.py b/src/cma/pack.py
+new file mode 100644
+index 0000000..56d8c7f
+--- /dev/null
++++ b/src/cma/pack.py
+@@ -0,0 +1,391 @@
++"""The preview (C6; R22, R24, R25, R26, R27, R28, R48, R56, P14, P20).
++
++`cma case preview` builds what a sign-off will be bound to, before anything is written:
++
++- the memo-ready sections, in the order of the memo field map (memo_fields.yaml at the case
++  root, or the path firm.yaml names, or the packaged map of the reply's 13 fields). Each
++  field's sentence template is filled in from the figures layer's figures, each figure as
++  the memo quotes it, to the whole pound (R2), followed by its id ("£55,000 [M2]"). A field
++  with no figure mapped to it is left empty and marked for the underwriter (R27), and the
++  recommendation and the other judgement fields always are (R24);
++- while show_policy_verdict is on (the default), a policy-check section after the memo
++  fields, which no field maps to: the illustrative label as its first line, then for each
++  account the overall outcome and each rule, the figure tagged [Mn] and the threshold tagged
++  [Rn] after a limit word (R25). With it off, no outcome and no rule result (R56);
++- on a demo case, the demo stamp, saying the case demonstrates the mechanism and is not an
++  applicant file (R48);
++- the grounding guard's verdict over that text, each account's sentences against its own
++  figures and policy result (R28, P14);
++- the snapshot hash, over every input R22 names: each account's statement hash, the ruleset,
++  the firm rules file, the profile, the override log position, the thresholds, the memo field
++  map, the packaged policy's hash, the show_policy_verdict setting and the package version.
++
++Nothing here does arithmetic on money: figures come from overrides.case_figures and the
++outcome from policy.evaluate. The preview writes no file; it appends one `preview` entry to
++the case log, holding the snapshot and the hashes it is made of (R42), while it holds the
++case, so every input it reads is the case as one writer saw it.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import re
++import string
++from dataclasses import dataclass, field
++from importlib import resources
++from pathlib import Path
++from typing import Any
++
++import yaml
++
++from . import firm, guard, overrides, policy, store
++from .categorise import active_ruleset
++from .models import GuardResult, Metric, PolicyResult, RuleResult, format_value
++
++DEFAULT_FIELD_MAP_NAME = "memo_fields.yaml"
++DEFAULT_FIELD_MAP_SOURCE = f"cma/memo_fields/{DEFAULT_FIELD_MAP_NAME}"
++EVENT = "preview"
++FIGURE_IDS = frozenset(f"M{i}" for i in range(1, 29))
++PERIOD_PLACEHOLDERS = frozenset({"period_start", "period_end"})
++FIELD_ID = re.compile(r"[a-z][a-z_]{0,63}")
++FIELD_KEYS = frozenset({"id", "title", "figures", "template"})
++MAP_KEYS = frozenset({"name", "fields"})
++# Judgement fields: the underwriter's, never a figure's (R24).
++JUDGEMENT_FIELDS = frozenset({"recommendation"})
++
++FOR_UNDERWRITER = "For the underwriter: no figure is mapped to this field; it is left empty."
++DEMO_STAMP = ("Demonstration case: this demonstrates the mechanism and is not an applicant file. "
++              "It holds synthetic data or the owner's own statements.")
++POLICY_TITLE = "Policy check (illustrative)"
++OPS = {">=": "at least", "<=": "at most", ">": "more than", "<": "less than", "==": "exactly the limit of"}
++
++
++class FieldMapError(ValueError):
++    """The memo field map is malformed; no preview is built from it."""
++
++
++class PreviewError(ValueError):
++    """The case cannot be previewed (no statement yet); nothing was recorded."""
++
++
++# --- the memo field map -----------------------------------------------------------------
++
++
++@dataclass(frozen=True)
++class MemoField:
++    id: str
++    title: str
++    figures: tuple[str, ...] = ()
++    template: str | None = None
++
++    @property
++    def for_underwriter(self) -> bool:
++        return not self.figures
++
++
++@dataclass(frozen=True)
++class FieldMap:
++    name: str
++    source: str
++    sha256: str
++    fields: tuple[MemoField, ...]
++
++
++def default_field_map_text() -> str:
++    return resources.files("cma.memo_fields").joinpath(DEFAULT_FIELD_MAP_NAME).read_text(encoding="utf-8")
++
++
++def _placeholders(template: str, where: str) -> list[str]:
++    names = []
++    try:
++        parsed = list(string.Formatter().parse(template))
++    except ValueError as e:
++        raise FieldMapError(f"{where}: the template's braces do not pair up ({e})") from None
++    for _literal, name, spec, conversion in parsed:
++        if name is None:
++            continue
++        if spec or conversion:
++            raise FieldMapError(f"{where}: placeholder {{{name}}} takes no format; write it as {{{name}}}")
++        names.append(name)
++    return names
++
++
++def parse_field_map(text: str, source: str) -> FieldMap:
++    """Validate a memo field map, refusing it naming the first problem."""
++    try:
++        raw = yaml.load(text, Loader=firm._UniqueKeyLoader)
++    except firm._RepeatedKey as e:
++        raise FieldMapError(f"{source}: the key {e.key!r} is given more than once; keep one") from None
++    except yaml.YAMLError as e:
++        mark = getattr(e, "problem_mark", None)
++        at = f" (line {mark.line + 1})" if mark is not None else ""
++        raise FieldMapError(f"{source}: not valid YAML{at}") from None
++    if not isinstance(raw, dict):
++        raise FieldMapError(f"{source}: not a mapping with a fields list")
++    if unknown := sorted(set(map(str, raw)) - MAP_KEYS):
++        raise FieldMapError(f"{source}: unknown key {unknown[0]!r}; use name and fields")
++    name = raw.get("name", "memo_fields")
++    if not isinstance(name, str) or not name.strip():
++        raise FieldMapError(f"{source}: name must be text")
++    items = raw.get("fields")
++    if not isinstance(items, list) or not items:
++        raise FieldMapError(f"{source}: no fields")
++    fields: list[MemoField] = []
++    seen: set[str] = set()
++    for n, item in enumerate(items, start=1):
++        where = f"{source}: field {n}"
++        if not isinstance(item, dict):
++            raise FieldMapError(f"{where}: not a mapping")
++        if unknown := sorted(set(map(str, item)) - FIELD_KEYS):
++            raise FieldMapError(f"{where}: unknown key {unknown[0]!r}; use id, title, figures and template")
++        fid = item.get("id")
++        if not isinstance(fid, str) or not FIELD_ID.fullmatch(fid):
++            raise FieldMapError(f"{where}: id must be lower-case letters and _")
++        where = f"{source}: field {fid}"
++        if fid in seen:
++            raise FieldMapError(f"{where}: given more than once")
++        seen.add(fid)
++        title = item.get("title")
++        if not isinstance(title, str) or not title.strip() or "\n" in title:
++            raise FieldMapError(f"{where}: title must be one line of text")
++        figures = item.get("figures", [])
++        if figures is None:
++            figures = []
++        if not isinstance(figures, list) or not all(isinstance(f, str) for f in figures):
++            raise FieldMapError(f"{where}: figures must be a list of figure ids")
++        if bad := [f for f in figures if f not in FIGURE_IDS]:
++            raise FieldMapError(f"{where}: {bad[0]!r} is not a figure id (M1 to M28)")
++        if len(set(figures)) != len(figures):
++            raise FieldMapError(f"{where}: a figure is listed more than once")
++        template = item.get("template")
++        if figures and fid in JUDGEMENT_FIELDS:
++            raise FieldMapError(f"{where}: a judgement field maps no figure; it is the underwriter's (R24)")
++        if not figures:
++            if template is not None:
++                raise FieldMapError(f"{where}: a template needs the figures it shows listed")
++            fields.append(MemoField(fid, title.strip()))
++            continue
++        if not isinstance(template, str) or not template.strip():
++            raise FieldMapError(f"{where}: the figures it shows need a template")
++        used = _placeholders(template, where)
++        if unknown := [u for u in used if u not in figures and u not in PERIOD_PLACEHOLDERS]:
++            raise FieldMapError(f"{where}: placeholder {{{unknown[0]}}} is not one of its figures, "
++                                "{period_start} or {period_end}")
++        if unused := [f for f in figures if f not in used]:
++            raise FieldMapError(f"{where}: {unused[0]} is listed but the template does not show it")
++        fields.append(MemoField(fid, title.strip(), tuple(figures), " ".join(template.split())))
++    return FieldMap(name.strip(), source, hashlib.sha256(text.encode("utf-8")).hexdigest(), tuple(fields))
++
++
++def load_field_map(config: firm.FirmConfig | None = None) -> FieldMap:
++    """The firm's field map when the case root has one (firm.yaml can name another), or the
++    packaged one. A file firm.yaml names that is not there is refused, never replaced by the
++    packaged map: the firm chose that file."""
++    config = config or firm.load()
++    path = config.memo_fields_path
++    if config.names_path("memo_fields") or path.exists():
++        try:
++            text = path.read_text(encoding="utf-8")
++        except FileNotFoundError:
++            raise FieldMapError(f"{path}: no such file") from None
++        except (OSError, UnicodeDecodeError) as e:
++            raise FieldMapError(f"{path}: cannot be read ({e.__class__.__name__})") from None
++        return parse_field_map(text, str(path))
++    return parse_field_map(default_field_map_text(), DEFAULT_FIELD_MAP_SOURCE)
++
++
++# --- section text -------------------------------------------------------------------------
++
++
++def quote(m: Metric) -> str:
++    """A figure as the memo quotes it, to the whole pound (R2), followed by its id."""
++    return f"{m.display()} [{m.id}]"
++
++
++def field_sentence(f: MemoField, metrics: list[Metric], start: str, end: str) -> str:
++    by_id = {m.id: m for m in metrics}
++    values = {fid: quote(by_id[fid]) for fid in f.figures}
++    return f.template.format(**values, period_start=start, period_end=end)
++
++
++def _limit(value: float | None, unit: str, rule_id: str) -> str:
++    return f"{format_value(value, unit)} [{rule_id}]"
++
++
++def rule_sentence(r: RuleResult, by_id: dict[str, Metric]) -> str:
++    """One rule's line in the policy-check section: its outcome, the figure tagged [Mn] and
++    each limit tagged [Rn] after a limit word, so the guard can tell a limit from a figure."""
++    m = by_id[r.metric_id]
++    head = f"- {r.rule_id} ({m.id} {m.name}): {r.outcome.value}."
++    if m.value is None:
++        return (f"{head} {m.name} cannot be computed: n/a [{m.id}]; the policy says "
++                f"{r.outcome.value} when the figure is missing.")
++    req = f"the rule requires {OPS.get(r.op, r.op)} {_limit(r.threshold, r.unit, r.rule_id)}"
++    if r.refer_below is not None:
++        req += f", referred below {_limit(r.refer_below, r.unit, r.rule_id)}"
++    if r.refer_above is not None:
++        req += f", referred above {_limit(r.refer_above, r.unit, r.rule_id)}"
++    return f"{head} {m.name} is {quote(m)}; {req}."
++
++
++@dataclass
++class AccountPreview:
++    account: str
++    statement_sha256: str
++    start: str
++    end: str
++    metrics: list[Metric]
++    policy: PolicyResult | None  # None while the policy check is hidden (R56)
++    sentences: dict[str, str]  # field id -> its sentence, for the fields figures map to
++    policy_lines: list[str]
++    guard: GuardResult | None = None
++
++
++@dataclass
++class Preview:
++    case: str
++    demo: bool
++    field_map: FieldMap
++    accounts: list[AccountPreview]
++    policy_shown: bool
++    inputs: dict[str, Any]
++    snapshot: str
++    text: str = ""
++    position: int | None = None  # the case log position of the preview's entry
++    fields: list[dict[str, Any]] = field(default_factory=list)
++
++    @property
++    def grounded(self) -> bool:
++        return all(_grounded(a.guard) for a in self.accounts)
++
++    def findings(self) -> list[tuple[str, str, str]]:
++        """(account, the number as written or the citation, why) for every guard finding."""
++        out = []
++        for a in self.accounts:
++            g = a.guard
++            if g is None:
++                continue
++            out += [(a.account, f.number_text, f.reason) for f in g.unmatched]
++            out += [(a.account, mid, "quoted without its id") for mid in g.missing_citations]
++        return out
++
++
++def _grounded(g: GuardResult | None) -> bool:
++    return g is not None and not g.unmatched and not g.missing_citations
++
++
++def _text(p: Preview, only: str | None = None) -> str:
++    """The pack's memo-ready text: every account's sentences, or `only` that account's (what
++    the guard reads against that account's figures)."""
++    accounts = [a for a in p.accounts if only is None or a.account == only]
++    several = len(p.accounts) > 1
++    out = ["# Credit memo sections", ""]
++    if p.demo:
++        out += [f"> {DEMO_STAMP}", ""]
++    for f in p.field_map.fields:
++        out += [f"## {f.title}", ""]
++        if f.for_underwriter:
++            out += [f"_{FOR_UNDERWRITER}_", ""]
++            continue
++        for a in accounts:
++            prefix = f"Account {a.account}: " if several else ""
++            out += [prefix + a.sentences[f.id], ""]
++    if p.policy_shown:
++        out += [f"## {POLICY_TITLE}", "", policy.ILLUSTRATIVE_LABEL, ""]
++        for a in accounts:
++            if several:
++                out += [f"### Account {a.account}", ""]
++            out += [*a.policy_lines, ""]
++    return "\n".join(out).rstrip() + "\n"
++
++
++def _fields(p: Preview) -> list[dict[str, Any]]:
++    return [{"id": f.id, "title": f.title, "figures": list(f.figures), "for_underwriter": f.for_underwriter,
++             "text": {a.account: a.sentences[f.id] for a in p.accounts} if f.figures else {}}
++            for f in p.field_map.fields]
++
++
++# --- the snapshot -----------------------------------------------------------------------
++
++
++def _file_sha(path: Path) -> str | None:
++    try:
++        return hashlib.sha256(path.read_bytes()).hexdigest()
++    except FileNotFoundError:
++        return None
++
++
++def snapshot_hash(inputs: dict[str, Any]) -> str:
++    blob = json.dumps(inputs, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
++    return hashlib.sha256(blob).hexdigest()
++
++
++def snapshot_inputs(folder: Path, entries, figures: dict[str, overrides.CaseFigures], profile: dict[str, Any],
++                    config: firm.FirmConfig, field_map: FieldMap, thresholds_sha256: str,
++                    policy_sha256: str) -> dict[str, Any]:
++    """Every input R22 names, as hashes and counts only: never a name or a description."""
++    from . import __version__
++
++    ruleset = active_ruleset()
++    records = overrides._read_records(folder, entries)
++    return {
++        "statements": {a: f.statement_sha256 for a, f in figures.items()},
++        "ruleset": {"id": ruleset.id, "sha256": ruleset.sha256},
++        "firm_rules_sha256": _file_sha(config.firm_rules_path),
++        "profile_sha256": store.profile_sha256(profile),
++        "override_log": {"position": len(records), "sha256": _file_sha(Path(folder) / overrides.OVERRIDES)},
++        "thresholds_sha256": thresholds_sha256,
++        "memo_field_map_sha256": field_map.sha256,
++        "policy_sha256": policy_sha256,
++        "show_policy_verdict": bool(config.show_policy_verdict),
++        "package_version": __version__,
++    }
++
++
++# --- the preview --------------------------------------------------------------------------
++
++
++def _build(folder: Path, case_id: str, entries) -> Preview:
++    from .review.summary import case_thresholds
++
++    config = firm.load()
++    field_map = load_field_map(config)
++    profile = store.load_profile(folder)
++    every = overrides.case_figures(folder)  # R3: refused when the buckets do not reconcile
++    figures = {a: f for a, f in every.items() if f.statement.transactions}
++    if not figures:
++        raise PreviewError("no statement has been imported into this case yet; nothing to preview")
++    thresholds = case_thresholds(config)
++    rules = policy.load_policy()  # the packaged policy: the workspace and the pack evaluate only it
++    shown = bool(config.show_policy_verdict)
++    accounts = []
++    for a, f in figures.items():
++        start, end = f.statement.start.isoformat(), f.statement.end.isoformat()
++        result = policy.evaluate(f.metrics, rules) if shown else None
++        by_id = {m.id: m for m in f.metrics}
++        accounts.append(AccountPreview(
++            a, f.statement_sha256, start, end, f.metrics, result,
++            {mf.id: field_sentence(mf, f.metrics, start, end) for mf in field_map.fields if mf.figures},
++            [rule_sentence(r, by_id) for r in result.rules] if result else []))
++        if result:
++            accounts[-1].policy_lines.insert(0, f"Overall outcome: {result.overall.value}.")
++    inputs = snapshot_inputs(folder, entries, every, profile, config, field_map, thresholds.sha256,
++                             rules["_sha256"])
++    p = Preview(case_id, bool(profile.get("demo")), field_map, accounts, shown, inputs, snapshot_hash(inputs))
++    for a in accounts:  # R28, P14: each account's text against its own figures and policy result
++        a.guard = guard.check(_text(p, a.account), a.metrics, a.policy)
++    p.text = _text(p)
++    p.fields = _fields(p)
++    return p
++
++
++def build_preview(folder: Path, case_id: str) -> Preview:
++    """Build the case's preview and record it in the case log; write nothing else."""
++    folder = Path(folder)
++    with store._recorded(folder, EVENT) as save:
++        p = _build(folder, case_id, save.entries)
++        p.position = len(save.entries) + 1
++        save.data = {"snapshot": p.snapshot, "inputs": p.inputs, "grounded": p.grounded,
++                     "policy_check": "shown" if p.policy_shown else "hidden"}
++    return p
+diff --git a/tests/test_preview.py b/tests/test_preview.py
+new file mode 100644
+index 0000000..4dc4122
+--- /dev/null
++++ b/tests/test_preview.py
+@@ -0,0 +1,374 @@
++"""T24: `cma case preview` (C6; R22, R24, R25, R26, R27, R28, R48, R56, P14, P20).
++
++The preview builds the pack's memo-ready text from the memo field map and the figures layer,
++the policy-check section while show_policy_verdict is on, the demo stamp, the grounding guard's
++verdict over the text and the snapshot hash over every input R22 names, and writes nothing but
++a preview entry in the case log."""
++
++import hashlib
++import re
++from datetime import date
++
++import pytest
++from typer.testing import CliRunner
++
++import cma
++from cma import case as caselog
++from cma import guard, overrides, pack, policy, store, synth
++from cma.cli import app
++
++STATEMENT = ("id,date,description,amount,balance\n"
++             "L1,2026-01-05,CARD SETTLEMENT STRIPE,500.60,1500.60\n"
++             "L2,2026-01-06,FPS CREDIT J BLOGGS,300.25,1800.85\n"
++             "L3,2026-01-07,IWOCA LOAN REPAYMENT,-100.00,1700.85\n"
++             "L4,2026-02-02,CASH PAID IN,250.10,1950.95\n"
++             "L5,2026-02-20,FPS CREDIT JANE DOE,1000.00,2950.95\n")
++OTHER = ("id,date,description,amount,balance\n"
++         "S1,2026-01-03,CARD SETTLEMENT SUMUP,900.00,900.00\n"
++         "S2,2026-01-20,IWOCA LOAN REPAYMENT,-120.00,780.00\n")
++OUTCOME_WORD = re.compile(r"\b(pass|refer|fail)\b", re.IGNORECASE)
++REPLY_FIELDS = ["business_details", "loan_request", "trading_history", "monthly_turnover", "balances",
++                "existing_commitments", "returned_direct_debits", "vat_and_hmrc",
++                "director_loans_and_transfers", "credit_history", "affordability", "key_risks", "recommendation"]
++END = date(2026, 10, 31)
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    return root
++
++
++def _case(tmp_path, accounts=(("main", STATEMENT),), demo=False):
++    case_id = store.new_case(label="t24", demo=demo)
++    folder = store.case_folder(case_id)
++    for account, body in accounts:
++        src = tmp_path / f"{account}.csv"
++        src.write_text(body, encoding="utf-8")
++        store.import_file(folder, src, "csv", account=account)
++    return case_id, folder
++
++
++def _sections(text: str) -> dict[str, str]:
++    """Each ## section of the text, by heading, with its body."""
++    out, title = {}, None
++    for line in text.splitlines():
++        if line.startswith("## "):
++            title = line[3:]
++            out[title] = ""
++        elif title is not None:
++            out[title] += line + "\n"
++    return out
++
++
++# --- the memo field map ------------------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_packaged_field_map_is_the_replys_13_fields_with_m18_next_to_m2():
++    fm = pack.parse_field_map(pack.default_field_map_text(), pack.DEFAULT_FIELD_MAP_SOURCE)
++    assert [f.id for f in fm.fields] == REPLY_FIELDS
++    turnover = next(f for f in fm.fields if f.id == "monthly_turnover")
++    assert turnover.figures[:2] == ("M2", "M18")
++    assert re.search(r"\{M2\}[^{]*\{M18\}", turnover.template)  # M18 follows M2, nothing between
++    unmapped = {f.id for f in fm.fields if f.for_underwriter}
++    assert unmapped == {"business_details", "loan_request", "credit_history", "key_risks", "recommendation"}
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("text, why", [
++    ("fields:\n  - id: a\n    title: A\n    figures: [M99]\n    template: '{M99}'\n", "not a figure id"),
++    ("fields:\n  - id: a\n    title: A\n    figures: [M2]\n    template: '{M3}'\n", "placeholder {M3}"),
++    ("fields:\n  - id: a\n    title: A\n    figures: [M2, M3]\n    template: '{M2}'\n", "M3 is listed"),
++    ("fields:\n  - id: a\n    title: A\n    figures: [M2]\n", "need a template"),
++    ("fields:\n  - id: a\n    title: A\n    template: 'x'\n", "needs the figures"),
++    ("fields:\n  - id: recommendation\n    title: R\n    figures: [M2]\n    template: '{M2}'\n", "judgement field"),
++    ("fields:\n  - id: a\n    title: A\n  - id: a\n    title: B\n", "more than once"),
++    ("fields:\n  - id: a\n    title: A\n    title: B\n", "more than once"),
++    ("fields:\n  - id: a\n    title: A\n    figures: [M2]\n    template: '{M2:.2f}'\n", "takes no format"),
++    ("fields: []\n", "no fields"),
++    ("fields:\n  - id: a\n    title: A\n    colour: red\n", "unknown key"),
++    ("fields: [\n", "not valid YAML"),
++])
++def test_malformed_field_map_is_refused_naming_the_problem(text, why):
++    with pytest.raises(pack.FieldMapError, match=re.escape(why)):
++        pack.parse_field_map(text, "memo_fields.yaml")
++
++
++def test_firm_field_map_orders_the_sections(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    (home / "memo_fields.yaml").write_text(
++        "fields:\n"
++        "  - id: affordability\n    title: Can they pay\n    figures: [M10]\n    template: 'Cover is {M10}.'\n"
++        "  - id: notes\n    title: Notes\n", encoding="utf-8")
++    p = pack.build_preview(folder, case_id)
++    heads = [line[3:] for line in p.text.splitlines() if line.startswith("## ")]
++    assert heads == ["Can they pay", "Notes", "Policy check (illustrative)"]
++    assert p.inputs["memo_field_map_sha256"] == hashlib.sha256((home / "memo_fields.yaml").read_bytes()).hexdigest()
++    assert p.fields[1] == {"id": "notes", "title": "Notes", "figures": [], "for_underwriter": True, "text": {}}
++
++
++def test_firm_names_a_field_map_that_is_not_there(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    (home / "firm.yaml").write_text("paths:\n  memo_fields: mine.yaml\n", encoding="utf-8")
++    entries = len(caselog.for_case(folder).entries())
++    with pytest.raises(pack.FieldMapError, match="no such file"):
++        pack.build_preview(folder, case_id)
++    assert len(caselog.for_case(folder).entries()) == entries  # nothing recorded
++
++
++# --- R27: unmapped fields, R48: the demo stamp --------------------------------------------
++
++
++def test_r27_unmapped_fields_are_marked_for_the_underwriter_and_left_empty(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    sections = _sections(p.text)
++    for f in p.fields:
++        if f["for_underwriter"]:
++            assert sections[f["title"]].strip() == f"_{pack.FOR_UNDERWRITER}_"
++            assert f["text"] == {}
++        else:
++            assert f["text"]["main"] and "[M" in sections[f["title"]]
++    # M18 sits right after M2 in the turnover field, each followed by its id
++    assert re.search(r"£[\d,]+ \[M2\], including cash deposits of £[\d,]+ \[M18\]", sections["Monthly turnover and credits"])
++
++
++def test_r48_demo_case_is_stamped(home, tmp_path):
++    case_id, folder = _case(tmp_path, demo=True)
++    assert pack.DEMO_STAMP in pack.build_preview(folder, case_id).text
++    case_id, folder = _case(tmp_path)
++    assert pack.DEMO_STAMP not in pack.build_preview(folder, case_id).text
++
++
++# --- P14: the text passes the grounding guard ----------------------------------------------
++
++
++def _assert_grounded(p):
++    assert p.grounded, p.findings()
++    for a in p.accounts:
++        # the account's whole text, as the pack holds it, against its figures and policy result
++        g = guard.check(pack._text(p, a.account), a.metrics, a.policy)
++        assert g.unmatched == [] and g.missing_citations == []
++        assert g.numbers_checked > 0
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("archetype", list(synth.ARCHETYPES))
++@pytest.mark.parametrize("shown", [True, False])
++def test_p14_preview_text_passes_the_guard_on_synthetic_cases(home, tmp_path, archetype, shown):
++    home.mkdir(parents=True, exist_ok=True)
++    (home / "firm.yaml").write_text(f"show_policy_verdict: {str(shown).lower()}\n", encoding="utf-8")
++    for profile in synth.PROFILES:
++        rows, truth = synth.generate(archetype, profile, seed=11, months=12, end=END, features=synth.FEATURES)
++        out = tmp_path / f"{archetype}-{profile}"
++        out.mkdir()
++        csv_path, _ = synth.write(rows, truth, out, stem="case")
++        case_id = store.new_case(label=f"{archetype}-{profile}")
++        folder = store.case_folder(case_id)
++        store.import_file(folder, csv_path, "csv")
++        for a in truth.accounts:  # the second account, with two_accounts
++            store.import_file(folder, out / f"case_{a['key']}.csv", "csv", account=a["key"])
++        store.update_profile(folder, lambda cur, t=truth: {
++            **cur, "directors": list(t.case_profile.get("directors", [])),
++            "own_accounts": list(t.case_profile.get("own_accounts", [])), "proposed_monthly_repayment": "1250.50"})
++        _assert_grounded(pack.build_preview(folder, case_id))
++
++
++@pytest.mark.invariants
++def test_p14_preview_text_passes_the_guard_with_overrides_negatives_and_missing_figures(home, tmp_path):
++    overdrawn = ("id,date,description,amount,balance\n"
++                 "D1,2026-03-01,CARD SETTLEMENT STRIPE,10.40,-50.00\n"
++                 "D2,2026-03-02,DIRECT DEBIT HMRC VAT,-2000.49,-2050.49\n"
++                 "D3,2026-03-09,FPS CREDIT ACME,0.60,-2049.89\n")
++    case_id, folder = _case(tmp_path, accounts=(("main", STATEMENT), ("spare", overdrawn)), demo=True)
++    overrides.add_override(folder, "L2", "revenue_transfer", reason="known customer", name="Ann")
++    store.update_profile(folder, lambda cur: {**cur, "directors": ["Jane Doe"]})
++    p = pack.build_preview(folder, case_id)
++    _assert_grounded(p)
++    assert "Account spare: " in p.text and "Account main: " in p.text  # several accounts, each named
++    assert "n/a [M4]" in p.text  # a figure that cannot be computed, still with its id
++
++
++@pytest.mark.invariants
++def test_p14_a_literal_number_in_a_firm_template_fails_the_guard(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    (home / "memo_fields.yaml").write_text(
++        "fields:\n  - id: a\n    title: A\n    figures: [M2]\n    template: 'Revenue {M2} over 12 months.'\n",
++        encoding="utf-8")
++    p = pack.build_preview(folder, case_id)
++    assert not p.grounded
++    assert any(number == "12" for _a, number, _why in p.findings())
++    entry = caselog.for_case(folder).entries()[-1]
++    assert entry.event == "preview" and entry.data["grounded"] is False
++
++
++# --- P20: the policy check in the text ---------------------------------------------------
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("accounts", [(("main", STATEMENT),), (("main", STATEMENT), ("other", OTHER))])
++def test_p20_preview_text_with_show_policy_verdict_on(home, tmp_path, accounts):
++    case_id, folder = _case(tmp_path, accounts)
++    p = pack.build_preview(folder, case_id)
++    sections = _sections(p.text)
++    title = pack.POLICY_TITLE
++    assert list(sections)[-1] == title  # after the memo fields, and no field maps to it
++    assert sections[title].strip().splitlines()[0] == policy.ILLUSTRATIVE_LABEL  # the label first
++    for heading, body in sections.items():
++        if OUTCOME_WORD.search(body):  # every section that shows an outcome holds the label
++            assert policy.ILLUSTRATIVE_LABEL in body, heading
++    assert sections["Recommendation"].strip() == f"_{pack.FOR_UNDERWRITER}_"  # blank (R24)
++    for a in p.accounts:
++        assert f"Overall outcome: {a.policy.overall.value}." in sections[title]
++        for r in a.policy.rules:
++            assert f"- {r.rule_id} ({r.metric_id} " in sections[title]
++    assert re.search(r"at least 1\.25x \[R2\]", p.text)  # a threshold after a limit word
++    assert p.inputs["show_policy_verdict"] is True
++
++
++@pytest.mark.invariants
++def test_p20_preview_text_with_show_policy_verdict_off(home, tmp_path):
++    home.mkdir(parents=True, exist_ok=True)
++    (home / "firm.yaml").write_text("show_policy_verdict: false\n", encoding="utf-8")
++    case_id, folder = _case(tmp_path, (("main", STATEMENT), ("other", OTHER)))
++    p = pack.build_preview(folder, case_id)
++    assert not OUTCOME_WORD.search(p.text)
++    assert pack.POLICY_TITLE not in p.text and "[R" not in p.text
++    assert all(a.policy is None and not a.policy_lines for a in p.accounts)
++    assert _sections(p.text)["Recommendation"].strip() == f"_{pack.FOR_UNDERWRITER}_"
++    assert caselog.for_case(folder).entries()[-1].data["policy_check"] == "hidden"
++
++
++# --- the snapshot ----------------------------------------------------------------------
++
++
++def _snapshot(folder, case_id):
++    return pack.build_preview(folder, case_id).snapshot
++
++
++@pytest.mark.invariants
++def test_snapshot_changes_with_each_input_r22_names(home, tmp_path, monkeypatch):
++    case_id, folder = _case(tmp_path)
++    base = pack.build_preview(folder, case_id)
++    assert set(base.inputs) == {"statements", "ruleset", "firm_rules_sha256", "profile_sha256", "override_log",
++                                "thresholds_sha256", "memo_field_map_sha256", "policy_sha256",
++                                "show_policy_verdict", "package_version"}
++    assert _snapshot(folder, case_id) == base.snapshot  # nothing changed, same hash
++    seen = {base.snapshot}
++
++    def changed(what):
++        h = _snapshot(folder, case_id)
++        assert h not in seen, f"{what} did not change the snapshot"
++        seen.add(h)
++
++    # statement hashes: another account, then a corrected statement for it
++    src = tmp_path / "o.csv"
++    src.write_text(OTHER, encoding="utf-8")
++    store.import_file(folder, src, "csv", account="other")
++    changed("a new statement")
++    # a statement whose bytes changed under the case (one account cannot be imported twice)
++    stmt = folder / store.STATEMENTS / "other.csv"
++    stmt.write_text(OTHER.replace("900.00,900.00", "900.01,900.01").replace("780.00", "780.01"), encoding="utf-8")
++    changed("a changed statement")
++    # the ruleset
++    monkeypatch.setenv("CMA_RULESET", "v1")
++    changed("the ruleset")
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    seen.discard(_snapshot(folder, case_id))  # back where it was
++    # the firm rules file
++    (home / "firm_rules.yaml").write_text("rules: []\n", encoding="utf-8")
++    changed("the firm rules")
++    # the profile
++    store.update_profile(folder, lambda cur: {**cur, "directors": ["Jane Doe"]})
++    changed("the profile")
++    # the override log position
++    overrides.add_override(folder, "L2", "revenue_transfer", reason="customer", name="Ann")
++    changed("an override")
++    # the thresholds
++    from cma import indicators
++    (home / "indicators.yaml").write_text(indicators.default_thresholds_text() + "\n# the firm's copy\n",
++                                          encoding="utf-8")
++    changed("the thresholds")
++    # the memo field map
++    (home / "memo_fields.yaml").write_text(pack.default_field_map_text() + "\n# the firm's copy\n", encoding="utf-8")
++    changed("the memo field map")
++    # the policy hash
++    shipped = policy.default_policy_text()
++    monkeypatch.setattr(policy, "default_policy_text", lambda: shipped + "\n# edited in place\n")
++    changed("the policy")
++    # the show_policy_verdict setting
++    (home / "firm.yaml").write_text("show_policy_verdict: false\n", encoding="utf-8")
++    changed("show_policy_verdict")
++    # the package version
++    monkeypatch.setattr(cma, "__version__", "9.9.9")
++    changed("the package version")
++
++
++@pytest.mark.invariants
++def test_preview_writes_nothing_but_a_preview_entry(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    overrides.add_override(folder, "L2", "revenue_transfer", reason="known customer J BLOGGS", name="Ann")
++    log_files = {caselog.LOG_NAME, caselog.LOG_NAME + ".head", caselog.LOG_NAME + ".gate", caselog.LOG_NAME + ".lock"}
++
++    def files():
++        return {p.relative_to(home): p.read_bytes() for p in home.rglob("*") if p.is_file() and p.name not in log_files}
++
++    before, entries = files(), caselog.for_case(folder).entries()
++    p = pack.build_preview(folder, case_id)
++    assert files() == before
++    after = caselog.for_case(folder).entries()
++    assert len(after) == len(entries) + 1 and p.position == len(after)
++    e = after[-1]
++    assert e.event == "preview"
++    assert e.data == {"snapshot": p.snapshot, "inputs": p.inputs, "grounded": True, "policy_check": "shown"}
++    # hashes and counts only: no description, name or reason reaches the log
++    assert "BLOGGS" not in str(e.data) and "Ann" not in str(e.data)
++    assert caselog.for_case(folder).verify().ok
++
++
++def test_preview_is_deterministic(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    a, b = pack.build_preview(folder, case_id), pack.build_preview(folder, case_id)
++    assert a.text == b.text and a.snapshot == b.snapshot and a.fields == b.fields
++
++
++def test_preview_of_a_case_with_no_statement_is_refused(home, tmp_path):
++    case_id = store.new_case(label="empty")
++    folder = store.case_folder(case_id)
++    n = len(caselog.for_case(folder).entries())
++    with pytest.raises(pack.PreviewError):
++        pack.build_preview(folder, case_id)
++    assert len(caselog.for_case(folder).entries()) == n
++
++
++# --- the command ----------------------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_cli_case_preview(home, tmp_path):
++    case_id, folder = _case(tmp_path, demo=True)
++    r = CliRunner().invoke(app, ["case", "preview", case_id])
++    assert r.exit_code == 0, r.output
++    entry = caselog.for_case(folder).entries()[-1]
++    assert f"snapshot {entry.data['snapshot']}" in r.output
++    assert "## Monthly turnover and credits" in r.output and pack.DEMO_STAMP in r.output.replace("\n", " ")
++    assert policy.ILLUSTRATIVE_LABEL.split(".")[0] in r.output
++
++
++@pytest.mark.contracts
++def test_cli_case_preview_ungrounded_and_refused(home, tmp_path):
++    case_id, _folder = _case(tmp_path)
++    (home / "memo_fields.yaml").write_text(
++        "fields:\n  - id: a\n    title: A\n    figures: [M2]\n    template: 'Revenue {M2} over 12 months.'\n",
++        encoding="utf-8")
++    r = CliRunner().invoke(app, ["case", "preview", case_id])
++    assert r.exit_code == 1 and "fails the grounding guard" in r.output
++    empty = store.new_case(label="empty")
++    r = CliRunner().invoke(app, ["case", "preview", empty])
++    assert r.exit_code == 2 and "Refused" in r.output
++    (home / "memo_fields.yaml").write_text("fields: [\n", encoding="utf-8")
++    r = CliRunner().invoke(app, ["case", "preview", case_id])
++    assert r.exit_code == 2 and "not valid YAML" in r.output

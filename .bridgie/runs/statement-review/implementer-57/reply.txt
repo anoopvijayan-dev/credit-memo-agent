@@ -1,0 +1,57 @@
+Waiting for the full-suite run to finish.
+
+T24 is built and committed as `03379db` on the T24 worktree branch. The 34 new tests pass, and so did the full suite (2354 passed) and ruff. One caveat: the full-suite run came before a last small fix in `pack._build`, which makes the snapshot record the statement hash of every account. I re-ran only `tests/test_preview.py` after that fix (34 passed), not the full suite.
+
+**What `cma case preview CASE` does:**
+- **Memo field map:** the default (`src/cma/memo_fields/memo_fields.yaml`) is the reply's 13 fields in order, with M18 directly after M2 in the turnover field. A firm's own `memo_fields.yaml` replaces it, and a malformed map is refused, naming the problem.
+- **Section text:** each field's sentences are filled in from the figures layer, money to the whole pound, each figure followed by its id ("£751 [M2]"). Business details, loan request, credit history, key risks and the recommendation are marked for the underwriter and left empty (R27, R24).
+- **Policy check:** while `show_policy_verdict` is on, a section after the memo fields starts with the illustrative label, then the overall outcome and each rule. Each rule line gives the figure tagged `[Mn]` and the threshold tagged `[Rn]` after a limit word. With the setting off, the text has no outcome, rule result or `[Rn]` tag.
+- **Demo stamp:** a demo case gets a stamp saying it demonstrates the mechanism and is not an applicant file.
+- **Grounding guard:** the guard checks each account's text against that account's own figures and policy result. The command exits 1 and lists the findings when the text fails, and 2 when the case can't be previewed.
+- **Snapshot hash:** it covers every input R22 lists. The tests change each one in turn and confirm the hash changes each time.
+- **What it writes:** no file, only one `preview` entry in the case log. The entry holds hashes and counts, never names, descriptions or override reasons.
+
+**Choices worth knowing:**
+- **Rule descriptions:** the policy-check lines don't quote them, because they contain untagged numbers ("at least 12 months") that the guard would reject.
+- **Snapshot gaps:** firm rules aren't built yet (T37), so the snapshot hashes `firm_rules.yaml`'s bytes, or null when the file is absent. The case-log head is left out, because R22 doesn't list it and the preview's own entry would change it.
+- **Failed guard:** a preview that fails the guard is still recorded, with `grounded: false`. T27's sign-off needs to refuse it.
+- **Digit-only account keys:** an account key made only of digits would be read by the guard as an untagged number, so that preview would report itself as failing. This only matters for multi-account cases (Tier 2).
+
+The claim is at `/home/user/credit-memo-agent/.bridgie/runs/statement-review/implementer-57/claim.json`, and matches the block below.
+
+```json
+{
+  "task": "T24",
+  "claims": [
+    {
+      "text": "The packaged memo field map is the reply's 13 fields in order, with M18 right after M2 in the turnover field and business details, loan request, credit history, key risks and the recommendation left unmapped. A malformed field map (an unknown figure, a placeholder mismatch, a judgement field mapping a figure, a repeated key, bad YAML) is refused, naming the problem.",
+      "proof_cmd": "python3 -m pytest -q -p no:cacheprovider tests/test_preview.py -m contracts",
+      "proof_output": "15 passed, 19 deselected in 3.42s"
+    },
+    {
+      "text": "P14, P20 and the snapshot (invariants). The preview text passes the grounding guard, each account against its own figures and policy result: on every synthetic archetype and profile with every feature, with the policy check shown and hidden; on a two-account demo case with an override, a profile name, negative balances and n/a figures. A literal number in a firm's template fails the guard. With show_policy_verdict on, every section showing an outcome holds the illustrative label, the label is the first line of the policy-check section after the memo fields, and the recommendation is empty. With it off, there is no outcome, rule result or [Rn] tag. Changing each R22 input changes the snapshot hash: a statement, the ruleset, the firm rules, the profile, the override log, the thresholds, the field map, the policy hash, show_policy_verdict and the package version. A preview writes no file but one preview entry in the case log, holding hashes only.",
+      "proof_cmd": "python3 -m pytest -q -p no:cacheprovider tests/test_preview.py -m invariants",
+      "proof_output": "13 passed, 21 deselected in 5.15s"
+    },
+    {
+      "text": "All T24 tests pass, including the R27 unmapped-field marks, the R48 demo stamp, determinism, the refusal for a case with no statement, and the cma case preview CLI (exit 0 with the snapshot; exit 1 when the guard fails; exit 2 when refused).",
+      "proof_cmd": "python3 -m pytest -q -p no:cacheprovider tests/test_preview.py",
+      "proof_output": "34 passed in 5.55s"
+    },
+    {
+      "text": "Full suite and lint pass",
+      "proof_cmd": "python3 -m pytest -q -x -p no:cacheprovider && ruff check src tests",
+      "proof_output": "2354 passed in 279.73s (0:04:39)\nAll checks passed!"
+    }
+  ],
+  "files_changed": [
+    "src/cma/pack.py",
+    "src/cma/memo_fields/__init__.py",
+    "src/cma/memo_fields/memo_fields.yaml",
+    "src/cma/cli.py",
+    "tests/test_preview.py",
+    "README.md"
+  ],
+  "notes": "Committed as 03379db on the T24 worktree branch. The full-suite run came before one small edit in pack._build: the snapshot's statement hashes now cover every account the figures layer returns, not only accounts that have lines. tests/test_preview.py was re-run after that edit (34 passed). Design choices: section text quotes money to the whole pound via Metric.display (R2, D230). Policy-check rule lines do not quote the policy's rule descriptions, because they hold untagged digits the guard would refuse. Each rule line gives its id, the figure tagged [Mn], and each limit tagged [Rn] after a limit word. Several accounts are prefixed 'Account <key>:', and each account's text is guarded against its own figures. Known edge, Tier 2 only: an account key made only of digits would be read by the guard as an untagged number, and the preview would report itself ungrounded. Firm rules are not built yet (T37), so the snapshot hashes firm_rules.yaml's bytes, or null when it is absent. The override log position is the number of override records together with the hash of overrides.jsonl. The case-log head is left out of the snapshot because R22 does not list it, and the preview's own entry would change it. When the guard fails, the preview entry is still recorded, with grounded false; T27 is to refuse sign-off on it."
+}
+```
