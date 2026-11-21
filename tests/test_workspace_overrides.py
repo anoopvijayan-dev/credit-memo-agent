@@ -521,3 +521,47 @@ def test_r52_a_form_save_on_a_10000_line_case_shows_the_recomputed_page_within_2
     assert status == 200 and "rests on an override" in html.decode()
     assert 'class="policy-check"' in html.decode() and 'id="judgement-queue"' in html.decode()
     assert elapsed < 2.0, elapsed
+
+
+# --- hardening: the redirect stays in the workspace, and the kept steps give what a fresh run gives
+
+
+@pytest.mark.parametrize("back", ["//evil.example/", "https://evil.example/", "/static/app.js", "/api/case",
+                                  "/\\evil.example", None, 7, "/lines?next=https://evil.example"])
+def test_a_form_never_sends_the_browser_outside_the_workspace_pages(back):
+    from cma.review.edit import back_url
+
+    url = back_url(back, "tok")
+    assert url.startswith(("/?", "/lines?")) and "evil" not in url and "next=" not in url
+    assert "token=tok" in url
+
+
+def test_categorise_with_kept_classes_gives_what_classifying_every_line_gives(home, tmp_path):
+    from cma.categorise import LineOverride, active_ruleset, categorise, classify_lines
+    from cma.ingest import load_csv
+
+    p = tmp_path / "big.csv"
+    p.write_text(_big(2_000))
+    rs_ = active_ruleset()
+    rng = random.Random(7)
+    base = load_csv(p, account_name="main")
+    classes = classify_lines(base, rs_)
+    for _ in range(5):
+        picked = rng.sample(base.transactions, 20)
+        ov = {t.id: LineOverride(sorted(valid_categories(t), key=lambda c: c.value)[0], f"o:{t.id}") for t in picked}
+        a = categorise(load_csv(p, account_name="main"), rs_, overrides=ov)
+        b = categorise(load_csv(p, account_name="main"), rs_, overrides=ov, unoverridden=classes)
+        assert [(t.category, t.rule_id, t.reverses) for t in a.transactions] == \
+               [(t.category, t.rule_id, t.reverses) for t in b.transactions]
+    with pytest.raises(ValueError):
+        categorise(load_csv(p, account_name="main"), rs_, unoverridden=classes[:-1])
+
+
+def test_the_kept_figures_follow_the_rule_table(home, tmp_path, monkeypatch):
+    from cma import overrides
+
+    _case_id, folder = _case(tmp_path)
+    v2 = overrides.case_figures(folder)["main"].statement.by_id()["L4"].category
+    monkeypatch.setenv("CMA_RULESET", "v1")
+    v1 = overrides.case_figures(folder)["main"].statement.by_id()["L4"].category
+    assert v2 == Category.CASH_DEPOSIT and v1 != v2  # no categories kept from the other table

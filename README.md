@@ -79,6 +79,11 @@ cma case resolve-override <id> 3 --confirm --name "Pat"   # or --drop
 # behind it (date, description, amount, balance, category and the rule or override that
 # set it), with the lines' total for a sum (the figure negated for money paid out), or the
 # inputs and method for an average, share, ratio or count.
+# Each line in the judgement queue and the drill-downs has a form to change its category
+# (only categories valid for its direction), with a reason and your typed name; stale
+# overrides are listed to confirm or drop. A save from a page older than the case log is
+# refused as a conflict: reload and save again. Each save is appended to the case log and
+# the page comes back with the figures, indicators and policy check recomputed.
 cma review <id>                                   # --no-browser to only print the URL
 
 # Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the

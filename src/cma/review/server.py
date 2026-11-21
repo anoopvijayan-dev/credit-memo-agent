@@ -129,8 +129,9 @@ class _Handler(BaseHTTPRequestHandler):
         return hmac.compare_digest(given[0].encode("utf-8", "surrogateescape"), want)
 
     def _handle(self) -> None:
-        # No request body is ever read, so a request that carries one, or that is not a GET,
-        # ends its connection: its unread body is never parsed as a further request.
+        # A request that carries a body, or that is not a GET, ends its connection: a body is
+        # read only by a write path (_body, at most MAX_BODY bytes), and an unread one is
+        # never parsed as a further request.
         if (self.command != "GET" or self.headers.get("Content-Length")
                 or self.headers.get("Transfer-Encoding")):
             self.close_connection = True
