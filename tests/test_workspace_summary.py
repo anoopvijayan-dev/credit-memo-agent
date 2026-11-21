@@ -95,14 +95,15 @@ def _pence(display: str) -> int:
 
 
 def _break_reconciliation(monkeypatch, line_id="L2", category=Category.SUPPLIER):
-    """Make one credit land in no money-in bucket, as a bug in the categoriser would: the
-    figures layer then refuses the case (R3)."""
+    """Make one credit (or each of several) land in no money-in bucket, as a bug in the
+    categoriser would: the figures layer then refuses the case (R3)."""
     real = overrides.categorise
+    ids = {line_id} if isinstance(line_id, str) else set(line_id)
 
     def broken(statement, *args, **kwargs):
         out = real(statement, *args, **kwargs)
         for t in statement.transactions:
-            if t.id == line_id:
+            if t.id in ids:
                 t.category = category
         return out
 
@@ -268,6 +269,47 @@ def test_one_account_that_does_not_reconcile_hides_every_account(home, tmp_path,
 
 
 @pytest.mark.contracts
+def test_every_account_that_does_not_reconcile_is_reported_with_its_difference_and_lines(
+        home, tmp_path, serve, monkeypatch):
+    """T19 review 2: with two accounts failing, both differences and every line are reported,
+    not only the first account's (R3)."""
+    case_id, _ = _case(tmp_path)
+    other = ("id,date,description,amount,balance\n"
+             "X1,2026-04-01,INTEREST,1.00,11.00\n"
+             "X2,2026-04-02,FPS CREDIT A N OTHER,20.00,31.00\n")
+    _case(tmp_path, other, account="savings", case_id=case_id)
+    _break_reconciliation(monkeypatch, ["L2", "X2"])
+    srv = serve(case_id)
+    data = _api(srv)
+    assert data["state"] == "not_reconciled" and data["accounts"] == []
+    rec = data["reconciliation"]
+    assert [(x["account"], x["id"]) for x in rec["lines"]] == [("main", "L2"), ("savings", "X2")]
+    assert [(a["account"], a["difference_pence"], a["lines"]) for a in rec["accounts"]] == [
+        ("main", 30025, 1), ("savings", 2000, 1)]
+    assert rec["difference_pence"] == 32025
+    text = " ".join(_parse(_page(srv)).text)
+    assert "30025 pence" in text and "2000 pence" in text and "L2" in text and "X2" in text
+    for shown in ("M17", "Total money in", "Monthly summary"):
+        assert shown not in text, shown
+
+
+@pytest.mark.contracts
+def test_case_figures_reports_every_account_that_does_not_reconcile(home, tmp_path, monkeypatch):
+    case_id, folder = _case(tmp_path)
+    other = ("id,date,description,amount,balance\n"
+             "X1,2026-04-01,INTEREST,1.00,11.00\n"
+             "X2,2026-04-02,FPS CREDIT A N OTHER,20.00,31.00\n")
+    _case(tmp_path, other, account="savings", case_id=case_id)
+    _break_reconciliation(monkeypatch, ["L2", "X2"])
+    with pytest.raises(metrics.ReconciliationError) as e:
+        overrides.case_figures(folder)
+    assert [(f.account, f.difference_pence, f.lines) for f in e.value.failures] == [
+        ("main", 30025, ["L2"]), ("savings", 2000, ["X2"])]
+    assert e.value.lines == ["L2", "X2"] and e.value.difference_pence == 32025
+    assert "main" in str(e.value) and "savings" in str(e.value)
+
+
+@pytest.mark.contracts
 def test_a_case_whose_files_are_refused_shows_no_figures(home, tmp_path, serve):
     case_id, folder = _case(tmp_path)
     overrides.add_override(folder, "L2", "director_funding", reason="loan", name="A Person")
@@ -411,3 +453,16 @@ def test_a_failure_no_refusal_foresees_is_answered_500_naming_nothing(home, tmp_
     for path in ("/", "/api/case"):
         status, _, body = _get(srv, path)
         assert status == 500 and body == b"The case could not be shown.\n"
+
+
+@pytest.mark.contracts
+def test_a_monthly_cell_that_is_n_a_shows_its_reason(home, tmp_path):
+    """T19 review 2: a monthly cell the figures layer cannot carry to the penny shows n/a
+    with the reason it carries, escaped (R2, P8)."""
+    case_id, folder = _case(tmp_path)
+    data = summary.case_summary(folder, case_id)
+    cell = data["accounts"][0]["monthly"][0]["average_balance"]
+    cell.update(value=None, display="n/a", note="Too large to report <b>to the penny</b>.")
+    page = summary.render(data)
+    assert "n/a <span class=\"note\">Too large to report &lt;b&gt;to the penny&lt;/b&gt;.</span>" in page
+    assert "<b>" not in page

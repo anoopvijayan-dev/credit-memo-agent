@@ -9,8 +9,8 @@ and render() turns into the page's HTML:
   then M19 to M25, adding up to total money in M17), every figure, and the monthly summary,
   money to the penny as every table shows it (R2);
 - or, when the money-in buckets do not reconcile with total money in, or a credit is in no
-  bucket or in more than one, no figures at all, for any account: only the difference in
-  pence and the lines involved (R3);
+  bucket or in more than one, in any account, no figures at all, for any account: only each
+  failing account's difference in pence and the lines involved (R3);
 - or, when the case cannot be read (its log broken or being saved, a statement or the
   override log refused), no figures and the refusal.
 
@@ -74,18 +74,23 @@ def _account(f: overrides.CaseFigures) -> dict[str, Any]:
 
 
 def _not_reconciled(e: metrics.ReconciliationError) -> dict[str, Any]:
-    statement = getattr(e, "statement", None)
-    found = statement.by_id() if statement is not None else {}
-    lines = []
-    for line_id in e.lines:
-        t = found.get(line_id)
-        lines.append({"account": getattr(e, "account", None), "id": line_id,
-                      "date": t.date.isoformat() if t else None,
-                      "description": t.description if t else None,
-                      "amount": money_exact(t.amount) if t else None,
-                      "category": t.category.value if t and t.category else None})
+    failures = getattr(e, "failures", None) or [e]
+    lines, accounts = [], []
+    for f in failures:
+        statement = getattr(f, "statement", None)
+        found = statement.by_id() if statement is not None else {}
+        account = getattr(f, "account", None)
+        accounts.append({"account": account, "difference_pence": f.difference_pence,
+                         "difference": metrics.pounds_text(f.difference_pence), "lines": len(f.lines)})
+        for line_id in f.lines:
+            t = found.get(line_id)
+            lines.append({"account": account, "id": line_id,
+                          "date": t.date.isoformat() if t else None,
+                          "description": t.description if t else None,
+                          "amount": money_exact(t.amount) if t else None,
+                          "category": t.category.value if t and t.category else None})
     return {"difference_pence": e.difference_pence, "difference": metrics.pounds_text(e.difference_pence),
-            "lines": lines}
+            "accounts": accounts, "lines": lines}
 
 
 def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
@@ -157,7 +162,8 @@ def _account_html(a: dict[str, Any]) -> str:
         for key, _ in CELLS:
             c = r[key]
             mark = ' <span class="overridden">*</span>' if c["overridden"] else ""
-            cells.append(f'<td class="num">{_e(c["display"])}{mark}</td>')
+            why = f' <span class="note">{_e(c["note"])}</span>' if c["value"] is None and c["note"] else ""
+            cells.append(f'<td class="num">{_e(c["display"])}{why}{mark}</td>')
         part = ' <span class="part">part month</span>' if r["part_month"] else ""
         month_rows.append(f'<tr><td>{_e(r["month"])}{part}</td>{"".join(cells)}</tr>')
     monthly = ('<table class="monthly"><thead><tr><th>Month</th>'
@@ -177,10 +183,14 @@ def _reconciliation_html(r: dict[str, Any]) -> str:
         f'<tr><td>{_e(x["account"])}</td><td>{_e(x["id"])}</td><td>{_e(x["date"])}</td>'
         f'<td>{_e(x["description"])}</td><td class="num">{_e(x["amount"])}</td><td>{_e(x["category"])}</td></tr>'
         for x in r["lines"])
+    per = "".join(
+        f'<p class="account-difference">Account {_e(a["account"])}: the money-in buckets differ from total money in by '
+        f'{_e(a["difference_pence"])} pence ({_e(_pounds(a["difference"]))}), and {_e(a["lines"])} line(s) are '
+        'in no bucket, in more than one, or counted as trading receipts without being money in.</p>'
+        for a in r["accounts"])
     return ('<section class="refusal" id="not-reconciled"><h2>No figures are shown for this case</h2>'
-            f'<p>The money-in buckets do not reconcile with total money in: they differ by '
-            f'{_e(r["difference_pence"])} pence ({_e(_pounds(r["difference"]))}), and {len(r["lines"])} line(s) are in '
-            'no bucket, in more than one, or counted as trading receipts without being money in.</p>'
+            f'<p>The money-in buckets do not reconcile with total money in in {len(r["accounts"])} account(s).</p>'
+            f'{per}'
             '<table class="lines"><thead><tr><th>Account</th><th>Line</th><th>Date</th><th>Description</th>'
             f'<th class="num">Amount</th><th>Category</th></tr></thead><tbody>{rows}</tbody></table></section>')
 

@@ -234,6 +234,20 @@ class CaseFigures:
     marked_cells: set[tuple[str, str]]  # (YYYY-MM, cell) of monthly cells that do
 
 
+class CaseNotReconciled(ReconciliationError):
+    """One or more accounts of a case do not reconcile (R3). Every failing account is
+    computed and reported, each in failures with its account and categorised statement; the
+    difference is the case's total and lines every account's, in account order. account and
+    statement are the first failing account's, as for a case of one account."""
+
+    def __init__(self, failures: list[ReconciliationError]):
+        self.failures = failures
+        ValueError.__init__(self, " ".join(f"Account {f.account}: {f}" for f in failures))
+        self.difference_pence = sum(f.difference_pence for f in failures)
+        self.lines = [line for f in failures for line in f.lines]
+        self.account, self.statement = failures[0].account, failures[0].statement
+
+
 def _figures(statement: Statement, profile: dict[str, Any], applied: dict[str, LineOverride]):
     from . import metrics
 
@@ -256,6 +270,7 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
     statements = {a: _load(folder, a) for a in accounts}
     state = _decide(_read_records(folder, entries), statements)
     out: dict[str, CaseFigures] = {}
+    failed: list[ReconciliationError] = []
     for account in accounts:
         loaded = statements[account]
         if loaded is None:
@@ -265,9 +280,10 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
         bare = statement.model_copy(deep=True)
         try:
             metrics, monthly = _figures(statement, profile, applied)
-        except ReconciliationError as e:  # R3: the caller names the account and its lines
+        except ReconciliationError as e:  # R3: every failing account is named, with its lines
             e.account, e.statement = account, statement
-            raise
+            failed.append(e)
+            continue
         lines = set(applied)
         marked: set[str] = set()
         cells: set[tuple[str, str]] = set()
@@ -276,7 +292,8 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
                 base_metrics, base_monthly = _figures(bare, profile, {})
             except ReconciliationError as e:
                 e.account, e.statement = account, bare
-                raise
+                failed.append(e)
+                continue
             marked = {m.id for m, b in zip(metrics, base_metrics, strict=True) if _rests_on(m, b, lines)}
             base_rows = {r.month: r for r in base_monthly}
             for row in monthly:
@@ -287,6 +304,8 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
         out[account] = CaseFigures(account, sha, statement, metrics, monthly,
                                    {k: v.ref for k, v in applied.items()},
                                    [s for s in state.stale if s.account == account], marked, cells)
+    if failed:  # R3: no figures for any account of the case
+        raise CaseNotReconciled(failed)
     return out
 
 
