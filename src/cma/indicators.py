@@ -456,3 +456,15 @@ def judgement_queue(statement: Statement, indicators: list[Indicator],
                 e["indicator_kinds"].append(ind.kind)
     order = sorted(entries, key=lambda i: (-abs(pence(by_id[i])), pos[i]))
     return [QueueEntry(line_id=i, amount=by_id[i].amount, **entries[i]) for i in order]
+
+
+def case_judgement_queue(accounts: list[tuple[str, Statement, list[QueueEntry]]]) -> list[tuple[str, QueueEntry]]:
+    """One case's judgement queue across its accounts (R15): each account's queue, as
+    judgement_queue() gave it, merged largest amount first (by size, either way), then in
+    account order, then in each queue's own order. Each entry is given with its account."""
+    rows = []
+    for n, (account, statement, queue) in enumerate(accounts):
+        by_id = {t.id: t for t in statement.transactions}
+        rows += [(-abs(pence(by_id[e.line_id])), n, k, account, e) for k, e in enumerate(queue)]
+    rows.sort(key=lambda r: r[:3])
+    return [(account, e) for *_, account, e in rows]

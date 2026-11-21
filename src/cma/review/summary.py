@@ -8,6 +8,14 @@ and render() turns into the page's HTML:
 - for each account, the money-in breakdown (trading receipts M2 with the cash inside it M18,
   then M19 to M25, adding up to total money in M17), every figure, and the monthly summary,
   money to the penny as every table shows it (R2);
+- the judgement queue, listed first: every line a person has to decide, across the case's
+  accounts, largest amount first (R15), each with why it is listed, the indicators that
+  flagged it and, for an ambiguous credit, its candidates and the bucket each would give;
+- for each account, the indicators panel: each indicator with its lines and the thresholds it
+  fired at, a threshold still at its shipped value labelled illustrative (R14). Indicators
+  are raised by the figures layer (indicators.py) from the firm's thresholds file, the case
+  root's indicators.yaml or the path firm.yaml gives, when there is one, and the packaged,
+  illustrative file otherwise;
 - or, when the money-in buckets do not reconcile with total money in, or a credit is in no
   bucket or in more than one, in any account, no figures at all, for any account: only each
   failing account's difference in pence and the lines involved (R3);
@@ -27,10 +35,19 @@ from pathlib import Path
 from typing import Any
 
 from .. import case as caselog
-from .. import metrics, overrides, store
+from .. import firm, metrics, overrides, store
+from .. import indicators as ind
 from ..categorise import RulesetError
 from ..ingest import StatementError
-from ..models import Metric, MonthlyCell, format_value, money_exact
+from ..models import (
+    Indicator,
+    Metric,
+    MonthlyCell,
+    QueueEntry,
+    Transaction,
+    format_value,
+    money_exact,
+)
 
 BREAKDOWN = ("M2", "M19", "M20", "M21", "M22", "M23", "M24", "M25")  # the money-in buckets (R1)
 TOTAL, CASH = "M17", "M18"
@@ -41,6 +58,21 @@ PROFILE_TITLES = {"directors": "Directors", "shareholders": "Shareholders", "own
 CELLS = (("money_in", "Money in"), ("money_out", "Money out"), ("trading_receipts", "Trading receipts"),
          ("average_balance", "Average end-of-day balance"), ("lowest_balance", "Lowest end-of-day balance"),
          ("days_overdrawn", "Days overdrawn"))
+INDICATOR_TITLES = {
+    "large_credit": "Single credit large against typical trading receipts",
+    "single_cash_deposit": "Cash deposit at or above the single-deposit limit",
+    "cash_heavy_month": "Month with cash deposits above a share of its trading receipts",
+    "cash_round_trip": "Cash paid in soon after a similar cash withdrawal",
+    "gambling": "Payment to a gambling operator",
+    "returned_dd": "Returned direct debit",
+    "overdrawn_run": "Run of consecutive overdrawn days",
+    "irregular_acquirer": "Irregular credit from a named acquirer",
+}
+REASON_TITLES = {"unexplained": "unexplained", "ambiguous": "ambiguous",
+                 "possible_own_account_transfer": "possible own-account transfer", "indicator": "flagged"}
+UNIT_SUFFIX = {"pct": "%", "times": " times", "days": " days", "count": ""}
+ILLUSTRATIVE = ("Thresholds marked illustrative are still at the values shipped with this tool; they are "
+                "not your firm's lending policy.")
 
 
 def _figure(m: Metric, marked: set[str]) -> dict[str, Any]:
@@ -59,9 +91,47 @@ def _cell(c: MonthlyCell, overridden: bool) -> dict[str, Any]:
             "lines": len(c.evidence), "overridden": overridden}
 
 
-def _account(f: overrides.CaseFigures) -> dict[str, Any]:
+def _line(t: Transaction) -> dict[str, Any]:
+    return {"id": t.id, "date": t.date.isoformat(), "description": t.description, "amount": money_exact(t.amount),
+            "category": t.category.value if t.category else None, "rule": t.rule_id}
+
+
+def _threshold_shown(value: str, unit: str) -> str:
+    """A threshold as the thresholds file gives it, money to the penny (R2)."""
+    if unit == "GBP":  # value is pounds_text: exact pounds and pence, formatted, never through a float
+        return f"£{Decimal(value):,.2f}"
+    return f"{value}{UNIT_SUFFIX.get(unit, '')}"
+
+
+def _indicator(i: Indicator, lines: dict[str, Transaction]) -> dict[str, Any]:
+    return {"id": i.id, "kind": i.kind, "title": INDICATOR_TITLES.get(i.kind, i.kind), "reason": i.reason,
+            "illustrative": i.illustrative,
+            "thresholds": [{"key": th.key, "value": th.value, "unit": th.unit,
+                            "shown": _threshold_shown(th.value, th.unit), "illustrative": th.illustrative}
+                           for th in i.thresholds],
+            "lines": [_line(lines[x]) for x in i.evidence]}
+
+
+def _queue_entry(account: str, e: QueueEntry, lines: dict[str, Transaction],
+                 kinds: dict[str, str]) -> dict[str, Any]:
+    return {"account": account, "line": _line(lines[e.line_id]), "reasons": list(e.reasons),
+            "indicators": [{"id": i, "kind": kinds[i]} for i in e.indicators],
+            "candidates": [{"rule_id": c.rule_id, "category": c.category.value if c.category else None,
+                            "bucket": c.bucket.value if c.bucket else None} for c in e.candidates],
+            "pairs_with": list(e.pairs_with)}
+
+
+def case_thresholds() -> ind.Thresholds:
+    """The firm's thresholds file when the case root has one (firm.yaml can name another),
+    or the packaged, illustrative one (R14). A malformed file is refused naming its line."""
+    path = firm.load().thresholds_path
+    return ind.load_thresholds(path) if path.exists() else ind.shipped()
+
+
+def _account(f: overrides.CaseFigures, raised: list[Indicator]) -> dict[str, Any]:
     by_id = {m.id: m for m in f.metrics}
     txns = f.statement.transactions
+    lines = {t.id: t for t in txns}
     return {
         "account": f.account,
         "statement_sha256": f.statement_sha256,
@@ -75,6 +145,7 @@ def _account(f: overrides.CaseFigures) -> dict[str, Any]:
                      "end": r.end.isoformat(),
                      **{key: _cell(getattr(r, key), (r.month, key) in f.marked_cells) for key, _ in CELLS}}
                     for r in f.monthly],
+        "indicators": [_indicator(i, lines) for i in raised],
     }
 
 
@@ -108,7 +179,8 @@ def refusal(e: Exception) -> dict[str, Any] | None:
     if isinstance(e, caselog.CaseLogBroken):
         return {"state": "refused", "refusal": f"The case log is broken at entry {e.first_bad}: {e.reason}. "
                                                "No figures are shown until it is resolved."}
-    if isinstance(e, (store.CaseStoreError, StatementError, metrics.AmountError, RulesetError)):
+    if isinstance(e, (store.CaseStoreError, StatementError, metrics.AmountError, RulesetError,
+                      ind.ThresholdsError, firm.FirmConfigError)):
         return {"state": "refused", "refusal": f"{str(e).rstrip('.')}. No figures are shown for this case."}
     if isinstance(e, OSError):
         return {"state": "refused",
@@ -131,7 +203,8 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
     """The case as the workspace shows it, computed afresh from its files."""
     folder = Path(folder)
     out: dict[str, Any] = {"case": case_id, "label": None, "business_name": None, "profile": None,
-                           "state": "shown", "accounts": [], "reconciliation": None, "refusal": None}
+                           "state": "shown", "accounts": [], "queue": [], "thresholds": None,
+                           "reconciliation": None, "refusal": None}
     try:
         profile = store.load_profile(folder)
         out["label"], out["business_name"] = profile.get("label"), profile.get("business_name")
@@ -147,7 +220,22 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
     if refused is not None:
         out.update(refused)
         return out
-    out["accounts"] = [_account(f) for f in figures.values()]
+    try:  # R14: the indicators and the queue, raised by the figures layer
+        thresholds = case_thresholds()
+        raised = {a: ind.raise_indicators(f.statement, thresholds) for a, f in figures.items()}
+    except Exception as e:
+        refused = refusal(e)
+        if refused is None:
+            raise
+        out.update(refused)
+        return out
+    out["thresholds"] = {"source": thresholds.source, "sha256": thresholds.sha256,
+                         "shipped": thresholds.sha256 == ind.shipped().sha256}
+    out["accounts"] = [_account(f, raised[a]) for a, f in figures.items()]
+    queues = [(a, f.statement, ind.judgement_queue(f.statement, raised[a])) for a, f in figures.items()]
+    lines = {a: {t.id: t for t in f.statement.transactions} for a, f in figures.items()}
+    kinds = {a: {i.id: i.kind for i in raised[a]} for a in figures}
+    out["queue"] = [_queue_entry(a, e, lines[a], kinds[a]) for a, e in ind.case_judgement_queue(queues)]
     if not out["accounts"]:
         out["state"] = "empty"
     return out
@@ -217,7 +305,62 @@ def _account_html(a: dict[str, Any], token: str | None = None) -> str:
                + f'</tr></thead><tbody>{"".join(month_rows)}</tbody></table>')
     return (f'<section class="account"><h2>Account {_e(a["account"])}</h2>'
             f'<p class="period">{period}{_e(a["line_count"])} lines</p>'
-            f'<h3>Money in</h3>{breakdown}<h3>Figures</h3>{figures}<h3>Monthly summary</h3>{monthly}</section>')
+            f'<h3>Money in</h3>{breakdown}<h3>Figures</h3>{figures}<h3>Monthly summary</h3>{monthly}'
+            f'{_indicators_html(a["indicators"])}</section>')
+
+
+def _line_cells(x: dict[str, Any]) -> str:
+    return (f'<td>{_e(x["id"])}</td><td>{_e(x["date"])}</td><td>{_e(x["description"])}</td>'
+            f'<td class="num">{_e(x["amount"])}</td><td>{_e(x["category"])}</td>')
+
+
+LINE_HEAD = ('<th>Line</th><th>Date</th><th>Description</th><th class="num">Amount</th><th>Category</th>')
+
+
+def _threshold_html(th: dict[str, Any]) -> str:
+    mark = (' <span class="illustrative">illustrative: the shipped value</span>' if th["illustrative"]
+            else ' <span class="firm">firm threshold</span>')
+    return f'<span class="threshold">{_e(th["key"])} {_e(th["shown"])}{mark}</span>'
+
+
+def _indicators_html(indicators: list[dict[str, Any]]) -> str:
+    """Each indicator with the thresholds it fired at and the lines behind it (R14)."""
+    note = f'<p class="note">{_e(ILLUSTRATIVE)}</p>'
+    if not indicators:
+        return f'<section class="indicators"><h3>Indicators</h3><p>No indicator fired.</p>{note}</section>'
+    parts = []
+    for i in indicators:
+        ths = "; ".join(_threshold_html(th) for th in i["thresholds"])
+        rows = "".join(f"<tr>{_line_cells(x)}</tr>" for x in i["lines"])
+        parts.append(f'<section class="indicator" id="indicator-{_e(i["id"])}"><p><strong>{_e(i["id"])} '
+                     f'{_e(i["title"])}</strong>: {_e(i["reason"])}</p><p>Threshold that fired: {ths}</p>'
+                     f'<table class="lines"><thead><tr>{LINE_HEAD}</tr></thead><tbody>{rows}</tbody></table>'
+                     '</section>')
+    return f'<section class="indicators"><h3>Indicators</h3>{note}{"".join(parts)}</section>'
+
+
+def _candidate_html(c: dict[str, Any]) -> str:
+    bucket = _e(c["bucket"]) if c["bucket"] else '<span class="none">no bucket</span>'
+    return f'{_e(c["rule_id"])} ({bucket})'
+
+
+def _queue_html(queue: list[dict[str, Any]]) -> str:
+    """The judgement queue, listed first, largest amount first (R15)."""
+    if not queue:
+        return ('<section id="judgement-queue"><h2>Judgement queue</h2>'
+                '<p>No line needs a decision.</p></section>')
+    rows = []
+    for e in queue:
+        why = ", ".join(_e(REASON_TITLES.get(r, r)) for r in e["reasons"])
+        flags = ", ".join(f'{_e(i["id"])} {_e(INDICATOR_TITLES.get(i["kind"], i["kind"]))}' for i in e["indicators"])
+        cands = "; ".join(_candidate_html(c) for c in e["candidates"])
+        pairs = ", ".join(_e(p) for p in e["pairs_with"])
+        rows.append(f'<tr><td>{_e(e["account"])}</td>{_line_cells(e["line"])}<td>{why}</td><td>{flags}</td>'
+                    f'<td>{cands}{(" pairs with " + pairs) if pairs else ""}</td></tr>')
+    return ('<section id="judgement-queue"><h2>Judgement queue</h2>'
+            '<p>The lines a person has to decide, largest amount first.</p>'
+            f'<table class="queue"><thead><tr><th>Account</th>{LINE_HEAD}<th>Why listed</th><th>Indicators</th>'
+            f'<th>Candidates</th></tr></thead><tbody>{"".join(rows)}</tbody></table></section>')
 
 
 def _pounds(text: str) -> str:
@@ -264,6 +407,8 @@ def render(summary: dict[str, Any], token: str | None = None) -> str:
     names = [x for x in (summary["business_name"], summary["label"]) if x]
     head = (f'<section id="summary-head"><p class="case-name">{_e(" — ".join(names))}</p></section>'
             if names else "")
+    if summary["state"] == "shown":
+        head += _queue_html(summary.get("queue") or [])  # listed first (R15)
     head += _profile_html(summary.get("profile"))
     state = summary["state"]
     if state == "not_reconciled":
