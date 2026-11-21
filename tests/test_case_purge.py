@@ -191,3 +191,53 @@ def test_cli_finishes_an_interrupted_purge(home, tmp_path, monkeypatch):
     assert second.exit_code == 0, second.output
     assert not [p for p in _all_files(home) if case_id in p]
     assert [line["case"] for line in _ledger(home)] == [case_id]
+
+
+@pytest.mark.contracts
+def test_a_purge_whose_ledger_write_fails_is_recorded_by_purging_again(home, tmp_path, monkeypatch):
+    case_id, folder = _full_case(home, tmp_path)
+    real = store._append_ledger
+
+    def full_disk(*_a):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(store, "_append_ledger", full_disk)
+    with pytest.raises(store.CaseStoreError, match="purge again"):
+        store.purge_case(case_id)
+    assert not folder.exists()
+    monkeypatch.setattr(store, "_append_ledger", real)
+    store.purge_case(case_id)  # the emptied folder marks the unfinished purge
+    assert [line["case"] for line in _ledger(home)] == [case_id]
+    assert not [p for p in _all_files(home) if case_id in p]
+
+
+@pytest.mark.contracts
+def test_a_purge_that_finished_but_kept_its_mark_writes_no_second_ledger_line(home, tmp_path, monkeypatch):
+    case_id = store.new_case()
+    real_rmdir = type(home).rmdir
+    calls = []
+
+    def fail_once(self):
+        calls.append(self)
+        if len(calls) == 1:
+            raise OSError(5, "Input/output error")
+        real_rmdir(self)
+
+    monkeypatch.setattr(type(home), "rmdir", fail_once)
+    with pytest.raises(store.CaseStoreError, match="purge again"):
+        store.purge_case(case_id)
+    store.purge_case(case_id)
+    assert [line["case"] for line in _ledger(home)] == [case_id]
+
+
+@pytest.mark.contracts
+def test_a_purge_racing_another_never_recreates_the_case_or_records_it_twice(home, monkeypatch):
+    case_id = store.new_case()
+    folder = store.case_folder(case_id)
+    store.purge_case(case_id)
+    # A second purge that found the case before the first moved it.
+    monkeypatch.setattr(store, "purge_target", lambda _c, _r=None: folder)
+    with pytest.raises(store.CaseStoreError, match="no case"):
+        store.purge_case(case_id)
+    assert not folder.exists()
+    assert len(_ledger(home)) == 1

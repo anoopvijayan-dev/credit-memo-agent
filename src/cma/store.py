@@ -684,23 +684,76 @@ def purge_case(case_id: str, *, root: Path | None = None, wait: float | None = N
     folder = root / CASES / case_id
     gone = root / CASES / f"{PURGING}{case_id}"
     if target == folder:
-        log = caselog.for_case(folder)
-        moved = False
-        with log.writer(wait=wait):
-            try:
-                os.replace(folder, gone)  # out of use while still held: no writer slips in
-                moved = True
-            except PermissionError:
-                if os.name != "nt":
-                    raise
-        if not moved:  # Windows will not rename a folder whose lock files are open
-            os.replace(folder, gone)
+        try:
+            _take_out_of_use(folder, gone, wait)
+        except FileNotFoundError:
+            # Another purge moved the case first (it was found before that purge renamed
+            # it). Never recreate the folder: finish what that purge left, if anything.
+            if not gone.is_dir():
+                raise CaseStoreError(f"no case {case_id} under {root}") from None
+    # The emptied folder stays, as the mark of an unfinished purge, until the ledger line is
+    # written; a purge stopped at any step is finished by purging the same id again.
     try:
-        _remove_tree(gone)
+        for child in list(gone.iterdir()):
+            if child.is_dir() and not child.is_symlink():
+                _remove_tree(child)
+            else:
+                _unlink_writable(child)
     except OSError as e:
         what = e.strerror or type(e).__name__
         raise CaseStoreError(f"case {case_id} is out of use but some of its files could not be deleted "
                              f"({what}); purge again to finish. Nothing was recorded in the ledger") from None
     record = Purged(case_id, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"), _os_user())
-    _append_ledger(root, {"case": record.case, "purged_at": record.purged_at, "by": record.by})
+    try:
+        if not _ledger_records(root, case_id):  # one line per case, however often it is retried
+            _append_ledger(root, {"case": record.case, "purged_at": record.purged_at, "by": record.by})
+        gone.rmdir()
+    except OSError as e:
+        what = e.strerror or type(e).__name__
+        raise CaseStoreError(f"case {case_id}'s files are deleted but the purge could not be finished "
+                             f"({what}); purge again to record it in the ledger") from None
     return record
+
+
+def _take_out_of_use(folder: Path, gone: Path, wait: float | None) -> None:
+    """Holding the case as a writer, rename it out of use. FileNotFoundError when the case
+    folder is gone (another purge moved it), so nothing is made in its place."""
+    log = caselog.for_case(folder)
+    if not (folder / PROFILE).is_file():
+        raise FileNotFoundError(str(folder))
+    # Lock files are made only for a case that lacks them; a folder that vanished since is
+    # then never recreated (the writer raises FileNotFoundError).
+    create = not (log.gate_path.exists() and log.lock_path.exists())
+    moved = False
+    with log.writer(wait=wait, create=create):
+        if not (folder / PROFILE).is_file():
+            raise FileNotFoundError(str(folder))
+        try:
+            os.replace(folder, gone)  # out of use while still held: no writer slips in
+            moved = True
+        except PermissionError:
+            if os.name != "nt":
+                raise
+    if not moved:  # Windows will not rename a folder whose lock files are open
+        os.replace(folder, gone)
+
+
+def _unlink_writable(path: Path) -> None:
+    try:
+        path.unlink()
+    except PermissionError:  # Windows: a read-only input file (0400)
+        os.chmod(path, FILE_MODE)
+        path.unlink()
+
+
+def _ledger_records(root: Path, case_id: str) -> bool:
+    """Whether the purge ledger already holds a line for `case_id`."""
+    try:
+        text = (root / PURGE_LEDGER).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False
+    for line in text.splitlines():
+        with suppress(ValueError):
+            if json.loads(line).get("case") == case_id:
+                return True
+    return False
