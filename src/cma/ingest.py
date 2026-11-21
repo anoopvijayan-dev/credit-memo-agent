@@ -61,6 +61,36 @@ class StatementError(ValueError):
         super().__init__(f"{path}: {len(problems)} problem(s)\n  " + "\n  ".join(whole + limit + rest))
 
 
+def refusal_parts(e: StatementError, line=None) -> list[str]:
+    """A refusal's problems said without any cell's value, grouped by the kind the loader
+    recorded, never by their text, which can quote a cell (T04 review 22): money in or out at
+    the limit in full; another problem with the whole file by its label; lines at the limit,
+    lines with a field too long to read, then up to ten other line labels. `line`, when given,
+    maps a line of the checked file to the line of the file it came from (an importer's
+    source). Used by the MCP server and the importer contract (R2, R34; T28)."""
+    problems, kinds = e.problems, e.kinds
+    where = line or (lambda n: n)
+
+    def label(text: str) -> str:
+        head = text.split(":", 1)[0]
+        parts = head.split()
+        return f"line {where(int(parts[1]))}" if len(parts) == 2 and parts[0] == "line" and parts[1].isdigit() else head
+
+    def labels(kind: str) -> list[str]:
+        got = {label(x) for x, k in zip(problems, kinds, strict=True) if k == kind}
+        return sorted(got, key=lambda lab: int(lab.split()[1]))
+
+    flows = [x for x, k in zip(problems, kinds, strict=True) if k == "flow"]
+    files = [label(x).split(" (", 1)[0] for x, k in zip(problems, kinds, strict=True) if k == "file"]
+    limit, long_ = labels("limit"), labels("too_long")
+    other = [x for x in labels("line") if x not in limit and x not in long_]
+    parts = flows + files + ([f"amount or balance {AT_LIMIT} on {', '.join(limit)}"] if limit else [])
+    parts += [f"{TOO_LONG} on {', '.join(long_)}"] if long_ else []
+    if other:
+        parts.append(f"other problems on {', '.join(other[:10])}{' and more' if len(other) > 10 else ''}")
+    return parts
+
+
 AMOUNT = re.compile(r"^[-+]?\d+(?:\.\d{1,2})?$")
 SPLIT_COLUMNS = {"paid in", "paid out", "money in", "money out", "debit", "credit"}
 

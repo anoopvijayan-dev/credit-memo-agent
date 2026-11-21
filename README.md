@@ -51,6 +51,41 @@ cma resume case-7 --checkpoint-db private/reviews.sqlite
 # (git-ignored, as are *.csv, memo files, evidence files and databases anywhere).
 cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out private/mine.csv
 
+# A case: a folder under the case root (CMA_HOME, default private/cma; owner-only, and
+# refused inside a git tree that does not ignore it). Each command is logged in the case.
+# A root inside a OneDrive, Dropbox, Google Drive or iCloud Drive folder gets a warning
+# on stderr before the case is made, recorded in the case log: keep cases on a local disk.
+cma case new --demo --label "Cafe trial"          # prints a random case id
+cma case profile <id> --director "Jane Doe" --own-account "ACME HOLDINGS" --proposed-repayment 1500
+cma case import <id> private/statement.csv --format csv
+cma case import <id> "private/Monzo Data Export.csv" --format monzo --account monzo --opening-balance 123.45
+
+# Correct one line's category (only the category; one valid for the line's direction),
+# with a reason and your typed name. The override goes to overrides.jsonl and the case
+# log with your operating-system user and the UTC time. `cma case figures` recomputes
+# every figure from the statements and the whole override log and marks with * each one
+# that rests on an overridden line. An override whose line is gone, or whose statement
+# changed since it was recorded, is stale and not applied until you confirm or drop it.
+cma case override <id> L42 director_funding --reason "director's own transfer" --name "Pat"
+cma case overrides <id>                           # applied, stale, superseded or dropped
+cma case figures <id>
+cma case resolve-override <id> 3 --confirm --name "Pat"   # or --drop
+
+# Open the review workspace for a case: a page served on 127.0.0.1 only, from the next
+# free port from 8765 (--port to choose another). Each start prints a URL with a new
+# random token; a request without it, or whose Host is not 127.0.0.1 and that port, is
+# refused. The page loads only files bundled in the package. Ctrl-C stops it.
+cma review <id>                                   # --no-browser to only print the URL
+
+# Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
+# first entry that was changed, removed, reordered or left half written.
+cma case check private/cma/cases/<id>
+
+# Delete every file of a case (asks first; --yes skips the question). The case root's
+# purge_ledger.jsonl gains one line with only the case id, the UTC time and your
+# operating-system user. A purge stopped part-way is finished by running it again.
+cma case purge <id>
+
 # Choose the categorisation table (src/cma/rules/<id>.yaml; default v1). v1 is the
 # original table, frozen; v2 adds real UK acquirers, gateways, marketplaces, delivery
 # platforms, lenders and merchant cash advance providers, own pots and savings, cash
@@ -142,6 +177,9 @@ tests named after each finding.
 - The categoriser knows the synthetic acquirer names. Card revenue from a real
   acquirer it doesn't recognise lands in M16 and refers the case until a rule is added.
 - Policy thresholds are illustrative. They are not any lender's real policy.
+- The cloud-sync warning knows each client's own folder names, the OneDrive
+  variables Windows sets and Dropbox's info file. A folder synced under any other
+  name, or a network share, is not detected.
 
 ## Data
 
