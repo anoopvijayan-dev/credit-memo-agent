@@ -278,9 +278,10 @@ def generate(
     # The owner props up the account once, half way through.
     if p["capital_in"]:
         mid = starts[len(starts) // 2]
-        # Under v1 OTHER; under v2, which feature truth is for, director funding (D48).
+        # Director funding under v2, the default ruleset (D48, T11); v1 called it OTHER, which
+        # P7 covers. The statement is byte-identical either way; only the truth names it.
         events.append((mid + timedelta(days=14), "FPS CREDIT DIRECTOR CAPITAL INTRODUCED", float(p["capital_in"]),
-                       Category.DIRECTOR_FUNDING if features else Category.OTHER))
+                       Category.DIRECTOR_FUNDING))
 
     # Returned direct debits: a scheduled DD bounces, the bank returns it two days later
     # and charges a fee, and the payee re-presents it a week after the original.
@@ -343,7 +344,7 @@ def generate(
     op = 0.0
     for _, desc, amt, cat in events:
         effective = returned_cat.get(desc, cat) if cat == Category.RETURNED_DD else cat
-        if effective in financing or cat in _NON_TRADING_IN:  # only OTHER without features
+        if effective in financing or cat in _NON_TRADING_IN:  # director funding is non-trading
             continue
         op += amt
     truth.net_operating = round(op, 2)

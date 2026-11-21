@@ -18,7 +18,8 @@ def _t(desc, amount, tid="T1"):
         ("DD BRIDGEPOINT FINANCE LOAN", -1150.0, Category.LOAN_REPAYMENT),
         ("BRIDGEPOINT FINANCE LOAN DRAWDOWN", 20000.0, Category.LOAN_DRAWDOWN),
         ("HMRC VAT", -6200.0, Category.HMRC_VAT),
-        ("HMRC VAT REPAYMENT", 900.0, Category.OTHER),
+        # v2 (the default) newly recognises it (docs/v2-newly-recognised.md); v1 gave OTHER.
+        ("HMRC VAT REPAYMENT", 900.0, Category.HMRC_REPAYMENT),
         ("CARD ACQUIRER SETTLEMENT", 812.4, Category.REVENUE_CARD),
         ("CARD ACQUIRER SETTLEMENT CHARGEBACK", -60.0, Category.SUPPLIER),
         ("FPS CREDIT T WHITTAKER INV4411", 1800.0, Category.REVENUE_TRANSFER),
