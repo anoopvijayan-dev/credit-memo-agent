@@ -1,0 +1,30 @@
+**Verdict: fail.** T43 has one major defect against R14.
+
+The runner ran all 11 tests in `tests/test_workspace_indicators.py`, and all of them passed. I couldn't write `evidence.json` to the run directory because the write was denied, so the evidence is the JSON block at the end of this reply.
+
+- **Major: the firm's thresholds file can be skipped without warning** (`src/cma/review/summary.py:128`).
+  - **What happens:** `case_thresholds()` checks whether the configured path exists. If it doesn't, it quietly uses the packaged thresholds. That includes the case where `firm.yaml` names a firm file under `paths.thresholds`.
+  - **Effect:** a misnamed or moved firm file opens the case with the shipped flags and no refusal. The page doesn't show where the thresholds came from, so the underwriter can't tell the firm's file was ignored.
+  - **Expected:** `cma run --thresholds` refuses a missing file (`indicators.py:111-112`). The design says no case opens with silently different flags (`design.md:1298`, `1423`).
+- **Minor: duplicate indicator ids in multi-account cases.** Indicator ids start again at `I1` for each account. A two-account case gets two `id="indicator-I1"` sections, and a queue entry's `I1` could point to either account's panel.
+- **Minor: unproven performance claim.** The 0.53 s timing for 10,000 lines comes from `scratchpad/perf.py`, which no runner tier ran. The queue also isn't paged, although the design calls for paging at 10,000 lines.
+
+Two things I checked and am not reporting:
+- The queue doesn't include possible own-account transfers yet. That belongs to the later pairing task, which depends on T43.
+- R15 isn't one of this task's requirements.
+
+```json
+{
+  "task": "T43",
+  "criteria": [
+    {"id": "R14", "tier": "adversarial", "check": "Indicators are raised by the figures layer (src/cma/indicators.py:247 raise_indicators) from case_thresholds() (src/cma/review/summary.py:124-128) and shown per account with their lines and every threshold that fired, a shipped-value threshold marked illustrative (summary.py:107-113, 316-338; indicators.py:91-94, 365-369). Runner rows specified:3/contracts:4/invariants:5 show test_a_cash_deposit_at_the_single_deposit_limit..., test_p19_..., test_the_page_lists_the_queue_first..., test_a_firm_threshold_is_not_labelled_illustrative... and test_a_malformed_firm_thresholds_file... PASSED. Gap: when firm.yaml's paths.thresholds names the firm's editable file and that file is missing, summary.py:128 silently raises from the packaged thresholds instead of the firm's file, so the indicators are not raised from the editable file the firm configured (design failure-modes table: 'no case opens with different flags').", "result": "fail", "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-240/specified-3.log"}
+  ],
+  "findings": [
+    {"severity": "major", "file": "src/cma/review/summary.py", "line": 128, "criterion": "R14", "claim": "case_thresholds() falls back to the packaged thresholds whenever the configured path does not exist, including when firm.yaml explicitly names a firm thresholds file (paths.thresholds). A misnamed or moved firm file opens the case with the shipped flags and no refusal, unlike `cma run --thresholds`, which refuses a missing file (indicators.py:111-112, 'no such file'). The page does not show thresholds.source either, so the underwriter has no sign the firm's file was ignored. The design's failure-modes table (design.md:1298, 1423) says no case opens with silently different flags.", "repro": "CMA_HOME=$H; write $H/firm.yaml with 'paths:\\n  thresholds: firm_thresholds.yaml' and do not create that file (the firm meant to lower single_cash_deposit.amount_at_least to 1000.00). Import a statement with a 'CASH PAID IN' credit of 1500.00 under CMA_RULESET=v2, then GET /api/case: state is 'shown', thresholds.source is 'cma/thresholds/indicators.yaml', no single_cash_deposit indicator fires, and the £1,500 deposit is not in the queue. Expected: a refusal naming the missing file, as the CLI gives."},
+    {"severity": "minor", "file": "src/cma/review/summary.py", "line": 333, "criterion": "R14", "claim": "Indicator ids restart at I1 for each account (indicators.py:367), so in a case with two accounts the page has duplicate element ids id=\"indicator-I1\", and a queue entry's 'I1' names an indicator that exists in both accounts' panels.", "repro": "Import two accounts that each raise an indicator, then render /: two <section id=\"indicator-I1\"> elements appear."},
+    {"severity": "minor", "file": null, "line": null, "criterion": null, "claim": "The performance claim (0.529 s for 10,000 lines, within R52) cites scratchpad/perf.py, which no runner tier ran. It is unproven, and so is the unpaged rendering of 5,194 queue rows against the design's paging at 10,000 lines (design.md:1424).", "repro": "No configured tier runs scratchpad/perf.py. A benchmark test under tests/, run by the runner, would prove it."}
+  ],
+  "verdict": "fail",
+  "verifier": {"seat": "reviewer", "adapter": "claude-code", "model": "claude-opus-5-5"}
+}
+```

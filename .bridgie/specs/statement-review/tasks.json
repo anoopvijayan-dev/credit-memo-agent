@@ -288,12 +288,12 @@
         "T08",
         "T09"
       ],
-      "status": "verify",
+      "status": "failed",
       "attempts": 1,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T43",
-      "evidence": null,
-      "escalation": null
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-243/evidence.json",
+      "escalation": "attempt 1 of 3 fail: R14 fail (Indicators are raised by the figures layer (src/cma/indicators.py:247 raise_indicators) from case_thresholds() (src/cma/review/summary.py:124-128) and shown per account with their lines and every threshold that fired, a shipped-value threshold marked illustrative (summary.py:107-113, 316-338; indicators.py:91-94, 365-369). Runner rows specified:3/contracts:4/invariants:5 show test_a_cash_deposit_at_the_single_deposit_limit..., test_p19_..., test_the_page_lists_the_queue_first..., test_a_firm_threshold_is_not_labelled_illustrative... and test_a_malformed_firm_thresholds_file... PASSED. Gap: when firm.yaml's paths.thresholds names the firm's editable file and that file is missing, summary.py:128 silently raises from the packaged thresholds instead of the firm's file, so the indicators are not raised from the editable file the firm configured (design failure-modes table: 'no case opens with different flags').); major: case_thresholds() falls back to the packaged thresholds whenever the configured path does not exist, including when firm.yaml explicitly names a firm thresholds file (paths.thresholds). A misnamed or moved firm file opens the case with the shipped flags and no refusal, unlike `cma run --thresholds`, which refuses a missing file (indicators.py:111-112, 'no such file'). The page does not show thresholds.source either, so the underwriter has no sign the firm's file was ignored. The design's failure-modes table (design.md:1298, 1423) says no case opens with silently different flags. at src/cma/review/summary.py:128; reviewer verdict fail"
     },
     {
       "id": "T21",
