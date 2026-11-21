@@ -563,3 +563,24 @@ def test_an_account_that_is_not_the_same_one_is_added(home, tmp_path, body):
     r = store.import_file(folder, _statement(tmp_path, body, "savings.csv"), "csv", account="savings")
     assert not r.already
     assert [e for e, _ in _events(folder)] == ["case_created", "import", "import"]
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("archetype, profile", [("cafe", "good"), ("trades", "stretched"), ("ecommerce", "poor")])
+def test_p9_holds_for_generated_statements(home, tmp_path, archetype, profile):
+    """P9 over generated statements of each kind of business, not only the small fixtures: a
+    second import of the same file, under any account key, leaves every file of the case and
+    the case log head as the first import left them."""
+    from datetime import date
+
+    from cma import synth
+
+    rows, truth = synth.generate(archetype, profile, end=date(2026, 9, 30))
+    synth.write(rows, truth, tmp_path, stem=archetype)
+    src = tmp_path / f"{archetype}.csv"
+    folder = home / "cases" / store.new_case()
+    store.import_file(folder, src, "csv")
+    head, once = case.for_case(folder).verify().head, _case_state(folder)
+    for account in ("main", "savings"):
+        assert store.import_file(folder, src, "csv", account=account).already
+        assert case.for_case(folder).verify().head == head and _case_state(folder) == once
