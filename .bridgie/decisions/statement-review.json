@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 311,
+  "next_id": 312,
   "decisions": [
     {
       "id": "D1",
@@ -6229,6 +6229,26 @@
       "decided_at": "2026-11-21T01:51:54.807Z",
       "effect": "design approved",
       "created_at": "2026-11-21T01:51:52.628Z"
+    },
+    {
+      "id": "D311",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (src/cma/firm.py:68 defaults the lock on. src/cma/llm.py:79 and :103 gate client creation and requests. src/cma/mcp_server.py:45, :69, :103, :112 and :167 gate native starts, app factories, lifespan, requests and tools. Revision 32 excludes the post-lifespan bind window. Two gaps remain: a separate nested graph invocation skips lock and tracer setup at src/cma/graph.py:527, and final evidence retains the draft lock after a locked resume at src/cma/graph.py:289 and :454.); P5 fail (The runner log records passing hosted redraft and custom-rule collision tests. The masking at src/cma/graph.py:219–222 covers ids and descriptions, but src/cma/policy.py:90 and :107 copy a custom threshold into detail, which reaches both the first prompt and redrafts. A case sentinel that matches that custom limit survives.); P18 fail (The runner log records both real SDK retryable-503 cases, both native transport bind checks, delayed saved-app startup refusal, native app HTTP refusal and both explicit tracer inputs. The native bind window is outside revision 32. The direct tracer tests do not cover a separate nested invocation, whose callback configuration bypasses the filter at src/cma/graph.py:527–539.); major: A separate graph invoked during an unlocked invocation inherits the outer wrapper's tracing decision and bypasses removal of a LangSmith tracer explicitly supplied to the inner run. The callback exclusion covers the caller's callback code itself. The inner graph's handling of its own supplied tracer is part of R29 and P18. at src/cma/graph.py:528; major: Evidence has no record of the effective lock for the resume that finalised the review. The resume wrapper computes the effective lock for tracing, while evidence reports only the saved draft value. at src/cma/graph.py:289; major: A custom policy's numeric limit can carry a case sentinel into the prompt. The rule id and description are masked, but the requirement and detail cells retain the custom limit. at src/cma/graph.py:222; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T01:54:19.470Z"
     }
   ]
 }
