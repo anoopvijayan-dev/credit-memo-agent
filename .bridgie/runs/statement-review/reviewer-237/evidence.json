@@ -1,0 +1,50 @@
+{
+  "task": "T05",
+  "criteria": [
+    {
+      "id": "R5",
+      "tier": "adversarial",
+      "check": "v2: _classify_credit (src/cma/categorise.py:1365-1393) decides a protected verdict first, then makes the credit ambiguous (table ambiguity, or a director name and an own-account name together; candidates are the table's matches plus both profile refs), then lets the profile name decide. Shareholders are merged into directors (store.py:445). v1: classify (categorise.py:1311-1324) runs a protected pass over v1's rules (_v1_protected, categorise.py:1334-1351) whenever a profile name matches. The pass covers returned_dd, hmrc, loan_repayment, loan_drawdown, owner_drawings, and non_trading_in only for DIRECTOR/OWNER/SHAREHOLDER/CAPITAL INTRODUCED/HMRC/REFUND/REVERSAL/own-pot move wording. After that pass comes the both-kinds conflict, then the single name. The invoice-referenced credit L2 becomes profile:director, JANE DOE LOAN becomes v1:loan_drawdown, and the both-kinds credit is a conflict under v1 and v2. The runner's contracts log shows all 19 tests/test_case_profile.py tests passed, including test_a_protected_verdict_outranks_a_profile_name_under_v1/v2 and test_a_both_kinds_credit_is_ambiguous_under_v1_too.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R6",
+      "tier": "adversarial",
+      "check": "_profile_matches (categorise.py:1360) matches own accounts in either direction. Debits go through ruleset.protected (v2) or _v1_protected (v1) before the name, so a loan repayment or returned DD naming an own account keeps its verdict (test P3/P4, M8 = 100.00). OWN_ACCOUNT_TRANSFER is not in REVENUE_CATEGORIES, so these lines stay out of M2. At metrics.py:477-485, own_account_named removes profile-named lines from operating_line in both directions, including a returned DD whose reverses points at such a debit (the leak from the previous review is closed). The sent/back round trip at metrics.py:494-502 also leaves them out. With no profile, operating_line(t) for a debit equals the old eff(t) not in FINANCING test, so M9 is unchanged and the dual_run tier passes (84 tests). test_a_returned_dd_undoing_an_own_account_debit_stays_out_of_m9[v1,v2] passed in the runner.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R13",
+      "tier": "adversarial",
+      "check": "overrides._figures (overrides.py:250-256) passes profile['proposed_monthly_repayment'] to metrics.compute. M28 (metrics.py:533-545) is n/a with the reason when none is given. store._repayment (store.py:346-367) normalises the value to pounds and pence. The workspace summary shows the field (review/summary.py:107-110, 205-219). test_the_proposed_repayment_feeds_m28 and test_without_a_proposed_repayment_m28_is_n_a_with_the_reason passed in the runner.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 119,
+      "criterion": null,
+      "claim": "The categoriser row now lists 'an own-account pairing' in the precedence and says a pairing settles an ambiguous credit. src/cma has no own-account pairing code (R8): a grep for pairing finds only unrelated text in categorise.py and store.py. The README therefore describes behaviour this build does not have.",
+      "repro": "grep -rn 'pair' src/cma/categorise.py src/cma/overrides.py finds no code that pairs a debit with a credit across accounts; compare README.md:119."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 1338,
+      "criterion": "R5",
+      "claim": "_V1_PROTECTED_IN counts only TO/FROM SAVINGS and POT TRANSFER as own-pot move wording. v2's own_pots_savings rule also has SAVINGS TRANSFER, SAVINGS TFR, TFR SAVINGS and TRANSFER SAVINGS, all of which v1's non_trading_in matches through \\bSAVINGS\\b. Under v1 with a director named, a credit 'SAVINGS TRANSFER JANE DOE' therefore becomes director funding, though by the term its move wording is a protected verdict. The producer flagged the list for the owner's confirmation, which is why this is minor.",
+      "repro": "CMA_RULESET=v1, profile directors=['Jane Doe'], credit 'SAVINGS TRANSFER JANE DOE' 10.00 -> profile:director; the same line with 'TO SAVINGS JANE DOE' -> v1:non_trading_in."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
