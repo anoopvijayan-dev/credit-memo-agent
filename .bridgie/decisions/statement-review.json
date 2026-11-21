@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 298,
+  "next_id": 299,
   "decisions": [
     {
       "id": "D1",
@@ -5972,6 +5972,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T01:08:22.208Z"
+    },
+    {
+      "id": "D298",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (src/cma/firm.py:67 defaults the lock on. src/cma/graph.py:283 and :356 tie draft evidence and hosted dispatch to the run reading. src/cma/mcp_server.py:69 and :94 gate exported apps, and :167 gates tool file reads. The native HTTP runners bypass the ASGI gate at :48–78, allowing requests and a delayed bind after the lock changes.); R30 fail (src/cma/graph.py:237 builds the prompt from the placeholder, period and tables. src/cma/metrics.py:295 omits evidence IDs. The custom-rule filter at src/cma/graph.py:189 still admits a rule ID taken from a statement when a custom rule matches the packaged fields compared there but changes its failure action.); P5 fail (The runner passed the hosted custom-policy redraft and referral-band collision tests. src/cma/graph.py:189 and :225 still admit a case sentinel used as a custom rule ID when only on_fail changes. src/cma/policy.py:106 applies that change.); P18 fail (The runner passed both retryable-503 SDK cases, native starts with the lock already on, and delayed startup of a saved app. src/cma/mcp_server.py:48–78 leaves native startup unguarded after its entry check. The bind test holds the lock constant and misses the transition before bind.); major: Native HTTP transports give Uvicorn the raw ASGI app. A lock change after the runner's entry check leaves protocol requests outside the ASGI lock gate and can allow a native bind while locked. at src/cma/mcp_server.py:70; major: The claimed whole-rule comparison omits on_fail and when_missing, allowing custom rules to send case-derived IDs that collide with packaged IDs. at src/cma/graph.py:197; major: The run context treats a distinct graph invocation as an internal LangGraph call when an outer stream is suspended, allowing the second invocation to inherit an unlocked tracing decision. at src/cma/graph.py:507; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T01:11:01.646Z"
     }
   ]
 }
