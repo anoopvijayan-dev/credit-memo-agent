@@ -540,8 +540,7 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
     """Import a bank file into a case: the original into inputs/ by its hash, the converted
     statement into statements/<account>.csv, checked by the statement loader, and one log
     entry (R42). The same file imported again leaves the case unchanged (R39)."""
-    from .importers import monzo
-    from .ingest import StatementError, load_csv
+    from .importers import contract, monzo
 
     folder = Path(folder)
     if fmt not in FORMATS:
@@ -576,7 +575,7 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
             _write_private(converted, b"")  # made 0600 before the importer writes into it
             try:
                 monzo.convert(raw, converted, opening_balance)
-            except monzo.MonzoImportError as e:
+            except contract.ImportRefused as e:  # by line, never a cell's value (T28)
                 raise CaseStoreError(f"import refused: {str(e).replace(str(raw), src.name)}") from None
             out = converted.read_bytes()
         else:
@@ -584,9 +583,11 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
                 raise CaseStoreError("--opening-balance is for a Monzo export; a statement CSV has its balances")
             out = data
         try:
-            stmt = load_csv(statement, account_name=account, data=out)
-        except StatementError as e:
-            raise CaseStoreError(f"import refused: {str(e).replace(str(statement), src.name)}") from None
+            # The statement every importer writes passes the statement loader; a refusal names
+            # lines, never a cell's value (the importer contract, T28).
+            stmt = contract.checked(out, src.name, account_name=account)
+        except contract.ImportRefused as e:
+            raise CaseStoreError(f"import refused: {e}") from None
 
         entry = {"account": account, "format": fmt, "input_sha256": sha,
                  "statement_sha256": hashlib.sha256(out).hexdigest(), "lines": len(stmt.transactions),

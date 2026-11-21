@@ -680,6 +680,7 @@ def test_import_flow_totals_and_balance_chain_come_from_the_figures_layer(monkey
     with pytest.raises(ingest.StatementError, match="line 3: running balance"):
         ingest.load_csv(ok, today=date(2026, 6, 1))
 
+    monkeypatch.undo()  # the importer's own output is checked by the loader (T28)
     src = tmp_path / "m.csv"
     src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance\n"
                    "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n")
@@ -688,8 +689,10 @@ def test_import_flow_totals_and_balance_chain_come_from_the_figures_layer(monkey
     with pytest.raises(monzo.MonzoImportError, match="money in totals"):
         monzo.convert(src, tmp_path / "o.csv")
     monkeypatch.setattr(monzo, "flows_at_limit", lambda amounts: [])
-    monkeypatch.setattr(monzo, "running_balances", lambda opening, amounts: [opening + 1 for _ in amounts])
-    with pytest.raises(monzo.MonzoImportError, match="walked balance"):
+    # The walk is the importer contract's, shared by every importer (T28).
+    from cma.importers import contract
+    monkeypatch.setattr(contract, "running_balances", lambda opening, amounts: [opening + 1 for _ in amounts])
+    with pytest.raises(monzo.MonzoImportError, match="balance walked from the opening balance disagrees"):
         monzo.convert(src, tmp_path / "o.csv")
 
 
@@ -957,7 +960,7 @@ def test_records_before_an_unreadable_one_are_still_checked(tmp_path):
     src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance\n"
                    "tx_1,01/01/2026,09:00:00,Faster payment,ACME,10000000000000.00,GBP,90.00\n"
                    "tx_2,02/01/2026,09:00:00,Faster payment," + "N" * 200_000 + ",-1.00,GBP,89.00\n")
-    with pytest.raises(monzo.MonzoImportError, match=re.escape("line 2: Amount '10000000000000.00' is £10,000,000,000,000")):
+    with pytest.raises(monzo.MonzoImportError, match=re.escape("line 2: Amount is £10,000,000,000,000")):
         monzo.convert(src, tmp_path / "o.csv")
 
 
@@ -991,7 +994,7 @@ def test_monzo_says_money_in_at_the_limit_before_any_later_bad_row(tmp_path):
                    "tx_3,not a date,09:00:00,Faster payment,ACME,-1.00,GBP,1.00\n")
     with pytest.raises(monzo.MonzoImportError) as e:
         monzo.convert(src, tmp_path / "o.csv")
-    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "not a date" in str(e.value)
+    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "line 4: unrecognised date" in str(e.value)
 
 
 @pytest.mark.contracts
@@ -1024,7 +1027,7 @@ def test_monzo_counts_the_row_that_reaches_the_limit_even_if_its_balance_is_bad(
                    f"tx_2,02/01/2026,09:00:00,Faster payment,ACME,{big},GBP,not money\n")
     with pytest.raises(monzo.MonzoImportError) as e:
         monzo.convert(src, tmp_path / "o.csv")
-    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "not money" in str(e.value)
+    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "line 3: Balance is not a plain amount" in str(e.value)
 
 
 @pytest.mark.contracts
@@ -1040,7 +1043,7 @@ def test_monzo_says_the_limit_when_the_crossing_row_has_a_bad_date(tmp_path):
                    f"tx_2,someday,09:00:00,Faster payment,ACME,{big},GBP,{big}\n")
     with pytest.raises(monzo.MonzoImportError) as e:
         monzo.convert(src, tmp_path / "o.csv")
-    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "someday" in str(e.value)
+    assert "money in totals £10,000,000,000,000 or more" in str(e.value) and "line 3: unrecognised date" in str(e.value)
 
 
 _MONZO_HEAD = "Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance\n"
@@ -1067,11 +1070,11 @@ def test_monzo_names_the_line_of_a_bad_date_and_a_walked_balance(tmp_path):
     src = tmp_path / "m.csv"
     src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n\n"
                    "tx_2,someday,09:00:00,Faster payment,ACME,-1.00,GBP,89.00\n")
-    with pytest.raises(monzo.MonzoImportError, match="line 4: unrecognised date 'someday'"):
+    with pytest.raises(monzo.MonzoImportError, match="line 4: unrecognised date;"):
         monzo.convert(src, tmp_path / "o.csv")
     src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n\n"
                    "tx_2,02/01/2026,09:00:00,Faster payment,ACME,-1.00,GBP,50.00\n")
-    with pytest.raises(monzo.MonzoImportError, match="line 4: tx_2: walked balance"):
+    with pytest.raises(monzo.MonzoImportError, match="line 4: the balance walked from the opening balance disagrees"):
         monzo.convert(src, tmp_path / "o.csv")
 
 
@@ -1136,10 +1139,10 @@ def test_monzo_opening_balance_refusals_name_the_line(tmp_path):
 
     src = tmp_path / "m.csv"
     src.write_text(_MONZO_HEAD + "\ntx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,\n")
-    with pytest.raises(monzo.MonzoImportError, match="line 3: the first transaction, tx_1, has no Balance"):
+    with pytest.raises(monzo.MonzoImportError, match="line 3: the first transaction has no balance"):
         monzo.convert(src, tmp_path / "o.csv")
     src.write_text(_MONZO_HEAD + "\ntx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n")
-    with pytest.raises(monzo.MonzoImportError, match=r"implies 100.00 at line 3 \(tx_1"):
+    with pytest.raises(monzo.MonzoImportError, match=r"implies 100\.00 at line 3, the first transaction"):
         monzo.convert(src, tmp_path / "o.csv", "50.00")
 
 
@@ -1194,7 +1197,8 @@ def test_cma_import_monzo_prints_a_refusal_quoting_markup_as_text(tmp_path):
     src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,[/red],GBP,1.00\n")
     r = CliRunner().invoke(app, ["import", "monzo", str(src), "--out", str(tmp_path / "o.csv")])
     flat = " ".join(r.output.split())
-    assert r.exit_code == 2 and "line 2: Amount '[/red]'" in flat, r.output
+    # No cell is quoted (the importer contract, T28), so the refusal names the line alone.
+    assert r.exit_code == 2 and "line 2: Amount is not a plain amount" in flat and "[/red]" not in flat, r.output
 
 
 @pytest.mark.contracts
@@ -1276,7 +1280,7 @@ def test_monzo_refuses_an_amount_past_the_line_limit_before_a_surplus_cell(tmp_p
 
     src = tmp_path / "m.csv"
     src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,10000000000000.00,GBP,1.00,extra\n")
-    with pytest.raises(monzo.MonzoImportError, match=r"line 2: Amount '10000000000000\.00' is £10,000,000,000,000"):
+    with pytest.raises(monzo.MonzoImportError, match=r"line 2: Amount is £10,000,000,000,000"):
         monzo.convert(src, tmp_path / "o.csv")
 
 
@@ -1295,7 +1299,7 @@ def test_monzo_checks_the_amount_of_a_row_with_a_later_field_too_long_to_read(tm
         monzo.convert(src, tmp_path / "o.csv")
     msg = str(e.value)
     assert "money in totals £10,000,000,000,000 or more" in msg
-    assert "line 3: Amount '10000000000000.00' is £10,000,000,000,000 or more" in msg and "NNNN" not in msg
+    assert "line 3: Amount is £10,000,000,000,000 or more" in msg and "NNNN" not in msg
 
     csv = tmp_path / "s.csv"
     csv.write_text("id,date,amount,balance,description\n"
@@ -1356,7 +1360,7 @@ def test_monzo_checks_a_partial_rows_currency_before_needing_its_amount(tmp_path
 
     src = tmp_path / "m.csv"
     src.write_text(_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME," + "1" * 200_000 + ",X1,1.00\n")
-    with pytest.raises(monzo.MonzoImportError, match="line 2: Currency 'X1' is not a currency code"):
+    with pytest.raises(monzo.MonzoImportError, match="line 2: Currency is not a currency code"):
         monzo.convert(src, tmp_path / "o.csv")
 
 
@@ -1447,7 +1451,7 @@ def test_a_bad_byte_in_the_first_data_record_is_on_its_line_with_its_amount_read
     src = tmp_path / "m.csv"
     src.write_bytes(f"Transaction ID,Amount,Currency,Date,Time,Type,Name,Balance{ending}".encode()
                     + b"tx_1,10000000000000.00,GBP,01/01/2026,09:00:00,Faster payment,CAF\xe9,1.00" + ending.encode())
-    with pytest.raises(monzo.MonzoImportError, match=r"line 2: Amount '10000000000000\.00' is £10,000,000,000,000"):
+    with pytest.raises(monzo.MonzoImportError, match=r"line 2: Amount is £10,000,000,000,000"):
         monzo.convert(src, tmp_path / "o.csv")
 
 
