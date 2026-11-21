@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 301,
+  "next_id": 302,
   "decisions": [
     {
       "id": "D1",
@@ -6032,6 +6032,24 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T01:20:44.521Z"
+    },
+    {
+      "id": "D301",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Amend the approved design for 'statement-review'?",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "answered",
+      "answer": "request changes",
+      "free_text": "Owner decision of 2026-11-20, given in chat: accept these as edge cases outside the guarantee and push development forward. Clarify the R2 scope limit revision 30 wrote, keeping everything else in revision 30. The one-record-ahead limit is about each record's own values: its cells, its amount and balance against the line limit, a bad byte, a field too long to read, a quoted field left open; these are checked once the next record has been read at most. Checks that relate records to one another, which way the file runs and whether its dates keep to it, whether each balance follows from the one before (across a record whose balance is missing or unreadable, as before this change), the money in and money out totals, and cma import monzo's walk of the balance after sorting by date and time, are made from the records read, once reading has stopped; they are not limited to one record ahead, and no order between a record's own problem and such a check is promised beyond R2's naming of the first problem cma import monzo meets in a record.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-21T01:20:59.355Z",
+      "effect": "changes requested: Owner decision of 2026-11-20, given in chat: accept these as edge cases outside the guarantee and push development forward. Clarify the R2 scope limit revision 30 wrote, keeping everything else in revision 30. The one-record-ahead limit is about each record's own values: its cells, its amount and balance against the line limit, a bad byte, a field too long to read, a quoted field left open; these are checked once the next record has been read at most. Checks that relate records to one another, which way the file runs and whether its dates keep to it, whether each balance follows from the one before (across a record whose balance is missing or unreadable, as before this change), the money in and money out totals, and cma import monzo's walk of the balance after sorting by date and time, are made from the records read, once reading has stopped; they are not limited to one record ahead, and no order between a record's own problem and such a check is promised beyond R2's naming of the first problem cma import monzo meets in a record.; re-run bridgie shape statement-review",
+      "created_at": "2026-11-21T01:20:59.336Z"
     }
   ]
 }
