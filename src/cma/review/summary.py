@@ -123,9 +123,14 @@ def _queue_entry(account: str, e: QueueEntry, lines: dict[str, Transaction],
 
 def case_thresholds() -> ind.Thresholds:
     """The firm's thresholds file when the case root has one (firm.yaml can name another),
-    or the packaged, illustrative one (R14). A malformed file is refused naming its line."""
-    path = firm.load().thresholds_path
-    return ind.load_thresholds(path) if path.exists() else ind.shipped()
+    or the packaged, illustrative one (R14). A malformed file is refused naming its line, and
+    a file firm.yaml names that is not there is refused naming it, as `cma run --thresholds`
+    refuses it: no case opens with flags the firm did not choose."""
+    config = firm.load()
+    path = config.thresholds_path
+    if config.names_path("thresholds") or path.exists():
+        return ind.load_thresholds(path)
+    return ind.shipped()
 
 
 def _account(f: overrides.CaseFigures, raised: list[Indicator]) -> dict[str, Any]:
@@ -268,7 +273,8 @@ def _figure_row(f: dict[str, Any], cls: str = "", href: str | None = None) -> st
             f'<td class="num">{_e(f["display"])}</td><td class="num">{_e(f["lines"])}</td></tr>')
 
 
-def _account_html(a: dict[str, Any], token: str | None = None) -> str:
+def _account_html(a: dict[str, Any], token: str | None = None,
+                  thresholds: dict[str, Any] | None = None) -> str:
     acct = a["account"]
     period = f'{_e(a["period"]["start"])} to {_e(a["period"]["end"])}, ' if a["period"] else ""
     head = '<thead><tr><th>Id</th><th>Figure</th><th class="num">Value</th><th class="num">Lines</th></tr></thead>'
@@ -306,7 +312,7 @@ def _account_html(a: dict[str, Any], token: str | None = None) -> str:
     return (f'<section class="account"><h2>Account {_e(a["account"])}</h2>'
             f'<p class="period">{period}{_e(a["line_count"])} lines</p>'
             f'<h3>Money in</h3>{breakdown}<h3>Figures</h3>{figures}<h3>Monthly summary</h3>{monthly}'
-            f'{_indicators_html(a["indicators"])}</section>')
+            f'{_indicators_html(a["indicators"], acct, thresholds)}</section>')
 
 
 def _line_cells(x: dict[str, Any]) -> str:
@@ -323,16 +329,20 @@ def _threshold_html(th: dict[str, Any]) -> str:
     return f'<span class="threshold">{_e(th["key"])} {_e(th["shown"])}{mark}</span>'
 
 
-def _indicators_html(indicators: list[dict[str, Any]]) -> str:
-    """Each indicator with the thresholds it fired at and the lines behind it (R14)."""
-    note = f'<p class="note">{_e(ILLUSTRATIVE)}</p>'
+def _indicators_html(indicators: list[dict[str, Any]], account: str = "",
+                     thresholds: dict[str, Any] | None = None) -> str:
+    """Each indicator with the thresholds it fired at and the lines behind it (R14), and the
+    thresholds file they were raised from, so a firm can see whose file decided the flags."""
+    source = (f'<p class="thresholds-source">Thresholds from {_e(thresholds["source"])}'
+              f'{" (shipped with this tool)" if thresholds["shipped"] else ""}.</p>' if thresholds else "")
+    note = f'<p class="note">{_e(ILLUSTRATIVE)}</p>{source}'
     if not indicators:
         return f'<section class="indicators"><h3>Indicators</h3><p>No indicator fired.</p>{note}</section>'
     parts = []
     for i in indicators:
         ths = "; ".join(_threshold_html(th) for th in i["thresholds"])
         rows = "".join(f"<tr>{_line_cells(x)}</tr>" for x in i["lines"])
-        parts.append(f'<section class="indicator" id="indicator-{_e(i["id"])}"><p><strong>{_e(i["id"])} '
+        parts.append(f'<section class="indicator" id="indicator-{_e(account)}-{_e(i["id"])}"><p><strong>{_e(i["id"])} '
                      f'{_e(i["title"])}</strong>: {_e(i["reason"])}</p><p>Threshold that fired: {ths}</p>'
                      f'<table class="lines"><thead><tr>{LINE_HEAD}</tr></thead><tbody>{rows}</tbody></table>'
                      '</section>')
@@ -418,4 +428,4 @@ def render(summary: dict[str, Any], token: str | None = None) -> str:
                 f'<p>{_e(summary["refusal"])}</p></section>')
     if state == "empty":
         return head + '<section id="empty"><p>No statement has been imported into this case yet.</p></section>'
-    return head + "".join(_account_html(a, token) for a in summary["accounts"])
+    return head + "".join(_account_html(a, token, summary.get("thresholds")) for a in summary["accounts"])

@@ -239,3 +239,41 @@ def test_an_override_takes_a_line_out_of_the_queue_and_its_cash_indicator(home, 
     data = _api(serve(case_id))
     assert [e["line"]["id"] for e in data["queue"]] == ["L8", "L2", "L7", "L6"]
     assert _indicator(data, "single_cash_deposit") == []  # L3 is no longer a cash deposit
+
+
+@pytest.mark.contracts
+def test_a_thresholds_file_firm_yaml_names_but_missing_shows_no_figures(home, tmp_path, serve):
+    """R14: firm.yaml names the firm's editable thresholds file; if it is not there, the case is
+    refused naming it, as `cma run --thresholds` refuses, never opened with the shipped flags."""
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "firm.yaml").write_text("paths:\n  thresholds: firm_thresholds.yaml\n", encoding="utf-8")
+    case_id, _ = _case(tmp_path, QUEUE)
+    data = _api(serve(case_id))
+    assert data["state"] == "refused" and data["accounts"] == [] and data["queue"] == []
+    assert "firm_thresholds.yaml" in data["refusal"] and "no such file" in data["refusal"]
+
+
+@pytest.mark.contracts
+def test_with_no_firm_thresholds_file_the_shipped_ones_raise_the_indicators(home, tmp_path, serve):
+    """No firm.yaml path and no indicators.yaml at the case root: the packaged thresholds, labelled
+    illustrative, and the page says which file they came from."""
+    case_id, _ = _case(tmp_path, QUEUE)
+    data = _api(serve(case_id))
+    assert data["state"] == "shown" and data["thresholds"]["shipped"]
+    assert "L3" in [e["line"]["id"] for e in data["queue"]]
+    page = _page(serve(case_id))
+    panel = page[page.index('class="indicators"'):]
+    assert data["thresholds"]["source"] in panel
+
+
+@pytest.mark.contracts
+def test_indicator_sections_of_two_accounts_have_distinct_ids(home, tmp_path, serve):
+    """Indicator ids restart for each account, so the page's element ids carry the account."""
+    case_id, folder = _case(tmp_path, _statement([("2026-01-05", "CARD PAYMENT BET365", "-50.00")]))
+    second = tmp_path / "second.csv"
+    second.write_text(_statement([("2026-02-05", "CARD PAYMENT BET365", "-70.00")]), encoding="utf-8")
+    store.import_file(folder, second, "csv", account="second")
+    page = _page(serve(case_id))
+    ids = re.findall(r'id="(indicator-[^"]+)"', page)
+    assert len(ids) == len(set(ids)) >= 2
+    assert "indicator-main-I1" in ids and "indicator-second-I1" in ids
