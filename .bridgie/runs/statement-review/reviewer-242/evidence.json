@@ -1,0 +1,35 @@
+{
+  "task": "T21",
+  "criteria": [
+    {
+      "id": "R15",
+      "tier": "adversarial",
+      "check": "On opening a case, render() (src/cma/review/summary.py:478-491) lists the judgement queue first, then each account's breakdown, figures, monthly summary and indicators (_account_html), and, while R25 applies, the policy check (_policy_checks_html, summary.py:398-403), computed in case_summary (summary.py:247-263) by policy.evaluate on overrides.case_figures' current per-account metrics (_policy_check, summary.py:141-150). The policy check is absent in the not_reconciled, refused and empty states, which show no figures (R3). Proven by tests/test_workspace_policy_check.py with the existing workspace tests, all run and PASSED in the runner's specified-3 (2202 passed) and contracts-4 logs.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P20",
+      "tier": "adversarial",
+      "check": "Workspace half; the pack half is assigned to T24 and T26 in tasks.json and no pack renderer exists yet. On: every outcome element (p.outcome and each td.rule-outcome) is emitted only inside section.policy-check together with p.illustrative-label holding policy.ILLUSTRATIVE_LABEL (summary.py:379-395); the recommendation is an empty p[data-field=recommendation] (summary.py:405-409) and recommendation: None in the API (summary.py:231). Off: rules=None (summary.py:251), so no per-account policy_check, summary policy_check={shown: False}, the page holds only a note (summary.py:399-401), and the policy is never loaded. The runner's invariants-5 log shows 22 test_p20 cases PASSED (one and two accounts, generated pass, refer and fail cases, default, on and off), including the check that every outcome element sits within a labelled panel and that no outcome word appears outside the panels.",
+      "result": "pass",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/review/summary.py",
+      "line": 206,
+      "criterion": "R15",
+      "claim": "A PolicyError from the packaged policy (raised by load_policy, or by validate inside evaluate) becomes a refusal of the whole case view, so the money-in breakdown, figures, indicators and judgement queue that R15 asks for are hidden along with the policy check. It is reachable only with a damaged install, and the producer flagged it as a design choice.",
+      "repro": "With show_policy_verdict on, monkeypatch policy.load_policy to raise PolicyError, as tests/test_workspace_policy_check.py::test_a_policy_that_cannot_load_is_a_named_refusal_not_a_server_error does: /api/case returns state=refused with accounts=[] and queue=[]."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
