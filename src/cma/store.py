@@ -448,14 +448,19 @@ def new_case(*, label: str | None = None, demo: bool = False, root: Path | None 
     given before anything of the case is made, through `warn` (a Python SyncFolderWarning
     when none is given), and is recorded as the case log's second entry (R32)."""
     profile = validate_profile({"label": label, "demo": demo})
-    root = ensure_root(root)
-    found = sync_folder(root)
-    message = sync_warning(root, found) if found else None
+    # Warned before anything is made, the case root and its cases folder included: on a first
+    # run ensure_root would make them inside the synced folder before the warning (R32). A
+    # root git would publish is refused first, so no warning precedes a refusal.
+    target = Path(root).resolve() if root is not None else firm.case_root()
+    check_not_in_git(target)
+    found = sync_folder(target)
+    message = sync_warning(target, found) if found else None
     if message:
         if warn is None:
             warnings.warn(message, SyncFolderWarning, stacklevel=2)
         else:
             warn(message)
+    root = ensure_root(target)
     for _ in range(8):
         case_id = secrets.token_hex(8)
         folder = root / CASES / case_id

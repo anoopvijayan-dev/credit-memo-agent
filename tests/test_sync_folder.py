@@ -149,14 +149,14 @@ def test_case_new_in_a_synced_folder_warns_first_and_logs_the_warning(tmp_path, 
 def test_the_warning_is_given_before_the_case_is_made(tmp_path, monkeypatch):
     _isolate(monkeypatch, tmp_path)
     root = tmp_path / "OneDrive" / "cma"
-    seen: list[list[Path]] = []
+    seen: list[bool] = []
 
     def warn(message):
         assert "OneDrive" in message
-        seen.append(list((root / "cases").iterdir()))  # no case folder yet when warned
+        seen.append((root / "cases").exists())  # nothing of the case made yet when warned
 
     cid = store.new_case(root=root, warn=warn)
-    assert seen == [[]]
+    assert seen == [False]
     assert [e.event for e in case.for_case(root / "cases" / cid).entries()][-1] == "sync_folder_warning"
 
 
@@ -204,3 +204,18 @@ def test_the_logged_warning_holds_no_case_profile(tmp_path, monkeypatch):
     entry = case.for_case(root / "cases" / cid).entries()[-1]
     assert set(entry.data) == {"client", "sync_folder", "case_root", "warning"}
     assert "Jane Doe Cafe" not in json.dumps(entry.data)
+
+
+def test_the_warning_comes_before_the_case_root_itself_is_made(tmp_path, monkeypatch):
+    """R32: on a first run the case root and its cases folder were made inside the synced
+    folder before the warning; nothing is made until the warning has been given."""
+    root = tmp_path / "Dropbox" / "never-made" / "cma"
+    monkeypatch.setenv("CMA_HOME", str(root))
+    seen = []
+
+    def warn(message):
+        seen.append((message, root.exists(), (tmp_path / "Dropbox").exists()))
+
+    case_id = store.new_case(warn=warn)
+    assert seen and seen[0][1:] == (False, False) and "Dropbox" in seen[0][0]
+    assert (root / store.CASES / case_id).is_dir()
