@@ -219,6 +219,34 @@ def test_a_cross_origin_request_is_refused(ws):
     assert _get(ws, "/api/case", headers=same)[0] == 200
 
 
+def _raw(srv, data: bytes) -> bytes:
+    with socket.create_connection(("127.0.0.1", srv.port), timeout=5) as s:
+        s.sendall(data)
+        reply = b""
+        while chunk := s.recv(4096):
+            reply += chunk
+    return reply
+
+
+def test_an_unread_body_is_never_parsed_as_a_second_request(ws):
+    inner = f"GET /api/case?token={ws.token} HTTP/1.1\r\nHost: 127.0.0.1:{ws.port}\r\n\r\n".encode()
+    for method in ("POST", "GET"):
+        outer = (f"{method} /?token={ws.token} HTTP/1.1\r\nHost: 127.0.0.1:{ws.port}\r\n"
+                 f"Content-Length: {len(inner)}\r\n\r\n").encode()
+        reply = _raw(ws, outer + inner)  # the server closes the connection after one answer
+        assert reply.count(b"HTTP/1.1 ") == 1, method
+        assert ws.case_id.encode() not in reply, method
+
+
+def test_an_idle_connection_is_closed(ws, monkeypatch):
+    monkeypatch.setattr(rs._Handler, "timeout", 0.5)
+    with socket.create_connection(("127.0.0.1", ws.port), timeout=5) as s:
+        s.sendall(b"GET / HTTP/1.1\r\n")  # never finished
+        start = time.monotonic()
+        assert s.recv(4096) == b""
+        assert time.monotonic() - start < 4
+
+
 def test_methods_other_than_get_are_not_served(ws):
     for method in ("POST", "PUT", "DELETE", "OPTIONS"):
         assert _get(ws, "/api/case", method=method, headers=_auth(ws))[0] == 405

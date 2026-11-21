@@ -75,6 +75,9 @@ class _Handler(BaseHTTPRequestHandler):
     sys_version = ""
     protocol_version = "HTTP/1.1"
     server: _HTTPServer
+    # A connection that sends nothing for this long is closed, so an idle or half-sent
+    # request never holds a thread for good.
+    timeout = 30
 
     def log_message(self, format, *args):  # the request line holds the token
         return
@@ -114,6 +117,11 @@ class _Handler(BaseHTTPRequestHandler):
         return hmac.compare_digest(given[0].encode("utf-8", "surrogateescape"), want)
 
     def _handle(self) -> None:
+        # No request body is ever read, so a request that carries one, or that is not a GET,
+        # ends its connection: its unread body is never parsed as a further request.
+        if (self.command != "GET" or self.headers.get("Content-Length")
+                or self.headers.get("Transfer-Encoding")):
+            self.close_connection = True
         # Only a path is served: an absolute URL or //host names somewhere else.
         target = self.path
         parts = urlsplit(target) if target.startswith("/") and not target.startswith("//") else None
