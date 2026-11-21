@@ -1,0 +1,54 @@
+Review done: both requirements pass and the verdict is `pass`, with one minor finding. I couldn't write `evidence.json` to the run directory because shell access was denied and I have no file-writing tool, so the record is in the block at the end.
+
+- **R47 passes.** With `--feature`, `cma generate` adds:
+  - real acquirer and gateway payouts (SumUp, Stripe, Deliveroo);
+  - director funding, both by the profile's name and by director-loan wording;
+  - cash deposits, including exactly £2,500.00, a penny under it, £3,200, and £1,450 paid in two days after a £1,500 withdrawal;
+  - an IWOCA drawdown with monthly repayments;
+  - a reserve account whose transfers the profile names as own accounts.
+
+  The truth file holds every bucket, every line's category and every indicator. The thresholds it restates match the shipped `indicators.yaml`. Without features nothing changes: the new golden hash test passed, and an older check in `tests/test_rules.py` that hashes the generator's CSV output, which this diff does not touch, also passed.
+- **P17 passes.** Every featured archetype and profile, each single feature and two pairs at three seeds and lengths, and the at-limit boundary all match the truth on both accounts. The runner's invariants log shows these tests passed, as did the byte-identity test, the contracts tests and the evals run (9/9 featured cases match truth).
+- **Minor finding:** `--feature all` silently ignores any other value given with it, so `--feature all --feature crypto` writes the full featured case instead of refusing the unknown name, as `--feature crypto` alone does (`src/cma/cli.py:68`).
+
+What the tests don't cover:
+- **Case-level pairing:** the two accounts are checked one at a time, not as one case. That matches how case figures are computed today (per account, `src/cma/overrides.py:345`), and I found no own-account pairing code, so the R8 pairing behaviour is not exercised here.
+- **Truth-file checks:** the truth file's byte identity rests on the golden file the producer committed, and its claimed check against the old generator was not run by the runner.
+
+```json
+{
+  "task": "T10",
+  "criteria": [
+    {
+      "id": "R47",
+      "tier": "adversarial",
+      "check": "Feature lines in src/cma/synth.py _feature_events (~L380-470): real acquirers SUMUP PAYMENTS LTD / STRIPE PAYMENTS UK plus a delivery platform (ACQUIRER_PAYOUTS), director funding by profile name and by DIRECTOR LOAN wording, cash deposits (weekly below the limit, 3200, exactly 2500.00, 2499.99, and 1450 two days after a 1500 CASH WITHDRAWAL), IWOCA LTD drawdown with DD repayments, and a reserve account whose FPS TO/FPS CREDIT lines the case profile names as own accounts. Truth for every bucket, category and indicator comes from _money_in_truth and indicator_truth; TRUTH_THRESHOLDS match src/cma/thresholds/indicators.yaml. Byte identity: with no features the only category change is gated on `features` (L283), _NON_TRADING_IN holds only OTHER among the non-feature events, and Truth.to_json drops the new fields. Proven by test_p17_byte_identity_of_existing_archetypes_and_profiles (invariants-5.log:904 PASSED) and independently by the existing generator-drift hash check at tests/test_rules.py:489 (dual_run-7 passed, file not in the diff). The CLI path (cli.py:61-78) is covered by test_generate_cli_writes_the_featured_case (contracts-4.log:639 PASSED). Evals were extended (behavioural-6: 9/9 featured cases match truth).",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-244/invariants-5.log"
+    },
+    {
+      "id": "P17",
+      "tier": "adversarial",
+      "check": "tests/test_synth_features.py checks, on both accounts, every line's category, M17, every bucket with its ids (M2, M19-M25), M18 and every indicator's (kind, evidence) against truth. It runs all 9 archetype x profile pairs with all features, each single feature and two pairs at seeds/lengths (3,12),(11,6),(5,24) across all archetypes, plus the at-limit boundary of exactly 2500.00 flagged and 2499.99 not. invariants-5.log shows the P17 tests passed (e.g. line 865), 955 passed with no failures; evals feature_mismatches is shown to be non-vacuous (contracts-4.log:640). Checked against how the system computes: case figures are per account (src/cma/overrides.py:345) and no own-account pairing code exists, so per-account truth is what the system produces.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-244/invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 68,
+      "criterion": "R47",
+      "claim": "When 'all' is among the --feature values, every other value is silently dropped, so an unknown feature name given beside 'all' is not refused. The claim says an unknown --feature is refused with exit 2.",
+      "repro": "cma generate --out /tmp/x --feature all --feature crypto: exits 0 and writes the full featured case, while `--feature crypto` alone exits 2 with 'unknown feature'. Fix: validate the non-'all' values with synth.generate's check before expanding 'all'."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "claude-opus-5-5"
+  }
+}
+```
