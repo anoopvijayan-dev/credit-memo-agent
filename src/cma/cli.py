@@ -13,7 +13,7 @@ except ImportError:  # Windows
     import msvcrt
 import json
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 import typer
@@ -713,6 +713,42 @@ def case_check(folder: Path = typer.Argument(..., help="The case folder (cases/<
                       "checked yet. Check again in a moment.")
         raise typer.Exit(code=4)
     console.print(f"case log intact: {check.head.position} entries, head {check.head.hash[:12]}")
+
+
+@app.command("review")
+def review_workspace(
+    case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
+    port: int = typer.Option(8765, "--port", min=1, max=65535,
+                             help="The loopback port to try first; the next free one is taken."),
+    browser: bool = typer.Option(True, "--browser/--no-browser", help="Open the URL in a browser."),
+):
+    """Start the review workspace for a case: a page on this machine only (127.0.0.1), with
+    a new random token in its URL, which is printed. Stop it with Ctrl-C (R33)."""
+    from . import store
+    from .review import server as review_server
+
+    with _case_errors():
+        folder = store.case_folder(case_id)
+        try:
+            srv = review_server.start(folder, case_id, port=port)
+        except review_server.NoFreePort as e:
+            raise store.CaseStoreError(str(e.strerror)) from None
+    # The URL is the only way in: anyone who has it can read the case while this runs.
+    console.print(f"Review workspace for case {case_id}, on this machine only:")
+    console.print(srv.url, soft_wrap=True, markup=False, highlight=False)
+    console.print("Keep this URL private. Press Ctrl-C to stop.")
+    if browser:
+        import webbrowser
+
+        with suppress(Exception):  # no browser is fine; the URL is printed
+            webbrowser.open(srv.url)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.close()
+    console.print("Review workspace stopped.")
 
 
 @app.command()
