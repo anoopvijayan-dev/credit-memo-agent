@@ -1,0 +1,1024 @@
+diff --git a/README.md b/README.md
+index 8122d75..91fee39 100644
+--- a/README.md
++++ b/README.md
+@@ -75,6 +75,10 @@ cma case resolve-override <id> 3 --confirm --name "Pat"   # or --drop
+ # free port from 8765 (--port to choose another). Each start prints a URL with a new
+ # random token; a request without it, or whose Host is not 127.0.0.1 and that port, is
+ # refused. The page loads only files bundled in the package. Ctrl-C stops it.
++# Every figure, money-in bucket and monthly cell on the page links to exactly the lines
++# behind it (date, description, amount, balance, category and the rule or override that
++# set it), with the lines' total for a sum (the figure negated for money paid out), or the
++# inputs and method for an average, share, ratio or count.
+ cma review <id>                                   # --no-browser to only print the URL
+ 
+ # Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
+diff --git a/src/cma/metrics.py b/src/cma/metrics.py
+index 20e4d20..ef3f51c 100644
+--- a/src/cma/metrics.py
++++ b/src/cma/metrics.py
+@@ -770,3 +770,124 @@ def as_table(metrics: list[Metric]) -> str:
+     for m in metrics:
+         lines.append(f"| {m.id} | {m.name} | {m.display()} | {m.method} |")
+     return "\n".join(lines)
++
++
++# --- Drill-down (R16) -------------------------------------------------------------------
++# What the workspace shows beside a figure, a bucket or a monthly cell when the underwriter
++# selects it. Every total and every input is computed here, from the lines' whole pence, so
++# the workspace only renders (R2). Each figure is one of three kinds (P2): a sum figure's
++# lines' signed amounts total it; an outflow figure is a positive amount its lines total
++# negated; a derived figure is not a total of its lines, and shows its inputs and its method.
++
++SUM_FIGURES = EXACT_IDS  # M2, M17, M18 and the money-in buckets M19 to M25
++OUTFLOW_FIGURES = frozenset({"M8", "M11", "M12", "M14"})
++# The figures a derived figure is computed from, shown as its inputs beside its own lines.
++DERIVED_FROM: dict[str, tuple[str, ...]] = {
++    "M3": ("M2",), "M4": ("M2",), "M10": ("M9", "M11", "M8"), "M26": ("M25",), "M28": ("M9", "M11", "M8"),
++}
++# The figures read from the close of every day of the period (P2): their inputs are those closes.
++FROM_CLOSES = frozenset({"M6", "M27"})
++
++
++def figure_kind(metric_id: str) -> str:
++    """'sum', 'outflow' or 'derived', as P2 names each figure."""
++    if metric_id in SUM_FIGURES:
++        return "sum"
++    if metric_id in OUTFLOW_FIGURES:
++        return "outflow"
++    return "derived"
++
++
++def money_text(p: int) -> str:
++    """Whole pence as pounds to the penny with thousands separators: -123456 is "-£1,234.56"."""
++    return f"{'-' if p < 0 else ''}£{Decimal(abs(p)) / 100:,.2f}"
++
++
++def lines_total(statement: Statement, ids: list[str]) -> int:
++    """The signed total, in pence, of the amounts of the lines named."""
++    by_id = statement.by_id()
++    return sum(pence(by_id[i]) for i in ids)
++
++
++def daily_closes(statement: Statement, first: date | None = None, last: date | None = None
++                 ) -> list[tuple[date, int, str]]:
++    """The close of every day from `first` to `last` (the whole period by default), carried
++    over days with no lines, with the id of the line that set it: what a figure or cell read
++    from end-of-day balances reads."""
++    eod = end_of_day_balances(statement.transactions)
++    return [(d, bal, line) for d, (bal, line) in sorted(eod.items())
++            if (first is None or d >= first) and (last is None or d <= last)]
++
++
++def _share_parts(statement: Statement, metric_id: str, evidence: list[str]) -> tuple[str, int, list[str]] | None:
++    """A share's numerator, in pence, and the lines counted in it; its denominator is its
++    evidence lines' total."""
++    by_id = statement.by_id()
++    lines = [by_id[i] for i in evidence]
++    if metric_id == "M16":
++        num = [t for t in lines if t.category in NON_TRADING_IN]
++        return "Money in that is not trading receipts", sum(pence(t) for t in num), [t.id for t in num]
++    if metric_id == "M26":
++        num = [t for t in lines if t.category == Category.OTHER]
++        return "Unexplained money in", sum(pence(t) for t in num), [t.id for t in num]
++    if metric_id == "M15":
++        by_payer: dict[str, list[Transaction]] = defaultdict(list)
++        for t in lines:
++            by_payer[counterparty(t.description)].append(t)
++        if not by_payer:
++            return None
++        top = max(by_payer.values(), key=lambda ts: sum(pence(t) for t in ts))
++        return "The largest payer's customer transfers", sum(pence(t) for t in top), [t.id for t in top]
++    return None
++
++
++def derived_inputs(statement: Statement, metrics: list[Metric], metric_id: str,
++                   proposed_repayment=None) -> dict:
++    """What a derived figure is computed from, for the drill-down (R16): the figures it reads,
++    the period, a share's numerator and denominator, and, for a figure read from end-of-day
++    balances, the close of every day it reads. Values are written as text, money to the penny."""
++    by = {m.id: m for m in metrics}
++    m = by[metric_id]
++    inputs: list[dict] = []
++    closes: list[tuple[date, int, str]] | None = None
++    start, end = statement.start, statement.end
++    days = (end - start).days + 1
++    for fid in DERIVED_FROM.get(metric_id, ()):
++        f = by[fid]
++        inputs.append({"label": f.name, "figure": f.id, "display": f.display_exact()})
++    if metric_id in ("M1", "M3", "M28"):
++        inputs.append({"label": "Period", "figure": None,
++                       "display": f"{start.isoformat()} to {end.isoformat()}, {days} days"})
++    if metric_id == "M28":
++        shown = ("not given" if proposed_repayment is None
++                 else money_text(proposed_repayment_pence(proposed_repayment)))
++        inputs.append({"label": "Proposed monthly repayment (case profile)", "figure": None, "display": shown})
++    if metric_id == "M5" and m.evidence:
++        t = statement.by_id()[m.evidence[0]]
++        inputs.append({"label": f"Running balance after line {t.id}", "figure": None,
++                       "display": money_text(balance_pence(t))})
++    if metric_id in ("M15", "M16", "M26") and m.evidence:
++        parts = _share_parts(statement, metric_id, m.evidence)
++        if parts is not None:
++            label, num, num_lines = parts
++            inputs.append({"label": label, "figure": None, "display": money_text(num), "lines": num_lines})
++            inputs.append({"label": "Of which it is a share (the lines below)", "figure": None,
++                           "display": money_text(lines_total(statement, m.evidence))})
++    if metric_id in FROM_CLOSES:
++        closes = daily_closes(statement)
++    return {"inputs": inputs, "closes": _closes_out(closes)}
++
++
++def cell_inputs(statement: Statement, row: MonthRow) -> dict:
++    """A monthly balance or overdrawn-day cell's inputs: the close of every day of the month in
++    the period, with the line that set it (P2, R11)."""
++    return {"inputs": [{"label": "Days of the month in the period", "figure": None,
++                        "display": f"{row.start.isoformat()} to {row.end.isoformat()}"}],
++            "closes": _closes_out(daily_closes(statement, row.start, row.end))}
++
++
++def _closes_out(closes) -> list[dict] | None:
++    if closes is None:
++        return None
++    return [{"date": d.isoformat(), "display": money_text(bal), "overdrawn": bal < 0, "line": line}
++            for d, bal, line in closes]
+diff --git a/src/cma/review/drilldown.py b/src/cma/review/drilldown.py
+new file mode 100644
+index 0000000..9fd0475
+--- /dev/null
++++ b/src/cma/review/drilldown.py
+@@ -0,0 +1,172 @@
++"""The workspace's drill-down (C5; R16, P2, R34).
++
++When the underwriter selects a figure, a money-in bucket (a figure too: M2 and M19 to M25)
++or a monthly cell, the workspace lists exactly the lines behind it, the figure's or cell's
++own evidence and no other, in the order the figures layer cites them. Each line comes with
++its date, description, amount, balance, category and the rule or override that set the
++category. Beside the lines it shows, by the figure's kind (P2):
++
++- a sum figure: the total of the lines' signed amounts, which is the figure;
++- an outflow figure: that total, saying it is the figure negated;
++- a derived figure (an average, share, ratio, count or lowest balance, or net operating
++  cash flow): its inputs and its method, and for net operating cash flow (M9) the lines it
++  counts only in part.
++
++Every total and input is the figures layer's (metrics.lines_total, metrics.derived_inputs,
++metrics.cell_inputs); this module computes no money (R2). Its HTML escapes every piece of
++text from the case (R34).
++"""
++
++from __future__ import annotations
++
++from html import escape
++from pathlib import Path
++from typing import Any
++from urllib.parse import urlencode
++
++from .. import metrics, store
++from ..models import MonthlyCell, format_value, money_exact
++from . import summary
++
++CELL_TITLES = dict(summary.CELLS)
++CELL_METHODS = {
++    "money_in": "Every credit dated in the month.",
++    "money_out": "Every debit dated in the month, reported as a positive amount.",
++    "trading_receipts": "The month's trading receipts (M2's lines dated in the month), cash paid in included.",
++    "average_balance": ("The close of every day of the month in the period, carried over days with no lines, "
++                        "averaged over those days."),
++    "lowest_balance": "The lowest close of any day of the month in the period, carried over days with no lines.",
++    "days_overdrawn": "Days of the month in the period that closed overdrawn, carried over days with no lines.",
++}
++NEGATED = "the figure negated: this figure reports money paid out as a positive amount"
++
++
++class DrillError(ValueError):
++    """A request that names no figure or cell of the case. Its message names only what was asked."""
++
++
++def _line(t, overridden: dict[str, str], note: set[str]) -> dict[str, Any]:
++    return {"id": t.id, "date": t.date.isoformat(), "description": t.description,
++            "amount": t.amount, "amount_display": money_exact(t.amount),
++            "balance": t.balance, "balance_display": money_exact(t.balance),
++            "category": t.category.value if t.category else None, "rule": t.rule_id,
++            "overridden": t.id in overridden, "counted_in_part": t.id in note}
++
++
++def _total(statement, ids: list[str], kind: str) -> dict[str, Any] | None:
++    if kind == "derived":
++        return None
++    p = metrics.lines_total(statement, ids)
++    return {"pence": p, "display": metrics.money_text(p),
++            "is": "the figure" if kind == "sum" else NEGATED}
++
++
++def lines_behind(folder: Path, case_id: str, *, account: str | None = None, figure: str | None = None,
++                 month: str | None = None, cell: str | None = None) -> dict[str, Any]:
++    """The lines behind one figure (`figure`) or one monthly cell (`month` and `cell`) of an
++    account, with their total, or the inputs and method, by the figure's kind (R16)."""
++    folder = Path(folder)
++    if (figure is not None and (month is not None or cell is not None)) or (
++            figure is None and (month is None or cell is None)):
++        raise DrillError("name a figure, or a month and a cell")
++    out: dict[str, Any] = {"case": case_id, "state": "shown", "refusal": None, "reconciliation": None}
++    figures, refused = summary.load_figures(folder)
++    if refused is not None:
++        out.update(refused)
++        return out
++    if account is None:
++        if len(figures) != 1:
++            raise DrillError("name the account")
++        account = next(iter(figures))
++    f = figures.get(account)
++    if f is None:
++        raise DrillError("no such account in this case")
++    statement, by_line = f.statement, f.statement.by_id()
++    out["account"] = account
++    if figure is not None:
++        m = next((x for x in f.metrics if x.id == figure), None)
++        if m is None:
++            raise DrillError("no such figure")
++        kind = metrics.figure_kind(m.id)
++        note = set(m.evidence_note or [])
++        out.update(target={"figure": m.id}, id=m.id, name=m.name, unit=m.unit, value=m.value,
++                   display=m.display_exact(), kind=kind, method=m.method, overridden=m.id in f.marked,
++                   lines=[_line(by_line[i], f.overridden, note) for i in m.evidence],
++                   total=_total(statement, m.evidence, kind), counted_in_part=list(m.evidence_note or []),
++                   inputs=None, closes=None)
++        if kind == "derived":
++            profile = store.load_profile(folder)
++            out.update(metrics.derived_inputs(statement, f.metrics, m.id, profile["proposed_monthly_repayment"]))
++        return out
++    row = next((r for r in f.monthly if r.month == month), None)
++    if row is None or cell not in CELL_TITLES:
++        raise DrillError("no such monthly cell")
++    c: MonthlyCell = getattr(row, cell)
++    out.update(target={"month": row.month, "cell": cell}, id=f"{row.month} {cell}",
++               name=f"{CELL_TITLES[cell]}, {row.month}" + (" (part month)" if row.part_month else ""),
++               unit=c.unit, value=c.value, display=_cell_display(c), kind=c.kind, method=CELL_METHODS[cell],
++               note=c.note, overridden=(row.month, cell) in f.marked_cells,
++               lines=[_line(by_line[i], f.overridden, set()) for i in c.evidence],
++               total=_total(statement, c.evidence, c.kind), counted_in_part=[], inputs=None, closes=None)
++    if c.kind == "derived":
++        out.update(metrics.cell_inputs(statement, row))
++    return out
++
++
++def _cell_display(c: MonthlyCell) -> str:
++    if c.value is None:
++        return "n/a"
++    return money_exact(c.value) if c.unit == "GBP" else format_value(c.value, c.unit)
++
++
++# --- HTML ----------------------------------------------------------------------------------
++
++
++def _e(value: Any) -> str:
++    return escape("" if value is None else str(value), quote=True)
++
++
++def link(token: str, account: str, **target: str) -> str:
++    """The workspace URL of a figure's or cell's lines, already escaped for an attribute."""
++    return _e("/lines?" + urlencode({"token": token, "account": account, **target}))
++
++
++def render(d: dict[str, Any], token: str) -> str:
++    """The drill-down as HTML for the page's main element; every case text escaped (R34)."""
++    back = f'<p><a href="{_e("/?" + urlencode({"token": token}))}">Back to the case</a></p>'
++    if d["state"] != "shown":
++        return back + summary.render({"business_name": None, "label": None, "profile": None, **d,
++                                      "accounts": []})
++    head = (f'<section id="drilldown"><h2>{_e(d["id"])}: {_e(d["name"])}</h2>'
++            f'<p class="figure-value">Account {_e(d["account"])}: <strong>{_e(d["display"])}</strong>'
++            + (' <span class="overridden">rests on an override</span>' if d["overridden"] else "")
++            + f'</p><p class="method">{_e(d["method"])}</p>')
++    if d.get("note"):
++        head += f'<p class="note">{_e(d["note"])}</p>'
++    t = d["total"]
++    if t is not None:
++        head += (f'<p class="lines-total">Total of the lines\' signed amounts: <strong>{_e(t["display"])}</strong>, '
++                 f'{_e(t["is"])}.</p>')
++    if d["inputs"]:
++        rows = "".join(f'<tr><td>{_e(i["label"])}' + (f' ({_e(i["figure"])})' if i.get("figure") else "")
++                       + f'</td><td class="num">{_e(i["display"])}</td></tr>' for i in d["inputs"])
++        head += f'<h3>Inputs</h3><table class="inputs"><tbody>{rows}</tbody></table>'
++    if d["counted_in_part"]:
++        head += ('<p class="in-part">Counted only in part (money sent back by someone the business paid by '
++                 f'transfer, offsetting no more than was sent): {_e(", ".join(d["counted_in_part"]))}</p>')
++    if d["closes"] is not None:
++        rows = "".join(f'<tr><td>{_e(c["date"])}</td><td class="num">{_e(c["display"])}</td>'
++                       f'<td>{_e(c["line"])}</td></tr>' for c in d["closes"])
++        head += ('<h3>End-of-day closes read</h3><table class="closes"><thead><tr><th>Day</th>'
++                 f'<th class="num">Close</th><th>Set by line</th></tr></thead><tbody>{rows}</tbody></table>')
++    rows = "".join(
++        f'<tr><td>{_e(x["id"])}</td><td>{_e(x["date"])}</td><td>{_e(x["description"])}</td>'
++        f'<td class="num">{_e(x["amount_display"])}</td><td class="num">{_e(x["balance_display"])}</td>'
++        f'<td>{_e(x["category"])}</td><td>{_e(x["rule"])}'
++        + (' <span class="overridden">override</span>' if x["overridden"] else "")
++        + (' <span class="in-part">counted in part</span>' if x["counted_in_part"] else "")
++        + '</td></tr>' for x in d["lines"])
++    table = ('<h3>Lines</h3><table class="lines"><thead><tr><th>Line</th><th>Date</th><th>Description</th>'
++             '<th class="num">Amount</th><th class="num">Balance</th><th>Category</th><th>Set by</th></tr></thead>'
++             f'<tbody>{rows}</tbody></table></section>')
++    return back + head + table
+diff --git a/src/cma/review/server.py b/src/cma/review/server.py
+index 3a8e532..c94a77b 100644
+--- a/src/cma/review/server.py
++++ b/src/cma/review/server.py
+@@ -140,7 +140,9 @@ class _Handler(BaseHTTPRequestHandler):
+             self.end_headers()
+             return
+         path = parts.path if parts else None
+-        if path in ("/", "/api/case"):
++        if path in ("/lines", "/api/lines"):
++            self._lines(path, parts.query)
++        elif path in ("/", "/api/case"):
+             # The summary is computed per request; a failure no refusal foresees is answered,
+             # naming nothing the case holds, rather than dropping the connection unanswered.
+             try:
+@@ -159,6 +161,34 @@ class _Handler(BaseHTTPRequestHandler):
+             self._send(404, b"Not found.\n")
+ 
+ 
++    def _lines(self, path: str, query: str) -> None:
++        """The lines behind one figure or monthly cell (R16): as data at /api/lines, as the
++        page at /lines. A request that names no figure or cell of the case is answered 400,
++        naming only what was asked."""
++        from .drilldown import DrillError
++
++        q = parse_qs(query, keep_blank_values=True)
++        args = {}
++        for key in ("account", "figure", "month", "cell"):
++            given = q.get(key, [])
++            if len(given) > 1:
++                self._send(400, f"Give {key} once.\n".encode())
++                return
++            args[key] = given[0] if given else None
++        try:
++            if path == "/lines":
++                body, kind = self.server.lines_html(**args), "text/html; charset=utf-8"
++            else:
++                body, kind = self.server.lines_json(**args), "application/json"
++        except DrillError as e:
++            self._send(400, f"{e}.\n".encode())
++            return
++        except Exception:
++            self._send(500, b"The lines could not be shown.\n")
++            return
++        self._send(200, body, kind)
++
++
+ class _HTTPServer(ThreadingHTTPServer):
+     allow_reuse_address = False  # never share a port another listener holds
+     daemon_threads = True
+@@ -195,6 +225,8 @@ class ReviewServer:
+         self.httpd.assets = assets
+         self.httpd.case_json = self._case_json
+         self.httpd.page_html = self._page_html
++        self.httpd.lines_json = self._lines_json
++        self.httpd.lines_html = self._lines_html
+         self._thread: threading.Thread | None = None
+ 
+     @property
+@@ -211,7 +243,21 @@ class ReviewServer:
+         """The page with the case summary rendered into it; every case text escaped (R34)."""
+         from . import summary
+ 
+-        html = summary.render(summary.case_summary(self.folder, self.case_id))
++        html = summary.render(summary.case_summary(self.folder, self.case_id), token=self.token)
++        return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
++
++    def _lines_json(self, **target) -> bytes:
++        """The lines behind one figure or monthly cell, as data (R16)."""
++        from . import drilldown
++
++        d = drilldown.lines_behind(self.folder, self.case_id, **target)
++        return json.dumps(d, ensure_ascii=False).encode("utf-8")
++
++    def _lines_html(self, **target) -> bytes:
++        """The page with the lines behind one figure or monthly cell; every case text escaped (R34)."""
++        from . import drilldown
++
++        html = drilldown.render(drilldown.lines_behind(self.folder, self.case_id, **target), self.token)
+         return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
+ 
+     def serve_forever(self) -> None:
+diff --git a/src/cma/review/summary.py b/src/cma/review/summary.py
+index 23a84eb..3ef034e 100644
+--- a/src/cma/review/summary.py
++++ b/src/cma/review/summary.py
+@@ -98,6 +98,35 @@ def _not_reconciled(e: metrics.ReconciliationError) -> dict[str, Any]:
+             "accounts": accounts, "lines": lines}
+ 
+ 
++def refusal(e: Exception) -> dict[str, Any] | None:
++    """Why a case cannot be shown, as the state and refusal (or reconciliation) the workspace
++    reports, or None for a failure no refusal foresees."""
++    if isinstance(e, metrics.ReconciliationError):  # R3: nothing is shown
++        return {"state": "not_reconciled", "reconciliation": _not_reconciled(e)}
++    if isinstance(e, caselog.CaseLocked):
++        return {"state": "refused", "refusal": "Another window or command is saving this case; reload in a moment."}
++    if isinstance(e, caselog.CaseLogBroken):
++        return {"state": "refused", "refusal": f"The case log is broken at entry {e.first_bad}: {e.reason}. "
++                                               "No figures are shown until it is resolved."}
++    if isinstance(e, (store.CaseStoreError, StatementError, metrics.AmountError, RulesetError)):
++        return {"state": "refused", "refusal": f"{str(e).rstrip('.')}. No figures are shown for this case."}
++    if isinstance(e, OSError):
++        return {"state": "refused",
++                "refusal": f"A file of the case could not be read ({e.strerror or type(e).__name__})."}
++    return None
++
++
++def load_figures(folder: Path) -> tuple[dict[str, overrides.CaseFigures] | None, dict[str, Any] | None]:
++    """Every account's figures from the figures layer, or why none can be shown (R3)."""
++    try:
++        return overrides.case_figures(folder), None
++    except Exception as e:
++        refused = refusal(e)
++        if refused is None:
++            raise
++        return None, refused
++
++
+ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+     """The case as the workspace shows it, computed afresh from its files."""
+     folder = Path(folder)
+@@ -108,22 +137,15 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+         out["label"], out["business_name"] = profile.get("label"), profile.get("business_name")
+         out["profile"] = {key: (list(profile[key]) if key in store.LIST_FIELDS else profile[key])
+                           for key in PROFILE_SHOWN}
+-        figures = overrides.case_figures(folder)
+-    except metrics.ReconciliationError as e:  # R3: nothing is shown
+-        out.update(state="not_reconciled", reconciliation=_not_reconciled(e))
+-        return out
+-    except caselog.CaseLocked:
+-        out.update(state="refused", refusal="Another window or command is saving this case; reload in a moment.")
+-        return out
+-    except caselog.CaseLogBroken as e:
+-        out.update(state="refused", refusal=f"The case log is broken at entry {e.first_bad}: {e.reason}. "
+-                                            "No figures are shown until it is resolved.")
+-        return out
+-    except (store.CaseStoreError, StatementError, metrics.AmountError, RulesetError) as e:
+-        out.update(state="refused", refusal=f"{str(e).rstrip('.')}. No figures are shown for this case.")
++    except Exception as e:
++        refused = refusal(e)
++        if refused is None:
++            raise
++        out.update(refused)
+         return out
+-    except OSError as e:
+-        out.update(state="refused", refusal=f"A file of the case could not be read ({e.strerror or type(e).__name__}).")
++    figures, refused = load_figures(folder)
++    if refused is not None:
++        out.update(refused)
+         return out
+     out["accounts"] = [_account(f) for f in figures.values()]
+     if not out["accounts"]:
+@@ -138,27 +160,43 @@ def _e(value: Any) -> str:
+     return escape("" if value is None else str(value), quote=True)
+ 
+ 
+-def _figure_row(f: dict[str, Any], cls: str = "") -> str:
++def _linked(text: str, href: str | None) -> str:
++    """Escaped text, as a link to its lines when the page has a token to link with (R16)."""
++    return f'<a href="{href}">{_e(text)}</a>' if href else _e(text)
++
++
++def _href(token: str | None, account: str, **target: str) -> str | None:
++    if token is None:
++        return None
++    from .drilldown import link
++
++    return link(token, account, **target)
++
++
++def _figure_row(f: dict[str, Any], cls: str = "", href: str | None = None) -> str:
+     mark = ' <span class="overridden">rests on an override</span>' if f["overridden"] else ""
+     attr = f' class="{cls}"' if cls else ""
+-    return (f'<tr{attr}><td>{_e(f["id"])}</td><td>{_e(f["name"])}{mark}</td>'
++    return (f'<tr{attr}><td>{_linked(f["id"], href)}</td><td>{_e(f["name"])}{mark}</td>'
+             f'<td class="num">{_e(f["display"])}</td><td class="num">{_e(f["lines"])}</td></tr>')
+ 
+ 
+-def _account_html(a: dict[str, Any]) -> str:
++def _account_html(a: dict[str, Any], token: str | None = None) -> str:
++    acct = a["account"]
+     period = f'{_e(a["period"]["start"])} to {_e(a["period"]["end"])}, ' if a["period"] else ""
+     head = '<thead><tr><th>Id</th><th>Figure</th><th class="num">Value</th><th class="num">Lines</th></tr></thead>'
+     mi = a["money_in"]
+     rows = []
+     for b in mi["buckets"]:
+-        rows.append(_figure_row(b))
++        rows.append(_figure_row(b, href=_href(token, acct, figure=b["id"])))
+         if b["id"] == "M2":
+-            rows.append(_figure_row(mi["cash_within_trading"], "within"))
++            cash = mi["cash_within_trading"]
++            rows.append(_figure_row(cash, "within", _href(token, acct, figure=cash["id"])))
++    total = mi["total"]
+     breakdown = (f'<table class="breakdown">{head}<tbody>{"".join(rows)}</tbody>'
+-                 f'<tfoot>{_figure_row(mi["total"], "total")}</tfoot></table>')
++                 f'<tfoot>{_figure_row(total, "total", _href(token, acct, figure=total["id"]))}</tfoot></table>')
+     figures = ('<table class="figures"><thead><tr><th>Id</th><th>Figure</th><th class="num">Value</th>'
+                '<th>Method</th><th class="num">Lines</th></tr></thead><tbody>'
+-               + "".join(f'<tr><td>{_e(f["id"])}</td><td>{_e(f["name"])}'
++               + "".join(f'<tr><td>{_linked(f["id"], _href(token, acct, figure=f["id"]))}</td><td>{_e(f["name"])}'
+                          + (' <span class="overridden">rests on an override</span>' if f["overridden"] else "")
+                          + f'</td><td class="num">{_e(f["display"])}</td><td>{_e(f["method"])}</td>'
+                          f'<td class="num">{_e(f["lines"])}</td></tr>' for f in a["figures"])
+@@ -170,7 +208,8 @@ def _account_html(a: dict[str, Any]) -> str:
+             c = r[key]
+             mark = ' <span class="overridden">*</span>' if c["overridden"] else ""
+             why = f' <span class="note">{_e(c["note"])}</span>' if c["value"] is None and c["note"] else ""
+-            cells.append(f'<td class="num">{_e(c["display"])}{why}{mark}</td>')
++            shown = _linked(c["display"], _href(token, acct, month=r["month"], cell=key))
++            cells.append(f'<td class="num">{shown}{why}{mark}</td>')
+         part = ' <span class="part">part month</span>' if r["part_month"] else ""
+         month_rows.append(f'<tr><td>{_e(r["month"])}{part}</td>{"".join(cells)}</tr>')
+     monthly = ('<table class="monthly"><thead><tr><th>Month</th>'
+@@ -219,8 +258,9 @@ def _profile_html(p: dict[str, Any] | None) -> str:
+     return f'<section id="profile"><h2>Case profile</h2><table class="profile"><tbody>{"".join(rows)}</tbody></table></section>'
+ 
+ 
+-def render(summary: dict[str, Any]) -> str:
+-    """The case summary as HTML for the page's main element; every case text escaped."""
++def render(summary: dict[str, Any], token: str | None = None) -> str:
++    """The case summary as HTML for the page's main element; every case text escaped. Given
++    the page's token, each figure, bucket and monthly cell links to the lines behind it (R16)."""
+     names = [x for x in (summary["business_name"], summary["label"]) if x]
+     head = (f'<section id="summary-head"><p class="case-name">{_e(" — ".join(names))}</p></section>'
+             if names else "")
+@@ -233,4 +273,4 @@ def render(summary: dict[str, Any]) -> str:
+                 f'<p>{_e(summary["refusal"])}</p></section>')
+     if state == "empty":
+         return head + '<section id="empty"><p>No statement has been imported into this case yet.</p></section>'
+-    return head + "".join(_account_html(a) for a in summary["accounts"])
++    return head + "".join(_account_html(a, token) for a in summary["accounts"])
+diff --git a/tests/test_drilldown.py b/tests/test_drilldown.py
+new file mode 100644
+index 0000000..1f98342
+--- /dev/null
++++ b/tests/test_drilldown.py
+@@ -0,0 +1,432 @@
++"""T20: the workspace drill-down (C5; R16, P2, R34).
++
++Selecting a figure, a money-in bucket or a monthly cell lists exactly the lines behind it,
++each with date, description, amount, balance, category and the rule or override that set
++the category. Beside them: for a sum figure the total of the lines' signed amounts, which is
++the figure; for an outflow figure that total, which is the figure negated; for a derived
++figure its inputs and method, and for M9 the lines it counts only in part.
++
++Each test talks to a real server running in a thread, through /api/lines and /lines, with the
++per-launch token."""
++
++import csv
++import http.client
++import io
++import json
++import random
++from decimal import Decimal
++from html import escape
++from urllib.parse import urlencode
++
++import pytest
++
++from cma import metrics, overrides, store
++from cma.review import server as rs
++from cma.review import summary
++
++RICH = ("id,date,description,amount,balance\n"
++        "L1,2026-01-05,CARD SETTLEMENT STRIPE,500.00,500.00\n"
++        "L2,2026-01-06,FPS CREDIT ACME LTD INV 12,300.25,800.25\n"
++        "L3,2026-01-07,CASH PAID IN,250.10,1050.35\n"
++        "L4,2026-01-08,FPS CREDIT DIRECTOR CAPITAL INTRODUCED,1000.00,2050.35\n"
++        "L5,2026-01-09,IWOCA LOAN,2000.00,4050.35\n"
++        "L6,2026-01-10,DD IWOCA LTD,-400.00,3650.35\n"
++        "L7,2026-01-11,HMRC VAT,-700.00,2950.35\n"
++        "L8,2026-01-12,HMRC PAYE,-300.00,2650.35\n"
++        "L9,2026-01-13,DIVIDEND J SMITH,-900.00,1750.35\n"
++        "L10,2026-01-14,FPS DEBIT J BLOGGS,-100.00,1650.35\n"
++        "L11,2026-01-15,FPS CREDIT J BLOGGS,250.00,1900.35\n"
++        "L12,2026-01-20,RENT,-2500.00,-599.65\n"
++        "L13,2026-02-03,XQZ 4471,80.00,-519.65\n"
++        "L14,2026-02-10,PAYPAL REFUND,20.00,-499.65\n"
++        "L15,2026-02-11,FPS CREDIT BETA LTD INV 77,900.00,400.35\n"
++        "L16,2026-02-12,UNPAID DD IWOCA LTD,400.00,800.35\n"
++        "L17,2026-02-20,DD IWOCA LTD,-400.00,400.35\n")
++SUMS = ["M2", "M17", "M18", "M19", "M20", "M21", "M22", "M23", "M24", "M25"]
++OUTFLOWS = ["M8", "M11", "M12", "M14"]
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    return root
++
++
++def _case(tmp_path, body=RICH, *, account="main", case_id=None, repayment="250.00"):
++    if case_id is None:
++        case_id = store.new_case(label="t20")
++    folder = store.case_folder(case_id)
++    if repayment is not None:
++        store.update_profile(folder, lambda p: {**p, "proposed_monthly_repayment": repayment})
++    src = tmp_path / f"{account}.csv"
++    src.write_text(body, encoding="utf-8")
++    store.import_file(folder, src, "csv", account=account)
++    return case_id, folder
++
++
++@pytest.fixture
++def serve():
++    servers = []
++
++    def start(case_id):
++        srv = rs.start(store.case_folder(case_id), case_id, port=0)
++        srv.serve_in_thread()
++        servers.append(srv)
++        return srv
++
++    yield start
++    for srv in servers:
++        srv.close()
++
++
++def _get(srv, path):
++    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=10)
++    try:
++        conn.request("GET", path, headers={"Host": f"127.0.0.1:{srv.port}", "X-CMA-Token": srv.token})
++        r = conn.getresponse()
++        return r.status, r.getheader("Content-Type"), r.read()
++    finally:
++        conn.close()
++
++
++def _lines(srv, **target) -> dict:
++    status, kind, body = _get(srv, "/api/lines?" + urlencode(target))
++    assert status == 200 and kind == "application/json", body
++    return json.loads(body)
++
++
++def _pence(display: str) -> int:
++    return int(Decimal(display.replace("£", "").replace(",", "")) * 100)
++
++
++def _figure_pence(value: float) -> int:
++    return int(Decimal(repr(value)) * 100)
++
++
++def _check_line(line: dict, t) -> None:
++    """Each line carries what R16 lists, as the categorised statement has it."""
++    assert line["id"] == t.id and line["date"] == t.date.isoformat() and line["description"] == t.description
++    assert line["amount"] == t.amount and line["balance"] == t.balance
++    assert _pence(line["amount_display"]) == _figure_pence(t.amount)
++    assert _pence(line["balance_display"]) == _figure_pence(t.balance)
++    assert line["category"] == t.category.value and line["rule"] == t.rule_id and line["rule"]
++
++
++# --- every figure and every cell: exactly its lines, and its total by kind -----------------
++
++
++@pytest.mark.invariants
++def test_p2_every_figure_s_drilldown_lists_exactly_its_lines_and_total_by_kind(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    f = overrides.case_figures(folder)["main"]
++    by_line = f.statement.by_id()
++    kinds = set()
++    for m in f.metrics:
++        d = _lines(srv, figure=m.id)
++        assert d["state"] == "shown" and d["id"] == m.id and d["account"] == "main"
++        assert d["value"] == m.value and d["display"] == m.display_exact() and d["method"] == m.method
++        # Exactly the figure's evidence: the same lines, in the same order, no more, no fewer.
++        assert [x["id"] for x in d["lines"]] == m.evidence
++        for x in d["lines"]:
++            _check_line(x, by_line[x["id"]])
++        kind = metrics.figure_kind(m.id)
++        kinds.add(kind)
++        assert d["kind"] == kind
++        if kind == "sum":
++            assert m.id in SUMS
++            assert d["total"]["pence"] == _figure_pence(m.value) == _pence(d["total"]["display"])
++            assert d["total"]["is"] == "the figure" and d["inputs"] is None
++        elif kind == "outflow":
++            assert m.id in OUTFLOWS
++            assert d["total"]["pence"] == -_figure_pence(m.value) == _pence(d["total"]["display"])
++            assert d["total"]["is"].startswith("the figure negated") and d["inputs"] is None
++        else:
++            assert d["total"] is None and isinstance(d["inputs"], list) and d["method"]
++    assert kinds == {"sum", "outflow", "derived"}
++
++
++@pytest.mark.invariants
++def test_p2_every_monthly_cell_s_drilldown_lists_exactly_its_lines_and_total_by_kind(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    f = overrides.case_figures(folder)["main"]
++    seen = set()
++    for row in f.monthly:
++        for key, _ in summary.CELLS:
++            c = getattr(row, key)
++            d = _lines(srv, month=row.month, cell=key)
++            assert d["target"] == {"month": row.month, "cell": key} and d["kind"] == c.kind
++            assert [x["id"] for x in d["lines"]] == c.evidence
++            for x in d["lines"]:
++                _check_line(x, f.statement.by_id()[x["id"]])
++            seen.add(c.kind)
++            if c.kind == "sum":
++                assert d["total"]["pence"] == _figure_pence(c.value) == _figure_pence(c.total)
++            elif c.kind == "outflow":
++                assert d["total"]["pence"] == -_figure_pence(c.value) == _figure_pence(c.total)
++            else:
++                assert d["total"] is None and d["method"]
++                # The closes it reads: every day of the month in the period, each set by a cited line.
++                days = (row.end - row.start).days + 1
++                assert len(d["closes"]) == days and {x["line"] for x in d["closes"]} == set(c.evidence)
++    assert seen == {"sum", "outflow", "derived"}
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("seed", range(20))
++def test_p2_drilldown_totals_equal_the_figures_on_random_statements(home, tmp_path, serve, seed):
++    rng = random.Random(seed)
++    words = ["STRIPE PAYOUT", "CASH PAID IN", "FPS CREDIT ACME LTD INV 12", "IWOCA LOAN", "PAYPAL REFUND",
++             "HMRC VAT", "HMRC PAYE", "DIVIDEND J SMITH", "DD IWOCA LTD", "RENT", "XQZ 4471", "FPS CREDIT J BLOGGS",
++             "FPS DEBIT J BLOGGS", "INTEREST PAID", "FPS CREDIT DIRECTOR CAPITAL INTRODUCED"]
++    out = io.StringIO()
++    w = csv.writer(out, lineterminator="\n")
++    w.writerow(["id", "date", "description", "amount", "balance"])
++    balance = 0
++    for n in range(rng.randint(1, 25)):
++        p = rng.choice([1, -1]) * rng.randint(1, 900_000)
++        balance += p
++        w.writerow([f"L{n + 1}", f"2026-0{1 + n // 10}-{1 + n % 10 * 2:02d}", rng.choice(words),
++                    f"{p / 100:.2f}", f"{balance / 100:.2f}"])
++    case_id, folder = _case(tmp_path, out.getvalue())
++    srv = serve(case_id)
++    f = overrides.case_figures(folder)["main"]
++    for m in f.metrics:
++        d = _lines(srv, figure=m.id)
++        assert [x["id"] for x in d["lines"]] == m.evidence
++        if d["kind"] == "sum":
++            assert d["total"]["pence"] == _figure_pence(m.value)
++        elif d["kind"] == "outflow":
++            assert d["total"]["pence"] == -_figure_pence(m.value)
++    for row in f.monthly:
++        for key, _ in summary.CELLS:
++            d = _lines(srv, month=row.month, cell=key)
++            assert [x["id"] for x in d["lines"]] == getattr(row, key).evidence
++
++
++# --- derived figures: inputs and method ------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_derived_figures_show_their_inputs_and_method(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    by = {m.id: m for m in overrides.case_figures(folder)["main"].metrics}
++    # A ratio: the figures it is computed from.
++    m10 = _lines(srv, figure="M10")
++    assert [(i["figure"], i["display"]) for i in m10["inputs"]] == [
++        ("M9", by["M9"].display_exact()), ("M11", "£900.00"), ("M8", "£400.00")]
++    assert m10["method"] == by["M10"].method
++    m28 = _lines(srv, figure="M28")
++    assert {"label": "Proposed monthly repayment (case profile)", "figure": None, "display": "£250.00"} in m28["inputs"]
++    # An average: M2 and the period.
++    m3 = _lines(srv, figure="M3")
++    assert m3["inputs"][0]["figure"] == "M2" and m3["inputs"][0]["display"] == "£1,950.35"
++    assert any(i["label"] == "Period" and "2026-01-05 to 2026-02-20" in i["display"] for i in m3["inputs"])
++    # A share: its numerator, with the lines counted in it, and what it is a share of.
++    m15 = _lines(srv, figure="M15")
++    assert m15["inputs"][0]["display"] == "£900.00" and m15["inputs"][0]["lines"] == ["L15"]
++    assert m15["inputs"][1]["display"] == "£1,200.25"
++    m26 = _lines(srv, figure="M26")
++    assert m26["inputs"][0]["figure"] == "M25" and m26["inputs"][1]["lines"] == ["L11", "L13"]
++    assert _pence(m26["inputs"][2]["display"]) == metrics.lines_total(
++        overrides.case_figures(folder)["main"].statement, by["M26"].evidence)
++    # A lowest balance: the line that set it, and its balance.
++    m5 = _lines(srv, figure="M5")
++    assert [x["id"] for x in m5["lines"]] == ["L12"] and m5["inputs"][0]["display"] == "-£599.65"
++    # Read from end-of-day balances: the close of every day of the period.
++    m27 = _lines(srv, figure="M27")
++    assert len(m27["closes"]) == 47 and m27["closes"][0] == {"date": "2026-01-05", "display": "£500.00",
++                                                             "overdrawn": False, "line": "L1"}
++    m6 = _lines(srv, figure="M6")
++    assert sum(c["overdrawn"] for c in m6["closes"]) == by["M6"].value == 22
++
++
++@pytest.mark.contracts
++def test_m9_names_the_lines_it_counts_only_in_part(home, tmp_path, serve):
++    case_id, _ = _case(tmp_path)
++    d = _lines(serve(case_id), figure="M9")
++    assert d["kind"] == "derived" and d["total"] is None
++    assert d["counted_in_part"] == ["L11"]
++    assert [x["id"] for x in d["lines"] if x["counted_in_part"]] == ["L11"]
++
++
++@pytest.mark.contracts
++def test_a_line_s_override_is_the_rule_shown_for_it(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    overrides.add_override(folder, "L13", "director_funding", reason="director's loan", name="A Person")
++    srv = serve(case_id)
++    d = _lines(srv, figure="M20")
++    assert [x["id"] for x in d["lines"]] == ["L4", "L13"] and d["overridden"] is True
++    l13 = d["lines"][1]
++    assert l13["rule"] == "override:1" and l13["overridden"] is True and l13["category"] == "director_funding"
++    assert d["lines"][0]["rule"] == "v2:director_funding" and d["lines"][0]["overridden"] is False
++    assert d["total"]["display"] == "£1,080.00" == by_display(folder, "M20")
++    assert [x["id"] for x in _lines(srv, figure="M25")["lines"]] == ["L11"]
++
++
++def by_display(folder, fid):
++    return next(m for m in overrides.case_figures(folder)["main"].metrics if m.id == fid).display_exact()
++
++
++# --- requests that name nothing, and cases that cannot be shown ------------------------------
++
++
++@pytest.mark.contracts
++def test_a_request_that_names_no_figure_or_cell_is_answered_400(home, tmp_path, serve):
++    case_id, _ = _case(tmp_path)
++    srv = serve(case_id)
++    for q in ({}, {"figure": "M99"}, {"figure": "M2", "month": "2026-01"}, {"month": "2026-01"},
++              {"month": "2031-01", "cell": "money_in"}, {"month": "2026-01", "cell": "nope"},
++              {"figure": "M2", "account": "other"}):
++        status, _, _ = _get(srv, "/api/lines?" + urlencode(q))
++        assert status == 400, q
++    status, _, _ = _get(srv, "/api/lines?figure=M2&figure=M3")
++    assert status == 400
++
++
++@pytest.mark.contracts
++def test_a_case_of_two_accounts_names_the_account(home, tmp_path, serve):
++    case_id, _ = _case(tmp_path)
++    _case(tmp_path, RICH.replace("L", "S").replace("2026-", "2025-"), account="savings", case_id=case_id)
++    srv = serve(case_id)
++    assert _get(srv, "/api/lines?figure=M2")[0] == 400
++    d = _lines(srv, figure="M2", account="savings")
++    assert d["account"] == "savings" and [x["id"] for x in d["lines"]] == ["S1", "S2", "S3", "S15"]
++
++
++@pytest.mark.contracts
++def test_a_case_that_does_not_reconcile_shows_no_lines(home, tmp_path, serve, monkeypatch):
++    case_id, _ = _case(tmp_path)
++    real = overrides.categorise
++
++    def broken(statement, *args, **kwargs):
++        out = real(statement, *args, **kwargs)
++        for t in statement.transactions:
++            if t.id == "L2":
++                t.category = overrides.Category.SUPPLIER
++        return out
++
++    monkeypatch.setattr(overrides, "categorise", broken)
++    srv = serve(case_id)
++    d = _lines(srv, figure="M2")
++    assert d["state"] == "not_reconciled" and "lines" not in d
++    status, _, page = _get(srv, "/lines?figure=M2")
++    assert status == 200 and b"No figures are shown" in page
++
++
++# --- the page ------------------------------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_every_figure_bucket_and_cell_on_the_page_links_to_its_lines(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    _, _, page = _get(srv, "/")
++    page = page.decode()
++    f = overrides.case_figures(folder)["main"]
++    for m in f.metrics:
++        assert escape("/lines?" + urlencode({"token": srv.token, "account": "main", "figure": m.id})) in page
++    for row in f.monthly:
++        for key, _ in summary.CELLS:
++            target = {"token": srv.token, "account": "main", "month": row.month, "cell": key}
++            assert escape("/lines?" + urlencode(target)) in page
++
++
++@pytest.mark.contracts
++def test_the_lines_page_shows_the_lines_and_the_total(home, tmp_path, serve):
++    case_id, _ = _case(tmp_path)
++    srv = serve(case_id)
++    status, kind, page = _get(srv, "/lines?figure=M8")
++    page = page.decode()
++    assert status == 200 and kind.startswith("text/html")
++    for text in ("DD IWOCA LTD", "UNPAID DD IWOCA LTD", "-£400.00", "the figure negated", "v2:returned_dd",
++                 "loan_repayment"):
++        assert text in page
++    assert "<script>" not in page.split("</head>", 1)[1]
++
++
++@pytest.mark.invariants
++def test_p8_the_lines_page_holds_description_text_only_escaped(home, tmp_path, serve):
++    desc = '<script>alert("x")</script> & </td><a href="javascript:1">'
++    body = RICH.replace("XQZ 4471", '"' + desc.replace('"', '""') + '"')
++    case_id, _ = _case(tmp_path, body)
++    srv = serve(case_id)
++    status, _, page = _get(srv, "/lines?figure=M25")
++    page = page.decode()
++    assert status == 200 and desc not in page and escape(desc, quote=True) in page
++    assert _lines(srv, figure="M25")["lines"][1]["description"] == desc
++
++
++# --- hardening: the new entry points' checks, and a share's inputs ---------------------------
++
++
++def _raw(srv, path, headers):
++    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=10)
++    try:
++        conn.request("GET", path, headers=headers)
++        r = conn.getresponse()
++        return r.status, r.read()
++    finally:
++        conn.close()
++
++
++@pytest.mark.contracts
++def test_the_lines_entry_points_refuse_a_request_without_the_token_or_the_loopback_host(home, tmp_path, serve):
++    case_id, _ = _case(tmp_path)
++    srv = serve(case_id)
++    host = f"127.0.0.1:{srv.port}"
++    for path in ("/lines?figure=M2", "/api/lines?figure=M2"):
++        assert _raw(srv, path, {"Host": host})[0] == 403  # no token
++        assert _raw(srv, path, {"Host": host, "X-CMA-Token": "wrong"})[0] == 403
++        assert _raw(srv, path, {"Host": "evil.example", "X-CMA-Token": srv.token})[0] == 403
++        assert _raw(srv, path + f"&token={srv.token}", {"Host": host, "Origin": "http://evil.example"})[0] == 403
++        status, _ = _raw(srv, path + f"&token={srv.token}", {"Host": host})
++        assert status == 200
++
++
++@pytest.mark.contracts
++def test_an_unforeseen_failure_in_the_lines_is_answered_500_naming_nothing(home, tmp_path, serve, monkeypatch):
++    from cma.review import drilldown
++
++    case_id, _ = _case(tmp_path)
++    srv = serve(case_id)
++
++    def boom(*a, **k):
++        raise RuntimeError("CARD SETTLEMENT STRIPE secret")
++
++    monkeypatch.setattr(drilldown, "lines_behind", boom)
++    for path in ("/lines?figure=M2", "/api/lines?figure=M2"):
++        status, _, body = _get(srv, path)
++        assert status == 500 and b"STRIPE" not in body
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("seed", range(10))
++def test_p2_a_share_s_inputs_give_the_figure(home, tmp_path, serve, seed):
++    rng = random.Random(seed)
++    words = ["FPS CREDIT ACME LTD INV 1", "FPS CREDIT BETA LTD INV 2", "FPS CREDIT GAMMA LTD INV 3",
++             "STRIPE PAYOUT", "XQZ 4471", "IWOCA LOAN", "PAYPAL REFUND", "INTEREST PAID"]
++    out = io.StringIO()
++    w = csv.writer(out, lineterminator="\n")
++    w.writerow(["id", "date", "description", "amount", "balance"])
++    balance = 0
++    for n in range(rng.randint(2, 20)):
++        p = rng.randint(1, 500_000)
++        balance += p
++        w.writerow([f"L{n + 1}", f"2026-01-{n + 1:02d}", rng.choice(words), f"{p / 100:.2f}", f"{balance / 100:.2f}"])
++    case_id, folder = _case(tmp_path, out.getvalue())
++    srv = serve(case_id)
++    by = {m.id: m for m in overrides.case_figures(folder)["main"].metrics}
++    for fid in ("M15", "M16", "M26"):
++        m = by[fid]
++        d = _lines(srv, figure=fid)
++        money = [i for i in d["inputs"] if i.get("figure") is None]
++        if m.value is None or not m.evidence:
++            continue
++        num, den = _pence(money[0]["display"]), _pence(money[-1]["display"])
++        assert den == metrics.lines_total(overrides.case_figures(folder)["main"].statement, m.evidence)
++        assert metrics._ratio(num, den, 2, 100) == m.value
+diff --git a/tests/test_workspace_summary.py b/tests/test_workspace_summary.py
+index 8fbb307..2fe2de2 100644
+--- a/tests/test_workspace_summary.py
++++ b/tests/test_workspace_summary.py
+@@ -352,10 +352,14 @@ def _random_statement(rng: random.Random) -> tuple[str, list[tuple[str, str]]]:
+ 
+ def _assert_only_escaped(page: str, texts: list[str], *, shown: bool) -> None:
+     allowed = {"html", "head", "meta", "title", "link", "script", "body", "header", "h1", "h2", "h3", "p",
+-               "main", "section", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "span"}
++               "main", "section", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "span", "a", "strong"}
+     p = _parse(page)
+     # No text adds markup: every tag is one the workspace writes, with no handler or style.
+     assert {t for t, _ in p.tags} <= allowed
++    # A link is the workspace's own, to a figure's or cell's lines or back to the case (R16).
++    for t, a in p.tags:
++        if t == "a":
++            assert [k for k, _ in a] == ["href"] and dict(a)["href"].startswith(("/lines?token=", "/?token="))
+     assert not any(k == "style" or k.startswith("on") for _, a in p.tags for k, _ in a)
+     assert [t for t, _ in p.tags].count("script") == 1
+     page_text = "".join(p.text)
+@@ -383,6 +387,11 @@ def test_p8_the_workspace_html_holds_description_text_only_escaped(home, tmp_pat
+     _assert_only_escaped(page, [d for _, d in lines], shown=False)
+     _assert_only_escaped(page, [label, business], shown=True)
+     assert srv.token in page  # the page still names its own token, once, where it should
++    # The drill-down page shows the lines behind a figure, each description only escaped (R16).
++    status, _, lines_page = _get(srv, "/lines?figure=M27")
++    assert status == 200
++    cited = set(next(m for m in overrides.case_figures(folder)["main"].metrics if m.id == "M27").evidence)
++    _assert_only_escaped(lines_page.decode("utf-8"), [d for i, d in lines if i in cited], shown=True)
+     # When the case does not reconcile, the lines involved are shown with their descriptions.
+     credits = [(i, d) for (i, d), row in zip(lines, body.splitlines()[1:], strict=True)
+                if not next(csv.reader([row]))[3].startswith("-")]

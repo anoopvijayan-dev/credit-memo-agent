@@ -270,12 +270,12 @@
       "depends_on": [
         "T19"
       ],
-      "status": "verify",
+      "status": "failed",
       "attempts": 1,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T20",
-      "evidence": null,
-      "escalation": null
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-241/evidence.json",
+      "escalation": "attempt 1 of 3 fail: R16 fail (Read src/cma/review/drilldown.py:64-115 (lines_behind), :46-61 (_line, _total), src/cma/metrics.py:780-893 (figure_kind, lines_total, derived_inputs, cell_inputs) against compute() at metrics.py:400-697 and the runner's specified-3.log (all 43 tests of tests/test_drilldown.py PASSED). Exact lines per figure/bucket/cell with date, description, amount, balance, category and rule/override: pass (drilldown.py:46-52, 93-95, 108). Sum total beside the figure and outflow total labelled as the figure negated: pass (metrics.py:782-783, drilldown.py:55-61; outflow set M8/M11/M12/M14 matches P2's list and money_out cell kind). M9's part-counted lines: pass (drilldown.py:91-94 from Metric.evidence_note). Derived figures' inputs and method: M1, M3, M5, M10, M15, M16, M26, M27, M28 and the monthly derived cells show real inputs, but M4 is given M2 (total revenue) as its input though it is computed from the first and last whole-month quarters (metrics.py:786 vs 437-441), and M7, M9 and M13 get an empty inputs list (derived_inputs has no branch for them), so the page shows no Inputs section. The test only asserts isinstance(d['inputs'], list).); major: Revenue trend (M4) is a derived figure whose drill-down lists total revenue (M2) as its only input. M4 is computed from the trading receipts of the earliest three and latest three whole calendar months (metrics.py:437-441, first3/last3), which are never shown, so the inputs shown do not give the figure and the inputs R16 asks for are missing. at src/cma/metrics.py:786; major: Late or missed VAT payments (M13), a count, gets no inputs: derived_inputs has no branch for M13, so inputs is [] and render() (drilldown.py `if d['inputs']`) shows no Inputs section. The count depends on the VAT stagger group, each quarter's due date and the collection window (metrics.py:557-581), and none of these is shown, nor which quarters were counted late. at src/cma/metrics.py:844; major: Net operating cash flow (M9) gets no inputs: derived_inputs has no branch for M9, so inputs is []. M9's value is the operating lines' total excluding NON_TRADING_IN credits plus a capped round-trip offset (metrics.py:501-511). Its lines' total is not the figure, and neither the offset nor the part-counted line's counted amount is shown, so the inputs R16 requires for M9 are missing (only the part-counted line ids are given). M7 (a count) likewise gets an empty inputs list. at src/cma/metrics.py:844; reviewer verdict fail"
     },
     {
       "id": "T43",

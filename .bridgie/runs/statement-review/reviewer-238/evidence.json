@@ -1,0 +1,60 @@
+{
+  "task": "T20",
+  "criteria": [
+    {
+      "id": "R16",
+      "tier": "adversarial",
+      "check": "Read src/cma/review/drilldown.py:64-115 (lines_behind), :46-61 (_line, _total), src/cma/metrics.py:780-893 (figure_kind, lines_total, derived_inputs, cell_inputs) against compute() at metrics.py:400-697 and the runner's specified-3.log (all 43 tests of tests/test_drilldown.py PASSED). Exact lines per figure/bucket/cell with date, description, amount, balance, category and rule/override: pass (drilldown.py:46-52, 93-95, 108). Sum total beside the figure and outflow total labelled as the figure negated: pass (metrics.py:782-783, drilldown.py:55-61; outflow set M8/M11/M12/M14 matches P2's list and money_out cell kind). M9's part-counted lines: pass (drilldown.py:91-94 from Metric.evidence_note). Derived figures' inputs and method: M1, M3, M5, M10, M15, M16, M26, M27, M28 and the monthly derived cells show real inputs, but M4 is given M2 (total revenue) as its input though it is computed from the first and last whole-month quarters (metrics.py:786 vs 437-441), and M7, M9 and M13 get an empty inputs list (derived_inputs has no branch for them), so the page shows no Inputs section. The test only asserts isinstance(d['inputs'], list).",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 786,
+      "criterion": "R16",
+      "claim": "Revenue trend (M4) is a derived figure whose drill-down lists total revenue (M2) as its only input. M4 is computed from the trading receipts of the earliest three and latest three whole calendar months (metrics.py:437-441, first3/last3), which are never shown, so the inputs shown do not give the figure and the inputs R16 asks for are missing.",
+      "repro": "Import a statement with 7 or more whole months of trading receipts that differ month to month. GET /api/lines?figure=M4. inputs == [{label:'Total revenue', figure:'M2', display:<all-period M2>}]. No first-quarter or last-quarter total appears, and (last3-first3)/first3 cannot be formed from what is shown. M4's evidence (only the quarters' lines) also does not total M2."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 844,
+      "criterion": "R16",
+      "claim": "Late or missed VAT payments (M13), a count, gets no inputs: derived_inputs has no branch for M13, so inputs is [] and render() (drilldown.py `if d['inputs']`) shows no Inputs section. The count depends on the VAT stagger group, each quarter's due date and the collection window (metrics.py:557-581), and none of these is shown, nor which quarters were counted late.",
+      "repro": "Set vat_stagger in the case profile and import a statement covering a full VAT quarter with HMRC VAT payments. GET /api/lines?figure=M13 returns kind 'derived', inputs [], closes null, with only the VAT lines and the method sentence. The stagger group and the due dates the count was judged against are absent."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 844,
+      "criterion": "R16",
+      "claim": "Net operating cash flow (M9) gets no inputs: derived_inputs has no branch for M9, so inputs is []. M9's value is the operating lines' total excluding NON_TRADING_IN credits plus a capped round-trip offset (metrics.py:501-511). Its lines' total is not the figure, and neither the offset nor the part-counted line's counted amount is shown, so the inputs R16 requires for M9 are missing (only the part-counted line ids are given). M7 (a count) likewise gets an empty inputs list.",
+      "repro": "With tests/test_drilldown.py RICH (L10 FPS DEBIT J BLOGGS -100, L11 FPS CREDIT J BLOGGS +250): GET /api/lines?figure=M9 gives inputs [], total null, counted_in_part ['L11']. Nothing shows that L11 counts £100.00 of its £250.00, or what the operating total and the offset are, so the shown value cannot be rebuilt from the page."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/review/drilldown.py",
+      "line": 98,
+      "criterion": "R16",
+      "claim": "The drill-down reads the case profile a second time, after load_figures and outside its refusal handling. A profile that cannot be loaded raises out of lines_behind, so /lines answers a generic 500 rather than the workspace's refusal. A profile changed between the two reads can show an M28 proposed repayment that differs from the one the figure was computed with.",
+      "repro": "Make the profile file unreadable or invalid after the statement import (e.g. chmod 000 on it between the figure computation and the second load, or patch store.load_profile to raise CaseStoreError on its second call). GET /lines?figure=M28 returns 500 'The lines could not be shown.' where the summary page would show a refusal."
+    },
+    {
+      "severity": "minor",
+      "file": null,
+      "line": null,
+      "criterion": null,
+      "claim": "The producer's performance claim (M17 2.29s, 904,886 bytes on a 10,000-line statement) comes from a scratchpad probe, not from any tier the runner ran, so it is unproven. Its note leaves paging of the drill-down as an open gap.",
+      "repro": "No runner tier runs <scratchpad>/probe.py. A timed test under a runner marker would be needed to prove it."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
