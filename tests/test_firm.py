@@ -1713,6 +1713,31 @@ def test_p18_a_graph_copied_by_with_config_keeps_the_locks_rules(home, no_networ
 
 
 @pytest.mark.invariants
+@pytest.mark.parametrize("how", ["invoke", "stream"])
+def test_p18_a_callers_tracing_v2_context_does_not_trace_a_run_under_the_lock(home, no_network, monkeypatch, tmp_path, how):
+    """T17 review 19 / R29: inside a caller's tracing_v2_enabled() context, LangChain added that
+    context's tracer to the run's callbacks after the run's own were filtered, so a run under
+    the lock was traced whatever LangSmith's own switch said."""
+    from langchain_core.tracers.context import tracing_v2_enabled
+    from langchain_core.tracers.langchain import LangChainTracer
+
+    names = []
+    monkeypatch.setattr(LangChainTracer, "_start_trace", lambda self, run: names.append(run.name), raising=False)
+    monkeypatch.setattr(LangChainTracer, "_persist_run", lambda self, run: names.append(run.name), raising=False)
+    monkeypatch.setattr(LangChainTracer, "_persist_run_single", lambda self, run: None, raising=False)
+    monkeypatch.setattr(LangChainTracer, "_update_run_single", lambda self, run: None, raising=False)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    graph = build(llm.FakeLLM())
+    args = ({"statement_path": str(_statement(tmp_path))}, {"configurable": {"thread_id": "t"}})
+    with tracing_v2_enabled(client=types.SimpleNamespace()):
+        if how == "invoke":
+            graph.invoke(*args)
+        else:
+            list(graph.stream(*args))
+    assert names == [] and no_network == []
+
+
+@pytest.mark.invariants
 def test_p5_a_custom_rules_limits_never_reach_the_prompt(home, tmp_path):
     """T17 review 10 / P5: a custom rule's threshold, a number that can come from the case, reached
     the prompt in its requirement and detail cells."""

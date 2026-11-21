@@ -595,6 +595,24 @@ def _untraced_inherited_config():
     return var_child_runnable_config.set({**inherited, "callbacks": _without_network_tracers(callbacks)})
 
 
+def _no_tracing_v2_context():
+    """Under the lock, a caller's tracing_v2_enabled() context is set aside for the run:
+    LangChain adds the tracer that context holds to every run's callbacks, after the run's own
+    were filtered, whatever LangSmith's own switch says (R29, T17 review 19)."""
+    from langchain_core.tracers.context import tracing_v2_callback_var
+
+    return tracing_v2_callback_var.set(None)
+
+
+def _reset_tracing_v2_context(token) -> None:
+    from langchain_core.tracers.context import tracing_v2_callback_var
+
+    # A stream finished in another context (closed by the garbage collector): the context it
+    # changed is gone with it.
+    with contextlib.suppress(ValueError):
+        tracing_v2_callback_var.reset(token)
+
+
 def _reset_inherited_config(token) -> None:
     from langchain_core.runnables.config import var_child_runnable_config
 
@@ -699,14 +717,16 @@ def _untraced_under_lock(graph, run_reading) -> None:
                 k = {**k, "config": config}
             else:
                 a = (a[0], config, *a[2:])
-        inherited = _untraced_inherited_config() if locked else None
+        inherited = (_untraced_inherited_config(), _no_tracing_v2_context()) if locked else None
         marks = (_IN_RUN.set((id(self), locked)), _DELEGATE.set(id(self))) if mark else None
         return locked, (marks, (reading, run_key) if reading is not None else None, inherited), a, k
 
     def end(token) -> None:
         if token is not None:
             if token[2] is not None:
-                _reset_inherited_config(token[2])
+                if token[2][0] is not None:
+                    _reset_inherited_config(token[2][0])
+                _reset_tracing_v2_context(token[2][1])
             if token[0] is not None:
                 _DELEGATE.reset(token[0][1])
                 _IN_RUN.reset(token[0][0])
