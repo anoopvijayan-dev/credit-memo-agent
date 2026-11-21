@@ -1,187 +1,188 @@
 1
-00:00:00,550 --> 00:00:01,807
-A week ago my friend,
+00:00:00,450 --> 00:00:02,580
+"If AI makes up a number,
 
 2
-00:00:01,807 --> 00:00:03,154
-an underwriter, cancelled our
-
-3
-00:00:03,154 --> 00:00:03,607
-road trip.
-
-4
-00:00:03,607 --> 00:00:06,007
-He was buried in bank statements.
-
-5
-00:00:06,007 --> 00:00:08,944
-His fear about AI wasn't speed.
-
-6
-00:00:08,944 --> 00:00:09,769
-It was this:
-
-7
-00:00:09,769 --> 00:00:11,464
-"If it makes up a number,
-
-8
-00:00:11,464 --> 00:00:14,150
+00:00:02,580 --> 00:00:05,050
 it's my name on the file."
 
+3
+00:00:05,050 --> 00:00:06,490
+My friend told me that.
+
+4
+00:00:06,490 --> 00:00:08,010
+He's an underwriter.
+
+5
+00:00:08,010 --> 00:00:09,370
+He'd just cancelled our road
+
+6
+00:00:09,370 --> 00:00:12,010
+trip, buried in bank statements.
+
+7
+00:00:12,010 --> 00:00:14,090
+So I'm building him a tool.
+
+8
+00:00:14,090 --> 00:00:15,530
+Not with one AI.
+
 9
-00:00:14,150 --> 00:00:16,008
-So I started building a tool
+00:00:15,530 --> 00:00:17,050
+With a team of them.
 
 10
-00:00:16,008 --> 00:00:17,424
-for him with Bridgie,
+00:00:17,050 --> 00:00:18,890
+I call it Bridgie.
 
 11
-00:00:17,424 --> 00:00:19,986
-my AI agent team.
+00:00:18,890 --> 00:00:20,250
+Before any code,
 
 12
-00:00:19,986 --> 00:00:21,251
-First, Bridgie interviewed
+00:00:20,250 --> 00:00:21,930
+Bridgie interviewed me.
 
 13
-00:00:21,251 --> 00:00:21,681
-me.
-
-14
-00:00:21,681 --> 00:00:23,295
+00:00:21,930 --> 00:00:23,690
 Seventy-six questions.
 
+14
+00:00:23,690 --> 00:00:25,530
+Forty-one tasks.
+
 15
-00:00:23,295 --> 00:00:24,607
-Then it wrote a spec:
+00:00:25,530 --> 00:00:26,810
+Any AI can build you a
 
 16
-00:00:24,607 --> 00:00:26,580
-fifty-five requirements, twenty
+00:00:26,810 --> 00:00:28,330
+demo in an afternoon.
 
 17
-00:00:26,580 --> 00:00:28,264
-rules that must always hold,
+00:00:28,330 --> 00:00:29,690
+None of them can prove a
 
 18
-00:00:28,264 --> 00:00:30,691
-and forty-one tasks.
+00:00:29,690 --> 00:00:31,550
+single number in it.
 
 19
-00:00:30,691 --> 00:00:32,061
-You could prompt an AI into
+00:00:31,550 --> 00:00:32,870
+So in Bridgie,
 
 20
-00:00:32,061 --> 00:00:33,489
-a demo in an afternoon.
+00:00:32,870 --> 00:00:34,470
+the AI doesn't get to say
 
 21
-00:00:33,489 --> 00:00:34,766
-But you couldn't prove a single
+00:00:34,470 --> 00:00:35,230
+"done".
 
 22
-00:00:34,766 --> 00:00:36,294
-number in it.
+00:00:35,230 --> 00:00:36,870
+The tests decide.
 
 23
-00:00:36,294 --> 00:00:38,570
-In Bridgie, a task isn't done
+00:00:36,870 --> 00:00:38,510
+Then a reviewer from a different
 
 24
-00:00:38,570 --> 00:00:40,160
-when the AI says so.
+00:00:38,510 --> 00:00:40,670
+AI company tries to break it.
 
 25
-00:00:40,160 --> 00:00:41,704
-It passes the tests,
+00:00:40,670 --> 00:00:42,860
+Then a human signs.
 
 26
-00:00:41,704 --> 00:00:43,423
-then a reviewer from a different
+00:00:42,860 --> 00:00:44,380
+The statement reader went through
 
 27
-00:00:43,423 --> 00:00:45,466
-AI company tries to break it,
+00:00:44,380 --> 00:00:46,020
+sixty-five rounds of review
 
 28
-00:00:45,466 --> 00:00:47,695
-then a human signs.
+00:00:46,020 --> 00:00:47,220
+before it passed.
 
 29
-00:00:47,695 --> 00:00:49,204
-The statement reader alone
-
-30
-00:00:49,204 --> 00:00:50,981
-took sixty-five rounds.
-
-31
-00:00:50,981 --> 00:00:52,397
+00:00:47,220 --> 00:00:48,420
 It caught a fraction of a
 
+30
+00:00:48,420 --> 00:00:49,900
+penny lost to rounding.
+
+31
+00:00:49,900 --> 00:00:51,940
+A refund counted as income.
+
 32
-00:00:52,397 --> 00:00:53,988
-penny lost to rounding,
+00:00:51,940 --> 00:00:53,460
+A file that crashed instead
 
 33
-00:00:53,988 --> 00:00:56,159
-a refund counted as income,
-
-34
-00:00:56,159 --> 00:00:57,772
-a file that crashed instead
-
-35
-00:00:57,772 --> 00:01:00,311
+00:00:53,460 --> 00:00:55,540
 of naming the bad line.
 
+34
+00:00:55,540 --> 00:00:57,060
+The kind of bug that ends
+
+35
+00:00:57,060 --> 00:00:59,540
+up with his name on it.
+
 36
-00:01:00,311 --> 00:01:01,507
-A week in,
+00:00:59,540 --> 00:01:00,580
+One week in:
 
 37
-00:01:01,507 --> 00:01:03,968
-nineteen of forty-one are done.
+00:01:00,580 --> 00:01:02,660
+nineteen of forty-one done.
 
 38
-00:01:03,968 --> 00:01:05,710
-Statements read to the penny,
+00:01:02,660 --> 00:01:04,180
+Read to the penny.
 
 39
-00:01:05,710 --> 00:01:07,416
-every figure traceable to its
+00:01:04,180 --> 00:01:05,460
+Every figure traced to its
 
 40
-00:01:07,416 --> 00:01:09,216
-transactions, nothing leaving
+00:01:05,460 --> 00:01:06,580
+transactions.
 
 41
-00:01:09,216 --> 00:01:11,158
-the laptop.
+00:01:06,580 --> 00:01:08,720
+Nothing leaves the laptop.
 
 42
-00:01:11,158 --> 00:01:12,586
-Not released yet,
+00:01:08,720 --> 00:01:09,920
+Not released yet.
 
 43
-00:01:12,586 --> 00:01:14,629
-and no underwriter has used
+00:01:09,920 --> 00:01:11,280
+No underwriter has used it
 
 44
-00:01:14,629 --> 00:01:17,279
-it on real work yet.
+00:01:11,280 --> 00:01:13,220
+on real work yet.
 
 45
-00:01:17,279 --> 00:01:18,951
+00:01:13,220 --> 00:01:14,660
 Nineteen of forty-one isn't
 
 46
-00:01:18,951 --> 00:01:19,346
+00:01:14,660 --> 00:01:15,380
 slow.
 
 47
-00:01:19,346 --> 00:01:22,505
+00:01:15,380 --> 00:01:18,700
 It's what "I'd sign this" costs.
+
