@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-194/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:77-88 verifies that parsed amounts round-trip to the exact pence. src/cma/metrics.py:510-517 handles unrepresentable M3 values, and src/cma/graph.py:175 and src/cma/cli.py:415 render GBP to the penny. The loader omits readable defects in a partially unreadable record and runs cross-record checks while it is still reading, contrary to revision 31. The Monzo balance walk after sorting is within scope.); major: A partially unreadable statement record loses defects in its readable ID, date and ordinary numeric fields. The fallback only checks monetary limits and whether a readable amount contributes to the flow total. at src/cma/ingest.py:563; major: The loader executes date and running-balance comparisons during record validation. Revision 31 places cross-record checks after reading stops. Selecting one direction and adding the stored diagnostics at EOF leaves the comparisons themselves inside the read loop. at src/cma/ingest.py:546; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-196/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:83-95 verifies the pence round trip, src/cma/metrics.py:510-517 handles unrepresentable M3 values, and src/cma/graph.py:175 and src/cma/cli.py:415 render GBP to the penny. The loader now runs cross-record checks after the read loop, but excludes readable dates and balances from some terminal records and truncates diagnostics. GBP policy comparisons still run outside the figures layer on unconverted values.); major: A partially unreadable terminal record contributes its readable amount to flow totals but loses its independently readable date and balance before the deferred cross-record checks. at src/cma/ingest.py:521; major: The refusal truncates ordinary diagnostics even though revision 31 requires the loader to name every problem it found in the records it read. at src/cma/ingest.py:60; major: GBP rules compare raw reported values and YAML numbers outside the figures layer. The main threshold, referral bands and stored-policy replay all bypass whole-pence comparisons. at src/cma/policy.py:176; reviewer verdict fail"
     },
     {
       "id": "T06",
