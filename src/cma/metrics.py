@@ -368,7 +368,21 @@ def end_of_day_balances(txns: list[Transaction]) -> dict[date, tuple[int, str]]:
     return out
 
 
-def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric]:
+def proposed_repayment_pence(proposed) -> int:
+    """The proposed facility's monthly repayment in whole pence, read exactly from the text it
+    is written as (a float from the repr it prints as), as a policy limit is (R2). Refused,
+    never rounded, unless it is a positive whole number of pence below the import limit."""
+    p = limit_pence(proposed)
+    if p is None or p <= 0 or at_limit(p):
+        raise ValueError(f"proposed monthly repayment {proposed!r} is not a positive whole number of pence "
+                         "below £10,000,000,000,000")
+    return p
+
+
+def compute(statement: Statement, vat_stagger: int | None = None, proposed_repayment=None) -> list[Metric]:
+    """Every figure for the statement. `proposed_repayment` is the proposed facility's monthly
+    repayment from the case profile (R13), in pounds, as text, a Decimal, an int or a float;
+    `cma run` has no case profile and gives none, so M28 is n/a with the reason there."""
     txns = statement.transactions
     # A debit with no category cannot be placed in any figure: refused, naming it. A credit
     # with none is in no bucket, so it is left to the reconciliation below, which names it
@@ -380,6 +394,7 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
     loose_debits = [t for t in txns if t.category is None and (_whole_pence_exact(t.amount) or 0) <= 0]
     if vat_stagger is not None and vat_stagger not in VAT_STAGGERS:
         raise ValueError("vat_stagger must be 1, 2 or 3")
+    proposed = None if proposed_repayment is None else proposed_repayment_pence(proposed_repayment)
 
     by_id = statement.by_id()
     for t in txns:  # refuse a fraction of a penny before any figure is computed
@@ -496,6 +511,24 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
     else:
         dscr_note = "No loan or finance repayments in the statement, so there is no existing debt to cover."
 
+    # M28 (R13): the proposed monthly repayment for each month of the period, counted in the
+    # exact length of the period in months as M3 counts it (period_days * 48 / 1461), added to
+    # existing debt service. Kept in integers: cover = cash * 1461 / (debt * 1461 + proposed *
+    # period_days * 48), rounded half to even from the exact quotient (P2: a derived figure).
+    cover_lines = sorted(operating + drawings + loan, key=lambda t: pos[t.id])
+    cover: float | None = None
+    if proposed is None:
+        cover_note = ("No proposed monthly repayment was given: it comes from the case profile, and this "
+                      "statement has none, so cover including the proposed facility cannot be computed.")
+    else:
+        cover_den = debt_service * 1461 + proposed * period_days * 48
+        cover_note = ("Net operating cash flow after owner drawings, divided by debt service plus the proposed "
+                      "monthly repayment for each month of the period (its exact length in months).")
+        if cover_den > 0:
+            cover = _ratio((net_operating - owner_drawings) * 1461, cover_den, 4)
+        else:
+            cover_note = "Debt service with the proposed repayment is not above zero, so there is nothing to cover."
+
     # Concentration: only knowable for customers who pay by named transfer.
     transfers = [t for t in txns if t.category == Category.REVENUE_TRANSFER]
     by_payer: dict[str, int] = defaultdict(int)
@@ -573,6 +606,20 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
         avg_revenue = None
         avg_note = "Average monthly revenue is too large to report to the penny."
 
+    # M27 (R12): the close of every calendar day from the first line to the last, a day with no
+    # lines carrying the close before it, averaged in whole pence (half to even), citing the line
+    # that set each of those closes (P2: a derived figure). n/a with the reason when no float
+    # carries those pence (R2).
+    closes = list(eod.values())
+    eod_avg_pence = _div_half_even(sum(bal for bal, _ in closes), len(closes))
+    eod_avg: float | None = eod_avg_pence / 100
+    eod_note = ("The closing balance of every calendar day in the period, carried over days with no "
+                "transactions, averaged over those days.")
+    if _whole_pence_exact(eod_avg) != eod_avg_pence:
+        eod_avg = None
+        eod_note = "The average end-of-day balance is too large to report to the penny."
+    eod_setters = sorted({line_id for _, line_id in closes}, key=pos.__getitem__)
+
     return [
         Metric(id="M1", name="Months covered", value=n_months, unit="months",
                method="Days from the first transaction to the last, in months, to the nearest month.",
@@ -629,6 +676,10 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
                method=("Unexplained money in (M25) as a share of money in less lending drawdowns, returned "
                        "direct debits and own-account transfers, the denominator M16 uses."),
                evidence=[t.id for t in inflows]),
+        Metric(id="M27", name="Average end-of-day balance", value=eod_avg, unit="GBP", method=eod_note,
+               evidence=eod_setters),
+        Metric(id="M28", name="Debt service cover including the proposed facility", value=cover, unit="ratio",
+               method=cover_note, evidence=[t.id for t in cover_lines] if cover is not None else []),
     ]
 
 

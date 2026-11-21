@@ -181,7 +181,7 @@ def test_each_bucket_holds_its_categories_and_m18_is_cash_inside_m2():
     assert m["M26"].value == round(10 / denominator * 100, 2) and m["M26"].unit == "pct"
     assert m["M16"].evidence == m["M26"].evidence == ["L1", "L2", "L4", "L6", "L8", "L9", "L10"]
     assert m["M16"].name == "Non-trading money in (share)"
-    assert [x.id for x in metrics.compute(s)] == [f"M{i}" for i in range(1, 27)]
+    assert [x.id for x in metrics.compute(s)] == [f"M{i}" for i in range(1, 29)]
 
 
 def test_buckets_that_do_not_reconcile_are_refused_naming_pence_and_lines():
@@ -232,7 +232,7 @@ def test_cma_run_exits_non_zero_naming_the_difference_and_the_lines(tmp_path, mo
 
 
 @pytest.mark.contracts
-def test_mcp_compute_metrics_carries_m17_to_m26(tmp_path, monkeypatch):
+def test_mcp_compute_metrics_carries_m17_to_m28(tmp_path, monkeypatch):
     pytest.importorskip("mcp")
     from cma import mcp_server
 
@@ -240,7 +240,7 @@ def test_mcp_compute_metrics_carries_m17_to_m26(tmp_path, monkeypatch):
     synth.write(rows, truth, tmp_path / "data", stem="cafe")
     monkeypatch.setenv("CMA_DATA_DIR", str(tmp_path / "data"))
     got = {m["id"]: m for m in mcp_server.compute_metrics("cafe.csv", vat_stagger=3)}
-    assert [f"M{i}" for i in range(1, 27)] == list(got)
+    assert [f"M{i}" for i in range(1, 29)] == list(got)
     assert got["M17"]["unit"] == "GBP" and got["M26"]["unit"] == "pct" and got["M17"]["evidence"]
 
 
