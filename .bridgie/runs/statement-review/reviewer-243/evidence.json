@@ -1,0 +1,49 @@
+{
+  "task": "T22",
+  "criteria": [
+    {
+      "id": "R17",
+      "tier": "adversarial",
+      "check": "Workspace form (edit.py override_form; summary.py _queue_html; drilldown.py render) posts reason, typed name, line, category and expected position; server.py _write -> edit.answer -> overrides.add_override (overrides.py:471-523), which appends under store._recorded (case log + override log, os_user, UTC time) after _check_position against len(save.entries); the reply/303 page is recomputed via case_summary -> case_figures, which marks figures via _rests_on. The new caches are sound: classify reads only description and amount (categorise.py:1286-1331), the _CLASSES/_BARE keys hold statement sha, ruleset id+sha256 and profile, _PARSED returns copies and Transaction has only flat fields. A double submit is refused as a conflict on the second post; the position is read before the figures (summary.log_position), which errs toward a conflict. The runner's specified-3 log shows test_an_override_is_appended..., test_a_save_from_a_stale_page... and test_marks_with_the_kept_figures... PASSED.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R18",
+      "tier": "adversarial",
+      "check": "The form offers only categories_for(t) (edit.py:47-50, overrides.valid_categories); add_override still refuses an invalid direction (overrides.py:507-509); any extra body key goes through refuse_changes (overrides.py:462-469, called from edit._save_override) before anything is read. A missing or non-string line, category, reason, name or position is refused with 400. test_a_category_not_valid..., test_anything_but_a_category... and test_an_override_without_its_reason... PASSED in the runner log.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R19",
+      "tier": "adversarial",
+      "check": "summary.stale_list lists the stale overrides from _decide (line not in the case, or statement hash changed; overrides.py:268-279), and stale_html renders confirm/drop forms, hiding confirm when can_confirm is false; resolve_stale (overrides.py:526-556) re-checks staleness, line presence and direction under the lock and appends the confirm or drop. A stale override is never applied (only matching-hash overrides enter applied). test_a_stale_override_is_listed_and_confirmed..., test_a_stale_override_on_a_missing_line_can_only_be_dropped and test_resolving_an_override_that_is_not_stale... PASSED.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R52",
+      "tier": "adversarial",
+      "check": "test_r52_an_override_on_a_10000_line_case_comes_back_recomputed_within_2_seconds asserts max(timings) < 2.0 over three saves, each returning figures, indicators and policy_check; test_r52_a_form_save... asserts under 2.0 s for the save plus the redirected page with the policy check and the queue. Both PASSED in the runner's specified-3 and contracts-4 logs. The cold first load is outside R52, which times a save on an open case; the GET warms the caches.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/review/edit.py",
+      "line": 53,
+      "criterion": "R17",
+      "claim": "_position (and _number, line 62) accepts any value for which str.isdigit() is true and then calls int(), which raises a plain ValueError for Unicode digits such as superscripts. edit.answer catches only Refused and CaseStoreError, so the request falls through to the server's generic 500 'could not be saved' instead of a 400 refusal. Nothing is recorded.",
+      "repro": "POST /api/override?token=<t> with JSON {\"line\":\"L2\",\"category\":\"director_funding\",\"reason\":\"r\",\"name\":\"P\",\"expected\":\"²\"} -> 500 {\"error\": \"The change could not be saved.\"} instead of 400 with the position refusal."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

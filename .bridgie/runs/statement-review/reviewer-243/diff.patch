@@ -1,0 +1,1507 @@
+diff --git a/README.md b/README.md
+index 91fee39..6847a01 100644
+--- a/README.md
++++ b/README.md
+@@ -79,6 +79,11 @@ cma case resolve-override <id> 3 --confirm --name "Pat"   # or --drop
+ # behind it (date, description, amount, balance, category and the rule or override that
+ # set it), with the lines' total for a sum (the figure negated for money paid out), or the
+ # inputs and method for an average, share, ratio or count.
++# Each line in the judgement queue and the drill-downs has a form to change its category
++# (only categories valid for its direction), with a reason and your typed name; stale
++# overrides are listed to confirm or drop. A save from a page older than the case log is
++# refused as a conflict: reload and save again. Each save is appended to the case log and
++# the page comes back with the figures, indicators and policy check recomputed.
+ cma review <id>                                   # --no-browser to only print the URL
+ 
+ # Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
+diff --git a/src/cma/categorise.py b/src/cma/categorise.py
+index 5772cb5..5e946c1 100644
+--- a/src/cma/categorise.py
++++ b/src/cma/categorise.py
+@@ -1478,6 +1478,13 @@ def unmark_round_trips(statement: Statement, ruleset_id: str | None = None, *,
+     return statement
+ 
+ 
++def classify_lines(statement: Statement, ruleset: Ruleset, *, profile: ProfileNames | None = None,
++                   firm_rules: Sequence[Rule] = ()) -> tuple[tuple[Category, str], ...]:
++    """What classify gives each line of `statement` with no override, in order; the
++    statement is not touched. categorise takes it as `unoverridden`."""
++    return tuple(classify(t, ruleset, profile=profile, firm_rules=firm_rules) for t in statement.transactions)
++
++
+ def categorise(
+     statement: Statement,
+     ruleset: Ruleset | None = None,
+@@ -1485,11 +1492,23 @@ def categorise(
+     overrides: Mapping[str, LineOverride] | None = None,
+     profile: ProfileNames | None = None,
+     firm_rules: Sequence[Rule] = (),
++    unoverridden: Sequence[tuple[Category, str]] | None = None,
+ ) -> Statement:
++    """Categorise every line, then undo round trips and link reversals across lines.
++    `unoverridden`, when given, is what classify gives each line with no override, in
++    order, for this statement, ruleset, profile and firm rules (classify_lines): a line with
++    no override takes it as it is, and a line with one is classified afresh. classify looks
++    at one line only, so the result is the same as classifying every line."""
+     ruleset = ruleset or active_ruleset()
+     overrides = overrides or {}
+-    for t in statement.transactions:
+-        t.category, t.rule_id = classify(t, ruleset, override=overrides.get(t.id), profile=profile,
+-                                         firm_rules=firm_rules)
++    if unoverridden is not None and len(unoverridden) != len(statement.transactions):
++        raise ValueError("unoverridden must give one result per line")
++    for i, t in enumerate(statement.transactions):
++        override = overrides.get(t.id)
++        if unoverridden is not None and override is None:
++            t.category, t.rule_id = unoverridden[i]
++        else:
++            t.category, t.rule_id = classify(t, ruleset, override=override, profile=profile,
++                                             firm_rules=firm_rules)
+         t.reverses = None
+     return link_reversals(unmark_round_trips(statement, ruleset.id, overridden=overrides.keys()))
+diff --git a/src/cma/overrides.py b/src/cma/overrides.py
+index 4492b9c..b9905ba 100644
+--- a/src/cma/overrides.py
++++ b/src/cma/overrides.py
+@@ -25,7 +25,14 @@ earlier one is superseded.
+ Figures are recomputed, every time, from the statements and the whole override log
+ (case_figures): nothing is carried from one computation to the next, so applying overrides
+ one at a time gives what a fresh computation with all of them gives (P3), and a line's id,
+-date, amount, balance and description are never touched (P4). A figure or monthly cell is
++date, amount, balance and description are never touched (P4). Three pure steps are kept by
++the hash of what they read, so that a workspace saving override after override on a large
++case does not repeat them (R52): a statement file parsed from given bytes (each caller gets
++its own copy of the lines to categorise), and the figures of a statement with no overrides,
++which only mark what rests on an override, kept by the statement's hash, the rule table's
++hash and the profile, and what classify gives each line with no override, kept the same
++way (a line with an override is classified afresh, and the passes across lines run every
++time). None depends on the override log. A figure or monthly cell is
+ marked when it rests on an overridden line: an overridden line is among its lines, or its
+ value or lines differ from what the statements give without overrides.
+ 
+@@ -36,6 +43,8 @@ from __future__ import annotations
+ 
+ import hashlib
+ import json
++import threading
++from collections import OrderedDict
+ from dataclasses import dataclass, field
+ from datetime import UTC, datetime
+ from pathlib import Path
+@@ -43,7 +52,7 @@ from typing import Any
+ 
+ from . import case as caselog
+ from . import store
+-from .categorise import _MONEY_IN_ONLY, LineOverride, active_ruleset, categorise
++from .categorise import _MONEY_IN_ONLY, LineOverride, active_ruleset, categorise, classify_lines
+ from .metrics import ReconciliationError
+ from .models import CREDIT_BUCKET, Category, Metric, MonthRow, Statement, Transaction
+ 
+@@ -166,6 +175,55 @@ def _accounts(entries) -> list[str]:
+     return sorted({e.data["account"] for e in entries if e.event == "import" and "account" in e.data})
+ 
+ 
++class _Memo:
++    """A small cache of a pure step's results, by the hash of what the step read. Thread
++    safe: the workspace serves requests on threads."""
++
++    def __init__(self, size: int):
++        self.size, self._items, self._lock = size, OrderedDict(), threading.Lock()
++
++    def get(self, key):
++        with self._lock:
++            if key in self._items:
++                self._items.move_to_end(key)
++                return self._items[key]
++        return None
++
++    def put(self, key, value) -> None:
++        with self._lock:
++            self._items[key] = value
++            self._items.move_to_end(key)
++            while len(self._items) > self.size:
++                self._items.popitem(last=False)
++
++
++_PARSED = _Memo(8)  # (account, statement sha) -> the statement as load_csv parsed it, never categorised
++_BARE = _Memo(8)    # (statement sha, ruleset, profile) -> figures with no overrides
++_CLASSES = _Memo(8)  # (statement sha, ruleset, profile) -> each line's category with no override
++
++
++def _categorise(statement: Statement, sha: str, profile: dict[str, Any], applied: dict[str, LineOverride]) -> None:
++    """categorise() with the overrides in force; the lines with none take the categories
++    kept for this statement, rule table and profile, which classify would give them again."""
++    ruleset = active_ruleset()
++    key = (sha, ruleset.id, ruleset.sha256, _profile_key(profile))
++    names = store.profile_names(profile)
++    classes = _CLASSES.get(key)
++    if classes is None or len(classes) != len(statement.transactions):
++        classes = classify_lines(statement, ruleset, profile=names)
++        _CLASSES.put(key, classes)
++    categorise(statement, ruleset, overrides=applied, profile=names, unoverridden=classes)
++
++
++def _profile_key(profile: dict[str, Any]) -> str:
++    return json.dumps(profile, sort_keys=True, default=str)
++
++
++def _copy(statement: Statement) -> Statement:
++    """A statement whose lines can be categorised without touching `statement`'s."""
++    return statement.model_copy(update={"transactions": [t.model_copy() for t in statement.transactions]})
++
++
+ def _load(folder: Path, account: str) -> tuple[Statement, str] | None:
+     from .ingest import load_csv
+ 
+@@ -173,7 +231,13 @@ def _load(folder: Path, account: str) -> tuple[Statement, str] | None:
+     if not path.is_file():
+         return None
+     data = path.read_bytes()
+-    return load_csv(path, account_name=account, data=data), _sha(data)
++    sha = _sha(data)
++    parsed = _PARSED.get((account, sha))
++    if parsed is None:
++        parsed = load_csv(path, account_name=account, data=data)
++        _PARSED.put((account, sha), _copy(parsed))
++        return parsed, sha
++    return _copy(parsed), sha
+ 
+ 
+ @dataclass
+@@ -250,14 +314,30 @@ class CaseNotReconciled(ReconciliationError):
+         self.account, self.statement = failures[0].account, failures[0].statement
+ 
+ 
+-def _figures(statement: Statement, profile: dict[str, Any], applied: dict[str, LineOverride]):
++def _figures(statement: Statement, sha: str, profile: dict[str, Any], applied: dict[str, LineOverride]):
+     from . import metrics
+ 
+-    categorise(statement, active_ruleset(), overrides=applied, profile=store.profile_names(profile))
++    _categorise(statement, sha, profile, applied)
+     return (metrics.compute(statement, profile["vat_stagger"], profile["proposed_monthly_repayment"]),
+             metrics.monthly_summary(statement))
+ 
+ 
++def _bare_figures(statement: Statement, sha: str, profile: dict[str, Any]):
++    """The figures `statement` (read with hash `sha`) gives with no override applied; only
++    ever compared with. `statement` is not touched."""
++    key = _bare_key(sha, profile)
++    got = _BARE.get(key)
++    if got is None:
++        got = _figures(_copy(statement), sha, profile, {})
++        _BARE.put(key, got)
++    return got
++
++
++def _bare_key(sha: str, profile: dict[str, Any]) -> tuple:
++    ruleset = active_ruleset()
++    return (sha, ruleset.id, ruleset.sha256, _profile_key(profile))
++
++
+ def _rests_on(a, b, lines: set[str]) -> bool:
+     return bool(lines & set(a.evidence)) or a.value != b.value or a.evidence != b.evidence
+ 
+@@ -279,19 +359,21 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
+             continue
+         statement, sha = loaded
+         applied = state.applied.get(account, {})
+-        bare = statement.model_copy(deep=True)
++        bare = _copy(statement) if applied else None  # as read, before it is categorised
+         try:
+-            metrics, monthly = _figures(statement, profile, applied)
++            metrics, monthly = _figures(statement, sha, profile, applied)
+         except ReconciliationError as e:  # R3: every failing account is named, with its lines
+             e.account, e.statement = account, statement
+             failed.append(e)
+             continue
++        if not applied:  # these are the figures with no override: kept, so the first save on
++            _BARE.put(_bare_key(sha, profile), (metrics, monthly))  # this case need not redo them (R52)
+         lines = set(applied)
+         marked: set[str] = set()
+         cells: set[tuple[str, str]] = set()
+         if applied:
+             try:
+-                base_metrics, base_monthly = _figures(bare, profile, {})
++                base_metrics, base_monthly = _bare_figures(bare, sha, profile)
+             except ReconciliationError:
+                 # The figures as overridden reconcile; only the comparison without overrides
+                 # does not (an override may be what puts a line right). The comparison only
+@@ -377,6 +459,16 @@ def _check_position(head, expected: int | None) -> None:
+         raise caselog.LogConflict(expected, head)
+ 
+ 
++def refuse_changes(changes: dict[str, Any]) -> None:
++    """R18: an override changes a line's category and nothing else. Any other change asked
++    for (an amount, date, balance or description, or a line added or removed) is refused,
++    naming it, before anything is read or written."""
++    if changes:
++        which = ", ".join(sorted(changes))
++        raise store.CaseStoreError(f"an override changes a line's category only, never its {which}; "
++                                   "nothing was recorded")
++
++
+ def add_override(folder: Path, line: str, category: str, *, reason: str, name: str,
+                  account: str = "main", expected: int | None = None, **changes: Any) -> Added:
+     """Give one line a category, with a reason and the typed name (R17). Anything but a
+@@ -385,10 +477,7 @@ def add_override(folder: Path, line: str, category: str, *, reason: str, name: s
+     same category the line has now changes nothing and records nothing. `expected`, when
+     given, is the case log position the caller last saw; a stale one is a LogConflict."""
+     folder = Path(folder)
+-    if changes:
+-        which = ", ".join(sorted(changes))
+-        raise store.CaseStoreError(f"an override changes a line's category only, never its {which}; "
+-                                   "nothing was recorded")
++    refuse_changes(changes)
+     if not isinstance(line, str) or not line:
+         raise store.CaseStoreError("an override names a line by its id")
+     try:
+@@ -411,8 +500,7 @@ def add_override(folder: Path, line: str, category: str, *, reason: str, name: s
+         # The line's category now, with the overrides in force: categorised only, never the
+         # figures, so a case that does not reconcile can still take the override that puts a
+         # line right (R3, R17).
+-        categorise(loaded[0], active_ruleset(), overrides=state.applied.get(account, {}),
+-                   profile=store.profile_names(profile))
++        _categorise(loaded[0], loaded[1], profile, state.applied.get(account, {}))
+         t = next((t for t in loaded[0].transactions if t.id == line), None)
+         if t is None:
+             raise store.CaseStoreError(f"no line {line} in account {account}")
+diff --git a/src/cma/review/drilldown.py b/src/cma/review/drilldown.py
+index c1cd2a5..f16de13 100644
+--- a/src/cma/review/drilldown.py
++++ b/src/cma/review/drilldown.py
+@@ -27,6 +27,7 @@ from urllib.parse import urlencode
+ from .. import metrics
+ from ..models import MonthlyCell, format_value, money_exact
+ from . import summary
++from .edit import categories_for, override_form
+ 
+ CELL_TITLES = dict(summary.CELLS)
+ CELL_METHODS = {
+@@ -50,7 +51,8 @@ def _line(t, overridden: dict[str, str], note: set[str]) -> dict[str, Any]:
+             "amount": t.amount, "amount_display": money_exact(t.amount),
+             "balance": t.balance, "balance_display": money_exact(t.balance),
+             "category": t.category.value if t.category else None, "rule": t.rule_id,
+-            "overridden": t.id in overridden, "counted_in_part": t.id in note}
++            "overridden": t.id in overridden, "counted_in_part": t.id in note,
++            "categories": categories_for(t)}
+ 
+ 
+ def _total(statement, ids: list[str], kind: str) -> dict[str, Any] | None:
+@@ -69,7 +71,8 @@ def lines_behind(folder: Path, case_id: str, *, account: str | None = None, figu
+     if (figure is not None and (month is not None or cell is not None)) or (
+             figure is None and (month is None or cell is None)):
+         raise DrillError("name a figure, or a month and a cell")
+-    out: dict[str, Any] = {"case": case_id, "state": "shown", "refusal": None, "reconciliation": None}
++    out: dict[str, Any] = {"case": case_id, "state": "shown", "refusal": None, "reconciliation": None,
++                           "position": summary.log_position(folder)}  # read first, as the summary's (R17)
+     figures, refused = summary.load_figures(folder)
+     if refused is not None:
+         out.update(refused)
+@@ -158,14 +161,21 @@ def render(d: dict[str, Any], token: str) -> str:
+                        f'<td>{_e(c["line"])}</td></tr>' for c in d["closes"])
+         head += ('<h3>End-of-day closes read</h3><table class="closes"><thead><tr><th>Day</th>'
+                  f'<th class="num">Close</th><th>Set by line</th></tr></thead><tbody>{rows}</tbody></table>')
++    position = d.get("position")
++    here = "/lines?" + urlencode({"account": d["account"], **d["target"]})  # where a form comes back to
++
++    def form(x):
++        return f'<td>{override_form(token, d["account"], x, position, here)}</td>' if position is not None else ""
++
+     rows = "".join(
+         f'<tr><td>{_e(x["id"])}</td><td>{_e(x["date"])}</td><td>{_e(x["description"])}</td>'
+         f'<td class="num">{_e(x["amount_display"])}</td><td class="num">{_e(x["balance_display"])}</td>'
+         f'<td>{_e(x["category"])}</td><td>{_e(x["rule"])}'
+         + (' <span class="overridden">override</span>' if x["overridden"] else "")
+         + (' <span class="in-part">counted in part</span>' if x["counted_in_part"] else "")
+-        + '</td></tr>' for x in d["lines"])
++        + f'</td>{form(x)}</tr>' for x in d["lines"])
++    change = "<th>Change category</th>" if position is not None else ""
+     table = ('<h3>Lines</h3><table class="lines"><thead><tr><th>Line</th><th>Date</th><th>Description</th>'
+-             '<th class="num">Amount</th><th class="num">Balance</th><th>Category</th><th>Set by</th></tr></thead>'
+-             f'<tbody>{rows}</tbody></table></section>')
++             '<th class="num">Amount</th><th class="num">Balance</th><th>Category</th><th>Set by</th>'
++             f'{change}</tr></thead><tbody>{rows}</tbody></table></section>')
+     return back + head + table
+diff --git a/src/cma/review/edit.py b/src/cma/review/edit.py
+new file mode 100644
+index 0000000..c8a980a
+--- /dev/null
++++ b/src/cma/review/edit.py
+@@ -0,0 +1,213 @@
++"""The workspace's override form and stale overrides (C5; R17, R18, R19, R52).
++
++The underwriter changes a line's category from the workspace: the judgement queue and every
++drill-down carry, for each line, a form that offers only the categories valid for the
++line's direction (R18), with a reason and the name they type. Each form also carries the
++case log position the page was built at, so a save made from a page that is out of date is
++refused as a conflict that asks for the case to be reloaded, and records nothing.
++
++A stale override (R19) is listed with a form to confirm it (its line still there, recorded
++again against the current statement) or drop it.
++
++Each save goes through the override log (overrides.add_override, overrides.resolve_stale),
++which appends it to the case's override log and its case log while it holds the case (R42).
++The reply carries the case summary recomputed through the figures layer, its figures,
++indicators and policy check included (R17, R52); this module computes no money.
++
++Two ways in, one answer:
++- /api/override and /api/stale take JSON (or a form body) and answer JSON;
++- /override and /stale take the page's form and, once saved, send the browser back to the
++  page the form was on (303), so reloading it never saves twice; a refusal is shown as a
++  page with a link to reload the case.
++
++Messages name lines and overrides by id and number, never by what the case holds.
++"""
++
++from __future__ import annotations
++
++from html import escape
++from pathlib import Path
++from typing import Any
++from urllib.parse import parse_qsl, urlencode, urlsplit
++
++from .. import case as caselog
++from .. import overrides, store
++from ..models import Category, Transaction
++
++OVERRIDE_KEYS = frozenset({"account", "line", "category", "reason", "name", "expected", "back"})
++STALE_KEYS = frozenset({"seq", "action", "name", "expected", "back"})
++BACK_PATHS = ("/", "/lines")  # the pages a form may send the browser back to
++
++
++class Refused(ValueError):
++    """A request the workspace refuses before anything is read from the case."""
++
++
++def categories_for(t: Transaction) -> list[str]:
++    """The categories a line's direction can take, in the order the form offers them (R18)."""
++    valid = overrides.valid_categories(t)
++    return [c.value for c in Category if c in valid]
++
++
++def _position(fields: dict[str, Any]) -> int:
++    value = fields.get("expected")
++    if isinstance(value, str) and value.isdigit():
++        value = int(value)
++    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
++        raise Refused("a save carries the case log position the page was built at (expected); reload the case")
++    return value
++
++
++def _number(fields: dict[str, Any], key: str, what: str) -> int:
++    value = fields.get(key)
++    if isinstance(value, str) and value.isdigit():
++        value = int(value)
++    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
++        raise Refused(f"name the {what} by its number")
++    return value
++
++
++def _save_override(folder: Path, fields: dict[str, Any]) -> dict[str, Any]:
++    extra = {k: fields[k] for k in fields if k not in OVERRIDE_KEYS}
++    overrides.refuse_changes(extra)  # R18: a category only, never anything else about a line
++    expected = _position(fields)
++    for key in ("line", "category"):
++        if not isinstance(fields.get(key), str) or not fields[key]:
++            raise Refused(f"an override names the {key}" if key == "line" else "an override needs a category")
++    account = fields.get("account") or "main"
++    if not isinstance(account, str):
++        raise Refused("name the account by its key")
++    r = overrides.add_override(folder, fields["line"], fields["category"], reason=fields.get("reason"),
++                               name=fields.get("name"), account=account, expected=expected)
++    return {"recorded": r.recorded, "seq": r.seq, "account": account, "line": r.line, "old": r.old, "new": r.new}
++
++
++def _resolve(folder: Path, fields: dict[str, Any]) -> dict[str, Any]:
++    extra = sorted(k for k in fields if k not in STALE_KEYS)
++    if extra:
++        raise Refused(f"a stale override is confirmed or dropped, and nothing else; {', '.join(extra)} "
++                      "is not part of it; nothing was recorded")
++    expected = _position(fields)
++    seq = _number(fields, "seq", "stale override")
++    action = fields.get("action")
++    if action not in ("confirm", "drop"):
++        raise Refused("a stale override is confirmed or dropped")
++    overrides.resolve_stale(folder, seq, action, name=fields.get("name"), expected=expected)
++    return {"recorded": True, "seq": seq, "action": action}
++
++
++def answer(folder: Path, case_id: str, kind: str, fields: dict[str, Any], *,
++           recompute: bool = True) -> tuple[int, dict[str, Any]]:
++    """Save one override ('override') or resolve one stale override ('stale'), and the HTTP
++    status and reply: on success the saved change, the case log position now and the case
++    summary recomputed (R17, R52); otherwise why nothing was recorded. A page form, which
++    sends the browser back to the page (303) to be built afresh, asks for no recomputed
++    summary (`recompute` false), so a save is not computed twice before the page shows it."""
++    from . import summary
++
++    folder = Path(folder)
++    try:
++        done = _save_override(folder, fields) if kind == "override" else _resolve(folder, fields)
++    except (Refused, store.CaseStoreError) as e:
++        return 400, {"refused": f"{str(e).rstrip('.')}."}
++    except caselog.LogConflict as e:
++        return 409, {"conflict": (f"The case changed since this page was loaded (the page was built at case log "
++                                  f"entry {e.expected}, the case is now at entry {e.actual}). Nothing was "
++                                  "recorded: reload the case and save again."),
++                     "reload": True, "expected": e.expected, "position": e.actual}
++    except caselog.SaveNotConfirmed as e:
++        return 500, {"not_confirmed": (f"Whether this save is in the case log is not confirmed ({e}). Check the "
++                                       "case (cma case check) before saving anything else."), "check": True}
++    except caselog.SaveNotRecorded as e:
++        return 503, {"not_recorded": f"The save was not recorded ({e}). Reload the case and save again.",
++                     "reload": True}
++    except caselog.CaseLocked:
++        return 409, {"locked": ("The case is held: another window or command is writing to it. Nothing was "
++                                "recorded; try again in a moment."), "reload": True}
++    except caselog.CaseLogBroken as e:
++        return 409, {"refused": (f"The case log is broken at entry {e.first_bad}: {e.reason}. Nothing can be saved "
++                                 "until it is resolved.")}
++    except OSError as e:
++        return 500, {"refused": f"A file of the case could not be read ({e.strerror or type(e).__name__}); "
++                                "nothing was recorded."}
++    if not recompute:
++        return 200, done
++    try:
++        shown = summary.case_summary(folder, case_id)
++    except Exception:  # the save is recorded; only the recomputed view failed
++        shown = None
++    done["position"] = shown["position"] if shown else None
++    done["case"] = shown
++    return 200, done
++
++
++def back_url(back: Any, token: str) -> str:
++    """Where a form sends the browser once it has saved: the workspace page it came from,
++    with the token, or the case page. Nothing outside the workspace is ever named."""
++    target = "/"
++    query: list[tuple[str, str]] = []
++    if isinstance(back, str) and back.startswith("/") and not back.startswith("//"):
++        parts = urlsplit(back)
++        if parts.path in BACK_PATHS and not parts.netloc and not parts.scheme:
++            target = parts.path
++            query = [(k, v) for k, v in parse_qsl(parts.query) if k in ("account", "figure", "month", "cell")]
++    return target + "?" + urlencode([("token", token), *query])
++
++
++# --- HTML ----------------------------------------------------------------------------------
++
++
++def _e(value: Any) -> str:
++    return escape("" if value is None else str(value), quote=True)
++
++
++def _hidden(name: str, value: Any) -> str:
++    return f'<input type="hidden" name="{_e(name)}" value="{_e(value)}">'
++
++
++def override_form(token: str, account: str, line: dict[str, Any], position: int, back: str) -> str:
++    """One line's form: only the categories valid for its direction, the line's own selected (R18)."""
++    options = "".join(f'<option value="{_e(c)}"{" selected" if c == line.get("category") else ""}>{_e(c)}</option>'
++                      for c in line["categories"])
++    return (f'<form class="override" method="post" action="{_e("/override?" + urlencode({"token": token}))}">'
++            + _hidden("account", account) + _hidden("line", line["id"]) + _hidden("expected", position)
++            + _hidden("back", back)
++            + f'<select name="category" required aria-label="Category for line {_e(line["id"])}">{options}</select> '
++            '<input name="reason" required maxlength="1000" placeholder="Reason" aria-label="Reason"> '
++            '<input name="name" required maxlength="1000" placeholder="Your name" aria-label="Your name"> '
++            '<button type="submit">Change category</button></form>')
++
++
++def stale_html(stale: list[dict[str, Any]], token: str | None, position: int | None) -> str:
++    """The stale overrides (R19), each with a form to confirm or drop it."""
++    if not stale:
++        return ""
++    action = _e("/stale?" + urlencode({"token": token})) if token else ""
++    rows = []
++    for s in stale:
++        forms = ""
++        if token and position is not None:
++            for verb, label in (("confirm", "Confirm"), ("drop", "Drop")):
++                if verb == "confirm" and not s["can_confirm"]:
++                    continue
++                forms += (f'<form class="stale" method="post" action="{action}">' + _hidden("seq", s["seq"])
++                          + _hidden("action", verb) + _hidden("expected", position) + _hidden("back", "/")
++                          + '<input name="name" required maxlength="1000" placeholder="Your name" '
++                            'aria-label="Your name"> '
++                          + f'<button type="submit">{label}</button></form>')
++        rows.append(f'<tr><td>{_e(s["seq"])}</td><td>{_e(s["account"])}</td><td>{_e(s["line"])}</td>'
++                    f'<td>{_e(s["new"])}</td><td>{_e(s["why"])}</td><td>{forms}</td></tr>')
++    return ('<section id="stale-overrides" class="refusal"><h2>Stale overrides</h2>'
++            '<p>These overrides are not applied: their line is not in the case any more, or their statement has '
++            'changed. Confirm one to apply it to the current statement, or drop it.</p>'
++            '<table class="stale"><thead><tr><th>Override</th><th>Account</th><th>Line</th><th>Category</th>'
++            f'<th>Why stale</th><th></th></tr></thead><tbody>{"".join(rows)}</tbody></table></section>')
++
++
++def outcome_html(status: int, reply: dict[str, Any], token: str) -> str:
++    """A refused form save, as the page's main element, with a link to reload the case."""
++    text = next((reply[k] for k in ("conflict", "locked", "refused", "not_recorded", "not_confirmed") if k in reply),
++                "The change could not be saved.")
++    reload = _e("/?" + urlencode({"token": token}))
++    return (f'<section class="refusal" id="save-refused"><h2>Not saved</h2><p>{_e(text)}</p>'
++            f'<p><a href="{reload}">Reload the case</a></p></section>')
+diff --git a/src/cma/review/server.py b/src/cma/review/server.py
+index c94a77b..88d016e 100644
+--- a/src/cma/review/server.py
++++ b/src/cma/review/server.py
+@@ -16,6 +16,12 @@
+ It is one process that serves requests on threads and never forks (R42's scope). It
+ renders what the figures layer computed; it computes no money. Its request log is off, so the token never reaches a log.
+ Refusals say only that the request was refused, never what the case holds.
++
++Every page and data path is GET only. The override form and the stale overrides' forms (R17,
++R19; edit.py) are the only writes: POST to /override and /stale from the page, or to
++/api/override and /api/stale for data, each with the token and the workspace's own Origin,
++a body of at most MAX_BODY bytes with its Content-Length (never chunked), and a form or JSON
++content type.
+ """
+ 
+ from __future__ import annotations
+@@ -29,7 +35,7 @@ import threading
+ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+ from importlib import resources
+ from pathlib import Path
+-from urllib.parse import parse_qs, urlsplit
++from urllib.parse import parse_qs, parse_qsl, urlsplit
+ 
+ LOOPBACK = "127.0.0.1"
+ DEFAULT_PORT = 8765
+@@ -53,6 +59,10 @@ SECURITY_HEADERS = {
+ TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
+ INDEX = "index.html"
+ REFUSED = b"Refused: this workspace answers only the URL it printed when it started.\n"
++WRITES = {"/override": ("override", "page"), "/stale": ("stale", "page"),
++          "/api/override": ("override", "data"), "/api/stale": ("stale", "data")}
++MAX_BODY = 16 * 1024  # bytes: a form or JSON body is far smaller
++FORM = "application/x-www-form-urlencoded"
+ 
+ 
+ class NoFreePort(OSError):
+@@ -119,8 +129,9 @@ class _Handler(BaseHTTPRequestHandler):
+         return hmac.compare_digest(given[0].encode("utf-8", "surrogateescape"), want)
+ 
+     def _handle(self) -> None:
+-        # No request body is ever read, so a request that carries one, or that is not a GET,
+-        # ends its connection: its unread body is never parsed as a further request.
++        # A request that carries a body, or that is not a GET, ends its connection: a body is
++        # read only by a write path (_body, at most MAX_BODY bytes), and an unread one is
++        # never parsed as a further request.
+         if (self.command != "GET" or self.headers.get("Content-Length")
+                 or self.headers.get("Transfer-Encoding")):
+             self.close_connection = True
+@@ -130,16 +141,20 @@ class _Handler(BaseHTTPRequestHandler):
+         if not (self._host_ok() and self._origin_ok() and self._token_ok(parts.query if parts else "")):
+             self._send(403, REFUSED)
+             return
+-        if self.command != "GET":
++        path = parts.path if parts else None
++        allowed = "POST" if path in WRITES else "GET"
++        if self.command != allowed:
+             self.send_response(405)
+             for key, value in SECURITY_HEADERS.items():
+                 self.send_header(key, value)
+-            self.send_header("Allow", "GET")
++            self.send_header("Allow", allowed)
+             self.send_header("Content-Type", "text/plain; charset=utf-8")
+             self.send_header("Content-Length", "0")
+             self.end_headers()
+             return
+-        path = parts.path if parts else None
++        if path in WRITES:
++            self._write(*WRITES[path])
++            return
+         if path in ("/lines", "/api/lines"):
+             self._lines(path, parts.query)
+         elif path in ("/", "/api/case"):
+@@ -161,6 +176,67 @@ class _Handler(BaseHTTPRequestHandler):
+             self._send(404, b"Not found.\n")
+ 
+ 
++    def _body(self) -> dict | None:
++        """The request's fields, or None once a refusal has been sent. The connection is
++        closed after every write, so nothing past the body is ever read as a request."""
++        self.close_connection = True
++        if self.headers.get("Transfer-Encoding"):
++            self._send(411, b"Send the body with its Content-Length.\n")
++            return None
++        lengths = self.headers.get_all("Content-Length") or []
++        if len(lengths) != 1 or not lengths[0].isdigit():
++            self._send(411, b"Send the body with its Content-Length.\n")
++            return None
++        n = int(lengths[0])
++        if n > MAX_BODY:
++            self._send(413, b"The request body is too large.\n")
++            return None
++        kind = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
++        raw = self.rfile.read(n)
++        try:
++            text = raw.decode("utf-8")
++            if kind == "application/json":
++                fields = json.loads(text)
++                if not isinstance(fields, dict):
++                    raise ValueError
++            elif kind == FORM:
++                pairs = parse_qsl(text, keep_blank_values=True, strict_parsing=bool(text))
++                fields = dict(pairs)
++                if len(fields) != len(pairs):
++                    raise ValueError
++            else:
++                self._send(415, b"Send a form or JSON body.\n")
++                return None
++        except ValueError:  # UnicodeDecodeError and JSONDecodeError among them
++            self._send(400, b"The request body could not be read.\n")
++            return None
++        return fields
++
++    def _write(self, kind: str, shape: str) -> None:
++        """Save one override or resolve one stale override (edit.answer). Data paths answer
++        JSON; page paths go back to the page the form was on once saved (303), or show why
++        nothing was saved, with a link to reload the case."""
++        from . import edit
++
++        fields = self._body()
++        if fields is None:
++            return
++        try:
++            status, reply = self.server.save(kind, fields, shape == "data")
++        except Exception:
++            status, reply = 500, {"error": "The change could not be saved."}
++        if shape == "data":
++            self._send(status, json.dumps(reply, ensure_ascii=False).encode("utf-8"), "application/json")
++        elif status == 200:
++            self.send_response(303)
++            for key, value in SECURITY_HEADERS.items():
++                self.send_header(key, value)
++            self.send_header("Location", edit.back_url(fields.get("back"), self.server.token))
++            self.send_header("Content-Length", "0")
++            self.end_headers()
++        else:
++            self._send(status, self.server.outcome_html(status, reply), "text/html; charset=utf-8")
++
+     def _lines(self, path: str, query: str) -> None:
+         """The lines behind one figure or monthly cell (R16): as data at /api/lines, as the
+         page at /lines. A request that names no figure or cell of the case is answered 400,
+@@ -227,6 +303,8 @@ class ReviewServer:
+         self.httpd.page_html = self._page_html
+         self.httpd.lines_json = self._lines_json
+         self.httpd.lines_html = self._lines_html
++        self.httpd.save = self._save
++        self.httpd.outcome_html = self._outcome_html
+         self._thread: threading.Thread | None = None
+ 
+     @property
+@@ -260,6 +338,18 @@ class ReviewServer:
+         html = drilldown.render(drilldown.lines_behind(self.folder, self.case_id, **target), self.token)
+         return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
+ 
++    def _save(self, kind: str, fields: dict, recompute: bool = True) -> tuple[int, dict]:
++        """One write from the workspace: its status and reply, the recomputed case included for
++        a data path (R17, R52); a page form is sent back to the page, which is built afresh."""
++        from . import edit
++
++        return edit.answer(self.folder, self.case_id, kind, fields, recompute=recompute)
++
++    def _outcome_html(self, status: int, reply: dict) -> bytes:
++        from . import edit
++
++        return self._page.replace(SUMMARY_MARK.encode(), edit.outcome_html(status, reply, self.token).encode("utf-8"))
++
+     def serve_forever(self) -> None:
+         self.httpd.serve_forever()
+ 
+diff --git a/src/cma/review/static/app.css b/src/cma/review/static/app.css
+index 6a74ebd..b413c97 100644
+--- a/src/cma/review/static/app.css
++++ b/src/cma/review/static/app.css
+@@ -18,3 +18,5 @@ tr.total td { font-weight: 600; border-top: 2px solid #8888; }
+ .policy-check { border: 1px solid #8888; padding: 0.5rem 1rem; margin: 0 0 0.75rem; }
+ .illustrative-label { font-weight: 600; }
+ .field { min-height: 3rem; border: 1px dashed #8888; }
++form.override, form.stale { display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0; }
++form.override input, form.override select, form.stale input { font-size: 0.8rem; max-width: 12rem; }
+diff --git a/src/cma/review/summary.py b/src/cma/review/summary.py
+index c01e2c9..1dbf225 100644
+--- a/src/cma/review/summary.py
++++ b/src/cma/review/summary.py
+@@ -45,6 +45,7 @@ from .. import indicators as ind
+ from ..categorise import RulesetError
+ from ..ingest import StatementError
+ from ..models import (
++    Category,
+     Indicator,
+     Metric,
+     MonthlyCell,
+@@ -119,7 +120,10 @@ def _indicator(i: Indicator, lines: dict[str, Transaction]) -> dict[str, Any]:
+ 
+ def _queue_entry(account: str, e: QueueEntry, lines: dict[str, Transaction],
+                  kinds: dict[str, str]) -> dict[str, Any]:
+-    return {"account": account, "line": _line(lines[e.line_id]), "reasons": list(e.reasons),
++    from .edit import categories_for
++
++    t = lines[e.line_id]
++    return {"account": account, "line": {**_line(t), "categories": categories_for(t)}, "reasons": list(e.reasons),
+             "indicators": [{"id": i, "kind": kinds[i]} for i in e.indicators],
+             "candidates": [{"rule_id": c.rule_id, "category": c.category.value if c.category else None,
+                             "bucket": c.bucket.value if c.bucket else None} for c in e.candidates],
+@@ -222,13 +226,41 @@ def load_figures(folder: Path) -> tuple[dict[str, overrides.CaseFigures] | None,
+         return None, refused
+ 
+ 
++def log_position(folder: Path) -> int | None:
++    """How many entries the case log holds, or None when it cannot be read whole now; a page
++    with no position offers no form."""
++    try:
++        return len(caselog.for_case(folder).entries())
++    except (caselog.CaseLogError, OSError):
++        return None
++
++
++def stale_list(folder: Path, figures: dict[str, overrides.CaseFigures] | None) -> list[dict[str, Any]]:
++    """The stale overrides (R19), each saying whether it can be confirmed: its line is still in
++    the case and its category still valid for the line's direction."""
++    try:
++        stale = overrides.stale_overrides(folder)
++    except Exception:  # the override log could not be read: the figures' refusal says why
++        return []
++    out = []
++    for s in stale:
++        t = figures[s.account].statement.by_id().get(s.line) if figures and s.account in figures else None
++        ok = s.why == "statement changed" and (t is None or Category(s.new) in overrides.valid_categories(t))
++        out.append({"seq": s.seq, "account": s.account, "line": s.line, "new": s.new, "why": s.why,
++                    "can_confirm": ok})
++    return out
++
++
+ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+     """The case as the workspace shows it, computed afresh from its files."""
+     folder = Path(folder)
+     out: dict[str, Any] = {"case": case_id, "label": None, "business_name": None, "profile": None,
+                            "state": "shown", "accounts": [], "queue": [], "thresholds": None,
+-                           "reconciliation": None, "refusal": None,
++                           "reconciliation": None, "refusal": None, "position": None, "stale": [],
+                            "policy_check": {"shown": False}, "recommendation": None}  # left blank (R24)
++    # The case log position the page is built at, read before anything else, so a save made
++    # from this page is refused as a conflict once anything was recorded after it (R17).
++    out["position"] = log_position(folder)
+     try:
+         profile = store.load_profile(folder)
+         out["label"], out["business_name"] = profile.get("label"), profile.get("business_name")
+@@ -241,6 +273,7 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+         out.update(refused)
+         return out
+     figures, refused = load_figures(folder)
++    out["stale"] = stale_list(folder, figures)
+     if refused is not None:
+         out.update(refused)
+         return out
+@@ -413,8 +446,12 @@ def _candidate_html(c: dict[str, Any]) -> str:
+     return f'{_e(c["rule_id"])} ({bucket})'
+ 
+ 
+-def _queue_html(queue: list[dict[str, Any]]) -> str:
+-    """The judgement queue, listed first, largest amount first (R15)."""
++def _queue_html(queue: list[dict[str, Any]], token: str | None = None, position: int | None = None) -> str:
++    """The judgement queue, listed first, largest amount first (R15); given the page's token
++    and case log position, each line carries the override form (R17)."""
++    from .edit import override_form
++
++    forms = token is not None and position is not None
+     if not queue:
+         return ('<section id="judgement-queue"><h2>Judgement queue</h2>'
+                 '<p>No line needs a decision.</p></section>')
+@@ -424,12 +461,14 @@ def _queue_html(queue: list[dict[str, Any]]) -> str:
+         flags = ", ".join(f'{_e(i["id"])} {_e(INDICATOR_TITLES.get(i["kind"], i["kind"]))}' for i in e["indicators"])
+         cands = "; ".join(_candidate_html(c) for c in e["candidates"])
+         pairs = ", ".join(_e(p) for p in e["pairs_with"])
++        form = override_form(token, e["account"], e["line"], position, "/") if forms else ""
+         rows.append(f'<tr><td>{_e(e["account"])}</td>{_line_cells(e["line"])}<td>{why}</td><td>{flags}</td>'
+-                    f'<td>{cands}{(" pairs with " + pairs) if pairs else ""}</td></tr>')
++                    f'<td>{cands}{(" pairs with " + pairs) if pairs else ""}</td><td>{form}</td></tr>')
+     return ('<section id="judgement-queue"><h2>Judgement queue</h2>'
+             '<p>The lines a person has to decide, largest amount first.</p>'
+             f'<table class="queue"><thead><tr><th>Account</th>{LINE_HEAD}<th>Why listed</th><th>Indicators</th>'
+-            f'<th>Candidates</th></tr></thead><tbody>{"".join(rows)}</tbody></table></section>')
++            f'<th>Candidates</th><th>Change category</th></tr></thead><tbody>{"".join(rows)}</tbody></table>'
++            '</section>')
+ 
+ 
+ def _pounds(text: str) -> str:
+@@ -476,8 +515,11 @@ def render(summary: dict[str, Any], token: str | None = None) -> str:
+     names = [x for x in (summary["business_name"], summary["label"]) if x]
+     head = (f'<section id="summary-head"><p class="case-name">{_e(" — ".join(names))}</p></section>'
+             if names else "")
++    from .edit import stale_html
++
++    head += stale_html(summary.get("stale") or [], token, summary.get("position"))  # R19
+     if summary["state"] == "shown":
+-        head += _queue_html(summary.get("queue") or [])  # listed first (R15)
++        head += _queue_html(summary.get("queue") or [], token, summary.get("position"))  # listed first (R15)
+     head += _profile_html(summary.get("profile"))
+     state = summary["state"]
+     if state == "not_reconciled":
+diff --git a/tests/test_workspace_overrides.py b/tests/test_workspace_overrides.py
+new file mode 100644
+index 0000000..1e6653a
+--- /dev/null
++++ b/tests/test_workspace_overrides.py
+@@ -0,0 +1,623 @@
++"""T22: the workspace's override form and stale overrides (C5; R17, R18, R19, R52).
++
++The underwriter changes a line's category in the workspace with a reason and their typed name;
++the form offers only the categories valid for the line's direction and carries the case log
++position the page was built at, so a save made from a stale page is a conflict that asks for a
++reload. A stale override (R19) is listed until the underwriter confirms or drops it. Each
++override, confirmation and drop is appended to the case log, and the figures, indicators and
++policy check come back recomputed, within 2 seconds at 10,000 lines (R52).
++
++Each test talks to a real server running in a thread, with the per-launch token."""
++
++import http.client
++import json
++import random
++import re
++import time
++from datetime import date, timedelta
++from html.parser import HTMLParser
++from urllib.parse import urlencode
++
++import pytest
++
++from cma import case, store
++from cma.models import CREDIT_BUCKET, Category
++from cma.overrides import valid_categories
++from cma.review import server as rs
++
++pytestmark = pytest.mark.contracts
++
++SMALL = ("id,date,description,amount,balance\n"
++         "L1,2026-01-05,CARD SETTLEMENT STRIPE,500.00,1500.00\n"
++         "L2,2026-01-06,FPS CREDIT J BLOGGS,300.25,1800.25\n"
++         "L3,2026-01-07,DD COUNCIL,-100.00,1700.25\n"
++         "L4,2026-02-02,CASH PAID IN,250.10,1950.35\n")
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    return root
++
++
++def _case(tmp_path, body=SMALL):
++    case_id = store.new_case(label="t22")
++    folder = store.case_folder(case_id)
++    src = tmp_path / "main.csv"
++    src.write_text(body, encoding="utf-8")
++    store.import_file(folder, src, "csv")
++    return case_id, folder
++
++
++@pytest.fixture
++def serve():
++    servers = []
++
++    def start(case_id):
++        srv = rs.start(store.case_folder(case_id), case_id, port=0)
++        srv.serve_in_thread()
++        servers.append(srv)
++        return srv
++
++    yield start
++    for srv in servers:
++        srv.close()
++
++
++def _request(srv, method, path, body=None, *, kind="application/json", headers=None, token=True):
++    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
++    try:
++        h = {"Host": f"127.0.0.1:{srv.port}"}
++        if token:
++            h["X-CMA-Token"] = srv.token
++        data = None
++        if body is not None:
++            data = json.dumps(body).encode() if kind == "application/json" else body.encode()
++            h["Content-Type"] = kind
++        h.update(headers or {})
++        conn.request(method, path, body=data, headers=h)
++        r = conn.getresponse()
++        return r.status, {k.lower(): v for k, v in r.getheaders()}, r.read()
++    finally:
++        conn.close()
++
++
++def _post(srv, path, body, **kw):
++    status, headers, raw = _request(srv, "POST", path, body, **kw)
++    ctype = headers.get("content-type", "")
++    return status, (json.loads(raw) if ctype.startswith("application/json") else raw)
++
++
++def _summary(srv) -> dict:
++    status, _, raw = _request(srv, "GET", "/api/case")
++    assert status == 200
++    return json.loads(raw)
++
++
++def _figure(summary, fid, account="main"):
++    a = next(x for x in summary["accounts"] if x["account"] == account)
++    return next(f for f in a["figures"] if f["id"] == fid)
++
++
++def _entries(folder):
++    return [e.event for e in case.for_case(folder).entries()]
++
++
++def _override(srv, position, **extra):
++    body = {"account": "main", "line": "L2", "category": "director_funding", "reason": "director's loan",
++            "name": "Pat Jones", "expected": position, **extra}
++    return _post(srv, "/api/override", body)
++
++
++# --- an override saved from the workspace ------------------------------------------------
++
++
++def test_an_override_is_appended_to_the_case_log_and_the_figures_come_back_recomputed(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    before = _summary(srv)
++    m25 = _figure(before, "M25")["value"]
++    status, reply = _override(srv, before["position"])
++    assert status == 200, reply
++    assert reply["recorded"] is True and reply["seq"] == 1
++    assert (reply["line"], reply["old"], reply["new"]) == ("L2", "other", "director_funding")
++    assert _entries(folder)[-1] == "override"
++    data = case.for_case(folder).entries()[-1].data
++    assert (data["line"], data["new"], data["name"]) == ("L2", "director_funding", "Pat Jones")
++    after = reply["case"]
++    assert after["position"] == before["position"] + 1 == reply["position"]
++    assert _figure(after, "M20")["value"] == pytest.approx(300.25) and _figure(after, "M20")["overridden"]
++    assert _figure(after, "M25")["value"] == pytest.approx(m25 - 300.25)
++    a = after["accounts"][0]
++    assert "indicators" in a and a["policy_check"] is not None  # recomputed with the figures
++    assert after == _summary(srv)  # what the workspace shows next is what the reply showed
++
++
++def test_the_same_category_records_nothing(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    pos = _summary(srv)["position"]
++    status, reply = _override(srv, pos, category="other")
++    assert status == 200 and reply["recorded"] is False and reply["position"] == pos
++    assert len(_entries(folder)) == pos
++
++
++# --- refusals (R18) -----------------------------------------------------------------------
++
++
++def _refused(srv, folder, body, *, status=400, match):
++    pos = len(_entries(folder))
++    got, reply = _post(srv, "/api/override", body)
++    assert got == status, reply
++    assert re.search(match, reply["refused"]), reply
++    assert len(_entries(folder)) == pos  # nothing appended
++    assert not (folder / "overrides.jsonl").exists() or (folder / "overrides.jsonl").read_bytes() == b""
++
++
++@pytest.mark.parametrize("line,category", [("L2", "supplier"), ("L3", "revenue_transfer"), ("L3", "director_funding")])
++def test_a_category_not_valid_for_the_lines_direction_is_refused(home, tmp_path, serve, line, category):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    pos = _summary(srv)["position"]
++    body = {"line": line, "category": category, "reason": "r", "name": "Pat", "expected": pos}
++    _refused(srv, folder, body, match="not valid for a (credit|debit)")
++
++
++@pytest.mark.parametrize("field,value", [("amount", "1.00"), ("date", "2026-01-01"), ("balance", "0.00"),
++                                         ("description", "X"), ("add_line", "L9"), ("remove_line", "L2")])
++def test_anything_but_a_category_is_refused_naming_it(home, tmp_path, serve, field, value):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    pos = _summary(srv)["position"]
++    body = {"line": "L2", "category": "director_funding", "reason": "r", "name": "Pat", "expected": pos,
++            field: value}
++    _refused(srv, folder, body, match=f"category only.*{field}")
++
++
++@pytest.mark.parametrize("missing,match", [("reason", "reason"), ("name", "name"), ("expected", "position"),
++                                           ("line", "line"), ("category", "category")])
++def test_an_override_without_its_reason_name_position_line_or_category_is_refused(home, tmp_path, serve,
++                                                                                  missing, match):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    body = {"line": "L2", "category": "director_funding", "reason": "r", "name": "Pat",
++            "expected": _summary(srv)["position"]}
++    del body[missing]
++    _refused(srv, folder, body, match=match)
++
++
++def test_an_unknown_line_or_category_is_refused(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    pos = _summary(srv)["position"]
++    _refused(srv, folder, {"line": "L99", "category": "other", "reason": "r", "name": "P", "expected": pos},
++             match="no line L99")
++    _refused(srv, folder, {"line": "L2", "category": "money", "reason": "r", "name": "P", "expected": pos},
++             match="not a category")
++
++
++def test_a_malformed_request_body_is_refused(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    n = len(_entries(folder))
++    for raw, kind in (("{not json", "application/json"), ("[1, 2]", "application/json")):
++        status, _reply = _post(srv, "/api/override", raw, kind="text/x-raw", headers={"Content-Type": kind})
++        assert status == 400, raw
++    status, _ = _post(srv, "/api/override", "x=1", kind="text/plain")
++    assert status == 415
++    assert len(_entries(folder)) == n
++
++
++# --- conflicts ----------------------------------------------------------------------------
++
++
++def test_a_save_from_a_stale_page_is_a_conflict_that_asks_for_a_reload(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    stale_pos = _summary(srv)["position"]
++    assert _override(srv, stale_pos)[0] == 200  # another tab saves first
++    n = len(_entries(folder))
++    status, reply = _override(srv, stale_pos, line="L4", category="other_explained_in")
++    assert status == 409, reply
++    assert reply["reload"] is True and reply["position"] == n and reply["expected"] == stale_pos
++    assert "reload" in reply["conflict"]
++    assert len(_entries(folder)) == n
++
++
++def test_a_save_while_another_writer_holds_the_case_is_refused(home, tmp_path, serve, monkeypatch):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    pos = _summary(srv)["position"]
++    monkeypatch.setattr(case, "WRITER_WAIT", 0.1, raising=False)
++    log = case.for_case(folder)
++    import threading
++
++    held, release = threading.Event(), threading.Event()
++
++    def hold():
++        with log.writer():
++            held.set()
++            release.wait(10)
++
++    t = threading.Thread(target=hold)
++    t.start()
++    held.wait(5)
++    try:
++        status, reply = _override(srv, pos)
++    finally:
++        release.set()
++        t.join()
++    assert status == 409 and "another window" in reply["locked"]
++    assert len(_entries(folder)) == pos
++
++
++# --- stale overrides (R19) ---------------------------------------------------------------
++
++
++def _replace_statement(folder, body):
++    p = folder / "statements" / "main.csv"
++    p.chmod(0o600)
++    p.write_text(body)
++
++
++def test_a_stale_override_is_listed_and_confirmed_from_the_workspace(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    assert _override(srv, _summary(srv)["position"])[0] == 200
++    _replace_statement(folder, SMALL.replace("J BLOGGS", "J BLOGGS LTD"))
++    s = _summary(srv)
++    assert s["stale"] == [{"seq": 1, "account": "main", "line": "L2", "new": "director_funding",
++                           "why": "statement changed", "can_confirm": True}]
++    assert not _figure(s, "M20")["overridden"] and _figure(s, "M20")["value"] == 0
++    status, reply = _post(srv, "/api/stale", {"seq": 1, "action": "confirm", "name": "Pat",
++                                              "expected": s["position"]})
++    assert status == 200, reply
++    assert _entries(folder)[-1] == "override_confirmed"
++    assert reply["case"]["stale"] == [] and _figure(reply["case"], "M20")["value"] == pytest.approx(300.25)
++    assert reply["position"] == s["position"] + 1
++
++
++def test_a_stale_override_on_a_missing_line_can_only_be_dropped(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    assert _override(srv, _summary(srv)["position"], line="L4", category="revenue_transfer")[0] == 200
++    _replace_statement(folder, "\n".join(SMALL.splitlines()[:4]) + "\n")
++    s = _summary(srv)
++    assert [(x["seq"], x["why"], x["can_confirm"]) for x in s["stale"]] == [(1, "line not in the case", False)]
++    n = len(_entries(folder))
++    status, reply = _post(srv, "/api/stale", {"seq": 1, "action": "confirm", "name": "Pat", "expected": n})
++    assert status == 400 and "dropped" in reply["refused"] and len(_entries(folder)) == n
++    status, reply = _post(srv, "/api/stale", {"seq": 1, "action": "drop", "name": "Pat", "expected": n})
++    assert status == 200 and reply["case"]["stale"] == []
++    assert _entries(folder)[-1] == "override_dropped"
++
++
++def test_resolving_an_override_that_is_not_stale_or_from_a_stale_page_is_refused(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    pos = _summary(srv)["position"]
++    assert _override(srv, pos)[0] == 200
++    n = len(_entries(folder))
++    status, reply = _post(srv, "/api/stale", {"seq": 1, "action": "drop", "name": "Pat", "expected": n})
++    assert status == 400 and "not stale" in reply["refused"]
++    _replace_statement(folder, SMALL.replace("J BLOGGS", "J BLOGGS LTD"))
++    status, reply = _post(srv, "/api/stale", {"seq": 1, "action": "drop", "name": "Pat", "expected": pos})
++    assert status == 409 and reply["reload"] is True
++    for bad in ({"seq": 1, "action": "keep", "name": "Pat", "expected": n},
++                {"seq": "one", "action": "drop", "name": "Pat", "expected": n},
++                {"seq": 1, "action": "drop", "expected": n},
++                {"seq": 1, "action": "drop", "name": "Pat"}):
++        assert _post(srv, "/api/stale", bad)[0] == 400, bad
++    assert len(_entries(folder)) == n
++
++
++# --- the page's forms ---------------------------------------------------------------------
++
++
++class _Forms(HTMLParser):
++    def __init__(self):
++        super().__init__()
++        self.forms, self._form, self._select = [], None, None
++
++    def handle_starttag(self, tag, attrs):
++        a = dict(attrs)
++        if tag == "form":
++            self._form = {"action": a.get("action"), "method": a.get("method"), "fields": {}, "options": [],
++                          "required": set()}
++            self.forms.append(self._form)
++        elif self._form is not None and tag in ("input", "select", "textarea"):
++            self._form["fields"][a.get("name")] = a.get("value")
++            if "required" in a:
++                self._form["required"].add(a.get("name"))
++            if tag == "select":
++                self._select = a.get("name")
++        elif self._form is not None and tag == "option" and self._select:
++            self._form["options"].append(a.get("value"))
++
++    def handle_endtag(self, tag):
++        if tag == "form":
++            self._form = None
++        elif tag == "select":
++            self._select = None
++
++
++def _forms(html: bytes):
++    p = _Forms()
++    p.feed(html.decode())
++    return p.forms
++
++
++def test_the_form_offers_only_the_categories_valid_for_each_lines_direction(home, tmp_path, serve):
++    case_id, _folder = _case(tmp_path)
++    srv = serve(case_id)
++    pos = _summary(srv)["position"]
++    status, _, html = _request(srv, "GET", "/lines?" + urlencode({"token": srv.token, "figure": "M17"}), token=False)
++    assert status == 200
++    forms = [f for f in _forms(html) if f["fields"].get("line")]
++    credits = {f["fields"]["line"]: f for f in forms}
++    assert set(credits) == {"L1", "L2", "L4"}
++    for f in forms:
++        assert f["method"] == "post" and f["action"].startswith("/override?")
++        assert f["options"] == [c.value for c in Category if c in CREDIT_BUCKET]
++        assert f["fields"]["expected"] == str(pos)
++        assert {"reason", "name", "category"} <= f["required"]
++    status, _, html = _request(srv, "GET", "/lines?" + urlencode({"token": srv.token, "month": "2026-01",
++                                                                  "cell": "money_out"}), token=False)
++    (debit,) = [f for f in _forms(html) if f["fields"].get("line")]
++    from cma.models import Transaction
++
++    t = Transaction(id="x", date=date(2026, 1, 1), description="x", amount=-1, balance=0)
++    assert debit["options"] == [c.value for c in Category if c in valid_categories(t)]
++    assert "director_funding" not in debit["options"] and "supplier" in debit["options"]
++
++
++def test_the_judgement_queue_carries_the_form(home, tmp_path, serve):
++    case_id, _folder = _case(tmp_path)
++    srv = serve(case_id)
++    _status, _, html = _request(srv, "GET", "/?token=" + srv.token, token=False)
++    queue = html.decode().split('id="judgement-queue"')[1].split("</section>")[0]
++    lines = {f["fields"]["line"] for f in _forms(queue.encode())}
++    assert "L2" in lines  # the unexplained credit, listed first, can be decided where it is listed
++
++
++def test_a_form_post_saves_and_returns_to_the_page_it_came_from(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    pos = _summary(srv)["position"]
++    back = "/lines?" + urlencode({"token": srv.token, "figure": "M17"})
++    form = urlencode({"account": "main", "line": "L2", "category": "director_funding", "reason": "loan",
++                      "name": "Pat", "expected": pos, "back": "/lines?figure=M17&account=main"})
++    status, headers, _ = _request(srv, "POST", "/override?token=" + srv.token, form,
++                                  kind="application/x-www-form-urlencoded", token=False)
++    assert status == 303
++    assert headers["location"].startswith("/lines?") and f"token={srv.token}" in headers["location"]
++    assert _entries(folder)[-1] == "override"
++    status, _, html = _request(srv, "GET", back, token=False)
++    assert "rests on an override" in html.decode()
++
++
++def test_a_form_post_from_a_stale_page_shows_the_conflict_and_a_reload_link(home, tmp_path, serve):
++    case_id, _folder = _case(tmp_path)
++    srv = serve(case_id)
++    pos = _summary(srv)["position"]
++    assert _override(srv, pos)[0] == 200
++    form = urlencode({"line": "L4", "category": "other_explained_in", "reason": "r", "name": "Pat",
++                      "expected": pos, "back": "https://evil.example/"})
++    status, _headers, html = _request(srv, "POST", "/override?token=" + srv.token, form,
++                                     kind="application/x-www-form-urlencoded", token=False)
++    assert status == 409
++    page = html.decode()
++    assert "Reload" in page and f'href="/?token={srv.token}"' in page and "evil.example" not in page
++    assert _forms(html) is not None
++
++
++def test_the_page_lists_stale_overrides_with_confirm_and_drop_forms(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    assert _override(srv, _summary(srv)["position"])[0] == 200
++    _replace_statement(folder, SMALL.replace("J BLOGGS", "J BLOGGS LTD"))
++    pos = _summary(srv)["position"]
++    _status, _, html = _request(srv, "GET", "/?token=" + srv.token, token=False)
++    page = html.decode()
++    assert 'id="stale-overrides"' in page
++    section = page.split('id="stale-overrides"')[1].split("</section>")[0]
++    forms = _forms(section.encode())
++    assert sorted(f["fields"]["action"] for f in forms) == ["confirm", "drop"]
++    assert all(f["action"].startswith("/stale?") and f["fields"]["expected"] == str(pos) and
++               f["fields"]["seq"] == "1" and "name" in f["required"] for f in forms)
++
++
++# --- the write endpoints keep the workspace's guards --------------------------------------
++
++
++def test_the_write_endpoints_need_the_token_and_the_same_origin(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    n = len(_entries(folder))
++    body = {"line": "L2", "category": "director_funding", "reason": "r", "name": "P", "expected": n}
++    assert _request(srv, "POST", "/api/override", body, token=False)[0] == 403
++    assert _request(srv, "POST", "/api/override", body, headers={"Origin": "http://evil.example"})[0] == 403
++    assert _request(srv, "POST", "/api/override", body, headers={"Host": "localhost"})[0] == 403
++    assert _request(srv, "GET", "/api/override")[0] == 405
++    assert _request(srv, "POST", "/api/case", body)[0] == 405
++    big = {**body, "reason": "x" * (rs.MAX_BODY + 1)}
++    assert _request(srv, "POST", "/api/override", big)[0] == 413
++    assert len(_entries(folder)) == n
++
++
++def test_a_chunked_body_is_refused(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    n = len(_entries(folder))
++    import socket
++
++    raw = (f"POST /api/override?token={srv.token} HTTP/1.1\r\nHost: 127.0.0.1:{srv.port}\r\n"
++           "Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n").encode()
++    with socket.create_connection(("127.0.0.1", srv.port), timeout=5) as s:
++        s.sendall(raw)
++        reply = b""
++        while chunk := s.recv(4096):
++            reply += chunk
++    assert reply.startswith(b"HTTP/1.1 411") and reply.count(b"HTTP/1.1 ") == 1
++    assert len(_entries(folder)) == n
++
++
++# --- R52: recomputed within 2 seconds at 10,000 lines -------------------------------------
++
++
++DESCRIPTIONS = ["CARD SETTLEMENT STRIPE", "FPS CREDIT J BLOGGS", "DD COUNCIL", "CASH PAID IN", "IWOCA LTD",
++                "TESCO STORES", "HMRC VAT", "TO SAVINGS POT", "PAYPAL REFUND", "BET365", "SUMUP PAYOUT",
++                "FPS CREDIT ACME LTD INV 42", "CASH WITHDRAWAL", "UNPAID DD IWOCA"]
++
++
++def _big(n=10_000) -> str:
++    rng = random.Random(22)
++    pence, rows, start = 100_000_00, ["id,date,description,amount,balance"], date(2025, 1, 1)
++    for i in range(n):
++        amount = rng.randint(-50_000, 60_000) or 1
++        pence += amount
++        rows.append(f"L{i + 1},{start + timedelta(days=i * 365 // n)},{rng.choice(DESCRIPTIONS)},"
++                    f"{amount / 100:.2f},{pence / 100:.2f}")
++    return "\n".join(rows) + "\n"
++
++
++def test_r52_an_override_on_a_10000_line_case_comes_back_recomputed_within_2_seconds(home, tmp_path, serve):
++    case_id, _folder = _case(tmp_path, _big())
++    srv = serve(case_id)
++    first = _summary(srv)  # the workspace is open on the case
++    assert first["state"] == "shown" and len(first["accounts"]) == 1
++    credit = next(q["line"] for q in first["queue"] if not q["line"]["amount"].startswith("-"))
++    timings = []
++    position = first["position"]
++    for category in ("director_funding", "other_explained_in", "revenue_transfer"):
++        start = time.perf_counter()
++        status, reply = _post(srv, "/api/override", {"line": credit["id"], "category": category,
++                                                     "reason": "checked", "name": "Pat", "expected": position})
++        timings.append(time.perf_counter() - start)
++        assert status == 200 and reply["recorded"], reply
++        position = reply["position"]
++        c = reply["case"]
++        assert c["state"] == "shown"
++        assert c["accounts"][0]["indicators"] is not None and c["accounts"][0]["policy_check"] is not None
++        assert any(f["overridden"] for f in c["accounts"][0]["figures"])
++    assert max(timings) < 2.0, timings
++
++
++def test_r52_a_form_save_on_a_10000_line_case_shows_the_recomputed_page_within_2_seconds(home, tmp_path, serve):
++    case_id, _folder = _case(tmp_path, _big())
++    srv = serve(case_id)
++    first = _summary(srv)
++    credit = next(q["line"] for q in first["queue"] if not q["line"]["amount"].startswith("-"))
++    form = urlencode({"account": "main", "line": credit["id"], "category": "director_funding", "reason": "checked",
++                      "name": "Pat", "expected": first["position"], "back": "/"})
++    start = time.perf_counter()
++    status, headers, _ = _request(srv, "POST", "/override?token=" + srv.token, form,
++                                  kind="application/x-www-form-urlencoded", token=False)
++    assert status == 303
++    status, _, html = _request(srv, "GET", headers["location"], token=False)
++    elapsed = time.perf_counter() - start
++    assert status == 200 and "rests on an override" in html.decode()
++    assert 'class="policy-check"' in html.decode() and 'id="judgement-queue"' in html.decode()
++    assert elapsed < 2.0, elapsed
++
++
++# --- hardening: the redirect stays in the workspace, and the kept steps give what a fresh run gives
++
++
++@pytest.mark.parametrize("back", ["//evil.example/", "https://evil.example/", "/static/app.js", "/api/case",
++                                  "/\\evil.example", None, 7, "/lines?next=https://evil.example"])
++def test_a_form_never_sends_the_browser_outside_the_workspace_pages(back):
++    from cma.review.edit import back_url
++
++    url = back_url(back, "tok")
++    assert url.startswith(("/?", "/lines?")) and "evil" not in url and "next=" not in url
++    assert "token=tok" in url
++
++
++def test_categorise_with_kept_classes_gives_what_classifying_every_line_gives(home, tmp_path):
++    from cma.categorise import LineOverride, active_ruleset, categorise, classify_lines
++    from cma.ingest import load_csv
++
++    p = tmp_path / "big.csv"
++    p.write_text(_big(2_000))
++    rs_ = active_ruleset()
++    rng = random.Random(7)
++    base = load_csv(p, account_name="main")
++    classes = classify_lines(base, rs_)
++    for _ in range(5):
++        picked = rng.sample(base.transactions, 20)
++        ov = {t.id: LineOverride(sorted(valid_categories(t), key=lambda c: c.value)[0], f"o:{t.id}") for t in picked}
++        a = categorise(load_csv(p, account_name="main"), rs_, overrides=ov)
++        b = categorise(load_csv(p, account_name="main"), rs_, overrides=ov, unoverridden=classes)
++        assert [(t.category, t.rule_id, t.reverses) for t in a.transactions] == \
++               [(t.category, t.rule_id, t.reverses) for t in b.transactions]
++    with pytest.raises(ValueError):
++        categorise(load_csv(p, account_name="main"), rs_, unoverridden=classes[:-1])
++
++
++def test_the_kept_figures_follow_the_rule_table(home, tmp_path, monkeypatch):
++    from cma import overrides
++
++    _case_id, folder = _case(tmp_path)
++    v2 = overrides.case_figures(folder)["main"].statement.by_id()["L4"].category
++    monkeypatch.setenv("CMA_RULESET", "v1")
++    v1 = overrides.case_figures(folder)["main"].statement.by_id()["L4"].category
++    assert v2 == Category.CASH_DEPOSIT and v1 != v2  # no categories kept from the other table
++
++
++def _clear_kept():
++    from cma import overrides
++
++    for memo in (overrides._PARSED, overrides._BARE, overrides._CLASSES):
++        memo._items.clear()
++
++
++def _marks(folder):
++    from cma import overrides
++
++    return {a: (sorted(f.marked), sorted(f.marked_cells), [(m.id, m.value, m.evidence) for m in f.metrics])
++            for a, f in overrides.case_figures(folder).items()}
++
++
++def test_marks_with_the_kept_figures_are_what_a_fresh_process_gives(home, tmp_path):
++    """The figures kept from the case's first, override-free computation mark each override's
++    figures exactly as a computation with nothing kept does, override after override (R17, R52)."""
++    from cma import overrides
++
++    _case_id, folder = _case(tmp_path, _big(2_000))
++    _clear_kept()
++    base = overrides.case_figures(folder)["main"]  # the page opens: the override-free figures are kept
++    assert not base.marked
++    rng = random.Random(22)
++    credits = [t for t in base.statement.transactions if t.amount > 0]
++    position = len(case.for_case(folder).entries())
++    for t in rng.sample(credits, 4):
++        new = next(c for c in sorted(valid_categories(t), key=lambda c: c.value) if c != t.category)
++        overrides.add_override(folder, t.id, new.value, reason="checked", name="Pat", expected=position)
++        position = len(case.for_case(folder).entries())
++        kept = _marks(folder)
++        _clear_kept()
++        assert kept == _marks(folder)
++        assert kept["main"][0]  # something now rests on an override
++
++
++def test_a_form_save_does_not_recompute_the_case_before_sending_the_browser_back(home, tmp_path, serve,
++                                                                                 monkeypatch):
++    from cma.review import summary
++
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    position = _summary(srv)["position"]
++    calls = []
++    real = summary.case_summary
++    monkeypatch.setattr(summary, "case_summary", lambda *a, **k: calls.append(a) or real(*a, **k))
++    form = urlencode({"account": "main", "line": "L2", "category": "director_funding", "reason": "loan",
++                      "name": "Pat", "expected": position, "back": "/"})
++    status, _, _ = _request(srv, "POST", "/override?token=" + srv.token, form,
++                            kind="application/x-www-form-urlencoded", token=False)
++    assert status == 303 and calls == []  # the page it goes back to is built once, on the GET
++    assert _entries(folder)[-1] == "override"
++    status, reply = _override(srv, position + 1, line="L1", category="director_funding")
++    assert status == 200 and reply["case"]["state"] == "shown" and len(calls) == 1  # data still recomputes
+diff --git a/tests/test_workspace_summary.py b/tests/test_workspace_summary.py
+index 2fe2de2..8ce709d 100644
+--- a/tests/test_workspace_summary.py
++++ b/tests/test_workspace_summary.py
+@@ -218,6 +218,10 @@ def test_the_page_shows_the_breakdown_the_figures_and_the_monthly_summary(home,
+     # Only the case's own figures: nothing computed in the page; no script or style inline.
+     scripts = [a for t, a in p.tags if t == "script"]
+     assert len(scripts) == 1 and dict(scripts[0])["src"].startswith("/static/app.js")
++    # A form is the workspace's own: it posts only to its override or stale-override path (R17, R19).
++    for t, a in p.tags:
++        if t == "form":
++            assert dict(a)["method"] == "post" and dict(a)["action"].startswith(("/override?token=", "/stale?token="))
+     assert not any(k == "style" or k.startswith("on") for _, a in p.tags for k, _ in a)
+ 
+ 
+@@ -352,7 +356,8 @@ def _random_statement(rng: random.Random) -> tuple[str, list[tuple[str, str]]]:
+ 
+ def _assert_only_escaped(page: str, texts: list[str], *, shown: bool) -> None:
+     allowed = {"html", "head", "meta", "title", "link", "script", "body", "header", "h1", "h2", "h3", "p",
+-               "main", "section", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "span", "a", "strong"}
++               "main", "section", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "span", "a", "strong",
++               "form", "input", "select", "option", "button"}  # the override form's own tags (T22)
+     p = _parse(page)
+     # No text adds markup: every tag is one the workspace writes, with no handler or style.
+     assert {t for t, _ in p.tags} <= allowed
+@@ -360,6 +365,10 @@ def _assert_only_escaped(page: str, texts: list[str], *, shown: bool) -> None:
+     for t, a in p.tags:
+         if t == "a":
+             assert [k for k, _ in a] == ["href"] and dict(a)["href"].startswith(("/lines?token=", "/?token="))
++    # A form is the workspace's own: it posts only to its override or stale-override path (R17, R19).
++    for t, a in p.tags:
++        if t == "form":
++            assert dict(a)["method"] == "post" and dict(a)["action"].startswith(("/override?token=", "/stale?token="))
+     assert not any(k == "style" or k.startswith("on") for _, a in p.tags for k, _ in a)
+     assert [t for t, _ in p.tags].count("script") == 1
+     page_text = "".join(p.text)
