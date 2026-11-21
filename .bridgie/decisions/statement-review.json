@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 321,
+  "next_id": 322,
   "decisions": [
     {
       "id": "D1",
@@ -6426,6 +6426,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T02:29:28.108Z"
+    },
+    {
+      "id": "D321",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:81 checks the statement amount and balance round trip, and src/cma/metrics.py:540 computes M3 from integer pence and handles an unrepresentable result. The CLI and memo appendix display GBP to the penny at src/cma/cli.py:415 and src/cma/graph.py:175. Policy validation can still lose a fractional penny, and the statement loader drops readable over-limit amounts from its flow checks.); major: The authored policy threshold can still lose a fractional penny before validation. Decimal construction preserves the lexeme, but multiplication uses the active Decimal precision before the whole-pence check. at src/cma/metrics.py:93; major: The statement loader leaves readable amounts out of the post-read flow check when they reach the line limit. It reports the line fault but omits the independently known flow fault. at src/cma/ingest.py:574; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T02:36:43.295Z"
     }
   ]
 }
