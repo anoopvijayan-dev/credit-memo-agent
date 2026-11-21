@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 325,
+  "next_id": 326,
   "decisions": [
     {
       "id": "D1",
@@ -6506,6 +6506,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T02:53:11.144Z"
+    },
+    {
+      "id": "D325",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (src/cma/firm.py:68 defaults the lock on. src/cma/llm.py:83 gates client creation, src/cma/mcp_server.py:40-119 gates startup and ASGI requests, and src/cma/mcp_server.py:169 gates tools. The runner passed the native startup, saved-app, inherited-tracer and async-resume cases. The config stamp and parsed bytes can come from different file versions at src/cma/firm.py:199-202. A resume that drafts can also leave evidence naming the wrong destination at src/cma/graph.py:413.); R30 fail (src/cma/graph.py:230-284 limits the prompt to the allowed fields and redraft IDs. The runner passed the new serializer round-trip and exact-copy tests. Older checkpoints can still restore a shipped rule without its actions, causing src/cma/graph.py:225-227 to mask the required citation.); P18 fail (The runner confirmed locked constructors, async resume, retryable 503s, redirects, native MCP bind refusal and saved ASGI refusal. src/cma/firm.py:137-152 and :197-202 can validate an unlocked reading against a restored locked file, allowing hosted client creation under the lock.); major: The configuration stamp and parsed settings come from separate reads. A concurrent update can bind an unlocked reading to the fingerprint of the locked file and allow client construction after the locked file has been restored. at src/cma/firm.py:199; major: Drafting from a resumed checkpoint leaves the original model and destination in the evidence, even when that resume sends the prompt to a hosted provider. at src/cma/graph.py:413; major: The new serializer preserves rule actions for new checkpoints. A pre-change checkpoint lacks both actions, so it can mask an exact shipped rule when drafting resumes. at src/cma/graph.py:225; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T02:55:39.999Z"
     }
   ]
 }
