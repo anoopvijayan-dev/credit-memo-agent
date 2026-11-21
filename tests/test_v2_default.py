@@ -168,3 +168,17 @@ def test_mcp_money_in_buckets_tool_is_registered_and_refuses_under_the_lock(mcp_
     (tmp_path / "home" / "firm.yaml").write_text("offline_lock: true\n")
     with pytest.raises(firm.OfflineLockError):
         mcp_server.money_in_buckets("ex.csv")
+
+
+@pytest.mark.contracts
+def test_mcp_money_in_buckets_tool_refuses_buckets_that_do_not_reconcile(mcp_data, monkeypatch):
+    """R3 through the new tool: a reconciliation failure is a refusal (ValueError), never a
+    partial set of buckets."""
+    from cma import mcp_server
+
+    def boom(*a, **k):
+        raise metrics.ReconciliationError(1, ["T00001"])
+
+    monkeypatch.setattr(mcp_server.metrics, "compute", boom)
+    with pytest.raises(ValueError, match="reconcile"):
+        mcp_server.money_in_buckets("ex.csv")
