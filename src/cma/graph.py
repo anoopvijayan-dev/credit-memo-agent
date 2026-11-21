@@ -537,7 +537,7 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
         or firm.yaml read now (T17 review 5)."""
         if graph_input is None or isinstance(graph_input, Command):
             if stored is _UNREAD:
-                stored = stored_lock(config)
+                stored = _stored_lock(compiled, config)
             # A checkpoint whose lock cannot be looked up is treated as drafted under the lock,
             # never as one from before it (T17 review 14).
             # A resume is a run of its own and reads firm.yaml as it resumes, never reusing the
@@ -555,21 +555,7 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
             firm.take_for_run(reading)
         return reading, reading.offline_lock is not False
 
-    def stored_lock(config):
-        try:
-            return compiled.get_state(config).values.get("offline_lock")
-        except Exception:
-            return _LOOKUP_FAILED
-
-    async def astored_lock(config):
-        # An async checkpointer (AsyncSqliteSaver) refuses the synchronous lookup on its own
-        # event loop: an async run looks the lock up the async way (T17 review 14).
-        try:
-            return (await compiled.aget_state(config)).values.get("offline_lock")
-        except Exception:
-            return _LOOKUP_FAILED
-
-    _untraced_under_lock(compiled, run_reading, astored_lock)
+    _untraced_under_lock(compiled, run_reading)
     return compiled
 
 
@@ -642,36 +628,57 @@ _UNREAD = object()  # the stored lock is looked up by run_reading itself
 _LOOKUP_FAILED = object()  # the checkpoint's stored lock could not be looked up
 
 
-def _untraced_under_lock(graph, run_reading, astored_lock) -> None:
+def _stored_lock(graph, config):
+    try:
+        return graph.get_state(config).values.get("offline_lock")
+    except Exception:
+        return _LOOKUP_FAILED
+
+
+async def _astored_lock(graph, config):
+    # An async checkpointer (AsyncSqliteSaver) refuses the synchronous lookup on its own event
+    # loop: an async run looks the lock up the async way (T17 review 14).
+    try:
+        return (await graph.aget_state(config)).values.get("offline_lock")
+    except Exception:
+        return _LOOKUP_FAILED
+
+
+def _untraced_under_lock(graph, run_reading) -> None:
     """Every way of running the graph (invoke and stream, and their async forms) takes the
-    run's one reading of firm.yaml as it starts (run_reading keeps it for the run's steps by
-    thread), and under the offline lock runs with
+    run's one reading of firm.yaml as it starts, and under the offline lock runs with
     LangSmith tracing off, whatever the environment says: a trace would send statement data
-    off the machine (R29, T17 review 4)."""
+    off the machine (R29, T17 review 4). The four are methods of a class made for this graph,
+    which the graph is given, so a copy LangGraph makes of it (with_config, copy) keeps them;
+    as attributes of the one object they were lost on a copy (T17 review 18)."""
     import langsmith
 
-    real_invoke, real_stream = graph.invoke, graph.stream
-    real_ainvoke, real_astream = graph.ainvoke, graph.astream
+    base = type(graph)
 
     def config_of(a, k):
         return k.get("config", a[1] if len(a) > 1 else None)
 
-    def start(a, k, mark: bool = True, stored=_UNREAD) -> tuple[bool, object, tuple, dict]:
+    def delegated(self) -> bool:
+        return (_IN_RUN.get() or (None,))[0] == id(self) and _DELEGATE.get() == id(self)
+
+    def start(self, a, k, mark: bool = True, stored=_UNREAD) -> tuple[bool, object, tuple, dict]:
         """Whether this run is under the lock, the token to end it, and the call's arguments
         with the run's reading in its config; a call nested in a run already going (invoke's
         own stream) keeps that run's reading. Only invoke and ainvoke mark a run as going,
         since they run to the end before returning: a stream suspended between items marks
         nothing, so no other run started meanwhile takes its decision (T17 review 8)."""
-        outer = _IN_RUN.get()
-        if outer is not None and outer[0] == id(graph) and _DELEGATE.get() == id(graph):
+        if delegated(self):
             # Only invoke's own call to its stream keeps the run's decision, once; a separate
             # run inside it, on this graph or another, takes its own reading and its own tracer
             # filtering (T17 reviews 10 and 11).
+            outer = _IN_RUN.get()
             _DELEGATE.set(None)
             return outer[1], None, a, k
         graph_input = a[0] if a else k.get("input")
-        reading, locked = run_reading(graph_input, config_of(a, k), stored)
         resumed = graph_input is None or isinstance(graph_input, Command)
+        if resumed and stored is _UNREAD:
+            stored = _stored_lock(self, config_of(a, k))  # this graph's, or its copy's, checkpoint
+        reading, locked = run_reading(graph_input, config_of(a, k), stored)
         run_key = firm.begin_run(reading) if reading is not None else None
         if reading is not None or locked or resumed:
             config = dict(config_of(a, k) or {})
@@ -693,7 +700,7 @@ def _untraced_under_lock(graph, run_reading, astored_lock) -> None:
             else:
                 a = (a[0], config, *a[2:])
         inherited = _untraced_inherited_config() if locked else None
-        marks = (_IN_RUN.set((id(graph), locked)), _DELEGATE.set(id(graph))) if mark else None
+        marks = (_IN_RUN.set((id(self), locked)), _DELEGATE.set(id(self))) if mark else None
         return locked, (marks, (reading, run_key) if reading is not None else None, inherited), a, k
 
     def end(token) -> None:
@@ -706,61 +713,62 @@ def _untraced_under_lock(graph, run_reading, astored_lock) -> None:
             if token[1] is not None:
                 firm.end_run(*token[1])
 
-    def invoke(*a, **k):
-        locked, token, a, k = start(a, k)
+    def invoke(self, *a, **k):
+        locked, token, a, k = start(self, a, k)
         try:
             if locked:
                 with langsmith.tracing_context(enabled=False):
-                    return real_invoke(*a, **k)
-            return real_invoke(*a, **k)
+                    return base.invoke(self, *a, **k)
+            return base.invoke(self, *a, **k)
         finally:
             end(token)
 
-    def stream(*a, **k):
+    def stream(self, *a, **k):
         def run():
-            locked, token, args, kwargs = start(a, k, mark=False)
+            locked, token, args, kwargs = start(self, a, k, mark=False)
             try:
                 if locked:
                     with langsmith.tracing_context(enabled=False):
-                        yield from real_stream(*args, **kwargs)
+                        yield from base.stream(self, *args, **kwargs)
                 else:
-                    yield from real_stream(*args, **kwargs)
+                    yield from base.stream(self, *args, **kwargs)
             finally:
                 end(token)
         return run()
 
-    async def stored_for(a, k):
+    async def stored_for(self, a, k):
         """For an async resume that is a run of its own, the checkpoint's lock, looked up the
         async way; otherwise left to start()."""
         graph_input = a[0] if a else k.get("input")
-        delegated = (_IN_RUN.get() or (None,))[0] == id(graph) and _DELEGATE.get() == id(graph)
-        if delegated or not (graph_input is None or isinstance(graph_input, Command)):
+        if delegated(self) or not (graph_input is None or isinstance(graph_input, Command)):
             return _UNREAD
-        return await astored_lock(config_of(a, k))
+        return await _astored_lock(self, config_of(a, k))
 
-    async def ainvoke(*a, **k):
-        locked, token, a, k = start(a, k, stored=await stored_for(a, k))
+    async def ainvoke(self, *a, **k):
+        locked, token, a, k = start(self, a, k, stored=await stored_for(self, a, k))
         try:
             if locked:
                 with langsmith.tracing_context(enabled=False):
-                    return await real_ainvoke(*a, **k)
-            return await real_ainvoke(*a, **k)
+                    return await base.ainvoke(self, *a, **k)
+            return await base.ainvoke(self, *a, **k)
         finally:
             end(token)
 
-    def astream(*a, **k):
+    def astream(self, *a, **k):
         async def run():
-            locked, token, args, kwargs = start(a, k, mark=False, stored=await stored_for(a, k))
+            locked, token, args, kwargs = start(self, a, k, mark=False, stored=await stored_for(self, a, k))
             try:
                 if locked:
                     with langsmith.tracing_context(enabled=False):
-                        async for item in real_astream(*args, **kwargs):
+                        async for item in base.astream(self, *args, **kwargs):
                             yield item
                 else:
-                    async for item in real_astream(*args, **kwargs):
+                    async for item in base.astream(self, *args, **kwargs):
                         yield item
             finally:
                 end(token)
         return run()
 
-    graph.invoke, graph.stream, graph.ainvoke, graph.astream = invoke, stream, ainvoke, astream
+    graph.__class__ = type(f"OfflineLocked{base.__name__}", (base,),
+                           {"invoke": invoke, "stream": stream, "ainvoke": ainvoke, "astream": astream,
+                            "__module__": __name__})

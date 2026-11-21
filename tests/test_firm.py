@@ -1681,6 +1681,38 @@ def test_r29_a_finalising_resume_keeps_the_lock_a_drafting_resume_was_checked_ag
 
 
 @pytest.mark.invariants
+def test_p18_a_graph_copied_by_with_config_keeps_the_locks_rules(home, no_network, monkeypatch, tmp_path):
+    """T17 review 18 / R29: the lock's rules for a run were attributes of the compiled graph
+    object; with_config() and copy() build a new object without them, so a run through
+    graph.with_config(...) under the lock kept a LangSmith tracer and, as a resume, took no
+    reading and recorded no resume lock."""
+    from langchain_core.tracers.langchain import LangChainTracer
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
+
+    names = []
+    monkeypatch.setattr(LangChainTracer, "_start_trace", lambda self, run: names.append(run.name), raising=False)
+    monkeypatch.setattr(LangChainTracer, "_persist_run", lambda self, run: names.append(run.name), raising=False)
+    monkeypatch.setattr(LangChainTracer, "_persist_run_single", lambda self, run: None, raising=False)
+    monkeypatch.setattr(LangChainTracer, "_update_run_single", lambda self, run: None, raising=False)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    saver = InMemorySaver()
+    graph = build(llm.FakeLLM(), checkpointer=saver)
+    copied = graph.with_config(tags=["copied"])
+    assert type(copied) is type(graph)
+    tracer = LangChainTracer(client=types.SimpleNamespace())
+    cfg = {"configurable": {"thread_id": "t"}}
+    copied.invoke({"statement_path": str(_statement(tmp_path))}, {**cfg, "callbacks": [tracer]})
+    assert names == []
+    reads = []
+    real_load = firm.load
+    monkeypatch.setattr(firm, "load", lambda *a, **k: reads.append(1) or real_load(*a, **k))
+    final = graph.copy().invoke(Command(resume={"approved": True, "reviewer": "A"}), {**cfg, "callbacks": [tracer]})
+    assert reads and names == [] and no_network == []
+    assert evidence_record({**final, "ruleset": None})["egress"]["resume_offline_lock"] is True
+
+
+@pytest.mark.invariants
 def test_p5_a_custom_rules_limits_never_reach_the_prompt(home, tmp_path):
     """T17 review 10 / P5: a custom rule's threshold, a number that can come from the case, reached
     the prompt in its requirement and detail cells."""
