@@ -1,0 +1,37 @@
+T43 is built and committed as `691d6ef` in the worktree. The two tests the task names pass, and so does the full suite (2168 tests), lint and compile. Whether it's done is up to the verifier.
+
+**What changed in the workspace (`src/cma/review/summary.py`):**
+- **Judgement queue first:** it now appears right after the case name, before the profile and every account's money-in breakdown. It runs largest amount first, by size either way, with equal amounts in statement order. Each row shows the line, why it is listed, the indicators that flagged it, and for an ambiguous credit its candidates with their buckets.
+- **Indicators panel:** each account now has one, after its monthly summary. Each indicator shows the lines behind it and the threshold that fired. A threshold still at its shipped value is labelled illustrative, and the panel says those values are not the firm's lending policy.
+- **Where thresholds come from:** the firm's `indicators.yaml` at the case root (or the path `firm.yaml` gives) if it exists, otherwise the packaged file. A malformed thresholds file or `firm.yaml` now shows no figures and names the problem.
+- **All the counting stays in the figures layer.** A new `case_judgement_queue` in `src/cma/indicators.py` merges each account's queue in pence. The summary only renders the result.
+
+**Tests:** 10 new tests in `tests/test_workspace_indicators.py`, 8 marked contracts and 2 invariants (`p19` and `p8` in their names).
+- **Queue order:** the expected order is L8 (−£5,000 gambling), L4, L3, L2, L7, L6.
+- **Cash at the limit:** a £2,500.00 cash deposit is in the queue with its single-deposit indicator; £2,499.99 is not.
+- **Other cases covered:**
+  - a firm threshold is not labelled illustrative and decides what fires;
+  - a malformed thresholds file shows no figures;
+  - descriptions in the queue and the panel appear only escaped;
+  - an ambiguous credit shows its candidates;
+  - two accounts' queues merge in the right order.
+
+**Worth knowing:**
+- The queue shows ambiguous credits' candidates now, even though R15 as a whole is T21's to finish.
+- Possible own-account transfers never reach the queue yet, because nothing computes pairings until R8/R9 (Tier 2) are built.
+- The first draft of my test data was wrong: an all-cash month also set off the cash-heavy-month indicator. I fixed the data, not the code.
+
+```json
+{
+  "task": "T43",
+  "claims": [
+    {"text": "The workspace's judgement queue is listed first on the page and in /api/case (`queue`), largest amount first by size either way, equal amounts in statement order; explained lines nothing flagged are not queued (R15). A multi-account case's queues merge in the figures layer (indicators.case_judgement_queue).", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_workspace_indicators.py -k 'largest_amount_first or lists_the_queue_first or merges_its_accounts'", "proof_output": "3 passed, 7 deselected"},
+    {"text": "A cash deposit at the single-deposit limit (£2,500.00) is in the queue with its single_cash_deposit indicator (id and kind); £2,499.99 is not. The indicators panel lists each indicator's lines and the threshold that fired, and labels a threshold still at its shipped value as illustrative; a firm's thresholds file at the case root decides what fires and its changed threshold is not labelled illustrative; a malformed one is refused, with no figures (R14, P19).", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_workspace_indicators.py -k 'single_deposit_limit or p19 or firm_threshold or malformed_firm'", "proof_output": "4 passed, 6 deselected"},
+    {"text": "Queue and indicator lines show their descriptions only escaped (P8), an ambiguous credit's candidates show with their buckets (a payment-method cue as no bucket), and a case with nothing shown has an empty queue.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_workspace_indicators.py -k 'p8 or ambiguous or cannot_be_shown'", "proof_output": "3 passed, 7 deselected"},
+    {"text": "New tests are marked: 8 contracts and 2 invariants (p19 and p8 in their names).", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_workspace_indicators.py -m contracts; python -m pytest -q -p no:cacheprovider tests/test_workspace_indicators.py -m invariants", "proof_output": "8 passed, 2 deselected\n2 passed, 8 deselected"},
+    {"text": "Full suite, lint and compile pass.", "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q -p no:cacheprovider", "proof_output": "All checks passed!\n2168 passed in 222.27s (0:03:42)"}
+  ],
+  "files_changed": ["src/cma/indicators.py", "src/cma/review/summary.py", "src/cma/review/static/app.css", "tests/test_workspace_indicators.py"],
+  "notes": "Indicators and the queue are computed by the figures layer (indicators.raise_indicators, judgement_queue, and a new case_judgement_queue that merges accounts by pence); summary.py only renders. Thresholds come from firm.load().thresholds_path (case root indicators.yaml by default) when that file exists, else the packaged file; a ThresholdsError or FirmConfigError is a refusal with no figures. The queue renders right after the case name, before the profile and every account's money-in breakdown; each account's indicators panel follows its monthly summary. Candidates are shown in the queue as well, though T21 completes R15 (policy panel). Possible own-account transfers (R8/R9, Tier 2) are not passed yet since case_figures computes no pairing candidates. Committed as 691d6ef in the worktree."
+}
+```
