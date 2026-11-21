@@ -1,0 +1,33 @@
+**Verdict: pass for T20.** R16 is met, and the three majors from the last review are fixed at 6ade054. I couldn't write the evidence file to the run directory because the write command was denied, so it's in the JSON block at the end instead.
+
+**The old majors, now fixed:**
+- **M4 (revenue trend):** the drill-down now shows the two whole-month quarters, with their trading receipts and the lines in each. It gets them from the same calculation `compute()` uses (`revenue_quarters`), so the shown inputs reproduce the figure.
+- **M9 (net operating cash flow):** it shows the operating lines' total and the capped offset. Both come from `operating_cash`, also shared with `compute()`, and together they add up to M9. It also shows how much of each sent-back credit counts (e.g. "£100.00 of £250.00") and still names the lines counted only in part.
+- **M13 (late or missed VAT payments):** it shows the stagger group and each quarter with its due date, end of collection window, and either the paying line or "late or missed". This comes from `vat_quarters`, the helper `compute()` counts with.
+- **M7 (returned direct debits):** it now shows its count.
+
+**The rest of R16 holds:**
+- Every figure, bucket and monthly cell lists exactly its own lines, in order, each with date, description, amount, balance, category and the rule or override that set it.
+- Sum figures show their lines' total, and outflow figures show the total labelled as the figure negated.
+- The other derived figures show inputs that match what `compute()` reads: the period, source figures, proposed repayment, lowest balance, daily closes, and share numerators and denominators.
+
+**Tests and security:**
+- The runner's log shows all 53 drill-down tests passed, including the new ones for M4, M7, M9 and M13 and the generated-statement cases.
+- The dual-run tier (84 passed) shows that moving these calculations into shared helpers didn't change M1 to M16.
+- The new `/lines` and `/api/lines` endpoints sit behind the server's existing host, origin and token checks.
+
+**One minor finding:** the HTML drill-down page shows each input's label and value but not which lines make it up. For example, the M4 quarters show their totals without naming their lines. The JSON API has those lists; the page the underwriter actually clicks to doesn't.
+
+```json
+{
+  "task": "T20",
+  "criteria": [
+    {"id": "R16", "tier": "adversarial", "check": "Read at HEAD 6ade054: src/cma/review/drilldown.py:46-111 (_line, _total, lines_behind), src/cma/metrics.py:384-520 (revenue_quarters, operating_cash, vat_quarters, now called by compute() at :573, :601, :653) and :850-1031 (figure_kind, lines_total, derived_inputs, _trend_inputs, _cash_flow_inputs, _vat_inputs, cell_inputs), server.py:139-189 (/lines and /api/lines behind the existing host/origin/token checks at :129), summary.py links. Exact lines: lines = the figure's or cell's own evidence in order with date, description, amount, balance, category, rule_id or override:N (drilldown.py:46-52, 93-95, 108). Sum total beside the figure and outflow total labelled as the figure negated (drilldown.py:55-61; OUTFLOW_FIGURES M8/M11/M12/M14 matches P2; monthly money_out cell by c.kind). Derived inputs and method: M1/M3/M28 period, M3/M10/M28 their source figures and M28 the proposed repayment taken from CaseFigures (overrides.py:316, the same profile values compute() got at :257); M4 the two whole-month quarters from revenue_quarters, the same helper compute() uses, so the inputs give the figure; M5 the setting balance; M6/M27 every daily close; M7 its count; M9 the operating total plus the capped offset (= OperatingCash.net, what compute() reports) and each sent-back credit's counted amount, with the part-counted line ids from evidence_note; M13 the stagger group and each quarter with due date, window end and the paying line or late/missed from vat_quarters, the helper compute() counts with; M15/M16/M26 numerator and denominator matching compute()'s selections (:637-641, :673-678); monthly balance and overdrawn-day cells the closes of the month. The previous review's three majors (M4, M9/M7, M13) are fixed in code, and compute() still produces the same values (dual_run tier 84 passed). The runner's specified-3.log shows all 53 tests/test_drilldown.py items PASSED, including test_m4_shows_the_two_quarters_it_compares, test_m9_shows_its_operating_total_and_the_offset_it_nets, test_m13_shows_the_stagger_group_and_each_quarter_judged, test_m7_shows_its_count, test_every_derived_figure_shows_inputs_that_give_it, the generated-statement parametrisations, and the token/host/origin refusal test for the new endpoints.", "result": "pass", "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-239/specified-3.log"}
+  ],
+  "findings": [
+    {"severity": "minor", "file": "src/cma/review/drilldown.py", "line": 151, "criterion": "R16", "claim": "The HTML drill-down's Inputs table shows only each input's label and value. It leaves out the 'lines' list that derived_inputs attaches to an input: the lines in each M4 quarter, the lines in M15/M16/M26's numerator, and M9's operating group versus its sent-back group. /api/lines carries those lists but the page the underwriter clicks to does not, so on the page the underwriter cannot tell which of the listed lines make up each input.", "repro": "Import tests/test_drilldown.py's _months_statement() and open /lines?figure=M4 with the token. The Inputs rows say 'Earliest quarter ... £3,000.00' and 'Latest quarter ... £4,801.00' and name no lines. /api/lines?figure=M4 gives inputs[0].lines and inputs[1].lines."}
+  ],
+  "verdict": "pass",
+  "verifier": {"seat": "reviewer", "adapter": "claude-code", "model": "claude-opus-5-5"}
+}
+```

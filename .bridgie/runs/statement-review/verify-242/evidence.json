@@ -1,0 +1,77 @@
+{
+  "task": "T20",
+  "criteria": [
+    {
+      "id": "R16",
+      "tier": "adversarial",
+      "check": "Read at HEAD 6ade054: src/cma/review/drilldown.py:46-111 (_line, _total, lines_behind), src/cma/metrics.py:384-520 (revenue_quarters, operating_cash, vat_quarters, now called by compute() at :573, :601, :653) and :850-1031 (figure_kind, lines_total, derived_inputs, _trend_inputs, _cash_flow_inputs, _vat_inputs, cell_inputs), server.py:139-189 (/lines and /api/lines behind the existing host/origin/token checks at :129), summary.py links. Exact lines: lines = the figure's or cell's own evidence in order with date, description, amount, balance, category, rule_id or override:N (drilldown.py:46-52, 93-95, 108). Sum total beside the figure and outflow total labelled as the figure negated (drilldown.py:55-61; OUTFLOW_FIGURES M8/M11/M12/M14 matches P2; monthly money_out cell by c.kind). Derived inputs and method: M1/M3/M28 period, M3/M10/M28 their source figures and M28 the proposed repayment taken from CaseFigures (overrides.py:316, the same profile values compute() got at :257); M4 the two whole-month quarters from revenue_quarters, the same helper compute() uses, so the inputs give the figure; M5 the setting balance; M6/M27 every daily close; M7 its count; M9 the operating total plus the capped offset (= OperatingCash.net, what compute() reports) and each sent-back credit's counted amount, with the part-counted line ids from evidence_note; M13 the stagger group and each quarter with due date, window end and the paying line or late/missed from vat_quarters, the helper compute() counts with; M15/M16/M26 numerator and denominator matching compute()'s selections (:637-641, :673-678); monthly balance and overdrawn-day cells the closes of the month. The previous review's three majors (M4, M9/M7, M13) are fixed in code, and compute() still produces the same values (dual_run tier 84 passed). The runner's specified-3.log shows all 53 tests/test_drilldown.py items PASSED, including test_m4_shows_the_two_quarters_it_compares, test_m9_shows_its_operating_total_and_the_offset_it_nets, test_m13_shows_the_stagger_group_and_each_quarter_judged, test_m7_shows_its_count, test_every_derived_figure_shows_inputs_that_give_it, the generated-statement parametrisations, and the token/host/origin refusal test for the new endpoints.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-239/specified-3.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-242/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-242/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-242/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-242/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-242/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-242/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-242/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/review/drilldown.py",
+      "line": 151,
+      "criterion": "R16",
+      "claim": "The HTML drill-down's Inputs table shows only each input's label and value. It leaves out the 'lines' list that derived_inputs attaches to an input: the lines in each M4 quarter, the lines in M15/M16/M26's numerator, and M9's operating group versus its sent-back group. /api/lines carries those lists but the page the underwriter clicks to does not, so on the page the underwriter cannot tell which of the listed lines make up each input.",
+      "repro": "Import tests/test_drilldown.py's _months_statement() and open /lines?figure=M4 with the token. The Inputs rows say 'Earliest quarter ... £3,000.00' and 'Latest quarter ... £4,801.00' and name no lines. /api/lines?figure=M4 gives inputs[0].lines and inputs[1].lines."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
