@@ -577,6 +577,28 @@ def case_import(
                   f"(sha256 {r.input_sha256[:12]})")
 
 
+@case_app.command("purge")
+def case_purge(
+    case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
+    yes: bool = typer.Option(False, "--yes", help="Do not ask before deleting."),
+):
+    """Delete every file of a case, and record only its id, the time and your operating-
+    system user in the firm's purge ledger (purge_ledger.jsonl at the case root; R35).
+    This cannot be undone."""
+    from . import store
+
+    with _case_errors():
+        store.purge_target(case_id)  # an unknown id is refused before anything is asked
+    if not yes and not typer.confirm(f"Delete every file of case {case_id}? This cannot be undone",
+                                     default=False):
+        console.print("Not purged; nothing was deleted.")
+        raise typer.Exit(code=1)
+    with _case_errors():
+        record = store.purge_case(case_id)
+    console.print(f"purged case {record.case} at {record.purged_at} by {escape(record.by)}; "
+                  f"recorded in {store.PURGE_LEDGER}")
+
+
 @case_app.command("check")
 def case_check(folder: Path = typer.Argument(..., help="The case folder (cases/<id>).")):
     """Load a case's log and check its hash chain against its head file (R43).
