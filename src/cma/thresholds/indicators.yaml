@@ -1,0 +1,68 @@
+# Risk indicator thresholds (R14). Illustrative values shipped with the tool: they are not
+# your firm's lending policy. A firm can give its own file with `cma run --thresholds`; a
+# threshold still at the value below is labelled illustrative wherever it fires.
+#
+# Money is in pounds with at most two decimals and is compared in whole pence. A share or a
+# multiple is a plain decimal number. Every section and key below is required.
+
+# A single credit at least this many times the typical (median) trading receipt.
+large_credit:
+  multiple_of_typical: 5
+
+# Each cash deposit at or above this amount (D35).
+single_cash_deposit:
+  amount_at_least: 2500.00
+
+# A calendar month whose cash deposits are above this share of its trading receipts (D35).
+cash_heavy_month:
+  share_above_pct: 50
+
+# Cash paid in within this many days after a cash withdrawal, the deposit within this share
+# of the amount withdrawn.
+cash_round_trip:
+  within_days: 7
+  tolerance_pct: 10
+
+# Each payment of at least this amount to a listed gambling operator. Names match as whole
+# words, whatever spaces, hyphens or dots stand between their letters.
+gambling:
+  amount_at_least: 0.01
+  operators:
+    - BET365
+    - WILLIAM HILL
+    - LADBROKES
+    - CORAL
+    - PADDY POWER
+    - BETFAIR
+    - SKY BET
+    - BETFRED
+    - BETWAY
+    - BETVICTOR
+    - BOYLESPORTS
+    - UNIBET
+    - 888SPORT
+    - 888 CASINO
+    - POKERSTARS
+    - SPORTING INDEX
+    - GROSVENOR CASINO
+    - MECCA BINGO
+    - GALA BINGO
+    - GALA CASINO
+    - TOMBOLA
+    - 32RED
+    - LOTTOLAND
+
+# Returned direct debits, each flagged once the period holds at least this many.
+returned_dd:
+  count_at_least: 1
+
+# A run of at least this many consecutive calendar days that closed overdrawn.
+overdrawn_run:
+  days_at_least: 7
+
+# A credit from a named card acquirer or payment gateway at least this many times, or at most
+# one over this many times, that acquirer's median credit, once it has paid at least
+# min_credits credits in the period.
+irregular_acquirer:
+  multiple_of_median: 3
+  min_credits: 3
