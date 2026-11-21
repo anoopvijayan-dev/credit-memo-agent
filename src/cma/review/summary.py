@@ -16,6 +16,11 @@ and render() turns into the page's HTML:
   are raised by the figures layer (indicators.py) from the firm's thresholds file, the case
   root's indicators.yaml or the path firm.yaml gives, when there is one, and the packaged,
   illustrative file otherwise;
+- while show_policy_verdict is on in firm.yaml (the default), for each account the policy
+  check: the overall pass, refer or fail outcome and each rule's result from the packaged
+  policy, by policy.evaluate on the account's current figures, with the illustrative label in
+  the same panel (R25). With it off, no outcome and no rule result, in the HTML or the data
+  (R56). The recommendation is a field left blank for the underwriter either way (R24);
 - or, when the money-in buckets do not reconcile with total money in, or a credit is in no
   bucket or in more than one, in any account, no figures at all, for any account: only each
   failing account's difference in pence and the lines involved (R3);
@@ -35,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import case as caselog
-from .. import firm, metrics, overrides, store
+from .. import firm, metrics, overrides, policy, store
 from .. import indicators as ind
 from ..categorise import RulesetError
 from ..ingest import StatementError
@@ -121,19 +126,31 @@ def _queue_entry(account: str, e: QueueEntry, lines: dict[str, Transaction],
             "pairs_with": list(e.pairs_with)}
 
 
-def case_thresholds() -> ind.Thresholds:
+def case_thresholds(config: firm.FirmConfig | None = None) -> ind.Thresholds:
     """The firm's thresholds file when the case root has one (firm.yaml can name another),
     or the packaged, illustrative one (R14). A malformed file is refused naming its line, and
     a file firm.yaml names that is not there is refused naming it, as `cma run --thresholds`
     refuses it: no case opens with flags the firm did not choose."""
-    config = firm.load()
+    config = config or firm.load()
     path = config.thresholds_path
     if config.names_path("thresholds") or path.exists():
         return ind.load_thresholds(path)
     return ind.shipped()
 
 
-def _account(f: overrides.CaseFigures, raised: list[Indicator]) -> dict[str, Any]:
+def _policy_check(f: overrides.CaseFigures, rules: dict | None) -> dict[str, Any] | None:
+    """The packaged policy's outcome on the account's current figures (R25), or None when the
+    firm hides it (R56). policy.evaluate compares; nothing here does."""
+    if rules is None:
+        return None
+    result = policy.evaluate(f.metrics, rules)
+    return {"policy_name": result.policy_name, "policy_sha256": result.policy_sha256,
+            "overall": result.overall.value,
+            "rules": [{"rule_id": r.rule_id, "description": r.description, "metric_id": r.metric_id,
+                       "outcome": r.outcome.value, "detail": r.detail} for r in result.rules]}
+
+
+def _account(f: overrides.CaseFigures, raised: list[Indicator], rules: dict | None = None) -> dict[str, Any]:
     by_id = {m.id: m for m in f.metrics}
     txns = f.statement.transactions
     lines = {t.id: t for t in txns}
@@ -151,6 +168,7 @@ def _account(f: overrides.CaseFigures, raised: list[Indicator]) -> dict[str, Any
                      **{key: _cell(getattr(r, key), (r.month, key) in f.marked_cells) for key, _ in CELLS}}
                     for r in f.monthly],
         "indicators": [_indicator(i, lines) for i in raised],
+        **({"policy_check": _policy_check(f, rules)} if rules is not None else {}),
     }
 
 
@@ -185,7 +203,7 @@ def refusal(e: Exception) -> dict[str, Any] | None:
         return {"state": "refused", "refusal": f"The case log is broken at entry {e.first_bad}: {e.reason}. "
                                                "No figures are shown until it is resolved."}
     if isinstance(e, (store.CaseStoreError, StatementError, metrics.AmountError, RulesetError,
-                      ind.ThresholdsError, firm.FirmConfigError)):
+                      ind.ThresholdsError, firm.FirmConfigError, policy.PolicyError)):
         return {"state": "refused", "refusal": f"{str(e).rstrip('.')}. No figures are shown for this case."}
     if isinstance(e, OSError):
         return {"state": "refused",
@@ -209,7 +227,8 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
     folder = Path(folder)
     out: dict[str, Any] = {"case": case_id, "label": None, "business_name": None, "profile": None,
                            "state": "shown", "accounts": [], "queue": [], "thresholds": None,
-                           "reconciliation": None, "refusal": None}
+                           "reconciliation": None, "refusal": None,
+                           "policy_check": {"shown": False}, "recommendation": None}  # left blank (R24)
     try:
         profile = store.load_profile(folder)
         out["label"], out["business_name"] = profile.get("label"), profile.get("business_name")
@@ -225,9 +244,12 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
     if refused is not None:
         out.update(refused)
         return out
-    try:  # R14: the indicators and the queue, raised by the figures layer
-        thresholds = case_thresholds()
+    try:  # R14: the indicators and the queue, raised by the figures layer; R25: the policy check
+        config = firm.load()
+        thresholds = case_thresholds(config)
         raised = {a: ind.raise_indicators(f.statement, thresholds) for a, f in figures.items()}
+        rules = policy.load_policy() if config.show_policy_verdict else None  # the packaged policy
+        accounts = [_account(f, raised[a], rules) for a, f in figures.items()]
     except Exception as e:
         refused = refusal(e)
         if refused is None:
@@ -236,7 +258,9 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
         return out
     out["thresholds"] = {"source": thresholds.source, "sha256": thresholds.sha256,
                          "shipped": thresholds.sha256 == ind.shipped().sha256}
-    out["accounts"] = [_account(f, raised[a]) for a, f in figures.items()]
+    out["accounts"] = accounts
+    if rules is not None and accounts:
+        out["policy_check"] = {"shown": True, "label": policy.ILLUSTRATIVE_LABEL}
     queues = [(a, f.statement, ind.judgement_queue(f.statement, raised[a])) for a, f in figures.items()]
     lines = {a: {t.id: t for t in f.statement.transactions} for a, f in figures.items()}
     kinds = {a: {i.id: i.kind for i in raised[a]} for a in figures}
@@ -349,6 +373,41 @@ def _indicators_html(indicators: list[dict[str, Any]], account: str = "",
     return f'<section class="indicators"><h3>Indicators</h3>{note}{"".join(parts)}</section>'
 
 
+OUTCOME_CLASS = {"pass": "pass", "refer": "refer", "fail": "fail"}
+
+
+def _policy_html(a: dict[str, Any]) -> str:
+    """One account's policy check: the illustrative label first, inside the same panel as the
+    overall outcome and each rule's result (R25, P20), so copying the panel copies the label."""
+    pc = a["policy_check"]
+    rows = "".join(
+        f'<tr><td>{_e(r["rule_id"])}</td><td>{_e(r["description"])}</td><td>{_e(r["metric_id"])}</td>'
+        f'<td class="rule-outcome {OUTCOME_CLASS.get(r["outcome"], "")}">{_e(r["outcome"])}</td>'
+        f'<td>{_e(r["detail"])}</td></tr>' for r in pc["rules"])
+    return (f'<section class="policy-check" data-account="{_e(a["account"])}">'
+            f'<h3>Policy check (illustrative): account {_e(a["account"])}</h3>'
+            f'<p class="illustrative-label">{_e(policy.ILLUSTRATIVE_LABEL)}</p>'
+            f'<p class="outcome {OUTCOME_CLASS.get(pc["overall"], "")}">Overall outcome: {_e(pc["overall"].upper())}</p>'
+            f'<p class="policy-source">From {_e(pc["policy_name"])}, the policy shipped with this tool, '
+            'on the figures as they now stand.</p>'
+            '<table class="rules"><thead><tr><th>Rule</th><th>Description</th><th>Figure</th><th>Outcome</th>'
+            f'<th>Detail</th></tr></thead><tbody>{rows}</tbody></table></section>')
+
+
+def _policy_checks_html(summary: dict[str, Any]) -> str:
+    if not summary.get("policy_check", {}).get("shown"):
+        return ('<section id="policy-checks"><h2>Policy check</h2><p class="note">Not shown: the firm '
+                'configuration has show_policy_verdict off.</p></section>')
+    return ('<section id="policy-checks"><h2>Policy check</h2>'
+            + "".join(_policy_html(a) for a in summary["accounts"] if a.get("policy_check")) + "</section>")
+
+
+RECOMMENDATION_HTML = ('<section id="recommendation"><h2>Recommendation</h2>'
+                       '<p class="for-underwriter">For the underwriter: the tool leaves this field blank, '
+                       'whatever the policy check shows.</p>'
+                       '<p class="field" data-field="recommendation"></p></section>')
+
+
 def _candidate_html(c: dict[str, Any]) -> str:
     bucket = _e(c["bucket"]) if c["bucket"] else '<span class="none">no bucket</span>'
     return f'{_e(c["rule_id"])} ({bucket})'
@@ -428,4 +487,5 @@ def render(summary: dict[str, Any], token: str | None = None) -> str:
                 f'<p>{_e(summary["refusal"])}</p></section>')
     if state == "empty":
         return head + '<section id="empty"><p>No statement has been imported into this case yet.</p></section>'
-    return head + "".join(_account_html(a, token, summary.get("thresholds")) for a in summary["accounts"])
+    return (head + "".join(_account_html(a, token, summary.get("thresholds")) for a in summary["accounts"])
+            + _policy_checks_html(summary) + RECOMMENDATION_HTML)
