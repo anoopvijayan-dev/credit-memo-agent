@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 323,
+  "next_id": 324,
   "decisions": [
     {
       "id": "D1",
@@ -6466,6 +6466,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T02:44:48.486Z"
+    },
+    {
+      "id": "D323",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (src/cma/firm.py:68 defaults the lock on, src/cma/llm.py:80 gates hosted client creation, and src/cma/mcp_server.py:40-120 and :169-172 gate startup, ASGI and tools. The runner passed the native bind, saved-app and inherited-tracer cases. The async resume path at src/cma/graph.py:493-506 and :668-687 can discard the draft lock, and the HTTP hook at src/cma/llm.py:101-102 takes a new lock reading during an active run.); R30 fail (src/cma/graph.py:230-284 limits the initial prompt and redraft to the permitted fields. Runner results cover whole-rule matching and redraft IDs. The checkpointers at src/cma/graph.py:83-102 lose the rule actions excluded at src/cma/models.py:172-173, so the shipped-rule recognition at src/cma/graph.py:218-227 fails when drafting from a restored checkpoint.); P18 fail (The runner passed locked client creation, retryable 503s, redirect refusal, native MCP binds, saved ASGI refusal and synchronous resume before drafting. src/cma/graph.py:495-506 still loses the historical lock when a synchronous state lookup fails during an async resume, and src/cma/graph.py:407-409 then dispatches using the incomplete decision.); major: An async resume can send a hosted request from a checkpoint created under the lock. The wrapper calls synchronous get_state even for ainvoke and astream. AsyncSqliteSaver rejects that call on its event loop, and the broad catch treats the failure as an absent historical lock. The async graph then loads the checkpoint successfully, but draft uses the unlocked resume flag in place of its stored locked flag. at src/cma/graph.py:495; major: The SDK HTTP hook rereads firm.yaml even when complete has already accepted the run's reading. This contradicts the producer's single-reading and dispatch-evidence claims and makes a mid-run lock change affect an already-started run. at src/cma/llm.py:102; major: Checkpoint serialization removes the two actions needed to recognize a shipped rule. JsonPlusSerializer calls PolicyResult.model_dump(), which omits the nested RuleResult fields marked exclude=True. On restore they default to empty strings, so even exact copies of shipped rules are masked and cannot be cited in the resumed prompt. at src/cma/models.py:172; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T02:47:47.039Z"
     }
   ]
 }

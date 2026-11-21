@@ -1,0 +1,83 @@
+```json
+{
+  "task": "T17",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "src/cma/firm.py:68 defaults the lock on, src/cma/llm.py:80 gates hosted client creation, and src/cma/mcp_server.py:40-120 and :169-172 gate startup, ASGI and tools. The runner passed the native bind, saved-app and inherited-tracer cases. The async resume path at src/cma/graph.py:493-506 and :668-687 can discard the draft lock, and the HTTP hook at src/cma/llm.py:101-102 takes a new lock reading during an active run.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:230-284 limits the initial prompt and redraft to the permitted fields. Runner results cover whole-rule matching and redraft IDs. The checkpointers at src/cma/graph.py:83-102 lose the rule actions excluded at src/cma/models.py:172-173, so the shipped-rule recognition at src/cma/graph.py:218-227 fails when drafting from a restored checkpoint.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:204-284 masks custom IDs, descriptions, limits and details, normalizes equivalent shipped-rule spellings, and filters redraft IDs. src/cma/metrics.py:248-298 renders fixed metric labels and methods plus computed values. Period dates, formatted values and outcomes are in revision 33's scope exception. The runner passed the sentinel, custom-policy, spelling and redraft cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "The runner passed locked client creation, retryable 503s, redirect refusal, native MCP binds, saved ASGI refusal and synchronous resume before drafting. src/cma/graph.py:495-506 still loses the historical lock when a synchronous state lookup fails during an async resume, and src/cma/graph.py:407-409 then dispatches using the incomplete decision.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 495,
+      "criterion": "P18",
+      "claim": "An async resume can send a hosted request from a checkpoint created under the lock. The wrapper calls synchronous get_state even for ainvoke and astream. AsyncSqliteSaver rejects that call on its event loop, and the broad catch treats the failure as an absent historical lock. The async graph then loads the checkpoint successfully, but draft uses the unlocked resume flag in place of its stored locked flag.",
+      "repro": "Use AsyncSqliteSaver and ainvoke to checkpoint a fake-model run immediately before draft with offline_lock true. Set the file to false, build a graph with an OpenAI or Anthropic client backed by a recording HTTP transport, and call ainvoke(None, cfg) on the saver event loop. The synchronous preflight raises, both request checks see an unlocked resume, and the transport receives a request despite the checkpoint storing offline_lock true."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/llm.py",
+      "line": 102,
+      "criterion": "R29",
+      "claim": "The SDK HTTP hook rereads firm.yaml even when complete has already accepted the run's reading. This contradicts the producer's single-reading and dispatch-evidence claims and makes a mid-run lock change affect an already-started run.",
+      "repro": "Start a real SDK graph run with offline_lock false and a recording HTTP transport. After HostedLLM._check returns, set offline_lock true before the first SDK send, or change it during guard processing before a redraft. The request hook refuses the request while the graph's recorded lock remains false. The runner's unchanged-file reading-count test substitutes _send and therefore bypasses this hook."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/models.py",
+      "line": 172,
+      "criterion": "R30",
+      "claim": "Checkpoint serialization removes the two actions needed to recognize a shipped rule. JsonPlusSerializer calls PolicyResult.model_dump(), which omits the nested RuleResult fields marked exclude=True. On restore they default to empty strings, so even exact copies of shipped rules are masked and cannot be cited in the resumed prompt.",
+      "repro": "With offline_lock false, checkpoint a graph using the stock policy immediately before draft, then resume via invoke(None, cfg) using the default MemorySaver or SQLite saver and capture the hosted prompt. Compare it with an uninterrupted draft. The restored policy renders shipped rows as '(custom id)' and omits their IDs from any redraft feedback. The shipped-spelling test compares live PolicyResult objects without a checkpoint round trip."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 239,
+      "criterion": "R30",
+      "claim": "The producer's performance claim of one shipped-policy load per prompt is contradicted by the call sites. The prompt table loads the policy separately for rule matching and threshold spelling, and a redraft loads it again for the ID filter. The runner's full-suite duration provides no baseline comparison.",
+      "repro": "Count calls to policy.load_policy while rendering draft_prompt, then while calling redraft_ids followed by draft_prompt. The counts are two and three respectively, excluding the policy evaluation itself."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 43,
+      "criterion": "R30",
+      "claim": "The producer's API compatibility claim omits the Monzo import's narrowed input contract. An ID beginning with a hyphen was accepted before this change and now causes import refusal.",
+      "repro": "Import an otherwise valid Monzo export with Transaction ID '-tx' through cma import monzo. The previous SAFE_ID accepts it. The current importer refuses it and writes no output. The runner passed the test that explicitly asserts the new refusal."
+    }
+  ],
+  "verdict": "fail"
+}
+```
