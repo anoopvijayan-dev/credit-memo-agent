@@ -1,0 +1,57 @@
+{
+  "task": "T17",
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "Lock defaults on (src/cma/firm.py FirmConfig offline_lock=True). A hosted client is built only after an unlocked reading of firm.yaml, with max_retries=0 and a per-request HTTP hook (src/cma/llm.py _require_unlocked_now, _checked_http, HostedLLM._check). MCP run methods, ASGI factories, LockCheckedASGI and every tool read the lock (src/cma/mcp_server.py). Evidence records the lock (graph.py _egress). Last review's gap is closed: under the lock start() runs on target=_without_bound_tracers(self) (graph.py:731-743, 873). Pregel.copy keeps self.__class__ (langgraph/pregel/main.py:1000-1003), so ensure_config(self.config, ...) at main.py:2862 merges the filtered copy's callbacks. _tracing_v2_is_enabled (langchain_core/tracers/context.py:141-144) depends only on tracing_v2_callback_var and ls_utils.tracing_is_enabled, and both are set aside per step. invariants-5.log:144-145 shows test_p18_a_tracer_bound_with_with_config_is_taken_out_under_the_lock[invoke|stream] passed.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-223/invariants-5.log"
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "draft_prompt (graph.py) carries Account: Applicant, the period, met.as_table (metrics.py:755-759: id, name, value, method) and rules_table(for_prompt=True). Every method note in metrics.py:430-682 is fixed text. The policy detail (policy.py:221, 236) is the metric name, its value or method, and the requirement. Custom rules are masked to (custom id), (custom rule), (custom requirement). redraft_ids sends only ids shown in the tables. Rule descriptions are no longer sent.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "test_p5_* passed in invariants-5.log (sentinel case across all archetypes and profiles, hallucinate/redraft, custom-policy masks, CLI with --policy). Under revision 33's scope, only tool-written text and case-decided values (period dates, figure values, outcomes) reach the prompt.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-223/invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "test_p18_* passed in invariants-5.log, among them the with_config copy test (139), tracing_v2 context (140-141), tracing turned on between stream steps (142-143) and the bound-tracer test (144-145). The last review's counterexample, with_config(callbacks=[LangChainTracer]), is now covered and passes.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-223/invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": null,
+      "line": null,
+      "criterion": "R29",
+      "claim": "claim.json is out of date. Its proof outputs ('557 passed in 23.86s', '93 passed, 464 deselected', '180 passed') do not match the runner's results (1575 passed overall; 603 invariants passed). The suite passes, but the claimed counts are not the runner's.",
+      "repro": "Compare the claim proof_output values with specified-3.log ('1575 passed') and invariants-5.log ('603 passed, 972 deselected')."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/mcp_server.py",
+      "line": 69,
+      "criterion": "R29",
+      "claim": "Claim 6 says 'no ASGI app is handed out', but with the lock off sse_app()/streamable_http_app() return a LockCheckedASGI. That behaviour is correct under R29 revision 30 and R53; the claim text is wrong.",
+      "repro": "With firm.yaml set to offline_lock: false, call cma.mcp_server.server.sse_app(): it returns a LockCheckedASGI (see test_an_asgi_app_handed_out_with_the_lock_off_refuses_once_it_is_on)."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
