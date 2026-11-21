@@ -174,6 +174,23 @@ def _shipped_descriptions() -> dict[str, str]:
         return {}
 
 
+def _shipped_rules() -> dict[str, tuple]:
+    """The shipped default policy's rules, by id: description, metric, operator, threshold."""
+    try:
+        return {r["id"]: (r.get("description"), r.get("metric"), r.get("op"), float(r.get("threshold")))
+                for r in pol.load_policy().get("rules", []) if isinstance(r, dict) and isinstance(r.get("id"), str)}
+    except Exception:  # no shipped rule known means none is sent
+        return {}
+
+
+def _is_shipped(r, shipped: dict[str, tuple]) -> bool:
+    """Whether a policy result's rule is the shipped policy's own rule, whole: its id, text,
+    metric and requirement. A custom rule that reuses a shipped id is custom (T17 review 6)."""
+    want = shipped.get(r.rule_id)
+    return want is not None and want == (r.description, r.metric_id, r.op,
+                                         float(r.threshold) if r.threshold is not None else None)
+
+
 def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = False) -> str:
     """The policy table. `for_prompt`: what goes to a hosted model, where a rule's free-text
     description is sent only when it is the shipped policy's own text for that rule; a custom
@@ -181,7 +198,7 @@ def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = F
     metric and requirement alone (P5, T17 review 1). A rule id is free text in a custom
     policy too, whatever its spelling (R4242 can be a sentinel), so only an id the shipped
     policy itself uses is sent; any other is replaced (T17 reviews 2 and 3)."""
-    shipped = _shipped_descriptions() if for_prompt else {}
+    shipped = _shipped_rules() if for_prompt else {}
     lines = ["| id | rule | metric | requirement | outcome | detail |", "|---|---|---|---|---|---|"]
     if overall_row:
         lines.append(f"| overall | overall outcome | - | - | {p.overall.value} | - |")
@@ -192,10 +209,8 @@ def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = F
         if r.refer_above is not None:
             req += f"; referred above {_threshold(r.refer_above, r.unit)}"
         rule_id, description = r.rule_id, r.description
-        if for_prompt and shipped.get(r.rule_id) != r.description:
-            description = "(custom rule)"
-        if for_prompt and r.rule_id not in shipped:
-            rule_id = "(custom id)"
+        if for_prompt and not _is_shipped(r, shipped):
+            rule_id, description = "(custom id)", "(custom rule)"
         lines.append(f"| {rule_id} | {description} | {r.metric_id} | {req} | {r.outcome.value} | {r.detail} |")
     return "\n".join(lines)
 
@@ -204,8 +219,8 @@ def redraft_ids(g: GuardResult, metrics: list[Metric], policy: PolicyResult) -> 
     """The metric and rule ids the guard flagged, and only ids the prompt's tables show, so
     nothing the model wrote (a made-up tag included) goes back into a prompt, nor a custom
     rule id the rule table masked (T17 review 3)."""
-    shipped = _shipped_descriptions()
-    known = {m.id for m in metrics} | {r.rule_id for r in policy.rules if r.rule_id in shipped}
+    shipped = _shipped_rules()
+    known = {m.id for m in metrics} | {r.rule_id for r in policy.rules if _is_shipped(r, shipped)}
     found = set(g.missing_citations)
     for f in g.unmatched:
         found.update(re.findall(r"\b[MR]\d+\b", f.reason))
@@ -296,7 +311,7 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
     later run of this graph reads firm.yaml at its own start."""
     llm = llm or get_llm()
     handed = [firm_config] if firm_config is not None else []
-    last_reading: list[firm.FirmConfig] = []  # this graph's latest run reading, for a resume here
+    thread_reading: dict[object, firm.FirmConfig] = {}  # the reading each thread last ran on here
 
     def load(s: MemoState, config: RunnableConfig) -> MemoState:
         reading = _run_reading_of(config) or (handed.pop() if handed else firm.load())
@@ -424,10 +439,16 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
             except Exception:
                 stored = None
             if stored is not None:
-                now = last_reading[-1] if last_reading else _read_or_locked()
+                # The thread's own reading, while firm.yaml is unchanged since it; otherwise
+                # firm.yaml read now, never another invocation's reading (T17 review 6).
+                own = thread_reading.get(_thread(config))
+                now = own if own is not None and firm.unchanged_since(own) else _read_or_locked()
                 return None, stored is not False or now is None or now.offline_lock is not False
-        reading = handed.pop() if handed else firm.load()
-        last_reading[:] = [reading]
+        reading = handed.pop() if handed else None
+        if reading is None or not firm.take_for_run(reading):
+            reading = firm.load()  # a reading drives one run only (T17 review 6)
+            firm.take_for_run(reading)
+        thread_reading[_thread(config)] = reading
         return reading, reading.offline_lock is not False
 
     compiled_get_state = compiled.get_state
@@ -436,6 +457,10 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
 
 
 _READING_KEY = "__cma_reading"  # LangGraph never saves a configurable key that starts with "__"
+
+
+def _thread(config) -> object:
+    return ((config or {}).get("configurable") or {}).get("thread_id")
 
 
 def _run_reading_of(config) -> firm.FirmConfig | None:

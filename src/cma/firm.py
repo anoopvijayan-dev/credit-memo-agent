@@ -129,6 +129,33 @@ def is_reading(config: object) -> bool:
 # is bound to its run and its firm folder, never reused as an allowance (T17 review 5).
 _IN_RUN: dict[int, int] = {}
 _CLAIMED: set[int] = set()
+_RAN: set[int] = set()  # readings that have driven a run: each drives one (T17 review 6)
+_STAMP: dict[int, tuple] = {}  # firm.yaml as it stood when each reading was made
+
+
+def _stamp(root: Path) -> tuple:
+    """firm.yaml's size and change time, or that it is absent: a change since a reading makes
+    that reading stale. Taken with os.stat, not a read of the file."""
+    try:
+        st = (root / FILE_NAME).stat()
+    except OSError:
+        return ("absent",)
+    return (st.st_size, st.st_mtime_ns)
+
+
+def unchanged_since(reading: FirmConfig) -> bool:
+    """Whether firm.yaml is as it was when load() made `reading` (T17 review 6)."""
+    return _here(reading) and _STAMP.get(id(reading)) == _stamp(reading.root)
+
+
+def take_for_run(reading: object) -> bool:
+    """Whether `reading` may be a run's reading: a reading load() made, for the folder in use,
+    that has driven no run before; the same reading handed to two graphs drives one run only,
+    and the other reads firm.yaml now (T17 review 6)."""
+    if not (isinstance(reading, FirmConfig) and _here(reading)) or id(reading) in _RAN:
+        return False
+    _RAN.add(id(reading))
+    return True
 
 
 def _here(config: FirmConfig) -> bool:
@@ -155,8 +182,9 @@ def allows_request(reading: object) -> bool:
 
 def claim_for_client(reading: object) -> bool:
     """Whether `reading` may decide building one hosted client: a reading load() made, for the
-    firm folder in use, that has not already decided one."""
-    if not (isinstance(reading, FirmConfig) and _here(reading)) or id(reading) in _CLAIMED:
+    firm folder in use, that has not already decided one, while firm.yaml is unchanged since
+    it was made (T17 review 6)."""
+    if not (isinstance(reading, FirmConfig) and unchanged_since(reading)) or id(reading) in _CLAIMED:
         return False
     _CLAIMED.add(id(reading))
     return True
@@ -164,10 +192,13 @@ def claim_for_client(reading: object) -> bool:
 
 def load(root: Path | None = None) -> FirmConfig:
     """firm.yaml, read now."""
+    stamp = _stamp(root or case_root())
     config = _load(root)
     key = id(config)
+    _STAMP[key] = stamp
     _READINGS[key] = weakref.ref(config, lambda _ref, k=key: (_READINGS.pop(k, None), _CLAIMED.discard(k),
-                                                              _IN_RUN.pop(k, None)))
+                                                              _IN_RUN.pop(k, None), _RAN.discard(k),
+                                                              _STAMP.pop(k, None)))
     return config
 
 

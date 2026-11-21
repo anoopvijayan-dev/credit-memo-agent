@@ -92,14 +92,25 @@ class LockCheckedASGI:
         return getattr(self.app, name)
 
     async def __call__(self, scope, receive, send):
+        if scope["type"] == "lifespan":
+            # The lock is read when start-up is asked for, not before, so a delayed start-up
+            # event cannot start the server under a lock turned on meanwhile (T17 review 6).
+            first = await receive()
+            while first["type"] != "lifespan.startup":
+                first = await receive()
+            problem = _lock_problem("Serving the MCP server")
+            if problem is not None:
+                await send({"type": "lifespan.startup.failed", "message": problem})
+                return
+            given = [first]
+
+            async def replay():
+                return given.pop() if given else await receive()
+            return await self.app(scope, replay, send)
         problem = _lock_problem("Serving the MCP server")
         if problem is None:
             return await self.app(scope, receive, send)
-        if scope["type"] == "lifespan":
-            while (await receive())["type"] != "lifespan.startup":
-                pass
-            await send({"type": "lifespan.startup.failed", "message": problem})
-        elif scope["type"] == "http":
+        if scope["type"] == "http":
             await send({"type": "http.response.start", "status": 503,
                         "headers": [(b"content-type", b"text/plain; charset=utf-8")]})
             await send({"type": "http.response.body", "body": problem.encode()})

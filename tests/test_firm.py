@@ -331,7 +331,10 @@ def test_p18_cli_run_reads_firm_yaml_once_and_records_what_dispatch_used(home, n
     r = CliRunner().invoke(app, ["run", str(_statement(tmp_path)), "--llm", "anthropic", "--yes",
                                  "--reviewer", "A", "--out", str(out)])
     assert r.exit_code == 0, r.output
-    assert len(reads) == 1
+    # The drafting run read firm.yaml once and kept that reading; the review step after it is
+    # a later run of the graph, which reads firm.yaml again only because it changed since
+    # (T17 review 6). Unchanged, a whole run reads it once (the test below).
+    assert len(reads) == 2
     record = json.loads((tmp_path / "memo.evidence.json").read_text())
     assert record["egress"]["offline_lock"] is False
     assert record["egress"]["destination"].startswith("anthropic:")
@@ -936,3 +939,88 @@ def test_p18_a_resumed_review_is_untraced_once_the_lock_is_on(home, no_network, 
     later = build(llm.FakeLLM(), checkpointer=saver)  # a new process's graph: no reading of its own yet
     later.invoke(Command(resume={"approved": True, "reviewer": "A"}), cfg)
     assert seen and not any(seen) and no_network == []
+
+
+
+@pytest.mark.invariants
+def test_p18_an_unchanged_firm_yaml_is_read_once_in_a_whole_cli_run(home, no_network, sdks, monkeypatch, tmp_path):
+    """The review step reuses its thread's reading while firm.yaml is unchanged (T17 review 6)."""
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    reads = []
+    real_load = firm.load
+    monkeypatch.setattr(firm, "load", lambda *a, **k: reads.append(1) or real_load(*a, **k))
+    monkeypatch.setattr(llm.AnthropicLLM, "_send", lambda self, s, u: llm.FakeLLM().complete(s, u))
+    r = CliRunner().invoke(app, ["run", str(_statement(tmp_path)), "--llm", "anthropic", "--yes",
+                                 "--reviewer", "A", "--out", str(tmp_path / "memo.md")])
+    assert r.exit_code == 0, r.output
+    assert len(reads) == 1 and no_network == []
+
+
+@pytest.mark.invariants
+def test_p18_a_reading_taken_before_the_lock_changed_builds_no_client(home, no_network, sdks):
+    """T17 review 6: an unused reading taken while the lock was off authorised a client after
+    the firm locked; a reading decides a client only while firm.yaml is unchanged since it."""
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    before = firm.load()
+    import os
+    import time
+    time.sleep(0.01)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    os.utime(home / "firm.yaml")
+    with pytest.raises(firm.OfflineLockError):
+        llm.AnthropicLLM(firm_config=before)
+    assert [c for c in sdks if c[1] == "client"] == [] and no_network == []
+
+
+@pytest.mark.invariants
+def test_p18_one_reading_drives_one_run_however_many_graphs_hold_it(home, no_network, sdks, tmp_path, monkeypatch):
+    """T17 review 6: the same unlocked reading handed to two graphs drove both runs; the second
+    run reads firm.yaml now, and under the lock refuses its hosted request."""
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    monkeypatch.setattr(llm.AnthropicLLM, "_send", lambda self, s, u: llm.FakeLLM().complete(s, u))
+    shared = firm.load()
+    model = llm.AnthropicLLM()
+    first, second = build(model, firm_config=shared), build(model, firm_config=shared)
+    first.invoke({"statement_path": str(_statement(tmp_path))}, {"configurable": {"thread_id": "a"}})
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    with pytest.raises(firm.OfflineLockError):
+        second.invoke({"statement_path": str(_statement(tmp_path))}, {"configurable": {"thread_id": "b"}})
+    assert no_network == []
+
+
+@pytest.mark.invariants
+def test_p5_a_custom_rule_reusing_a_shipped_id_is_still_custom(home, tmp_path):
+    """T17 review 6 / P5: a custom rule spelt with a shipped id (a sentinel can be) passed the
+    id filter; a rule counts as shipped only if it is the shipped rule whole."""
+    from cma import categorise, ingest, metrics, policy
+
+    st = categorise.categorise(ingest.load_csv(_statement(tmp_path), account_name="ACME LTD"))
+    ms = metrics.compute(st)
+    custom = policy.load_policy()
+    custom["rules"][0] = {**custom["rules"][0], "description": "SNTLCASE", "threshold": 0.5}
+    user = draft_prompt(st, ms, policy.evaluate(ms, custom))
+    shipped_id = custom["rules"][0]["id"]
+    assert "SNTLCASE" not in user and f"| {shipped_id} |" not in user and "(custom id)" in user
+
+
+@pytest.mark.invariants
+def test_p18_a_saved_app_reads_the_lock_when_start_up_is_asked_for(home, no_network, monkeypatch, tmp_path):
+    """T17 review 6 / R29: the saved app read the lock before the start-up event arrived, so a
+    lock turned on while start-up was delayed could still start the server."""
+    pytest.importorskip("mcp")
+    from cma import mcp_server
+
+    monkeypatch.setenv("CMA_DATA_DIR", str(tmp_path))
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    app = mcp_server.server.sse_app()
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    async def delayed_startup():
+        (home / "firm.yaml").write_text("offline_lock: true\n")  # turned on while start-up waits
+        return {"type": "lifespan.startup"}
+
+    asyncio.run(app({"type": "lifespan"}, delayed_startup, send))
+    assert sent and sent[0]["type"] == "lifespan.startup.failed" and no_network == []
