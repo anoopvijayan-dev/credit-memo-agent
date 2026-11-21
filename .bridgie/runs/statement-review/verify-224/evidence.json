@@ -1,0 +1,106 @@
+{
+  "task": "T17",
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "Lock defaults on (src/cma/firm.py FirmConfig offline_lock=True; a missing file means the defaults; a malformed file raises FirmConfigError). Hosted clients are built only on an unlocked reading (src/cma/llm.py _require_unlocked_now), with max_retries=0 and a per-request HTTP hook that follows no redirect (_checked_http, HostedLLM._check). The MCP run methods, both ASGI factories, LockCheckedASGI (lifespan, 503, websocket close) and every tool (_statement) read the lock; main() reads it first (src/cma/mcp_server.py). Evidence records offline_lock, resume_offline_lock and draft_resume_offline_lock (src/cma/graph.py _egress). Revision 32 untraced run: the verify-223 gap is closed. stream and astream now wrap the generator's creation, every next()/__anext__ and close() in _untraced_step (src/cma/graph.py:767-829), which clears tracing_v2_callback_var, strips inherited LangChainTracers and enters langsmith.tracing_context(enabled=False) afresh inside each step, so a context the caller enters between steps is overridden while graph code runs. LangGraph runs node tasks only within a tick inside that __anext__/next; sync executor submissions copy the context at submit (langgraph/pregel/_executor.py), and async tasks are created inside the step (langgraph/pregel/main.py:3550-3570). invoke, ainvoke, stream_events v3 (main.py:3659, 3714) and the Runnable batch and transform paths all reach the subclass's stream/astream (main.py:4003-4205). invariants-5.log:139-143 passed: the with_config copy test, the tracing_v2 context tests for invoke and stream, and the between-steps tests for sync and async.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-221/invariants-5.log"
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "draft_prompt (src/cma/graph.py) writes only Account: Applicant, the period, met.as_table (fixed method strings, src/cma/metrics.py:295) and rules_table(for_prompt=True). A custom rule that is not the shipped rule whole (_is_shipped compares description, metric, op, threshold, bands, on_fail and when_missing) is masked as (custom id)/(custom rule)/(custom requirement) with detail '-'. A shipped rule's detail uses the shipped spellings. Policy details come from fixed templates (src/cma/policy.py:93, 107). Redraft feedback is REDRAFT_LABEL plus redraft_ids, restricted to table ids, and the guard's reasons are no longer sent. The P5 tests in invariants-5.log passed.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-221/invariants-5.log"
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "Under revision 33's scope, a prompt holds only text the tool writes (labels, headings, fixed method and detail sentences, custom masks, shipped rule text) and values the case decides (period, figure values, outcomes). test_p5_no_prompt_carries_line_level_text (every archetype, every profile, hallucinate on and off, redrafts included), the custom-policy id, description and limit tests and test_p5_cli_custom_policy_prompts_carry_no_sentinel all passed in the invariants tier.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-221/invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "The p18 tests passed in invariants-5.log. They cover: the hosted model refused under the lock with no client and no socket; an existing client refused once the lock is on; the SDK sending one attempt per check; the MCP start paths, ASGI factories and tools refused; the real HTTP start binding no socket under the lock; a saved app refusing at start-up and on requests; a resume reading firm.yaml as it resumes; tracers handed in or inherited taken out; with_config copies; and tracing contexts entered before the run or between stream steps. With R29's untraced-run gap closed, the property holds within the revision 32 scope.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-221/invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-224/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-224/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-224/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-224/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-224/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-224/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-224/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/mcp_server.py",
+      "line": 21,
+      "criterion": "R29",
+      "claim": "claim.json is stale and contradicts the code. It says 'no ASGI app is handed out' unconditionally, and the module docstring (mcp_server.py:21-24) says the same, but sse_app()/streamable_http_app() hand out a LockCheckedASGI while the lock is off, as R53 revision 30 requires. Its proof outputs (557 passed, 93 passed) also do not match the runner's 603 passed.",
+      "repro": "With firm.yaml set to 'offline_lock: false', server.sse_app() returns a LockCheckedASGI (test_an_asgi_app_handed_out_with_the_lock_off_refuses_once_it_is_on). Compare with claim.json's claim 6 and the docstring at mcp_server.py:21-24. specified-3.log shows 603 passed, not 557."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_firm.py",
+      "line": 1006,
+      "criterion": "P18",
+      "claim": "The docstring of test_p18_an_unchanged_firm_yaml_is_read_once_in_a_whole_cli_run says the file is read once, but the test asserts two reads: the draft, then the resume, which revision 32 requires.",
+      "repro": "Read the test: its body asserts len(reads) == 2 while its name says 'read once'."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

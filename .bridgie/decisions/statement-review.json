@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 333,
+  "next_id": 334,
   "decisions": [
     {
       "id": "D1",
@@ -6666,6 +6666,26 @@
       "decided_at": "2026-11-21T10:31:43.482Z",
       "effect": "task T17 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T17",
       "created_at": "2026-11-21T10:27:17.562Z"
+    },
+    {
+      "id": "D333",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (Lock defaults on (src/cma/firm.py FirmConfig offline_lock=True); a hosted client is built only on an unlocked reading, with max_retries=0 and a per-request HTTP hook (src/cma/llm.py _require_unlocked_now, _checked_http, HostedLLM._check); MCP run paths, ASGI factories and LockCheckedASGI read the lock (src/cma/mcp_server.py); evidence records the lock (graph.py _egress). The fix for verify-224's finding was checked: stream and astream turn tracing off per step (graph.py:887-899, 927-939), and invariants-5.log:142-143 passed. Gap: under the lock only the call's config callbacks are filtered (graph.py:848), but Pregel.stream merges self.config, so a LangSmith tracer bound with graph.with_config(callbacks=...) stays in the run's callbacks (langgraph/pregel/main.py:1005-1008, 2862; _config.py:398-401). R29 says such a tracer is taken out.); P18 fail (P18 tests passed in invariants-5.log, including the with_config copy test (line 139) and the mid-stream tracing tests (142-143). The with_config test binds only tags=['copied']. A copy bound with callbacks=[LangChainTracer] keeps the tracer through Pregel's self.config merge (finding 1), so a run under the lock can be traced, which P18's revision 32 scope excludes for a LangSmith tracer.); major: Under the offline lock, start() takes LangSmith tracers out of the per-call config only. Pregel.with_config(callbacks=[tracer]) returns a copy (which keeps the OfflineLocked class) whose self.config holds the tracer (langgraph/pregel/main.py:1000-1008). Pregel.stream then runs ensure_config(self.config, config) (main.py:2862), which merges self.config's callbacks back in (langgraph/_internal/_config.py:398-401) after the filter. invoke goes through the same stream. The LangChainTracer therefore traces every node run, statement data among the inputs, under the lock. This fails R29's 'a LangSmith tracer handed in with the run's callbacks is taken out of them' and P18. test_p18_a_graph_copied_by_with_config_keeps_the_locks_rules binds only tags, so it does not cover this. Found by reading the code; not run, because the shell was denied. at src/cma/graph.py:848; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T10:51:14.244Z"
     }
   ]
 }
