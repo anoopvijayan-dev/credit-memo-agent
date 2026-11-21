@@ -189,6 +189,16 @@ def test_the_queue_leaves_the_statement_unchanged_and_gives_the_same_answer_twic
 
 
 @pytest.mark.contracts
+def test_the_queue_names_lines_by_id_and_never_carries_a_description():
+    # R34 and the evidence contract: the queue holds ids, amounts, reasons and rule ids only.
+    for seed in range(50):
+        s = _random_case(seed)
+        dumped = json.dumps([e.model_dump(mode="json") for e in judgement_queue(s, raise_indicators(s))])
+        for t in s.transactions:
+            assert json.dumps(t.description)[1:-1] not in dumped, t.description
+
+
+@pytest.mark.contracts
 def test_cma_run_writes_the_judgement_queue_into_its_evidence_record(tmp_path, monkeypatch):
     monkeypatch.setenv("CMA_RULESET", "v2")
     csv = tmp_path / "s.csv"
