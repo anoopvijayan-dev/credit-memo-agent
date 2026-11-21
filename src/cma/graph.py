@@ -269,9 +269,13 @@ def run_thresholds(s: MemoState) -> ind.Thresholds:
 
 def _indicator_fields(s: MemoState) -> dict:
     t = run_thresholds(s)
+    raised = ind.raise_indicators(s["statement"], t)
     return {"thresholds": {"source": t.source, "sha256": t.sha256,
                            "illustrative": [f"{a}.{b}" for a, b in t.fields() if t.illustrative(a, b)]},
-            "indicators": [i.model_dump(mode="json") for i in ind.raise_indicators(s["statement"], t)]}
+            "indicators": [i.model_dump(mode="json") for i in raised],
+            # R15: the lines a person has to decide, largest first, assembled from the same
+            # lines and indicators; `cma run` has one account, so no possible own-account pairs.
+            "judgement_queue": [e.model_dump(mode="json") for e in ind.judgement_queue(s["statement"], raised)]}
 
 
 def evidence_record(s: MemoState) -> dict:
