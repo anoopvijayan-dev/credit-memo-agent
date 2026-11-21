@@ -104,7 +104,7 @@ class _Sections(HTMLParser):
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
         self.stack.append({"tag": tag, "class": (a.get("class") or "").split(), "id": a.get("id"),
-                           "data": a, "text": []})
+                           "data": a, "text": [], "within": [el for el in self.stack]})
 
     def handle_endtag(self, tag):
         while self.stack:
@@ -148,9 +148,15 @@ def _check_shown(page: str, folder) -> None:
         for r in result.rules:
             assert r.rule_id in panel["text"] and r.description in panel["text"] and r.detail in panel["text"]
     # Every element that shows an outcome sits inside a panel with the label (P20).
-    for e in els:
-        if "outcome" in e["class"] or "rule-outcome" in e["class"]:
-            assert any(p["text"].find(e["text"]) >= 0 and policy.ILLUSTRATIVE_LABEL in p["text"] for p in panels)
+    # The element itself must be inside the panel, not just share its words.
+    shown = [e for e in els if "outcome" in e["class"] or "rule-outcome" in e["class"]]
+    assert shown
+    for e in shown:
+        assert any(id(p) in {id(w) for w in e["within"]} for p in panels), e
+    # Outside the panels, the page shows no outcome word at all.
+    outside, cut = re.subn(r'<section class="policy-check".*?</section>', "", page, flags=re.S)
+    assert cut == len(panels)
+    assert not OUTCOME_WORD.search(re.sub(r"<[^>]*>", " ", outside))
     # The recommendation is left blank for the underwriter (R24, P20).
     rec = [e for e in els if e["data"].get("data-field") == "recommendation"]
     assert len(rec) == 1 and rec[0]["text"].strip() == ""
@@ -184,6 +190,54 @@ def test_p20_the_workspace_html_under_both_settings(home, tmp_path, serve, setti
         _check_hidden(page, folder)
     else:  # on, and on by default (R25)
         _check_shown(page, folder)
+
+
+GENERATED = [  # (archetype, profile, VAT stagger, the overall outcome it gives)
+    ("cafe", "good", 1, "pass"),
+    ("trades", "good", 1, "refer"),
+    ("ecommerce", "stretched", None, "refer"),
+    ("cafe", "poor", None, "fail"),
+    ("trades", "poor", 2, "fail"),
+]
+
+
+@pytest.mark.invariants
+def test_the_generated_cases_cover_every_overall_outcome():
+    assert {g[3] for g in GENERATED} == {o.value for o in RuleOutcome}
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("setting", [None, True, False], ids=["default", "on", "off"])
+@pytest.mark.parametrize("archetype, profile, stagger, overall", GENERATED,
+                         ids=[f"{g[0]}-{g[1]}-{g[3]}" for g in GENERATED])
+def test_p20_holds_for_generated_cases_of_every_outcome(home, tmp_path, serve, setting,
+                                                        archetype, profile, stagger, overall):
+    """P20 over a year of generated statements of each kind of business, not only the small
+    fixtures, so that a pass, a refer and a fail are each shown with the label, and each hidden."""
+    from datetime import date
+
+    from cma import synth
+
+    _setting(home, setting)
+    rows, truth = synth.generate(archetype, profile, end=date(2026, 9, 30))
+    synth.write(rows, truth, tmp_path, stem=archetype)
+    case_id = store.new_case(label="t21-generated")
+    folder = store.case_folder(case_id)
+    store.import_file(folder, tmp_path / f"{archetype}.csv", "csv")
+    if stagger is not None:
+        store.update_profile(folder, lambda p: {**p, "vat_stagger": stagger})
+    assert {r.overall.value for r in _expected(folder).values()} == {overall}
+    srv = serve(case_id)
+    page, data = _page(srv), _api(srv)
+    if setting is False:
+        _check_hidden(page, folder)
+        assert data["policy_check"] == {"shown": False}
+        assert all("policy_check" not in a for a in data["accounts"])
+    else:
+        _check_shown(page, folder)
+        assert [a["policy_check"]["overall"] for a in data["accounts"]] == [overall]
+        assert data["policy_check"] == {"shown": True, "label": policy.ILLUSTRATIVE_LABEL}
+    assert data["recommendation"] is None
 
 
 @pytest.mark.invariants
