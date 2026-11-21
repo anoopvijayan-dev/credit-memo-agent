@@ -1471,8 +1471,44 @@ def test_monzo_checks_the_header_before_reading_any_record(tmp_path, monkeypatch
     def never(data):
         raise AssertionError("records were read before the header was checked")
 
-    monkeypatch.setattr(monzo, "read_data", never)
+    monkeypatch.setattr(monzo, "iter_data", never)
     src = tmp_path / "m.csv"
     src.write_text("Transaction ID,Date,Amount\ntx_1,01/01/2026,-1.00\n")
     with pytest.raises(monzo.MonzoImportError, match="missing column"):
+        monzo.convert(src, tmp_path / "o.csv")
+
+
+@pytest.mark.contracts
+def test_monzo_reads_nothing_past_the_first_problem(tmp_path, monkeypatch):
+    """T04 review 52: the importer parsed and kept every row before checking the first one, so
+    a long tail could delay or prevent the refusal; it now reads one record at a time."""
+    from cma.importers import monzo
+
+    reads = [0]
+    real_next = ingest._Feed.__next__
+
+    def counted(self):
+        reads[0] += 1
+        return real_next(self)
+
+    monkeypatch.setattr(ingest._Feed, "__next__", counted)
+    rows = [f"tx_{k},02/01/2026,09:00:00,Faster payment,ACME,-1.00,GBP,1.00" for k in range(5000)]
+    src = tmp_path / "m.csv"
+    src.write_text(_MONZO_HEAD + ",01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n" + "\n".join(rows) + "\n")
+    with pytest.raises(monzo.MonzoImportError, match="line 2: empty Transaction ID"):
+        monzo.convert(src, tmp_path / "o.csv")
+    assert reads[0] <= 5
+
+
+@pytest.mark.contracts
+def test_monzo_refuses_an_unreadable_description_on_its_own_row(tmp_path, small_field_limit):
+    """T04 review 52: the check that a description can be read back ran after every row, so a
+    later row's problem hid an earlier row whose description was too long."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance,Notes and #tags\n"
+                   "tx_1,01/01/2026,09:00,Faster,ACMEACMEACMEACME,-10.00,GBP,90.00,INV-12345678901\n"
+                   "bad id!,02/01/2026,09:00,Faster,ACME,-1.00,GBP,89.00,\n")
+    with pytest.raises(monzo.MonzoImportError, match="line 2: the description would be"):
         monzo.convert(src, tmp_path / "o.csv")

@@ -33,7 +33,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from ..categorise import INVOICE_REF
-from ..ingest import CsvRecordError, not_utf8, read_data, read_header, shown, unreadable_cells
+from ..ingest import CsvRecordError, iter_data, read_header, shown
 from ..metrics import (
     AT_LIMIT,
     at_limit,
@@ -166,11 +166,11 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             f"{src}: not a Monzo export; missing column(s): {', '.join(missing)}"
         )
     try:
-        header, raw_rows, unreadable = read_data(data)
+        # Records are read one at a time, and reading stops at the first problem: nothing past
+        # it is read (T04 review 52).
+        header, records = iter_data(data)
     except CsvRecordError as e:
         raise MonzoImportError(f"{src}: {e}") from None
-    if not raw_rows and unreadable is None:
-        raise MonzoImportError(f"{src}: no transactions")
 
     has_balance = "Balance" in header
 
@@ -191,29 +191,17 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
     line_of: dict[str, int] = {}  # each transaction's line, for refusals after sorting
 
     try:
-        # A record with a field too long to read is still read, after the others, for its
-        # currency and amount first (T04 review 36).
         # A record that cannot be read whole (a field too long to read, a bad byte) is still
-        # read, after the others, for its currency and amount if they can be (T04 reviews 36-37).
-        # Past a bad byte, reading goes on, so a row in another currency is skipped whatever
-        # bytes it holds and the rows after it are read (T04 review 46); a field too long to
-        # read stops reading at its record, so the import is refused after that record.
-        queue: list[tuple[int, dict, CsvRecordError | None]] = [(i, r, None) for i, r in raw_rows]
-        stopped, err = None, unreadable
-        while err is not None:
-            if err.row is not None:
-                queue.append((err.line, err.row, err))
-            if err.rest is None:
-                stopped = err
+        # read for its currency and amount if they can be (T04 reviews 36-37); past a bad byte
+        # or a field too long to read, reading goes on, so a row in another currency is
+        # skipped whatever it holds and the rows after it are read (T04 reviews 46-47).
+        stopped = None
+        any_record = False
+        for i, r, problem in records:
+            any_record = True
+            if r is None:  # a record the reader cannot read at all: reading stops here
+                stopped = problem
                 break
-            queue += [(i, r, None) for i, r in err.rest]
-            err = err.rest_err
-        for i, r, problem in queue:
-            if problem is None and (bad_cells := unreadable_cells(r)):
-                problem = not_utf8(i)
-                problem.readable = set(header) - bad_cells
-            elif problem is not None:
-                problem.readable -= unreadable_cells(r)  # a cell with a bad byte is never read (T04 review 48)
             partial = problem is not None
             unreadable = problem
             # Its currency is needed only if the export has a Currency column; without one,
@@ -229,6 +217,9 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             if currency and currency != "GBP":
                 if CURRENCY_CODE.match(currency):
                     skipped += 1  # another currency: skipped, whatever else the row holds
+                    if partial and unreadable.stops:  # but reading cannot go on past it
+                        stopped = unreadable
+                        break
                     continue
                 # Not a currency code: the row's cells are not where the header says (an unquoted
                 # "1,000.00" shifts them), so it is refused, never skipped (T04 review 34).
@@ -267,6 +258,12 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             bal = _money(r["Balance"], "Balance", i) if has_balance and (r.get("Balance") or "").strip() else None
             refs = references(r.get("Notes and #tags"), r.get("Description"))
             desc = describe(r.get("Type", ""), r.get("Name", ""), amount, refs)
+            # Never accept a row whose cells the statement loader could not read back: checked
+            # here, as the row is read, so no later row's problem hides it (T04 reviews 50, 52).
+            for name, cell in (("id", tid), ("description", desc)):
+                if len(cell) > csv.field_size_limit():
+                    raise MonzoImportError(f"line {i}: the {name} would be {len(cell):,} characters, longer "
+                                           f"than the {csv.field_size_limit():,} a statement's CSV reader reads")
             parsed.append((d, t, tid, desc, amount, bal))
             reading = None
     except MonzoImportError as e:
@@ -276,6 +273,8 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
         raise MonzoImportError(f"{note}{e}") from None
     if stopped is not None:  # reading stopped; after the records before it are checked (T04 review 22)
         raise MonzoImportError(f"{src}: {flows_before()}{stopped}")
+    if not any_record:
+        raise MonzoImportError(f"{src}: no transactions")
     if not parsed:
         raise MonzoImportError(f"{src}: no GBP transactions")
     # Money in or out at the limit is said before anything else about the export (its
@@ -325,11 +324,6 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
                 f"line {line_of[tid]}: {tid}: walked balance {_gbp(bal)} disagrees with Monzo's {_gbp(monzo_bal)}; "
                 "the export may be missing transactions"
             )
-        # Never write a cell the statement loader could not read back (T04 review 50).
-        for name, cell in (("id", tid), ("description", desc)):
-            if len(cell) > csv.field_size_limit():
-                raise MonzoImportError(f"line {line_of[tid]}: the {name} would be {len(cell):,} characters, longer "
-                                       f"than the {csv.field_size_limit():,} a statement's CSV reader reads")
         out_rows.append({"id": tid, "date": d.isoformat(), "description": desc,
                          "amount": _gbp(amount), "balance": _gbp(bal)})
 
