@@ -223,8 +223,14 @@ def _is_shipped(r, shipped: dict[str, tuple]) -> bool:
 
     def num(v):
         return float(v) if v is not None else None
-    return want is not None and want == (r.description, r.metric_id, r.op, num(r.threshold),
-                                         num(r.refer_below), num(r.refer_above), r.on_fail, r.when_missing)
+    have = (r.description, r.metric_id, r.op, num(r.threshold), num(r.refer_below), num(r.refer_above),
+            r.on_fail, r.when_missing)
+    if want is not None and r.on_fail == "" and r.when_missing == "":
+        # A checkpoint from before the actions were kept holds neither (T17 review 15). Both are
+        # one of a few fixed words, never text a case or a policy could carry, so such a rule is
+        # the shipped one when everything else it holds is (P5).
+        return want[:6] == have[:6]
+    return want is not None and want == have
 
 
 def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = False) -> str:
@@ -410,7 +416,11 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
             memo = llm.complete(SYSTEM_PROMPT, user, offline_lock=lock, reading=_run_reading_of(config))
         else:
             memo = llm.complete(SYSTEM_PROMPT, user)
-        return {"memo": memo, "redrafts": s.get("redrafts", 0)}
+        # The model that drafted it, and where the prompt went, are this graph's: a resume that
+        # drafts on another graph's model records that model, not the first draft's (T17 review 15).
+        return {"memo": memo, "redrafts": s.get("redrafts", 0),
+                "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
+                "egress": "offline" if isinstance(llm, FakeLLM) else f"{llm.name}:{getattr(llm, 'model', '-')}"}
 
     def guard(s: MemoState) -> MemoState:
         g = grd.check(s["memo"], s["metrics"], s["policy"], required_headings=grd.REQUIRED_HEADINGS)

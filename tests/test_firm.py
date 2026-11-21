@@ -1493,6 +1493,67 @@ def test_r30_a_shipped_rule_is_still_known_after_a_checkpoint_round_trip(home, t
 
 
 @pytest.mark.invariants
+def test_p18_a_reading_is_parsed_from_the_bytes_its_stamp_hashes(home, sdks, monkeypatch):
+    """T17 review 15 / R29: the stamp hashed one read of firm.yaml and the settings came from a
+    second; a file changed between them paired an unlocked reading with the locked file's stamp,
+    which then built a hosted client once the locked file was back."""
+    import pathlib
+
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    real_read_text = pathlib.Path.read_text
+    monkeypatch.setattr(pathlib.Path, "read_text", lambda self, *a, **k: "offline_lock: false\n"
+                        if self.name == "firm.yaml" else real_read_text(self, *a, **k))  # a second read sees a change
+    reading = firm.load()
+    assert reading.offline_lock is not False
+    with pytest.raises(firm.OfflineLockError):
+        llm.get_llm("anthropic", firm_config=reading)
+    assert ("anthropic", "client") not in sdks
+
+
+@pytest.mark.invariants
+def test_r29_a_resume_that_drafts_records_its_own_model_and_destination(home, no_network, tmp_path):
+    """T17 review 15 / R29: a resume that drafted on a hosted model left the first draft's model
+    and destination in the evidence."""
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
+
+    class Hosted(llm.HostedLLM):
+        name = "test"
+        model = "m1"
+
+        def _send(self, system, user):
+            return llm.FakeLLM().complete(system, user)
+
+    saver = InMemorySaver()
+    cfg = {"configurable": {"thread_id": "t"}}
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    first = build(llm.FakeLLM(), checkpointer=saver)
+    first.invoke({"statement_path": str(_statement(tmp_path))}, cfg)
+    first.update_state(cfg, {}, as_node="policy")  # paused again before its draft
+    later = build(Hosted(), checkpointer=saver)
+    later.invoke(None, cfg)
+    final = later.invoke(Command(resume={"approved": True, "reviewer": "A"}), cfg)
+    record = evidence_record({**final, "ruleset": None})
+    assert record["model"] == "test:m1" and record["egress"]["destination"] == "test:m1" and no_network == []
+
+
+def test_p5_a_shipped_rule_from_a_checkpoint_without_its_actions_is_still_known(home, tmp_path):
+    """T17 review 15 / R30: a checkpoint from before rule actions were kept restores a shipped
+    rule with neither, which was masked as custom, so the memo could not cite it."""
+    import cma.graph as g
+    from cma import categorise, ingest, metrics, policy
+
+    st = categorise.categorise(ingest.load_csv(_statement(tmp_path), account_name="ACME LTD"))
+    result = policy.evaluate(metrics.compute(st))
+    legacy = result.model_copy(update={"rules": [r.model_copy(update={"on_fail": "", "when_missing": ""})
+                                                 for r in result.rules]})
+    assert g.rules_table(legacy, for_prompt=True) == g.rules_table(result, for_prompt=True)
+    changed = legacy.model_copy(update={"rules": [legacy.rules[0].model_copy(update={"threshold": 99.0}),
+                                                  *legacy.rules[1:]]})
+    assert "(custom id)" in g.rules_table(changed, for_prompt=True)
+
+
+@pytest.mark.invariants
 def test_p5_a_custom_rules_limits_never_reach_the_prompt(home, tmp_path):
     """T17 review 10 / P5: a custom rule's threshold, a number that can come from the case, reached
     the prompt in its requirement and detail cells."""

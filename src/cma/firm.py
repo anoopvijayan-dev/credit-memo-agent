@@ -134,17 +134,24 @@ _RAN: set[int] = set()  # readings that have driven a run: each drives one (T17 
 _STAMP: dict[int, tuple] = {}  # firm.yaml as it stood when each reading was made
 
 
-def _stamp(root: Path) -> tuple:
-    """firm.yaml as it stands: its size, change time and a hash of its bytes, or that it is
-    absent; any change since a reading makes that reading stale, even a file of the same size
-    and time (T17 reviews 6 and 7). Its bytes are hashed, not read as a configuration."""
+def _snapshot(root: Path) -> tuple[tuple, bytes | None]:
+    """firm.yaml as it stands, read once: its stamp (size, change time and a hash of the bytes
+    read, or that it is absent) and those bytes. A reading is parsed from the very bytes its
+    stamp hashes, so a file changed between two reads can never pair one version's settings
+    with another's stamp (T17 review 15)."""
     path = root / FILE_NAME
     try:
         st = path.stat()
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        data = path.read_bytes()
     except OSError:
-        return ("absent",)
-    return (st.st_size, st.st_mtime_ns, digest)
+        return ("absent",), None
+    return (st.st_size, st.st_mtime_ns, hashlib.sha256(data).hexdigest()), data
+
+
+def _stamp(root: Path) -> tuple:
+    """firm.yaml's stamp as it stands now: any change since a reading makes that reading
+    stale, even a file of the same size and time (T17 reviews 6 and 7)."""
+    return _snapshot(root)[0]
 
 
 def unchanged_since(reading: FirmConfig) -> bool:
@@ -195,9 +202,9 @@ def claim_for_client(reading: object) -> bool:
 
 
 def load(root: Path | None = None) -> FirmConfig:
-    """firm.yaml, read now."""
-    stamp = _stamp(root or case_root())
-    config = _load(root)
+    """firm.yaml, read now, once: the settings are parsed from the bytes the stamp hashes."""
+    stamp, data = _snapshot(root or case_root())
+    config = _load(root, data)
     key = id(config)
     _STAMP[key] = stamp
     _READINGS[key] = weakref.ref(config, lambda _ref, k=key: (_READINGS.pop(k, None), _CLAIMED.discard(k),
@@ -206,14 +213,17 @@ def load(root: Path | None = None) -> FirmConfig:
     return config
 
 
-def _load(root: Path | None = None) -> FirmConfig:
+def _load(root: Path | None = None, data: bytes | None = None) -> FirmConfig:
+    """`data`: firm.yaml's bytes as load() read them; None when it could not read them."""
     root = root or case_root()
     path = root / FILE_NAME
-    if not path.is_file():
-        return FirmConfig(root=root)
+    if data is None:
+        if not path.is_file():
+            return FirmConfig(root=root)
+        raise FirmConfigError(f"{path}: cannot be read as UTF-8 text (OSError)")
     try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as e:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as e:
         raise FirmConfigError(f"{path}: cannot be read as UTF-8 text ({e.__class__.__name__})") from e
     try:
         data = yaml.load(text, Loader=_UniqueKeyLoader)
