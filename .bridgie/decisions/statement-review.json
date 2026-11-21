@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 296,
+  "next_id": 297,
   "decisions": [
     {
       "id": "D1",
@@ -5932,6 +5932,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T00:58:46.627Z"
+    },
+    {
+      "id": "D296",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (src/cma/firm.py:67 sets both defaults and resolves configured paths. src/cma/cli.py:79 passes the configuration to dispatch and src/cma/graph.py:280 records it. src/cma/mcp_server.py:40 gates native startup and src/cma/mcp_server.py:98 checks saved apps after delivery of the lifespan startup event. An unused unlocked reading still authorizes a graph invocation started after the firm locks.); R30 fail (src/cma/graph.py:230 constructs the prompt from the placeholder name, dates and tables. src/cma/metrics.py:295 omits transaction evidence IDs. The policy filter at src/cma/graph.py:186 still admits a custom rule ID copied from a statement when the rule differs from the shipped rule only in a referral band.); P5 fail (The runner passed the hosted custom-policy redraft test and the shipped-ID collision test that changes the description and primary threshold. src/cma/graph.py:186 omits referral bands from the comparison, so a case sentinel matching a shipped ID still appears in the first prompt and remains eligible for redraft feedback at src/cma/graph.py:223.); P18 fail (The runner passed both SDK retryable-503 cases, native MCP bind checks and delayed saved-app startup. Its cross-graph reuse test consumes the reading before the lock changes. src/cma/firm.py:151 still accepts an unused unlocked reading after the lock changes and src/cma/llm.py:108 uses it to authorize a hosted request.); major: The first invocation can send a hosted request after the firm enables the lock. The supplied reading is checked for provenance and prior use, but its freshness is never checked before it becomes the run's authorization. at src/cma/firm.py:155; major: The hosted constructor can accept an obsolete unlocked reading when a replacement configuration has the same byte length and modification time. The same comparison also controls whether a resume reuses its previous tracing decision. at src/cma/firm.py:143; major: The whole-rule comparison ignores referral bands. A custom rule with a different band can carry a statement sentinel that matches a packaged ID into the hosted prompt and redraft feedback. at src/cma/graph.py:190; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T01:01:13.967Z"
     }
   ]
 }

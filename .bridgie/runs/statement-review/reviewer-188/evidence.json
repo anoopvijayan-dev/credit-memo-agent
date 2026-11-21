@@ -1,0 +1,73 @@
+{
+  "task": "T17",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "src/cma/firm.py:67 sets both defaults and resolves configured paths. src/cma/cli.py:79 passes the configuration to dispatch and src/cma/graph.py:280 records it. src/cma/mcp_server.py:40 gates native startup and src/cma/mcp_server.py:98 checks saved apps after delivery of the lifespan startup event. An unused unlocked reading still authorizes a graph invocation started after the firm locks.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:230 constructs the prompt from the placeholder name, dates and tables. src/cma/metrics.py:295 omits transaction evidence IDs. The policy filter at src/cma/graph.py:186 still admits a custom rule ID copied from a statement when the rule differs from the shipped rule only in a referral band.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "The runner passed the hosted custom-policy redraft test and the shipped-ID collision test that changes the description and primary threshold. src/cma/graph.py:186 omits referral bands from the comparison, so a case sentinel matching a shipped ID still appears in the first prompt and remains eligible for redraft feedback at src/cma/graph.py:223.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "The runner passed both SDK retryable-503 cases, native MCP bind checks and delayed saved-app startup. Its cross-graph reuse test consumes the reading before the lock changes. src/cma/firm.py:151 still accepts an unused unlocked reading after the lock changes and src/cma/llm.py:108 uses it to authorize a hosted request.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/firm.py",
+      "line": 155,
+      "criterion": "P18",
+      "claim": "The first invocation can send a hosted request after the firm enables the lock. The supplied reading is checked for provenance and prior use, but its freshness is never checked before it becomes the run's authorization.",
+      "repro": "With a recording SDK stub, load an unlocked configuration and construct a hosted model and graph with that reading. Enable the lock before the graph's first invoke. The graph accepts the unused reading, registers it as active and reaches the stub's request method. The runner's one-reading test covers a second invocation after the reading has already been consumed."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/firm.py",
+      "line": 143,
+      "criterion": "R29",
+      "claim": "The hosted constructor can accept an obsolete unlocked reading when a replacement configuration has the same byte length and modification time. The same comparison also controls whether a resume reuses its previous tracing decision.",
+      "repro": "In a temporary configuration fixture, load an unlocked file, then replace it with a locked file of equal length and set the replacement's modification time to the original timestamp. Pass the unused reading to a hosted constructor backed by an SDK stub. The stub is constructed even though the current file is locked."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 190,
+      "criterion": "P5",
+      "claim": "The whole-rule comparison ignores referral bands. A custom rule with a different band can carry a statement sentinel that matches a packaged ID into the hosted prompt and redraft feedback.",
+      "repro": "Use R2 as a sentinel in a synthetic statement description and case profile. Copy the packaged policy and change only R2's refer_below from 1.5 to 2.0. Capture the prompts through cma run --policy with a recording hosted stub. The initial table contains '| R2 |' with the custom band. Have the stub return an incorrect limit tagged [R2] and check that the redraft ID filter still accepts R2."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 177,
+      "criterion": "R30",
+      "claim": "The producer's performance claim has no comparative timing evidence. A suite duration does not establish the cost of parsing the shipped policy for each prompt and again when collecting redraft IDs.",
+      "repro": "Compare the producer's pytest duration with specified-3.log. The runner reports a single current-revision suite duration and no matched baseline or prompt benchmark. A before-and-after benchmark of the same initial draft and redraft workload would substantiate the claim."
+    }
+  ],
+  "verdict": "fail"
+}
