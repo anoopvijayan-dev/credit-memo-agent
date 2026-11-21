@@ -861,3 +861,78 @@ def test_p18_the_graph_runs_untraced_under_the_lock_whatever_the_environment(hom
     graph = build(Watching())
     graph.invoke({"statement_path": str(_statement(tmp_path))}, {"configurable": {"thread_id": "t"}})
     assert seen and not any(seen) and no_network == []
+
+
+@pytest.mark.invariants
+def test_p18_a_reading_authorises_only_its_own_run_and_folder(home, no_network, sdks, tmp_path, monkeypatch):
+    """T17 review 5 / R29: a reading load() made was accepted for any later client or request,
+    from an earlier run or for another firm folder. It now authorises one client, and requests
+    only while its run is going, for the folder in use; otherwise firm.yaml is read now."""
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    earlier = firm.load()
+    llm.AnthropicLLM(firm_config=earlier)  # authorises this one client
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    with pytest.raises(firm.OfflineLockError):
+        llm.AnthropicLLM(firm_config=earlier)  # not a second one, now the lock is on
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "firm.yaml").write_text("offline_lock: false\n")
+    elsewhere = firm.load(other)
+    with pytest.raises(firm.OfflineLockError):
+        llm.AnthropicLLM(firm_config=elsewhere)  # another folder's reading
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    client = llm.AnthropicLLM()
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    with pytest.raises(firm.OfflineLockError):
+        client.complete("s", "u", reading=earlier)  # its run is not going
+    assert [c for c in sdks if c[1] == "request"] == [] and no_network == []
+
+
+@pytest.mark.invariants
+def test_each_run_drafts_with_its_own_reading(home, no_network, sdks, tmp_path, monkeypatch):
+    """T17 review 5: readings were kept by thread, so concurrent runs on one thread could take
+    each other's; each run's reading now travels in its own config."""
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    seen = []
+    monkeypatch.setattr(llm.AnthropicLLM, "_send", lambda self, s, u: llm.FakeLLM().complete(s, u))
+    real = llm.HostedLLM.complete
+
+    def watch(self, system, user, **k):
+        seen.append(k.get("reading"))
+        return real(self, system, user, **k)
+
+    monkeypatch.setattr(llm.HostedLLM, "complete", watch)
+    mine = firm.load()
+    graph = build(llm.AnthropicLLM(), firm_config=mine)
+    graph.invoke({"statement_path": str(_statement(tmp_path))}, {"configurable": {"thread_id": "t"}})
+    assert seen and all(r is mine for r in seen) and no_network == []
+
+
+@pytest.mark.invariants
+def test_p18_a_resumed_review_is_untraced_once_the_lock_is_on(home, no_network, monkeypatch, tmp_path):
+    """T17 review 5 / R29: a review drafted with the lock off, resumed after the firm turned it
+    on, ran traced by its drafting lock; the lock now decides too."""
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
+    from langsmith import utils as ls_utils
+
+    saver = InMemorySaver()
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    cfg = {"configurable": {"thread_id": "t"}}
+    build(llm.FakeLLM(), checkpointer=saver).invoke({"statement_path": str(_statement(tmp_path))}, cfg)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    monkeypatch.setattr(ls_utils, "get_env_var", lambda name, *a, **k: {"TRACING": "true", "TRACING_V2": "true",
+                                                                         "API_KEY": "dummy"}.get(name, k.get("default")))
+    seen = []
+    import cma.graph as g
+
+    real_finalise_hook = g.appendix
+
+    def watching(*a, **k):
+        seen.append(ls_utils.tracing_is_enabled())
+        return real_finalise_hook(*a, **k)
+
+    monkeypatch.setattr(g, "appendix", watching)
+    later = build(llm.FakeLLM(), checkpointer=saver)  # a new process's graph: no reading of its own yet
+    later.invoke(Command(resume={"approved": True, "reviewer": "A"}), cfg)
+    assert seen and not any(seen) and no_network == []

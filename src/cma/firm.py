@@ -125,11 +125,49 @@ def is_reading(config: object) -> bool:
     return ref is not None and ref() is config
 
 
+# Readings driving a run now, and readings that have already authorised a client: a reading
+# is bound to its run and its firm folder, never reused as an allowance (T17 review 5).
+_IN_RUN: dict[int, int] = {}
+_CLAIMED: set[int] = set()
+
+
+def _here(config: FirmConfig) -> bool:
+    return is_reading(config) and config.root == case_root()
+
+
+def begin_run(reading: FirmConfig) -> None:
+    _IN_RUN[id(reading)] = _IN_RUN.get(id(reading), 0) + 1
+
+
+def end_run(reading: FirmConfig) -> None:
+    left = _IN_RUN.get(id(reading), 0) - 1
+    if left > 0:
+        _IN_RUN[id(reading)] = left
+    else:
+        _IN_RUN.pop(id(reading), None)
+
+
+def allows_request(reading: object) -> bool:
+    """Whether `reading` may decide a hosted request: a reading load() made, for the firm folder
+    in use, whose run is still going. Any other is no allowance; firm.yaml is read instead."""
+    return isinstance(reading, FirmConfig) and _here(reading) and id(reading) in _IN_RUN
+
+
+def claim_for_client(reading: object) -> bool:
+    """Whether `reading` may decide building one hosted client: a reading load() made, for the
+    firm folder in use, that has not already decided one."""
+    if not (isinstance(reading, FirmConfig) and _here(reading)) or id(reading) in _CLAIMED:
+        return False
+    _CLAIMED.add(id(reading))
+    return True
+
+
 def load(root: Path | None = None) -> FirmConfig:
     """firm.yaml, read now."""
     config = _load(root)
     key = id(config)
-    _READINGS[key] = weakref.ref(config, lambda _ref, k=key: _READINGS.pop(k, None))
+    _READINGS[key] = weakref.ref(config, lambda _ref, k=key: (_READINGS.pop(k, None), _CLAIMED.discard(k),
+                                                              _IN_RUN.pop(k, None)))
     return config
 
 

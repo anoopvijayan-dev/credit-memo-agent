@@ -81,7 +81,7 @@ def _require_unlocked_now(what: str, firm_config: "firm.FirmConfig | None") -> N
     """A hosted client is built only on a reading of firm.yaml with the lock off that load()
     made: the run's own, when it hands it in, or one read now. A FirmConfig the caller built
     can only refuse, never stand in for a reading (R29, T17 review 4)."""
-    if firm_config is not None and firm.is_reading(firm_config):
+    if firm.claim_for_client(firm_config):  # a fresh reading, for this folder, used once
         firm_config.require_offline_off(what)
         return
     firm.load().require_offline_off(what)
@@ -105,7 +105,7 @@ class HostedLLM:
         # Never on the caller's word (R29, T17 review 4): a request is allowed only by a
         # reading of firm.yaml that load() made, the run's own when it hands it in, or one read
         # now. A bare offline_lock value, or a FirmConfig the caller built, can only refuse.
-        if reading is not None and firm.is_reading(reading):
+        if firm.allows_request(reading):  # the run's own reading, while its run is going
             reading.require_offline_off(what)
         else:
             firm.require_unlocked(what)
