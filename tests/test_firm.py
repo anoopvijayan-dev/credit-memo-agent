@@ -1123,3 +1123,22 @@ def test_p18_a_suspended_stream_lends_no_run_its_tracing_decision(home, no_netwo
     build(Watching()).invoke({"statement_path": str(_statement(tmp_path))}, {"configurable": {"thread_id": "t"}})
     outer.close()
     assert seen and not any(seen) and no_network == []
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("as_manager", [False, True])
+def test_p18_a_tracer_handed_in_is_taken_out_under_the_lock(home, no_network, monkeypatch, tmp_path, as_manager):
+    """T17 review 9 / R29: turning ambient tracing off left a LangChainTracer passed in the
+    run's callbacks active, which would export the run's inputs and statement data."""
+    from langchain_core.callbacks import CallbackManager
+    from langchain_core.tracers.langchain import LangChainTracer
+
+    tracer = LangChainTracer(client=types.SimpleNamespace())
+    seen = []
+    monkeypatch.setattr(LangChainTracer, "_start_trace", lambda self, run: seen.append(run), raising=False)
+    monkeypatch.setattr(LangChainTracer, "_persist_run", lambda self, run: seen.append(run), raising=False)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    callbacks = CallbackManager(handlers=[tracer], inheritable_handlers=[tracer]) if as_manager else [tracer]
+    build(llm.FakeLLM()).invoke({"statement_path": str(_statement(tmp_path))},
+                                {"configurable": {"thread_id": "t"}, "callbacks": callbacks})
+    assert seen == [] and no_network == []

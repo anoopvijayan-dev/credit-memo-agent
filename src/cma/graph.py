@@ -467,6 +467,23 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
 _READING_KEY = "__cma_reading"  # LangGraph never saves a configurable key that starts with "__"
 
 
+def _without_network_tracers(callbacks):
+    """The run's callbacks without any LangSmith tracer: a list, or a callback manager's own
+    and inherited handlers."""
+    from langchain_core.callbacks import BaseCallbackManager
+    from langchain_core.tracers.langchain import LangChainTracer
+
+    def keep(handlers):
+        return [h for h in (handlers or []) if not isinstance(h, LangChainTracer)]
+
+    if isinstance(callbacks, BaseCallbackManager):
+        manager = callbacks.copy()
+        manager.handlers = keep(manager.handlers)
+        manager.inheritable_handlers = keep(manager.inheritable_handlers)
+        return manager
+    return keep(callbacks) if callbacks else callbacks
+
+
 def _thread(config) -> object:
     return ((config or {}).get("configurable") or {}).get("thread_id")
 
@@ -511,14 +528,21 @@ def _untraced_under_lock(graph, run_reading) -> None:
         if outer is not None:
             return outer, None, a, k
         reading, locked = run_reading(a[0] if a else k.get("input"), config_of(a, k))
-        if reading is not None:
+        if reading is not None or locked:
             config = dict(config_of(a, k) or {})
-            config["configurable"] = {**(config.get("configurable") or {}), _READING_KEY: reading}
+            if reading is not None:
+                config["configurable"] = {**(config.get("configurable") or {}), _READING_KEY: reading}
+            if locked:
+                # A LangSmith tracer handed in with the run's callbacks would send the run off
+                # the machine whatever the environment says: under the lock it is taken out
+                # (R29, T17 review 9). Local callbacks stay.
+                config["callbacks"] = _without_network_tracers(config.get("callbacks"))
             if "config" in k or len(a) < 2:
                 k = {**k, "config": config}
             else:
                 a = (a[0], config, *a[2:])
-            firm.begin_run(reading)
+            if reading is not None:
+                firm.begin_run(reading)
         return locked, ((_IN_RUN.set(locked) if mark else None), reading), a, k
 
     def end(token) -> None:
