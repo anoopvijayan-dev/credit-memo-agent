@@ -1,0 +1,59 @@
+{
+  "task": "T05",
+  "claims": [
+    {
+      "text": "Tests for T05's behaviour pass through the workspace API on cases with and without each profile field (directors, shareholders, own_accounts, proposed_monthly_repayment, and both kinds together), under v2 and v1. Hardening added three contracts tests: a profile edited between two reads is shown on the next read, and two reads with no change in between give the same answer; a malformed profile gives the refused state, names the field and shows no figures or profile; /api/case without the session token returns no profile names.",
+      "proof_cmd": "python -m pytest tests/test_case_profile.py -q -m contracts",
+      "proof_output": "15 passed in 9.62s"
+    },
+    {
+      "text": "Failure modes: an invalid case.yaml cannot crash the summary. store.validate_profile normalises the proposed_monthly_repayment to two-decimal text before summary._profile_html reads it with Decimal, and case_summary turns a CaseStoreError into the refused state with no figures shown.",
+      "proof_cmd": "python -m pytest tests/test_case_profile.py -q -k malformed",
+      "proof_output": "1 passed (part of 15 passed in tests/test_case_profile.py)"
+    },
+    {
+      "text": "Idempotency and determinism: the endpoint only reads. The summary is recomputed from the case files on every read, so repeated reads give the same figures and nothing is written. A profile change shows on the next read, with no stale cache.",
+      "proof_cmd": "python -m pytest tests/test_case_profile.py -q -k edited_between_reads",
+      "proof_output": "1 passed"
+    },
+    {
+      "text": "Security: there is no new entry point. The profile reaches the page through the existing /api/case and /, which keep the session-token check, and the token-less request is tested. Profile names are HTML-escaped in the page (test_the_page_shows_the_profile_escaped). Evidence still records only the profile hash, and no dependency was added.",
+      "proof_cmd": "python -m pytest tests/test_case_profile.py -q -k 'token or escaped'",
+      "proof_output": "2 passed"
+    },
+    {
+      "text": "No regression: ruff passes, compileall passes and the full suite passes. The dual_run and invariants tiers pass, so M1 to M16 under v1 with no case profile are unchanged (R54, P7).",
+      "proof_cmd": "ruff check src tests; python -m compileall -q src; python -m pytest -q; python -m pytest -q -m dual_run; python -m pytest -q -m invariants",
+      "proof_output": "All checks passed! / compile-ok / 2098 passed in 172.02s (before the 3 hardening tests; those 3 pass in the 15-test file run) / 84 passed, 2017 deselected / 845 passed, 1256 deselected"
+    },
+    {
+      "text": "The offline evals still ground every memo under both rulesets.",
+      "proof_cmd": "python evals/run_evals.py; CMA_RULESET=v2 python evals/run_evals.py",
+      "proof_output": "9/9 memos fully grounded; model = fake; ruleset = v1 / 9/9 memos fully grounded; model = fake; ruleset = v2"
+    },
+    {
+      "text": "Rollback: CMA_RULESET=v1 is the flag, and the profile still applies under v1 as R54 requires. Two tests cover v1: a credit both kinds name is ambiguous with v1 candidates, and a single name decides. Rollback by reinstall needs no data repair because nothing new is stored: the profile already lived in case.yaml (T13/T19).",
+      "proof_cmd": "python -m pytest tests/test_case_profile.py -q -k v1",
+      "proof_output": "2 passed"
+    },
+    {
+      "text": "Data and migration checklist: not applicable. There is no schema or stored-data change and no backfill. The summary JSON gains an additive 'profile' key, read only by the bundled page. PII (director and account names) is shown only to the token holder on loopback, as the case view already shows the descriptions.",
+      "proof_cmd": "git diff 4aa7580 --stat",
+      "proof_output": "src/cma/categorise.py, src/cma/metrics.py, src/cma/review/summary.py, tests/test_case_profile.py; no store/schema file touched"
+    },
+    {
+      "text": "Performance: under v1 the profile is now matched once per line through _profile_matches, which uses the same compiled per-case ProfileNames as v2. Conflict candidates rescan the v1 rules only for a credit both kinds name. No new query or unbounded payload: the profile is at most three lists of names, each name of at most 200 characters, as store validates.",
+      "proof_cmd": "grep -n 'len(value) > 200' src/cma/store.py",
+      "proof_output": "341:    if len(value) > 200:"
+    },
+    {
+      "text": "Observability: each line's provenance records which profile name decided it (profile:director, profile:own_account, or the v1/v2 conflict form ending in both kinds), so the evidence shows the behaviour ran. There is no remote alerting by design (design: Observability).",
+      "proof_cmd": "python -m pytest tests/test_case_profile.py -q -k 'both_kinds or director_s_name'",
+      "proof_output": "3 passed"
+    }
+  ],
+  "files_changed": [
+    "tests/test_case_profile.py"
+  ],
+  "notes": "Gaps for the owner. These are design choices, not code: (1) M9 leaves out only own-account transfers whose rule is profile:own_account (src/cma/metrics.py own_account_named). A line the underwriter overrides to own_account_transfer, and a Tier 2 R8 pairing, stay in M9's operating lines and round trip. The design does not say whether a person's own-account override should leave M9, so I made no change. (2) An alert on the failure mode that matters most does not apply: the tool is local with no remote alerting by design; the refusal banner is the signal. (3) The runbook and changelog lines are not written; README.md:78 (profile precedence wording) remains as T03 left it. (4) The full-suite count was taken before the 3 hardening tests were added; those tests pass in the per-file run."
+}
