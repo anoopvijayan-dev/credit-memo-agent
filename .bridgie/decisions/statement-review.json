@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 302,
+  "next_id": 307,
   "decisions": [
     {
       "id": "D1",
@@ -6050,6 +6050,108 @@
       "decided_at": "2026-11-21T01:20:59.355Z",
       "effect": "changes requested: Owner decision of 2026-11-20, given in chat: accept these as edge cases outside the guarantee and push development forward. Clarify the R2 scope limit revision 30 wrote, keeping everything else in revision 30. The one-record-ahead limit is about each record's own values: its cells, its amount and balance against the line limit, a bad byte, a field too long to read, a quoted field left open; these are checked once the next record has been read at most. Checks that relate records to one another, which way the file runs and whether its dates keep to it, whether each balance follows from the one before (across a record whose balance is missing or unreadable, as before this change), the money in and money out totals, and cma import monzo's walk of the balance after sorting by date and time, are made from the records read, once reading has stopped; they are not limited to one record ahead, and no order between a record's own problem and such a check is promised beyond R2's naming of the first problem cma import monzo meets in a record.; re-run bridgie shape statement-review",
       "created_at": "2026-11-21T01:20:59.336Z"
+    },
+    {
+      "id": "D302",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-31"
+      },
+      "context": "D291, the answer to revision 30's second question, chose that a lock turned on takes effect from the next run: a run keeps the lock its reading found as it started, and a resume reads firm.yaml as it resumes. It asked for that in R29 and P18 in the next revision. D301 asks revision 31 to clarify R2 and keep everything else in revision 30, so revision 31 leaves R29 and P18 as revision 30 wrote them. R29 is a state requirement, and verify-186, verify-189 and verify-191 each failed T17 on a reading of firm.yaml taken before the lock was turned on. When should R29 and P18 say D291?",
+      "options": [
+        "Write D291 into R29 and P18 in the next revision, with the answers to the other T17 questions, keeping every id (design default)",
+        "Leave R29 and P18 as revision 30 wrote them, so T17 is judged without D291 in their text"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T01:33:20.456Z"
+    },
+    {
+      "id": "D303",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-31"
+      },
+      "context": "A native HTTP runner of the MCP server reads the offline lock, and then Uvicorn binds the runner's socket. If the lock is turned on between the two, the runner binds under the lock (verify-193; src/cma/mcp_server.py:111 at 25db103). Since 25db103 the native runners serve the lock-checked app, so every request on that socket gets 503 and no tool runs. R29 says that starting the server through its run methods reads the lock first and is refused under it. No check can be joined to the bind, as R42 says of a writer's check and its step.",
+      "options": [
+        "State the window in R29 and P18: a lock turned on after the runner's check and before its bind is outside them, the socket serves no request, and the next start is refused (design default; no build change)",
+        "Read the lock again once the socket is bound, close it if the lock is on, and state the smaller window that leaves (one change in T17)"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T01:33:20.477Z"
+    },
+    {
+      "id": "D304",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-31"
+      },
+      "context": "verify-193 handed a run a LangChainTracer in its callbacks, and the tracer stayed active under the lock (src/cma/graph.py:535 at 25db103). The owner's 9b10daa, not yet reviewed, takes a LangSmith tracer out of a run's callbacks under the lock. R29 does not say what it asks of a callback a caller hands a run, which is the caller's own code.",
+      "options": [
+        "Take LangSmith tracers out under the lock, as 9b10daa does. Any other callback a caller hands a run is the caller's code and outside R29, as an embedder's own server is. Say so in R29 in the next revision (design default)",
+        "Refuse, under the lock, a run handed any LangSmith tracer, naming the lock, so the caller learns its tracer was not used (one change in T17)"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T01:33:20.488Z"
+    },
+    {
+      "id": "D305",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-31"
+      },
+      "context": "P5 says that no prompt contains a sentinel string that the case's descriptions and profile contain. R30 lets a prompt carry the rule table. T17 keeps a custom rule's id in the prompt only when the rule is the packaged one, and four reviews in a row failed that comparison. In verify-193, an exact copy of the packaged R2 under another policy name, with R2 used as a sentinel, put R2 in the prompt. A sentinel equal to a packaged rule id appears in every prompt drawn up with the packaged policy, whatever the build does, so P5 as written cannot hold for it.",
+      "options": [
+        "A string that the policy in use holds, packaged or supplied, is the firm's text, which R30 lets the rule table carry, and is not a sentinel. Say so in P5 and R30 in the next revision (design default; T17's comparison can then be simpler)",
+        "Also keep every supplied policy's rule ids and descriptions out of a prompt: each custom rule shows as a position with its metric, comparison and limits, and the guard and the appendix map positions back (changes in T17 and the guard). A sentinel equal to a packaged id still needs the first option's exception"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T01:33:20.500Z"
+    },
+    {
+      "id": "D306",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Approve the design and requirements (R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R18 R19 R20 R21 R22 R23 R24 R25 R26 R27 R28 R29 R30 R31 R32 R33 R34 R35 R36 R37 R38 R39 R40 R41 R42 R43 R44 R45 R46 R47 R48 R50 R51 R52 R53 R54 R55 R56 P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20) for 'statement-review'? Branch bridgie/statement-review from claude/busy-ride-h88y5r.",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T01:33:20.514Z"
     }
   ]
 }
