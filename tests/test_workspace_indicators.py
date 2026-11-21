@@ -13,10 +13,10 @@ import io
 import re
 
 import pytest
+from test_workspace_summary import _api, _assert_only_escaped, _get, _page
 
 from cma import store
 from cma.review import server as rs
-from tests.test_workspace_summary import _api, _assert_only_escaped, _get, _page
 
 
 @pytest.fixture
