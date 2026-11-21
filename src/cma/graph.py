@@ -11,6 +11,19 @@ and waits for a named person; nothing is final until they say so. `finalise` sta
 the decision and appends the figures, rules, model and file hashes the memo rests on,
 so the written memo can answer "where did this figure come from" on its own.
 
+Prompts: `draft_prompt` is the only thing that reaches the model. It carries the metric
+and rule tables, the period and a placeholder account name, never a description, a
+payer, the account's real name, a case profile field, a file path or the policy's name
+(ADR 001, R30); the overall policy outcome is a row of the rule table. A redraft adds one
+line naming the metric and rule ids the guard flagged, and nothing else: never the
+rejected draft, the guard's reasons or any number it quoted.
+
+Offline lock: a run reads firm.yaml once, at its start. The CLI reads it before making the
+model client and hands that reading to `build`, which uses it for the first run only; any
+other run reads firm.yaml in `load`. Nothing in the graph's input can set the run's lock
+(T17 review 3). Every hosted request in the run is checked against that value, and the
+evidence records it.
+
 Checkpoints: the default MemorySaver lives in memory, so a pending review is lost when
 the process exits. Pass a durable checkpointer (`sqlite_checkpointer(path)`, needs the
 `durable` extra) to keep pending reviews across restarts.
@@ -18,23 +31,28 @@ the process exits. Pass a durable checkpointer (`sqlite_checkpointer(path)`, nee
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import re
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import TypedDict
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import interrupt
+from langgraph.types import Command, interrupt
 from pydantic import ValidationError
 
 from . import categorise as cat
+from . import firm, ingest
 from . import guard as grd
-from . import ingest
+from . import indicators as ind
 from . import metrics as met
 from . import policy as pol
-from .llm import LLM, get_llm
+from .llm import LLM, FakeLLM, HostedLLM, get_llm
 from .models import (
     EVIDENCE_SCHEMA_VERSION,
     GuardResult,
@@ -46,6 +64,11 @@ from .models import (
 )
 
 MAX_REDRAFTS = 2
+PROMPT_ACCOUNT_NAME = "Applicant"
+# A redraft prompt's only addition: this label and the metric and rule ids the guard flagged.
+# The guard's findings quote the model's own output, so they stay out of the prompt (R30);
+# they go to the reviewer.
+REDRAFT_LABEL = "Redraft ids:"
 
 # Our pydantic models travel through the checkpointer between the review interrupt and
 # the resume, so they must be on the allow-list.
@@ -95,14 +118,27 @@ Rules you must follow. An automatic check enforces 1-7 and rejects the draft if 
 6. Use exactly these headings, as "## " markdown headings: Business overview, Revenue, Cash position, Obligations and conduct, Recommendation.
 7. A policy limit takes its rule tag and is introduced as a limit: "above the 1.25x [R2] minimum", never "cover is 1.25x [R2]".
 8. The Recommendation states the policy outcome and names each rule that was referred or failed. You do not decide; the analyst does.
-9. Plain English, no hedging filler, under 400 words."""
+9. Plain English, no hedging filler, under 400 words.
+10. A "Redraft ids:" line means your previous draft failed the check. It lists the metric and rule ids whose figures were misquoted, untagged or not introduced as a limit ("none" if the fault was a number with no tag or a missing heading). Write the memo again from the tables."""
 
 
 class MemoState(TypedDict, total=False):
     statement_path: str
     policy_path: str | None
+    # The thresholds file's path (None: the packaged one) and its text as read at the start of
+    # the run, so the indicators in the evidence come from the file the run checked (R14).
+    thresholds_path: str | None
+    thresholds_text: str | None
     vat_stagger: int | None
     model: str
+    run_offline_lock: bool | None  # never read: an input before T17 review 3, kept so old checkpoints load
+    offline_lock: bool
+    resume_offline_lock: bool | None  # the lock in force when the review was resumed (T17 review 10)
+    # The lock in force for a resume that drafted (a review paused before its draft): the lock
+    # that resume's hosted request was checked against, kept apart from the finalising
+    # resume's (T17 review 17).
+    draft_resume_offline_lock: bool | None
+    egress: str
     statement_sha256: str
     statement: Statement
     ruleset: dict  # {"id", "sha256"} of the categorisation table used (CMA_RULESET)
@@ -112,6 +148,9 @@ class MemoState(TypedDict, total=False):
     guard: GuardResult
     guard_feedback: str
     redrafts: int
+    # Set when `cma resume` has written today's figures into a review drafted by an earlier
+    # release, before showing it: the review goes on to the reviewer as it was (T04 review 24).
+    refreshed_for_review: bool
     review: ReviewDecision | None
     final_memo: str | None
 
@@ -140,16 +179,139 @@ def _threshold(value: float | None, unit: str) -> str:
     return "" if value is None else format_value(value, unit)
 
 
-def rules_table(p: PolicyResult) -> str:
+def _shipped_descriptions() -> dict[str, str]:
+    """The rule descriptions of the shipped default policy, by rule id."""
+    try:
+        return {r["id"]: r["description"] for r in pol.load_policy().get("rules", [])
+                if isinstance(r, dict) and isinstance(r.get("id"), str) and isinstance(r.get("description"), str)}
+    except Exception:  # no shipped text known means none is sent
+        return {}
+
+
+def _shipped_rules() -> dict[str, tuple]:
+    """The shipped default policy's rules, by id: description, metric, operator, threshold."""
+    try:
+        def band(v):
+            return float(v) if v is not None else None
+        return {r["id"]: (r.get("description"), r.get("metric"), r.get("op"), float(r.get("threshold")),
+                          band(r.get("refer_below")), band(r.get("refer_above")),
+                          str(r.get("on_fail", "")), str(r.get("when_missing", "refer")))
+                for r in pol.load_policy().get("rules", []) if isinstance(r, dict) and isinstance(r.get("id"), str)}
+    except Exception:  # no shipped rule known means none is sent
+        return {}
+
+
+def _shipped_spellings() -> dict[str, tuple]:
+    """Each shipped rule's limits as the shipped policy writes them: a custom rule equal to it
+    is sent with these, never with its own spelling of the same number (T17 review 12)."""
+    try:
+        def spell(v):
+            return str(v) if v is not None else None
+        return {r["id"]: (spell(r.get("threshold")), spell(r.get("refer_below")), spell(r.get("refer_above")))
+                for r in pol.load_policy().get("rules", []) if isinstance(r, dict) and isinstance(r.get("id"), str)}
+    except Exception:
+        return {}
+
+
+def _shipped_detail(r, spelt: tuple) -> str:
+    """A shipped rule's detail for the prompt, its limits written as the shipped policy writes
+    them; a figure that cannot be computed names no limit."""
+    head, sep, tail = r.detail.partition("; rule requires ")
+    if not sep:
+        return r.detail
+    req = f"rule requires {r.op} {spelt[0]}"
+    if "referred below" in tail:
+        req += f", referred below {spelt[1]}"
+    if "referred above" in tail:
+        req += f", referred above {spelt[2]}"
+    return f"{head}; {req}."
+
+
+def _from_shipped_policy(p: PolicyResult) -> bool:
+    """Whether a policy result came from the shipped policy file itself, by its hash."""
+    try:
+        return bool(p.policy_sha256) and p.policy_sha256 == pol.load_policy()["_sha256"]
+    except Exception:
+        return False
+
+
+def _is_shipped(r, shipped: dict[str, tuple], from_shipped: bool = False) -> bool:
+    """Whether a policy result's rule is the shipped policy's own rule, whole: its id, text,
+    metric and requirement, referral bands and what a breach or a missing figure means
+    included. A custom rule that reuses a shipped id is custom (T17 reviews 6, 7 and 8).
+    `from_shipped`: the result came from the shipped policy file, by its hash."""
+    want = shipped.get(r.rule_id)
+
+    def num(v):
+        return float(v) if v is not None else None
+    have = (r.description, r.metric_id, r.op, num(r.threshold), num(r.refer_below), num(r.refer_above),
+            r.on_fail, r.when_missing)
+    if want is not None and r.on_fail == "" and r.when_missing == "":
+        # A checkpoint from before the actions were kept holds neither (T17 review 15). Its
+        # actions are known only when the result came from the shipped policy file itself, by
+        # its hash: they are then the shipped rule's. Any other such rule is not known to be
+        # the shipped one whole, and is masked (R30, P5, T17 review 16).
+        return from_shipped and want[:6] == have[:6]
+    return want is not None and want == have
+
+
+def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = False) -> str:
+    """The policy table. `for_prompt`: what goes to a hosted model, where a rule's free-text
+    description is sent only when it is the shipped policy's own text for that rule; a custom
+    policy's description could carry case or customer text, so it is replaced by the rule's
+    metric and requirement alone (P5, T17 review 1). A rule id is free text in a custom
+    policy too, whatever its spelling (R4242 can be a sentinel), so only an id the shipped
+    policy itself uses is sent; any other is replaced (T17 reviews 2 and 3)."""
+    shipped = _shipped_rules() if for_prompt else {}
+    spellings = _shipped_spellings() if for_prompt else {}
+    from_shipped = for_prompt and _from_shipped_policy(p)
     lines = ["| id | rule | metric | requirement | outcome | detail |", "|---|---|---|---|---|---|"]
+    if overall_row:
+        lines.append(f"| overall | overall outcome | - | - | {p.overall.value} | - |")
     for r in p.rules:
         req = f"{r.op} {_threshold(r.threshold, r.unit)}"
         if r.refer_below is not None:
             req += f"; referred below {_threshold(r.refer_below, r.unit)}"
         if r.refer_above is not None:
             req += f"; referred above {_threshold(r.refer_above, r.unit)}"
-        lines.append(f"| {r.rule_id} | {r.description} | {r.metric_id} | {req} | {r.outcome.value} | {r.detail} |")
+        rule_id, description = r.rule_id, r.description
+        detail = r.detail
+        if for_prompt and not _is_shipped(r, shipped, from_shipped):
+            # A custom rule's limits and detail are its own text too, and a number in them could
+            # come from the case: only its metric and outcome are sent (T17 review 10).
+            rule_id, description, req, detail = "(custom id)", "(custom rule)", "(custom requirement)", "-"
+        elif for_prompt and r.rule_id in spellings:
+            detail = _shipped_detail(r, spellings[r.rule_id])
+        lines.append(f"| {rule_id} | {description} | {r.metric_id} | {req} | {r.outcome.value} | {detail} |")
     return "\n".join(lines)
+
+
+def redraft_ids(g: GuardResult, metrics: list[Metric], policy: PolicyResult) -> list[str]:
+    """The metric and rule ids the guard flagged, and only ids the prompt's tables show, so
+    nothing the model wrote (a made-up tag included) goes back into a prompt, nor a custom
+    rule id the rule table masked (T17 review 3)."""
+    shipped = _shipped_rules()
+    from_shipped = _from_shipped_policy(policy)
+    known = {m.id for m in metrics} | {r.rule_id for r in policy.rules if _is_shipped(r, shipped, from_shipped)}
+    found = set(g.missing_citations)
+    for f in g.unmatched:
+        found.update(re.findall(r"\b[MR]\d+\b", f.reason))
+    return sorted(found & known, key=lambda i: (i[0], int(i[1:])))
+
+
+def draft_prompt(statement: Statement, metrics: list[Metric], policy: PolicyResult,
+                 redraft: list[str] | None = None) -> str:
+    """The user prompt: the tables (the overall outcome as a rule-table row), the period and
+    the placeholder name. A redraft adds one line of metric and rule ids, nothing else."""
+    user = (
+        f"Account: {PROMPT_ACCOUNT_NAME}\n"
+        f"Period: {statement.start} to {statement.end}\n\n"
+        f"Metrics table:\n{met.as_table(metrics)}\n\n"
+        f"Policy table:\n{rules_table(policy, overall_row=True, for_prompt=True)}\n"
+    )
+    if redraft is not None:
+        user += f"\n{REDRAFT_LABEL} {', '.join(redraft) or 'none'}\n"
+    return user
 
 
 def appendix(s: MemoState) -> str:
@@ -167,7 +329,9 @@ def appendix(s: MemoState) -> str:
         "| id | metric | value | method | lines |",
         "|---|---|---|---|---|",
     ]
-    lines += [f"| {m.id} | {m.name} | {m.display()} | {m.method} | {len(m.evidence)} |" for m in s["metrics"]]
+    # Every money figure to the penny in the appendix (T04 review 4); the memo's prose keeps
+    # its own convention, checked by the guard.
+    lines += [f"| {m.id} | {m.name} | {m.display_exact()} | {m.method} | {len(m.evidence)} |" for m in s["metrics"]]
     lines += ["", rules_table(p)]
     return "\n".join(lines)
 
@@ -183,6 +347,118 @@ def ruleset_used(s: MemoState) -> dict:
         return s["ruleset"]
     v1 = cat.load_ruleset("v1")
     return {"id": v1.id, "sha256": v1.sha256, "inferred": "pre-ruleset checkpoint"}
+def _egress(s: MemoState) -> dict:
+    """Where the draft's data went. A review drafted by the version before the offline lock
+    resumes with no lock fields in its checkpoint; that version had no lock, and its model
+    name says whether the draft left the machine."""
+    if s.get("egress") is not None and s.get("offline_lock") is not None:
+        out = {"offline_lock": s["offline_lock"], "destination": s["egress"],
+               "recorded": "at run start; every hosted request in the run was checked against this value"}
+        if s.get("resume_offline_lock") is not None:
+            # The lock in force when the review was resumed and finalised, which may differ
+            # from the draft's (T17 review 10). An added field; the others are unchanged.
+            out["resume_offline_lock"] = s["resume_offline_lock"]
+        _add_draft_resume_lock(out, s)
+        return out
+    model = s.get("model") or "-"
+    out = {"offline_lock": False, "destination": "offline" if model.startswith("fake:") else model,
+           "recorded": "at resume; the draft predates the offline lock"}
+    if s.get("resume_offline_lock") is not None:
+        # The lock in force as the review resumed, recorded at finalisation, for a draft from
+        # before the lock too (T17 review 11).
+        out["resume_offline_lock"] = s["resume_offline_lock"]
+    _add_draft_resume_lock(out, s)
+    return out
+
+
+def _add_draft_resume_lock(out: dict, s: MemoState) -> None:
+    """The lock a resume that drafted was checked against, where one drafted: the draft's
+    destination went out under it, whichever later resume finalised (T17 review 17)."""
+    if s.get("draft_resume_offline_lock") is not None:
+        out["draft_resume_offline_lock"] = s["draft_resume_offline_lock"]
+
+
+def line_rule_ids(s: MemoState) -> list[str | None]:
+    """Each line's rule id. A checkpoint from before provenance holds none: either no
+    ruleset at all (before T01; the lines were categorised by the table that is now v1,
+    P7) or a recorded ruleset with no rule ids on the lines (T02). The table the state
+    names, or v1 when it names none, is replayed on a copy, provided the installed table
+    has the recorded hash, and its rule id taken for each line whose saved category it
+    reproduces. A line it does not reproduce keeps None rather than a rule that did not
+    set it."""
+    txns = s["statement"].transactions
+    if all(t.rule_id for t in txns):
+        return [t.rule_id for t in txns]
+    recorded = s.get("ruleset") or {}
+    try:
+        table = cat.load_ruleset(recorded.get("id") or "v1")
+    except cat.RulesetError:
+        return [t.rule_id for t in txns]
+    if recorded.get("sha256") and recorded["sha256"] != table.sha256:
+        return [t.rule_id for t in txns]  # not the table that categorised these lines
+    replay = cat.categorise(s["statement"].model_copy(deep=True), table).transactions
+    return [t.rule_id or (r.rule_id if r.category == t.category else None) for t, r in zip(txns, replay, strict=True)]
+
+
+class StaleReviewError(ValueError):
+    """A pending review whose policy outcome could differ under this release's figures."""
+
+
+def refreshed(s: MemoState) -> dict:
+    """A pending review's figures as this release computes them, with the grounding check
+    that follows from them, when they differ from the stored ones; else {}.
+
+    A review drafted by an earlier release can hold figures computed by its arithmetic and
+    no total money in or money-in buckets. Resumed here, it is decided, finalised and
+    recorded on today's figures (R1, R2, P2), and keeps resuming as before (R53); if its
+    memo no longer holds against them, approving it needs the grounding override, as for
+    any memo that fails the check (T04 review 16).
+
+    The stored policy result is re-evaluated for the changed figures from the rules it holds
+    (T04 review 18); where it cannot say a rule's outcome, the policy is read once and used
+    only if its hash is the stored one (T04 review 19). Only if neither settles it is the
+    review refused with StaleReviewError, to be drafted again by `cma run`. Raises AmountError or ReconciliationError when today's
+    figures cannot be computed."""
+    fresh = met.compute(s["statement"].model_copy(deep=True), vat_stagger=s.get("vat_stagger"))
+    if [m.model_dump() for m in fresh] == [m.model_dump() for m in s["metrics"]]:
+        return {}
+    try:
+        policy = pol.reevaluate(s["policy"], s["metrics"], fresh,
+                                Path(s["policy_path"]) if s.get("policy_path") else None)
+    except pol.OutcomeUnknown as e:
+        raise StaleReviewError(f"this review was drafted by an earlier release, and {e} today; "
+                               "run `cma run` on the statement again") from e
+    g = grd.check(s["memo"], fresh, policy, required_headings=grd.REQUIRED_HEADINGS)
+    update = {"metrics": fresh, "guard": g}
+    if policy != s["policy"]:
+        update["policy"] = policy
+    return update
+
+
+def guard_fields(g) -> dict:
+    """The grounding result as the review shows it."""
+    return {"guard_grounded": g.grounded,
+            "guard_unmatched": [f.number_text or f.reason for f in g.unmatched],
+            "guard_missing_citations": g.missing_citations}
+
+
+def run_thresholds(s: MemoState) -> ind.Thresholds:
+    """The thresholds the run read: the text kept in its state, or the packaged file for a run
+    that kept none (a review drafted before indicators existed)."""
+    if s.get("thresholds_text") is not None:
+        return ind.parse_thresholds(s["thresholds_text"], s.get("thresholds_path") or ind.DEFAULT_SOURCE)
+    return ind.load_thresholds()
+
+
+def _indicator_fields(s: MemoState) -> dict:
+    t = run_thresholds(s)
+    raised = ind.raise_indicators(s["statement"], t)
+    return {"thresholds": {"source": t.source, "sha256": t.sha256,
+                           "illustrative": [f"{a}.{b}" for a, b in t.fields() if t.illustrative(a, b)]},
+            "indicators": [i.model_dump(mode="json") for i in raised],
+            # R15: the lines a person has to decide, largest first, assembled from the same
+            # lines and indicators; `cma run` has one account, so no possible own-account pairs.
+            "judgement_queue": [e.model_dump(mode="json") for e in ind.judgement_queue(s["statement"], raised)]}
 
 
 def evidence_record(s: MemoState) -> dict:
@@ -193,10 +469,21 @@ def evidence_record(s: MemoState) -> dict:
                       "start": str(s["statement"].start), "end": str(s["statement"].end),
                       "transactions": len(s["statement"].transactions)},
         "model": s.get("model"),
+        "egress": _egress(s),
         "vat_stagger": s.get("vat_stagger"),
         "ruleset": ruleset_used(s),
+        # Each line's category and the rule that set it: ids only, no descriptions.
+        "lines": [{"id": t.id, "category": t.category.value if t.category else None, "rule_id": rule_id,
+                   "reverses": t.reverses} for t, rule_id in zip(s["statement"].transactions, line_rule_ids(s),
+                                                                 strict=True)],
         "metrics": [m.model_dump() for m in s["metrics"]],
-        "policy": s["policy"].model_dump(mode="json"),
+        # R11: computed here from the stored lines, as the metrics were, so no new type
+        # travels through the checkpoint (CHECKPOINT_TYPES is unchanged).
+        "monthly_summary": [r.model_dump(mode="json") for r in met.monthly_summary(s["statement"])],
+        # R14: raised here from the stored lines, as the monthly summary is, with the thresholds
+        # file the run read; each indicator names the thresholds it fired at.
+        **_indicator_fields(s),
+        "policy": s["policy"].evidence_dump(mode="json"),
         "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
         "redrafts": s.get("redrafts", 0),
         "review": s["review"].model_dump(mode="json") if s.get("review") else None,
@@ -204,16 +491,38 @@ def evidence_record(s: MemoState) -> dict:
     }
 
 
-def build(llm: LLM | None = None, checkpointer=None):
+def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfig | None = None):
+    """`firm_config`: the caller's reading of firm.yaml, made just before this build (the CLI
+    makes it before the model client). It is the first run's reading and is used once; every
+    later run of this graph reads firm.yaml at its own start."""
     llm = llm or get_llm()
+    handed = [firm_config] if firm_config is not None else []
 
-    def load(s: MemoState) -> MemoState:
+    def load(s: MemoState, config: RunnableConfig) -> MemoState:
+        reading = _run_reading_of(config) or (handed.pop() if handed else firm.load())
         path = Path(s["statement_path"])
-        statement = ingest.load_csv(path)
+        try:
+            data = path.read_bytes()  # read once: these bytes are both parsed and hashed (T04 review 17)
+        except OSError:
+            ingest.load_csv(path)  # refuses, saying why (no such file)
+            raise
+        statement = ingest.load_csv(path, data=data)
+        # The thresholds file is read and checked once, here: a malformed one is refused naming
+        # its line before anything is computed, and its text is what the indicators come from.
+        tpath = s.get("thresholds_path")
+        thresholds_text, _ = ind.read_thresholds(Path(tpath) if tpath else None)
         return {
             "statement": statement,
-            "statement_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "thresholds_text": thresholds_text,
+            "statement_sha256": hashlib.sha256(data).hexdigest(),
             "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
+            # The run's one reading of firm.yaml: the one handed to build() for its first run,
+            # or read now; never the graph's input. Every hosted request in this run is
+            # checked against it, and the evidence records it.
+            "offline_lock": reading.offline_lock is not False,
+            "run_offline_lock": None,
+            "draft_resume_offline_lock": None,
+            "egress": "offline" if isinstance(llm, FakeLLM) else f"{llm.name}:{getattr(llm, 'model', '-')}",
             # A run starts clean, even on a thread that has run before.
             "redrafts": 0,
             "guard_feedback": "",
@@ -233,30 +542,40 @@ def build(llm: LLM | None = None, checkpointer=None):
         p = pol.load_policy(Path(s["policy_path"])) if s.get("policy_path") else None
         return {"policy": pol.evaluate(s["metrics"], p)}
 
-    def draft(s: MemoState) -> MemoState:
-        table = met.as_table(s["metrics"])
-        user = (
-            f"Account: {s['statement'].account_name}\n"
-            f"Period: {s['statement'].start} to {s['statement'].end}\n\n"
-            f"Metrics table:\n{table}\n\n"
-            f"Policy: {s['policy'].policy_name}\nOverall policy outcome: {s['policy'].overall.value}\n"
-            f"Policy table:\n{rules_table(s['policy'])}\n"
-        )
-        if s.get("guard_feedback"):
-            user += f"\nYour previous draft was rejected by the grounding check:\n{s['guard_feedback']}\nRewrite it using only figures from the table, each with its tag.\n"
-        return {"memo": llm.complete(SYSTEM_PROMPT, user), "redrafts": s.get("redrafts", 0)}
+    def draft(s: MemoState, config: RunnableConfig) -> MemoState:
+        g = s.get("guard")
+        ids = redraft_ids(g, s["metrics"], s["policy"]) if s.get("guard_feedback") and g else None
+        user = draft_prompt(s["statement"], s["metrics"], s["policy"], redraft=ids)
+        if isinstance(llm, HostedLLM):
+            # A resume's own lock, which its reading at resume found (or the draft's, if that was
+            # on), decides its hosted requests, as its evidence records (T17 review 13).
+            resumed = ((config or {}).get("configurable") or {}).get(_RESUME_KEY)
+            # The draft's own lock, if it was on, still holds (T17 review 14).
+            lock = s["offline_lock"] if resumed is None else (resumed or s["offline_lock"] is True)
+            memo = llm.complete(SYSTEM_PROMPT, user, offline_lock=lock, reading=_run_reading_of(config),
+                                run_key=((config or {}).get("configurable") or {}).get(_RUN_KEY))
+        else:
+            memo = llm.complete(SYSTEM_PROMPT, user)
+        # The model that drafted it, and where the prompt went, are this graph's: a resume that
+        # drafts on another graph's model records that model, not the first draft's (T17 review 15).
+        out = {"memo": memo, "redrafts": s.get("redrafts", 0),
+               "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
+               "egress": "offline" if isinstance(llm, FakeLLM) else f"{llm.name}:{getattr(llm, 'model', '-')}"}
+        resumed = ((config or {}).get("configurable") or {}).get(_RESUME_KEY)
+        # A resume that drafts records its lock with the destination it drafted to, so the
+        # evidence names both, even if the review pauses again (T17 review 16), in a field of its
+        # own that a later, finalising resume does not overwrite (T17 review 17). A draft that
+        # is not a resume clears it: its own lock is the run's.
+        out["draft_resume_offline_lock"] = resumed
+        return out
 
     def guard(s: MemoState) -> MemoState:
         g = grd.check(s["memo"], s["metrics"], s["policy"], required_headings=grd.REQUIRED_HEADINGS)
-        feedback = ""
-        if not g.grounded:
-            parts = [f"- {f.number_text}: {f.reason}" for f in g.unmatched]
-            parts += [f"- {mid} quoted without its tag" for mid in g.missing_citations]
-            feedback = "\n".join(parts)
-        return {"guard": g, "guard_feedback": feedback}
+        # The findings stay in `guard` for the reviewer; the model is told only that it failed.
+        return {"guard": g, "guard_feedback": "" if g.grounded else "redraft"}
 
     def route_after_guard(s: MemoState) -> str:
-        if s["guard"].grounded or s.get("redrafts", 0) >= MAX_REDRAFTS:
+        if s["guard"].grounded or s.get("redrafts", 0) >= MAX_REDRAFTS or s.get("refreshed_for_review"):
             return "review"
         return "redraft"
 
@@ -269,12 +588,12 @@ def build(llm: LLM | None = None, checkpointer=None):
         Each refusal is a fresh interrupt, so LangGraph replays earlier answers in order
         and the reviewer can always correct theirs.
         """
+        update = refreshed(s)  # a review drafted by an earlier release (T04 review 16)
+        s = {**s, **update}
         payload = {
             "memo": s["memo"],
             "policy_outcome": s["policy"].overall.value,
-            "guard_grounded": s["guard"].grounded,
-            "guard_unmatched": [f.number_text or f.reason for f in s["guard"].unmatched],
-            "guard_missing_citations": s["guard"].missing_citations,
+            **guard_fields(s["guard"]),
             "question": "Approve this memo for the credit file?",
             "error": None,
         }
@@ -282,10 +601,10 @@ def build(llm: LLM | None = None, checkpointer=None):
             decision = interrupt(payload)
             problem = _review_problem(decision, s["guard"].grounded)
             if problem is None:
-                return {"review": ReviewDecision(**decision)}
+                return {"review": ReviewDecision(**decision), **update}
             payload = {**payload, "error": problem}
 
-    def finalise(s: MemoState) -> MemoState:
+    def finalise(s: MemoState, config: RunnableConfig) -> MemoState:
         r, g = s["review"], s["guard"]
         if g.grounded:
             grounding = "passed"
@@ -301,7 +620,9 @@ def build(llm: LLM | None = None, checkpointer=None):
             + f"\nGrounding check: {grounding} ({g.numbers_checked} numbers checked,"
             f" {len(g.unmatched)} unmatched, {len(g.missing_citations)} missing citations)."
         )
-        return {"final_memo": s["memo"] + stamp + "\n\n" + appendix(s)}
+        resumed = ((config or {}).get("configurable") or {}).get(_RESUME_KEY)
+        return {"final_memo": s["memo"] + stamp + "\n\n" + appendix(s),
+                "resume_offline_lock": resumed}
 
     g = StateGraph(MemoState)
     for name, fn in [
@@ -319,4 +640,326 @@ def build(llm: LLM | None = None, checkpointer=None):
     g.add_edge("redraft", "draft")
     g.add_edge("review", "finalise")
     g.add_edge("finalise", END)
-    return g.compile(checkpointer=checkpointer or default_checkpointer())
+    compiled = g.compile(checkpointer=checkpointer or default_checkpointer())
+
+    def run_reading(graph_input, config, stored=_UNREAD):
+        """The run's one reading of firm.yaml, taken as it starts: the one handed to build() for
+        its first run, or read now; it travels with the run's own config, never shared by
+        thread, so concurrent runs keep their own (T17 review 5). A resumed run is under the
+        lock if its first reading was, or if the lock is on now: by this graph's latest reading,
+        or firm.yaml read now (T17 review 5)."""
+        if graph_input is None or isinstance(graph_input, Command):
+            if stored is _UNREAD:
+                stored = _stored_lock(compiled, config)
+            # A checkpoint whose lock cannot be looked up is treated as drafted under the lock,
+            # never as one from before it (T17 review 14).
+            # A resume is a run of its own and reads firm.yaml as it resumes, never reusing the
+            # draft's reading or one handed to build(), even with firm.yaml unchanged, and for a
+            # draft from before the lock (stored None) too (R29 revision 32, T17 reviews 11, 12).
+            now = _read_or_locked()
+            if now is not None and not firm.take_for_run(now):
+                now = None
+            # The resume's reading travels with it, so a hosted request it makes (a draft or a
+            # redraft, for a review paused before drafting) is checked against it (T17 review 13).
+            return now, stored is True or stored is _LOOKUP_FAILED or now is None or now.offline_lock is not False
+        reading = handed.pop() if handed else None
+        if reading is None or not firm.take_for_run(reading):
+            reading = firm.load()  # a reading drives one run only (T17 review 6)
+            firm.take_for_run(reading)
+        return reading, reading.offline_lock is not False
+
+    _untraced_under_lock(compiled, run_reading)
+    return compiled
+
+
+_READING_KEY = "__cma_reading"  # LangGraph never saves a configurable key that starts with "__"
+_RESUME_KEY = "__cma_resume_lock"
+_RUN_KEY = "__cma_run_key"
+
+
+def _without_network_tracers(callbacks):
+    """The run's callbacks without any LangSmith tracer: a list, or a callback manager's own
+    and inherited handlers."""
+    from langchain_core.callbacks import BaseCallbackManager
+    from langchain_core.tracers.langchain import LangChainTracer
+
+    def keep(handlers):
+        return [h for h in (handlers or []) if not isinstance(h, LangChainTracer)]
+
+    if isinstance(callbacks, BaseCallbackManager):
+        manager = callbacks.copy()
+        manager.handlers = keep(manager.handlers)
+        manager.inheritable_handlers = keep(manager.inheritable_handlers)
+        return manager
+    return keep(callbacks) if callbacks else callbacks
+
+
+def _untraced_inherited_config():
+    """Under the lock, the runnable context the graph is called from loses its LangSmith
+    tracers for the run: LangGraph merges a caller's inherited callbacks with the run's own,
+    so a tracer inherited from the calling runnable would trace the run (R29, T17 review 13).
+    Returns the token to restore it, or None when there is nothing to take out."""
+    from langchain_core.runnables.config import var_child_runnable_config
+
+    inherited = var_child_runnable_config.get()
+    callbacks = (inherited or {}).get("callbacks")
+    if not callbacks:
+        return None
+    return var_child_runnable_config.set({**inherited, "callbacks": _without_network_tracers(callbacks)})
+
+
+@contextlib.contextmanager
+def _untraced_step(locked: bool):
+    """Under the lock, one step of a run untraced: LangSmith's own tracing off, a caller's
+    tracing_v2_enabled() context set aside, and the calling runnable's LangSmith tracers taken
+    out, all set up and taken down within the step (R29, T17 reviews 4, 13, 19 and 20)."""
+    if not locked:
+        yield
+        return
+    import langsmith
+
+    inherited, tracing_v2 = _untraced_inherited_config(), _no_tracing_v2_context()
+    try:
+        with langsmith.tracing_context(enabled=False):
+            yield
+    finally:
+        _reset_tracing_v2_context(tracing_v2)
+        if inherited is not None:
+            _reset_inherited_config(inherited)
+
+
+def _without_bound_tracers(graph):
+    """The graph, or under the lock a copy of it whose own bound callbacks hold no LangSmith
+    tracer: a copy keeps the graph's class, so its runs keep the lock's rules (T17 reviews 18
+    and 21)."""
+    bound = (getattr(graph, "config", None) or {}).get("callbacks")
+    if not bound:
+        return graph
+    kept = _without_network_tracers(bound)
+    same = (len(kept.handlers) == len(bound.handlers) and len(kept.inheritable_handlers) == len(bound.inheritable_handlers)
+            if hasattr(bound, "handlers") else len(kept) == len(bound))
+    if same:
+        return graph
+    return graph.copy(update={"config": {**graph.config, "callbacks": kept}})
+
+
+def _no_tracing_v2_context():
+    """Under the lock, a caller's tracing_v2_enabled() context is set aside for the run:
+    LangChain adds the tracer that context holds to every run's callbacks, after the run's own
+    were filtered, whatever LangSmith's own switch says (R29, T17 review 19)."""
+    from langchain_core.tracers.context import tracing_v2_callback_var
+
+    return tracing_v2_callback_var.set(None)
+
+
+def _reset_tracing_v2_context(token) -> None:
+    from langchain_core.tracers.context import tracing_v2_callback_var
+
+    # A stream finished in another context (closed by the garbage collector): the context it
+    # changed is gone with it.
+    with contextlib.suppress(ValueError):
+        tracing_v2_callback_var.reset(token)
+
+
+def _reset_inherited_config(token) -> None:
+    from langchain_core.runnables.config import var_child_runnable_config
+
+    # A stream finished in another context (closed by the garbage collector): the context it
+    # changed is gone with it.
+    with contextlib.suppress(ValueError):
+        var_child_runnable_config.reset(token)
+
+
+def _run_reading_of(config) -> firm.FirmConfig | None:
+    return ((config or {}).get("configurable") or {}).get(_READING_KEY)
+
+
+def _read_or_locked() -> firm.FirmConfig | None:
+    try:
+        return firm.load()
+    except Exception:
+        return None  # a firm.yaml that cannot be read counts as the lock
+
+
+# Set while a run started through one of the wrappers below is going: LangGraph's invoke
+# runs through its own stream, which must not take a second reading of firm.yaml.
+_IN_RUN: ContextVar[tuple | None] = ContextVar("cma_in_run", default=None)
+# Set by invoke and ainvoke for the one call LangGraph makes to its own stream, and taken by
+# that call: any later call on the same graph object, from a node or a callback, is a run of
+# its own, with its own reading and its own tracer filtering (T17 review 11).
+_DELEGATE: ContextVar[int | None] = ContextVar("cma_delegate", default=None)
+
+
+_UNREAD = object()  # the stored lock is looked up by run_reading itself
+_LOOKUP_FAILED = object()  # the checkpoint's stored lock could not be looked up
+
+
+def _stored_lock(graph, config):
+    try:
+        return graph.get_state(config).values.get("offline_lock")
+    except Exception:
+        return _LOOKUP_FAILED
+
+
+async def _astored_lock(graph, config):
+    # An async checkpointer (AsyncSqliteSaver) refuses the synchronous lookup on its own event
+    # loop: an async run looks the lock up the async way (T17 review 14).
+    try:
+        return (await graph.aget_state(config)).values.get("offline_lock")
+    except Exception:
+        return _LOOKUP_FAILED
+
+
+def _untraced_under_lock(graph, run_reading) -> None:
+    """Every way of running the graph (invoke and stream, and their async forms) takes the
+    run's one reading of firm.yaml as it starts, and under the offline lock runs with
+    LangSmith tracing off, whatever the environment says: a trace would send statement data
+    off the machine (R29, T17 review 4). The four are methods of a class made for this graph,
+    which the graph is given, so a copy LangGraph makes of it (with_config, copy) keeps them;
+    as attributes of the one object they were lost on a copy (T17 review 18)."""
+    import langsmith
+
+    base = type(graph)
+
+    def config_of(a, k):
+        return k.get("config", a[1] if len(a) > 1 else None)
+
+    def delegated(self) -> bool:
+        return (_IN_RUN.get() or (None,))[0] == id(self) and _DELEGATE.get() == id(self)
+
+    def start(self, a, k, mark: bool = True, stored=_UNREAD, untrace: bool = True) -> tuple:
+        """Whether this run is under the lock, the token to end it, and the call's arguments
+        with the run's reading in its config; a call nested in a run already going (invoke's
+        own stream) keeps that run's reading. Only invoke and ainvoke mark a run as going,
+        since they run to the end before returning: a stream suspended between items marks
+        nothing, so no other run started meanwhile takes its decision (T17 review 8)."""
+        if delegated(self):
+            # Only invoke's own call to its stream keeps the run's decision, once; a separate
+            # run inside it, on this graph or another, takes its own reading and its own tracer
+            # filtering (T17 reviews 10 and 11).
+            outer = _IN_RUN.get()
+            _DELEGATE.set(None)
+            return outer[1], None, a, k, self
+        graph_input = a[0] if a else k.get("input")
+        resumed = graph_input is None or isinstance(graph_input, Command)
+        if resumed and stored is _UNREAD:
+            stored = _stored_lock(self, config_of(a, k))  # this graph's, or its copy's, checkpoint
+        reading, locked = run_reading(graph_input, config_of(a, k), stored)
+        run_key = firm.begin_run(reading) if reading is not None else None
+        if reading is not None or locked or resumed:
+            config = dict(config_of(a, k) or {})
+            if reading is not None:
+                # The run's key goes with its reading: only the run's own steps hold it.
+                config["configurable"] = {**(config.get("configurable") or {}), _READING_KEY: reading,
+                                          _RUN_KEY: run_key}
+            if resumed:
+                # The lock in force for this resume, which the evidence records beside the
+                # draft's (T17 review 10).
+                config["configurable"] = {**(config.get("configurable") or {}), _RESUME_KEY: locked}
+            if locked:
+                # A LangSmith tracer handed in with the run's callbacks would send the run off
+                # the machine whatever the environment says: under the lock it is taken out
+                # (R29, T17 review 9). Local callbacks stay.
+                config["callbacks"] = _without_network_tracers(config.get("callbacks"))
+            if "config" in k or len(a) < 2:
+                k = {**k, "config": config}
+            else:
+                a = (a[0], config, *a[2:])
+        # invoke's run is untraced from here to its end; a stream is untraced step by step.
+        inherited = (_untraced_inherited_config(), _no_tracing_v2_context()) if locked and untrace else None
+        # Under the lock, the run goes on a copy of the graph without the LangSmith tracers
+        # bound to it (with_config(callbacks=...)): LangGraph merges the graph's own callbacks
+        # into the run's after the call's were filtered (T17 review 21).
+        target = _without_bound_tracers(self) if locked else self
+        marks = (_IN_RUN.set((id(target), locked)), _DELEGATE.set(id(target))) if mark else None
+        return locked, (marks, (reading, run_key) if reading is not None else None, inherited), a, k, target
+
+    def end(token) -> None:
+        if token is not None:
+            if token[2] is not None:
+                if token[2][0] is not None:
+                    _reset_inherited_config(token[2][0])
+                _reset_tracing_v2_context(token[2][1])
+            if token[0] is not None:
+                _DELEGATE.reset(token[0][1])
+                _IN_RUN.reset(token[0][0])
+            if token[1] is not None:
+                firm.end_run(*token[1])
+
+    def invoke(self, *a, **k):
+        locked, token, a, k, target = start(self, a, k)
+        try:
+            if locked:
+                with langsmith.tracing_context(enabled=False):
+                    return base.invoke(target, *a, **k)
+            return base.invoke(target, *a, **k)
+        finally:
+            end(token)
+
+    def stream(self, *a, **k):
+        def run():
+            locked, token, args, kwargs, target = start(self, a, k, mark=False, untrace=False)
+            try:
+                # Each step runs untraced under the lock, set up afresh and taken down within
+                # the step, so a tracing context the caller enters between two steps never
+                # reaches the run (T17 review 20), and none of the run's leaks to the caller.
+                with _untraced_step(locked):
+                    inner = base.stream(target, *args, **kwargs)
+                try:
+                    while True:
+                        with _untraced_step(locked):
+                            try:
+                                item = next(inner)
+                            except StopIteration:
+                                return
+                        yield item
+                finally:
+                    with _untraced_step(locked):
+                        inner.close()
+            finally:
+                end(token)
+        return run()
+
+    async def stored_for(self, a, k):
+        """For an async resume that is a run of its own, the checkpoint's lock, looked up the
+        async way; otherwise left to start()."""
+        graph_input = a[0] if a else k.get("input")
+        if delegated(self) or not (graph_input is None or isinstance(graph_input, Command)):
+            return _UNREAD
+        return await _astored_lock(self, config_of(a, k))
+
+    async def ainvoke(self, *a, **k):
+        locked, token, a, k, target = start(self, a, k, stored=await stored_for(self, a, k))
+        try:
+            if locked:
+                with langsmith.tracing_context(enabled=False):
+                    return await base.ainvoke(target, *a, **k)
+            return await base.ainvoke(target, *a, **k)
+        finally:
+            end(token)
+
+    def astream(self, *a, **k):
+        async def run():
+            locked, token, args, kwargs, target = start(self, a, k, mark=False, stored=await stored_for(self, a, k),
+                                                        untrace=False)
+            try:
+                with _untraced_step(locked):
+                    inner = base.astream(target, *args, **kwargs)
+                try:
+                    while True:
+                        with _untraced_step(locked):  # each step afresh, as stream (T17 review 20)
+                            try:
+                                item = await inner.__anext__()
+                            except StopAsyncIteration:
+                                return
+                        yield item
+                finally:
+                    with _untraced_step(locked):
+                        await inner.aclose()
+            finally:
+                end(token)
+        return run()
+
+    graph.__class__ = type(f"OfflineLocked{base.__name__}", (base,),
+                           {"invoke": invoke, "stream": stream, "ainvoke": ainvoke, "astream": astream,
+                            "__module__": __name__})
