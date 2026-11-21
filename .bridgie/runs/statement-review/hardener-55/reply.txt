@@ -1,0 +1,34 @@
+I went through every checklist line for T11. Everything passes with the change as built. I added one test and committed it as `3bf6d11`.
+
+**Test results:**
+- **Full suite:** 2319 passed. It ran before I added the new test, which passes in its own file.
+- **Static checks:** ruff and compileall are clean.
+- **Marked tiers:** the dual-run tier passed (84), the p7 tests passed (70), and the offline evals matched truth on 9/9 cases.
+
+**What I added:** one test showing that the new `money_in_buckets` MCP tool refuses a statement whose buckets don't add up, instead of returning a partial set.
+
+**Gaps for the owner** (also in `notes` below):
+- The new tool has no alert or log line of its own. The other MCP tools have none either; adding them needs a design choice.
+- The repo has no changelog. The release-note line is the README row plus `docs/v2-newly-recognised.md`.
+- `design.md` is not updated for T11. That file belongs to the owner.
+- The rollback path (`CMA_RULESET=v1`) is proven in tests only, not tried in a real environment.
+
+```json
+{
+  "task": "T11",
+  "claims": [
+    {"text": "Failure modes: the full suite passes with v2 as the default ruleset (2319 tests, run before the hardening test was added; that test passes in its file); ruff and compileall are clean.", "proof_cmd": "ruff check src tests evals; python -m compileall -q src; python -m pytest -q -p no:cacheprovider", "proof_output": "All checks passed! / compile-ok / 2319 passed in 268.03s"},
+    {"text": "Failure modes / R3: the new money_in_buckets MCP tool refuses buckets that do not reconcile (a ValueError, never a partial set of buckets). New contracts test added.", "proof_cmd": "python -m pytest -q tests/test_v2_default.py tests/test_mcp_paths.py", "proof_output": "36 passed in 4.46s"},
+    {"text": "Idempotency: money_in_buckets is read-only. It categorises and computes from the file and writes nothing; the test compares its output with metrics.compute on the same file, value for value.", "proof_cmd": "python -m pytest -q tests/test_v2_default.py -k money_in_buckets_tool_returns", "proof_output": "passed (within 18 passed for tests/test_v2_default.py)"},
+    {"text": "Security / authz on the new entry point: money_in_buckets goes through _statement(), which calls firm.require_unlocked and safe_path. It refuses paths outside CMA_DATA_DIR and non-.csv files, refuses to run under the offline lock, and returns line ids only (no descriptions).", "proof_cmd": "python -m pytest -q tests/test_mcp_paths.py tests/test_v2_default.py -k 'mcp or money_in'", "proof_output": "21 passed, 14 deselected in 3.78s"},
+    {"text": "Data / migration: the committed examples are regenerated under v2 and match what `cma run` writes today (lines, metrics, policy, memo). The truth file names the director capital line director_funding. Generated statements stay byte-identical; only their truth changes on the capital line.", "proof_cmd": "python -m pytest -q tests/test_v2_default.py tests/test_synth_features.py", "proof_output": "passed (within 130 passed for test_v2_default, test_cli, test_mcp_paths, test_categorise, test_synth_features)"},
+    {"text": "P7 / R10: under v2, M1-M16 keep the previous release's values and evidence. The dual-run and p7 tiers pass, and the lines v2 newly recognises equal the list in docs/v2-newly-recognised.md.", "proof_cmd": "python -m pytest -q -m dual_run; python -m pytest -q -k p7", "proof_output": "84 passed, 2235 deselected / 70 passed, 2249 deselected"},
+    {"text": "Evals pass under the new default.", "proof_cmd": "python evals/run_evals.py", "proof_output": "9/9 featured cases match truth (features: acquirers, director, cash, lenders, two_accounts)"},
+    {"text": "Operability / rollback: CMA_RULESET=v1 still selects v1, and evidence records the ruleset id and hash under the default, v1 and v2. The P7 pending-review rollback test drafts under CMA_RULESET=v1.", "proof_cmd": "python -m pytest -q tests/test_v2_default.py::test_v2_is_the_default_ruleset tests/test_cli.py -k ruleset", "proof_output": "passed (within the 130-test run above)"},
+    {"text": "Docs: the README says v2 is the default, points to docs/v2-newly-recognised.md, and lists money_in_buckets; R9 and the offline model's M16 sentence are reworded; a test checks the docs page against the computed list.", "proof_cmd": "python -m pytest -q tests/test_v2_default.py -k 'newly_recognised or r9 or m16'", "proof_output": "passed (within 18 passed for tests/test_v2_default.py)"},
+    {"text": "Performance: not applicable beyond what the build already measures. money_in_buckets makes one categorise and one metrics.compute call per request, the same cost as compute_metrics; no queries or list endpoints.", "proof_cmd": "grep -n 'def money_in_buckets' -A16 src/cma/mcp_server.py", "proof_output": "s = categorise.categorise(_statement(path)); by_id = {m.id: m for m in metrics.compute(s, ...)}"}
+  ],
+  "files_changed": ["tests/test_v2_default.py"],
+  "notes": "Gaps for the owner: (1) Observability: the new money_in_buckets tool has no log line or alert of its own, consistent with the other MCP tools and the local-only design. Adding one is a design choice, not something to put in code here. (2) Docs: the repo has no changelog; the release-note line is the README row plus docs/v2-newly-recognised.md. design.md's Consequences are not updated for T11; that file is the owner's. (3) Operability: the rollback via CMA_RULESET=v1 is proven by tests only, not tried in a non-test environment. A review drafted under v2 cannot be resumed by the previous wheel (director_funding has no value there), as the P7 rollback test now records by drafting under v1. Hardening commit: 3bf6d11."
+}
+```

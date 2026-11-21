@@ -1,0 +1,5336 @@
+diff --git a/README.md b/README.md
+index 9cfda5c..84dc996 100644
+--- a/README.md
++++ b/README.md
+@@ -102,14 +102,16 @@ cma case check private/cma/cases/<id>
+ # operating-system user. A purge stopped part-way is finished by running it again.
+ cma case purge <id>
+ 
+-# Choose the categorisation table (src/cma/rules/<id>.yaml; default v1). v1 is the
++# Choose the categorisation table (src/cma/rules/<id>.yaml; default v2). v1 is the
+ # original table, frozen; v2 adds real UK acquirers, gateways, marketplaces, delivery
+ # platforms, lenders and merchant cash advance providers, own pots and savings, cash
+ # paid in (counted as trading receipts), cash-withdrawal wording, HMRC repayments,
+ # refunds and explained non-trading credits. An unknown id is refused. The evidence
+ # file records the table's id and hash, and under "lines" each line's id, category and
+-# the rule that set it (no descriptions). CMA_RULESET=v1 is the rollback.
+-CMA_RULESET=v2 cma run examples/cafe_stretched.csv
++# the rule that set it (no descriptions). CMA_RULESET=v1 is the rollback. The committed
++# lines whose category v2 changes are listed in docs/v2-newly-recognised.md; M1-M16 do
++# not move on any committed case or fixture.
++CMA_RULESET=v1 cma run examples/cafe_stretched.csv
+ 
+ # Use a real model instead of the offline one. The offline lock in firm.yaml (under
+ # CMA_HOME, default private/cma) is on by default and refuses hosted models and the MCP
+@@ -139,7 +141,7 @@ example.
+ | Draft | `graph.py` + `llm.py` | The model gets the metrics table and the policy table, nothing else, and must tag every figure ([Mn]) and threshold ([Rn]). |
+ | Guard | `guard.py` | Reads every number in the memo, in digits or words, back against the table: value at the precision written, unit, sign, and the tag right after it. |
+ | Review | `graph.py` | LangGraph `interrupt()`; resumes only with a named reviewer's decision. The final memo carries an appendix of every figure, rule, the model and file hashes. |
+-| MCP server | `mcp_server.py` | Exposes metrics, policy and evidence lookup as tools for any MCP client; reads only .csv/.yaml under `CMA_DATA_DIR`; refuses to start while the offline lock is on. |
++| MCP server | `mcp_server.py` | Exposes metrics, the money-in buckets (`money_in_buckets`, read only, line ids only), policy and evidence lookup as tools for any MCP client; reads only .csv/.yaml under `CMA_DATA_DIR`; refuses to start while the offline lock is on. |
+ | Evals | `evals/run_evals.py` | Runs all nine cases, reports grounding rate, redrafts and agreement with ground truth on nine metrics. Fails CI if any metric disagrees with truth or the offline memo is ungrounded. |
+ 
+ ## Evaluation
+diff --git a/docs/v2-newly-recognised.md b/docs/v2-newly-recognised.md
+new file mode 100644
+index 0000000..b20872d
+--- /dev/null
++++ b/docs/v2-newly-recognised.md
+@@ -0,0 +1,31 @@
++# Lines v2 newly recognises
++
++v2 is the default categorisation table (`CMA_RULESET` unset); `CMA_RULESET=v1` brings
++back the original, frozen table. R10 asks the change to list every line a new rule now
++recognises. These are every line in the committed corpus (the synthetic cases, the
++committed example, the test fixtures and the single lines in the P7 golden,
++`tests/golden/p7_v1_baseline.json.gz`) whose category v2 gives differently from v1. The
++test `test_p7_v2_changes_only_the_listed_lines_and_m1_m16_only_where_listed`
++(tests/test_rules_v2.py) recomputes the difference and checks it is exactly this list, and
++`tests/test_v2_default.py` checks this page against it.
++
++Every one of them is non-trading under both tables, so M1 to M16 keep their ids, units,
++values and evidence on every committed case and fixture (P7). The new figures move: in the
++committed example (`examples/cafe_stretched.*`), `FPS CREDIT DIRECTOR CAPITAL INTRODUCED`
++(£8,000.00) leaves unexplained money in (M25) for director and shareholder funding (M20),
++so M26 goes from 2.5% to 0.0%. In the generator's truth files that line is now
++`director_funding`; the statements themselves are byte-identical.
++
++| description | direction | v1 category | v2 category |
++|---|---|---|---|
++| `BACS CREDIT HMRC VAT REPAYMENT` | in | other | hmrc_repayment |
++| `FPS CREDIT A DIRECTOR LOAN ACCOUNT` | in | loan_drawdown | director_funding |
++| `FPS CREDIT CAPITAL INJECTION` | in | other | director_funding |
++| `FPS CREDIT DIRECTOR CAPITAL INJECTION` | in | other | director_funding |
++| `FPS CREDIT DIRECTOR CAPITAL INTRODUCED` | in | other | director_funding |
++| `FPS CREDIT J SMITH CAPITAL INTRODUCED` | in | other | director_funding |
++| `HMRC VAT REPAYMENT` | in | other | hmrc_repayment |
++| `POT TRANSFER OUT HOLIDAY POT` | out | supplier | own_account_transfer |
++
++A line a case profile's name or an own-account pairing decides is new behaviour under
++either table (R10, R54), so it is not in this list: no committed case carries a profile.
+diff --git a/examples/cafe_stretched.memo.evidence.json b/examples/cafe_stretched.memo.evidence.json
+index fd84157..ffcf723 100644
+--- a/examples/cafe_stretched.memo.evidence.json
++++ b/examples/cafe_stretched.memo.evidence.json
+@@ -8,2344 +8,2350 @@
+     "transactions": 389
+   },
+   "model": "fake:offline-template",
++  "egress": {
++    "offline_lock": true,
++    "destination": "offline",
++    "recorded": "at run start; every hosted request in the run was checked against this value",
++    "resume_offline_lock": true
++  },
+   "vat_stagger": 3,
+   "ruleset": {
+-    "id": "v1",
+-    "sha256": "7573366854a668793ca20b3ecfaad91d406ea3018a71d524ea3324cc4ff76630"
++    "id": "v2",
++    "sha256": "903f802abacf3caf3c7af48075625253e5a55a9f96718cad75ba7191c5848809"
+   },
+   "lines": [
+     {
+       "id": "T00001",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00002",
+       "category": "rent",
+-      "rule_id": "v1:rent",
++      "rule_id": "v2:rent",
+       "reverses": null
+     },
+     {
+       "id": "T00003",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00004",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00005",
+       "category": "loan_repayment",
+-      "rule_id": "v1:loan_repayment",
++      "rule_id": "v2:loan_repayment",
+       "reverses": null
+     },
+     {
+       "id": "T00006",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00007",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00008",
+       "category": "hmrc_vat",
+-      "rule_id": "v1:hmrc_vat",
++      "rule_id": "v2:hmrc_vat",
+       "reverses": null
+     },
+     {
+       "id": "T00009",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00010",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00011",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00012",
+       "category": "owner_drawings",
+-      "rule_id": "v1:owner_drawings",
++      "rule_id": "v2:owner_drawings",
+       "reverses": null
+     },
+     {
+       "id": "T00013",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00014",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00015",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00016",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00017",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00018",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00019",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00020",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00021",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00022",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00023",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00024",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00025",
+       "category": "hmrc_paye",
+-      "rule_id": "v1:hmrc_paye",
++      "rule_id": "v2:hmrc_paye",
+       "reverses": null
+     },
+     {
+       "id": "T00026",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00027",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00028",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00029",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00030",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00031",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00032",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00033",
+       "category": "bank_fees",
+-      "rule_id": "v1:bank_fees",
++      "rule_id": "v2:bank_fees",
+       "reverses": null
+     },
+     {
+       "id": "T00034",
+       "category": "payroll",
+-      "rule_id": "v1:payroll",
++      "rule_id": "v2:payroll",
+       "reverses": null
+     },
+     {
+       "id": "T00035",
+       "category": "rent",
+-      "rule_id": "v1:rent",
++      "rule_id": "v2:rent",
+       "reverses": null
+     },
+     {
+       "id": "T00036",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00037",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00038",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00039",
+       "category": "loan_repayment",
+-      "rule_id": "v1:loan_repayment",
++      "rule_id": "v2:loan_repayment",
+       "reverses": null
+     },
+     {
+       "id": "T00040",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00041",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00042",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00043",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00044",
+       "category": "owner_drawings",
+-      "rule_id": "v1:owner_drawings",
++      "rule_id": "v2:owner_drawings",
+       "reverses": null
+     },
+     {
+       "id": "T00045",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00046",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00047",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00048",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00049",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00050",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00051",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00052",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00053",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00054",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00055",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00056",
+       "category": "hmrc_paye",
+-      "rule_id": "v1:hmrc_paye",
++      "rule_id": "v2:hmrc_paye",
+       "reverses": null
+     },
+     {
+       "id": "T00057",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00058",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00059",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00060",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00061",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00062",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00063",
+       "category": "bank_fees",
+-      "rule_id": "v1:bank_fees",
++      "rule_id": "v2:bank_fees",
+       "reverses": null
+     },
+     {
+       "id": "T00064",
+       "category": "payroll",
+-      "rule_id": "v1:payroll",
++      "rule_id": "v2:payroll",
+       "reverses": null
+     },
+     {
+       "id": "T00065",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00066",
+       "category": "rent",
+-      "rule_id": "v1:rent",
++      "rule_id": "v2:rent",
+       "reverses": null
+     },
+     {
+       "id": "T00067",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00068",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00069",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00070",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00071",
+       "category": "loan_repayment",
+-      "rule_id": "v1:loan_repayment",
++      "rule_id": "v2:loan_repayment",
+       "reverses": null
+     },
+     {
+       "id": "T00072",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00073",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00074",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00075",
+       "category": "owner_drawings",
+-      "rule_id": "v1:owner_drawings",
++      "rule_id": "v2:owner_drawings",
+       "reverses": null
+     },
+     {
+       "id": "T00076",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00077",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00078",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00079",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00080",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00081",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00082",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00083",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00084",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00085",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00086",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00087",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00088",
+       "category": "hmrc_paye",
+-      "rule_id": "v1:hmrc_paye",
++      "rule_id": "v2:hmrc_paye",
+       "reverses": null
+     },
+     {
+       "id": "T00089",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00090",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00091",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00092",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00093",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00094",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00095",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00096",
+       "category": "bank_fees",
+-      "rule_id": "v1:bank_fees",
++      "rule_id": "v2:bank_fees",
+       "reverses": null
+     },
+     {
+       "id": "T00097",
+       "category": "payroll",
+-      "rule_id": "v1:payroll",
++      "rule_id": "v2:payroll",
+       "reverses": null
+     },
+     {
+       "id": "T00098",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00099",
+       "category": "rent",
+-      "rule_id": "v1:rent",
++      "rule_id": "v2:rent",
+       "reverses": null
+     },
+     {
+       "id": "T00100",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00101",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00102",
+       "category": "loan_repayment",
+-      "rule_id": "v1:loan_repayment",
++      "rule_id": "v2:loan_repayment",
+       "reverses": null
+     },
+     {
+       "id": "T00103",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00104",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00105",
+       "category": "hmrc_vat",
+-      "rule_id": "v1:hmrc_vat",
++      "rule_id": "v2:hmrc_vat",
+       "reverses": null
+     },
+     {
+       "id": "T00106",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00107",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00108",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00109",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00110",
+       "category": "owner_drawings",
+-      "rule_id": "v1:owner_drawings",
++      "rule_id": "v2:owner_drawings",
+       "reverses": null
+     },
+     {
+       "id": "T00111",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00112",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00113",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00114",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00115",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00116",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00117",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00118",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00119",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00120",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00121",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00122",
+       "category": "hmrc_paye",
+-      "rule_id": "v1:hmrc_paye",
++      "rule_id": "v2:hmrc_paye",
+       "reverses": null
+     },
+     {
+       "id": "T00123",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00124",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00125",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00126",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00127",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00128",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00129",
+       "category": "bank_fees",
+-      "rule_id": "v1:bank_fees",
++      "rule_id": "v2:bank_fees",
+       "reverses": null
+     },
+     {
+       "id": "T00130",
+       "category": "payroll",
+-      "rule_id": "v1:payroll",
++      "rule_id": "v2:payroll",
+       "reverses": null
+     },
+     {
+       "id": "T00131",
+       "category": "rent",
+-      "rule_id": "v1:rent",
++      "rule_id": "v2:rent",
+       "reverses": null
+     },
+     {
+       "id": "T00132",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00133",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00134",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00135",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00136",
+       "category": "loan_repayment",
+-      "rule_id": "v1:loan_repayment",
++      "rule_id": "v2:loan_repayment",
+       "reverses": null
+     },
+     {
+       "id": "T00137",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00138",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00139",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00140",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00141",
+       "category": "owner_drawings",
+-      "rule_id": "v1:owner_drawings",
++      "rule_id": "v2:owner_drawings",
+       "reverses": null
+     },
+     {
+       "id": "T00142",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00143",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00144",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00145",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00146",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00147",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00148",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00149",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00150",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00151",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00152",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00153",
+       "category": "hmrc_paye",
+-      "rule_id": "v1:hmrc_paye",
++      "rule_id": "v2:hmrc_paye",
+       "reverses": null
+     },
+     {
+       "id": "T00154",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00155",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00156",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00157",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00158",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00159",
+       "category": "bank_fees",
+-      "rule_id": "v1:bank_fees",
++      "rule_id": "v2:bank_fees",
+       "reverses": null
+     },
+     {
+       "id": "T00160",
+       "category": "payroll",
+-      "rule_id": "v1:payroll",
++      "rule_id": "v2:payroll",
+       "reverses": null
+     },
+     {
+       "id": "T00161",
+       "category": "rent",
+-      "rule_id": "v1:rent",
++      "rule_id": "v2:rent",
+       "reverses": null
+     },
+     {
+       "id": "T00162",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00163",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00164",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00165",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00166",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00167",
+       "category": "loan_repayment",
+-      "rule_id": "v1:loan_repayment",
++      "rule_id": "v2:loan_repayment",
+       "reverses": null
+     },
+     {
+       "id": "T00168",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00169",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00170",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00171",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00172",
+       "category": "owner_drawings",
+-      "rule_id": "v1:owner_drawings",
++      "rule_id": "v2:owner_drawings",
+       "reverses": null
+     },
+     {
+       "id": "T00173",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00174",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00175",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00176",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00177",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00178",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00179",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00180",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00181",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00182",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00183",
+       "category": "hmrc_paye",
+-      "rule_id": "v1:hmrc_paye",
++      "rule_id": "v2:hmrc_paye",
+       "reverses": null
+     },
+     {
+       "id": "T00184",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00185",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00186",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00187",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00188",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00189",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00190",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00191",
+       "category": "bank_fees",
+-      "rule_id": "v1:bank_fees",
++      "rule_id": "v2:bank_fees",
+       "reverses": null
+     },
+     {
+       "id": "T00192",
+       "category": "payroll",
+-      "rule_id": "v1:payroll",
++      "rule_id": "v2:payroll",
+       "reverses": null
+     },
+     {
+       "id": "T00193",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00194",
+       "category": "rent",
+-      "rule_id": "v1:rent",
++      "rule_id": "v2:rent",
+       "reverses": null
+     },
+     {
+       "id": "T00195",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00196",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00197",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00198",
+       "category": "loan_repayment",
+-      "rule_id": "v1:loan_repayment",
++      "rule_id": "v2:loan_repayment",
+       "reverses": null
+     },
+     {
+       "id": "T00199",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00200",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00201",
+       "category": "hmrc_vat",
+-      "rule_id": "v1:hmrc_vat",
++      "rule_id": "v2:hmrc_vat",
+       "reverses": null
+     },
+     {
+       "id": "T00202",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00203",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00204",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00205",
+       "category": "owner_drawings",
+-      "rule_id": "v1:owner_drawings",
++      "rule_id": "v2:owner_drawings",
+       "reverses": null
+     },
+     {
+       "id": "T00206",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00207",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00208",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00209",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00210",
+-      "category": "other",
+-      "rule_id": "v1:non_trading_in",
++      "category": "director_funding",
++      "rule_id": "v2:director_funding",
+       "reverses": null
+     },
+     {
+       "id": "T00211",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00212",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00213",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00214",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00215",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00216",
+       "category": "hmrc_paye",
+-      "rule_id": "v1:hmrc_paye",
++      "rule_id": "v2:hmrc_paye",
+       "reverses": null
+     },
+     {
+       "id": "T00217",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00218",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00219",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00220",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00221",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00222",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00223",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00224",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00225",
+       "category": "bank_fees",
+-      "rule_id": "v1:bank_fees",
++      "rule_id": "v2:bank_fees",
+       "reverses": null
+     },
+     {
+       "id": "T00226",
+       "category": "payroll",
+-      "rule_id": "v1:payroll",
++      "rule_id": "v2:payroll",
+       "reverses": null
+     },
+     {
+       "id": "T00227",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00228",
+       "category": "rent",
+-      "rule_id": "v1:rent",
++      "rule_id": "v2:rent",
+       "reverses": null
+     },
+     {
+       "id": "T00229",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00230",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00231",
+       "category": "loan_repayment",
+-      "rule_id": "v1:loan_repayment",
++      "rule_id": "v2:loan_repayment",
+       "reverses": null
+     },
+     {
+       "id": "T00232",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00233",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00234",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00235",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00236",
+       "category": "owner_drawings",
+-      "rule_id": "v1:owner_drawings",
++      "rule_id": "v2:owner_drawings",
+       "reverses": null
+     },
+     {
+       "id": "T00237",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00238",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00239",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00240",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00241",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00242",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00243",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00244",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00245",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00246",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00247",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00248",
+       "category": "hmrc_paye",
+-      "rule_id": "v1:hmrc_paye",
++      "rule_id": "v2:hmrc_paye",
+       "reverses": null
+     },
+     {
+       "id": "T00249",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00250",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00251",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00252",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00253",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00254",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00255",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00256",
+       "category": "bank_fees",
+-      "rule_id": "v1:bank_fees",
++      "rule_id": "v2:bank_fees",
+       "reverses": null
+     },
+     {
+       "id": "T00257",
+       "category": "payroll",
+-      "rule_id": "v1:payroll",
++      "rule_id": "v2:payroll",
+       "reverses": null
+     },
+     {
+       "id": "T00258",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00259",
+       "category": "rent",
+-      "rule_id": "v1:rent",
++      "rule_id": "v2:rent",
+       "reverses": null
+     },
+     {
+       "id": "T00260",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00261",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00262",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00263",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00264",
+       "category": "loan_repayment",
+-      "rule_id": "v1:loan_repayment",
++      "rule_id": "v2:loan_repayment",
+       "reverses": null
+     },
+     {
+       "id": "T00265",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00266",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00267",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00268",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00269",
+       "category": "owner_drawings",
+-      "rule_id": "v1:owner_drawings",
++      "rule_id": "v2:owner_drawings",
+       "reverses": null
+     },
+     {
+       "id": "T00270",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00271",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00272",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00273",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00274",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00275",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00276",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00277",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00278",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00279",
+       "category": "hmrc_paye",
+-      "rule_id": "v1:hmrc_paye",
++      "rule_id": "v2:hmrc_paye",
+       "reverses": null
+     },
+     {
+       "id": "T00280",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00281",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00282",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00283",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00284",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00285",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00286",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00287",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00288",
+       "category": "bank_fees",
+-      "rule_id": "v1:bank_fees",
++      "rule_id": "v2:bank_fees",
+       "reverses": null
+     },
+     {
+       "id": "T00289",
+       "category": "payroll",
+-      "rule_id": "v1:payroll",
++      "rule_id": "v2:payroll",
+       "reverses": null
+     },
+     {
+       "id": "T00290",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00291",
+       "category": "rent",
+-      "rule_id": "v1:rent",
++      "rule_id": "v2:rent",
+       "reverses": null
+     },
+     {
+       "id": "T00292",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00293",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00294",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00295",
+       "category": "loan_repayment",
+-      "rule_id": "v1:loan_repayment",
++      "rule_id": "v2:loan_repayment",
+       "reverses": null
+     },
+     {
+       "id": "T00296",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00297",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00298",
+       "category": "hmrc_vat",
+-      "rule_id": "v1:hmrc_vat",
++      "rule_id": "v2:hmrc_vat",
+       "reverses": null
+     },
+     {
+       "id": "T00299",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00300",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00301",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00302",
+       "category": "owner_drawings",
+-      "rule_id": "v1:owner_drawings",
++      "rule_id": "v2:owner_drawings",
+       "reverses": null
+     },
+     {
+       "id": "T00303",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00304",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00305",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00306",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00307",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00308",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00309",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00310",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00311",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00312",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00313",
+       "category": "hmrc_paye",
+-      "rule_id": "v1:hmrc_paye",
++      "rule_id": "v2:hmrc_paye",
+       "reverses": null
+     },
+     {
+       "id": "T00314",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00315",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00316",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00317",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00318",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00319",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00320",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00321",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00322",
+       "category": "bank_fees",
+-      "rule_id": "v1:bank_fees",
++      "rule_id": "v2:bank_fees",
+       "reverses": null
+     },
+     {
+       "id": "T00323",
+       "category": "payroll",
+-      "rule_id": "v1:payroll",
++      "rule_id": "v2:payroll",
+       "reverses": null
+     },
+     {
+       "id": "T00324",
+       "category": "rent",
+-      "rule_id": "v1:rent",
++      "rule_id": "v2:rent",
+       "reverses": null
+     },
+     {
+       "id": "T00325",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00326",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00327",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00328",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00329",
+       "category": "returned_dd",
+-      "rule_id": "v1:returned_dd",
++      "rule_id": "v2:returned_dd",
+       "reverses": "T00326"
+     },
+     {
+       "id": "T00330",
+       "category": "loan_repayment",
+-      "rule_id": "v1:loan_repayment",
++      "rule_id": "v2:loan_repayment",
+       "reverses": null
+     },
+     {
+       "id": "T00331",
+       "category": "bank_fees",
+-      "rule_id": "v1:bank_fees",
++      "rule_id": "v2:bank_fees",
+       "reverses": null
+     },
+     {
+       "id": "T00332",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00333",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00334",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00335",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00336",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00337",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00338",
+       "category": "owner_drawings",
+-      "rule_id": "v1:owner_drawings",
++      "rule_id": "v2:owner_drawings",
+       "reverses": null
+     },
+     {
+       "id": "T00339",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00340",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00341",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00342",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00343",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00344",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00345",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00346",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00347",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00348",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00349",
+       "category": "hmrc_paye",
+-      "rule_id": "v1:hmrc_paye",
++      "rule_id": "v2:hmrc_paye",
+       "reverses": null
+     },
+     {
+       "id": "T00350",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00351",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00352",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00353",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00354",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00355",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00356",
+       "category": "bank_fees",
+-      "rule_id": "v1:bank_fees",
++      "rule_id": "v2:bank_fees",
+       "reverses": null
+     },
+     {
+       "id": "T00357",
+       "category": "payroll",
+-      "rule_id": "v1:payroll",
++      "rule_id": "v2:payroll",
+       "reverses": null
+     },
+     {
+       "id": "T00358",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00359",
+       "category": "rent",
+-      "rule_id": "v1:rent",
++      "rule_id": "v2:rent",
+       "reverses": null
+     },
+     {
+       "id": "T00360",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00361",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00362",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00363",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00364",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00365",
+       "category": "loan_repayment",
+-      "rule_id": "v1:loan_repayment",
++      "rule_id": "v2:loan_repayment",
+       "reverses": null
+     },
+     {
+       "id": "T00366",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00367",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00368",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00369",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00370",
+       "category": "owner_drawings",
+-      "rule_id": "v1:owner_drawings",
++      "rule_id": "v2:owner_drawings",
+       "reverses": null
+     },
+     {
+       "id": "T00371",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00372",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00373",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00374",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00375",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00376",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00377",
+       "category": "supplier",
+-      "rule_id": "v1:default",
++      "rule_id": "v2:default",
+       "reverses": null
+     },
+     {
+       "id": "T00378",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00379",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00380",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00381",
+       "category": "hmrc_paye",
+-      "rule_id": "v1:hmrc_paye",
++      "rule_id": "v2:hmrc_paye",
+       "reverses": null
+     },
+     {
+       "id": "T00382",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00383",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00384",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00385",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00386",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00387",
+       "category": "revenue_card_settlement",
+-      "rule_id": "v1:card_settlement",
++      "rule_id": "v2:card_settlement",
+       "reverses": null
+     },
+     {
+       "id": "T00388",
+       "category": "bank_fees",
+-      "rule_id": "v1:bank_fees",
++      "rule_id": "v2:bank_fees",
+       "reverses": null
+     },
+     {
+       "id": "T00389",
+       "category": "payroll",
+-      "rule_id": "v1:payroll",
++      "rule_id": "v2:payroll",
+       "reverses": null
+     }
+   ],
+@@ -4649,10 +4655,12 @@
+     {
+       "id": "M20",
+       "name": "Director and shareholder funding",
+-      "value": 0.0,
++      "value": 8000.0,
+       "unit": "GBP",
+       "method": "Credits from directors or shareholders, and capital introduced.",
+-      "evidence": [],
++      "evidence": [
++        "T00210"
++      ],
+       "evidence_note": null
+     },
+     {
+@@ -4696,18 +4704,16 @@
+     {
+       "id": "M25",
+       "name": "Unexplained money in",
+-      "value": 8000.0,
++      "value": 0.0,
+       "unit": "GBP",
+       "method": "Credits no rule, firm rule or override explains, and credits whose wording is ambiguous.",
+-      "evidence": [
+-        "T00210"
+-      ],
++      "evidence": [],
+       "evidence_note": null
+     },
+     {
+       "id": "M26",
+       "name": "Unexplained share of money in",
+-      "value": 2.49,
++      "value": 0.0,
+       "unit": "pct",
+       "method": "Unexplained money in (M25) as a share of money in less lending drawdowns, returned direct debits and own-account transfers, the denominator M16 uses.",
+       "evidence": [
+@@ -7777,6 +7783,1945 @@
+       "illustrative": true
+     }
+   ],
++  "judgement_queue": [
++    {
++      "line_id": "T00008",
++      "amount": -9394.06,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00201",
++      "amount": -8197.3,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00210",
++      "amount": 8000.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I1",
++        "I6"
++      ],
++      "indicator_kinds": [
++        "large_credit",
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00130",
++      "amount": -7369.07,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00192",
++      "amount": -7356.42,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00226",
++      "amount": -7332.77,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I7"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00160",
++      "amount": -7262.32,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00034",
++      "amount": -7099.85,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I4"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00013",
++      "amount": -5277.25,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00143",
++      "amount": -5216.36,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00112",
++      "amount": -5076.79,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I5"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00206",
++      "amount": -4723.62,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00176",
++      "amount": -4391.3,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00235",
++      "amount": -4263.07,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I7"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00042",
++      "amount": -3998.93,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I4"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00012",
++      "amount": -2500.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00044",
++      "amount": -2500.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I4"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00110",
++      "amount": -2500.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I5"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00141",
++      "amount": -2500.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00172",
++      "amount": -2500.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00205",
++      "amount": -2500.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00236",
++      "amount": -2500.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I7"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00035",
++      "amount": -2400.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I4"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00131",
++      "amount": -2400.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00161",
++      "amount": -2400.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00194",
++      "amount": -2400.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00228",
++      "amount": -2400.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I7"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00240",
++      "amount": 1848.52,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I7"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00037",
++      "amount": 1754.79,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I4"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00047",
++      "amount": 1713.24,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I4"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00040",
++      "amount": 1638.28,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I4"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00148",
++      "amount": -1633.83,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00122",
++      "amount": -1621.19,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I5"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00183",
++      "amount": -1618.41,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00216",
++      "amount": -1613.21,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00241",
++      "amount": 1606.71,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I7"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00046",
++      "amount": -1606.53,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I4"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00232",
++      "amount": 1598.73,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I7"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00153",
++      "amount": -1597.71,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00237",
++      "amount": 1592.98,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I7"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00220",
++      "amount": 1584.38,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00213",
++      "amount": 1577.82,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00028",
++      "amount": 1577.39,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00049",
++      "amount": 1571.7,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I4"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00025",
++      "amount": -1561.97,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00197",
++      "amount": -1558.09,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00020",
++      "amount": -1506.33,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00018",
++      "amount": 1490.58,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00222",
++      "amount": 1486.82,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00041",
++      "amount": 1482.65,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I4"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00199",
++      "amount": 1476.37,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00163",
++      "amount": 1464.84,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00169",
++      "amount": -1446.25,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00211",
++      "amount": 1441.64,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00145",
++      "amount": 1412.28,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00021",
++      "amount": 1402.51,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00242",
++      "amount": 1352.08,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I7"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00120",
++      "amount": -1350.49,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I5"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00239",
++      "amount": -1348.04,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I7"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00114",
++      "amount": 1332.8,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I5"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00027",
++      "amount": 1288.31,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00189",
++      "amount": 1283.11,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00113",
++      "amount": 1267.67,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I5"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00149",
++      "amount": 1253.13,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00214",
++      "amount": 1242.72,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00026",
++      "amount": 1235.59,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00233",
++      "amount": 1223.03,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I7"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00124",
++      "amount": 1219.15,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I5"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00023",
++      "amount": 1208.74,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00009",
++      "amount": 1203.2,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00170",
++      "amount": 1196.29,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00202",
++      "amount": 1192.38,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00051",
++      "amount": 1184.32,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I4"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00015",
++      "amount": 1153.19,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00187",
++      "amount": 1151.25,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00039",
++      "amount": -1150.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I4"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00136",
++      "amount": -1150.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00167",
++      "amount": -1150.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00198",
++      "amount": -1150.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00231",
++      "amount": -1150.0,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I7"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00207",
++      "amount": 1145.6,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00195",
++      "amount": 1109.11,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00203",
++      "amount": 1087.31,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00017",
++      "amount": -1069.76,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00115",
++      "amount": 1060.05,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I5"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00184",
++      "amount": 1040.45,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00154",
++      "amount": 1032.88,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00036",
++      "amount": 1030.31,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I4"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00155",
++      "amount": 1014.18,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00212",
++      "amount": 1008.68,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00022",
++      "amount": 992.15,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00185",
++      "amount": 987.43,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00175",
++      "amount": 974.49,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00151",
++      "amount": 969.93,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00219",
++      "amount": -961.71,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00048",
++      "amount": 947.86,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I4"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00174",
++      "amount": 932.33,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00229",
++      "amount": 919.67,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I7"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00173",
++      "amount": 919.6,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00178",
++      "amount": -895.46,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00123",
++      "amount": 886.06,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I5"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00139",
++      "amount": -869.93,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00133",
++      "amount": 861.26,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00144",
++      "amount": 853.77,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00181",
++      "amount": 844.73,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00137",
++      "amount": 840.56,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00134",
++      "amount": 836.48,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00050",
++      "amount": -830.6,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I4"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00221",
++      "amount": 829.06,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00132",
++      "amount": 806.72,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00182",
++      "amount": 802.47,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00208",
++      "amount": 792.1,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00157",
++      "amount": 790.32,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00117",
++      "amount": 784.23,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I5"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00116",
++      "amount": 763.66,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I5"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00186",
++      "amount": 756.34,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00179",
++      "amount": 753.16,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00196",
++      "amount": 746.94,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00118",
++      "amount": 745.61,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I5"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00010",
++      "amount": 727.21,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00156",
++      "amount": 722.94,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00162",
++      "amount": 710.93,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00188",
++      "amount": 709.57,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00180",
++      "amount": 699.48,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00146",
++      "amount": 684.77,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00150",
++      "amount": 673.81,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00329",
++      "amount": 189.91,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I2"
++      ],
++      "indicator_kinds": [
++        "returned_dd"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00014",
++      "amount": -180.62,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I3"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    },
++    {
++      "line_id": "T00165",
++      "amount": -162.91,
++      "reasons": [
++        "indicator"
++      ],
++      "indicators": [
++        "I6"
++      ],
++      "indicator_kinds": [
++        "overdrawn_run"
++      ],
++      "candidates": [],
++      "pairs_with": []
++    }
++  ],
+   "policy": {
+     "policy_name": "uk_sme_default",
+     "overall": "refer",
+@@ -7879,7 +9824,7 @@
+       },
+       {
+         "rule_id": "R9",
+-        "description": "No more than 20% of money in left unexplained",
++        "description": "No more than 20% of money in that is not trading receipts",
+         "metric_id": "M16",
+         "outcome": "pass",
+         "detail": "Non-trading money in (share) is 2.5%; rule requires <= 20.",
+@@ -7890,7 +9835,7 @@
+         "unit": "pct"
+       }
+     ],
+-    "policy_sha256": "334ca78d527599388809c7f9ac947d9fcd754144da0fdd369e7bed6de2acd494"
++    "policy_sha256": "d6dd697fa7881563d5d263f0d7bb7aecbb2945bd18e334abe4fda24c7f151fad"
+   },
+   "guard": {
+     "numbers_checked": 17,
+@@ -7903,9 +9848,9 @@
+     "approved": true,
+     "reviewer": "A. Analyst",
+     "notes": "Approved by script (--yes); the draft was not reviewed interactively.",
+-    "decided_at": "2026-11-21T09:08:44.394658Z",
++    "decided_at": "2026-11-21T22:21:36.251702Z",
+     "override_grounding": false,
+     "mode": "automated"
+   },
+-  "memo": "## Business overview\nThe statements cover 12 [M1] months. Total revenue over the period was \u00a3313,135 [M2], averaging \u00a326,112 [M3] a month.\n\n## Revenue\nRevenue moved 10.8% [M4], comparing the latest quarter with the earliest. The largest single payer accounted for n/a [M15] of transfer revenue. Unclassified money in was 2.5% [M16] of inflows.\n\n## Cash position\nThe lowest balance reached was -\u00a319,760 [M5], and the account closed overdrawn on 165 [M6] days. Net operating cash flow was \u00a354,192 [M9].\n\n## Obligations and conduct\nLoan repayments totalled \u00a313,800 [M8] and owner drawings \u00a330,000 [M11], giving debt service cover after drawings of 1.75x [M10]. Returned direct debits in the period: 1 [M7]. VAT paid was \u00a336,158 [M12] with late or missed payments of 0 [M13]; PAYE paid was \u00a319,114 [M14].\n\n## Recommendation\nPolicy outcome: refer. The case needs an analyst decision before any offer: R3 (limit 2 [R3]) is refer; R4 (limit 15 [R4]) is refer.\n"
++  "memo": "## Business overview\nThe statements cover 12 [M1] months. Total revenue over the period was \u00a3313,135 [M2], averaging \u00a326,112 [M3] a month.\n\n## Revenue\nRevenue moved 10.8% [M4], comparing the latest quarter with the earliest. The largest single payer accounted for n/a [M15] of transfer revenue. Money in that is not trading receipts was 2.5% [M16] of inflows.\n\n## Cash position\nThe lowest balance reached was -\u00a319,760 [M5], and the account closed overdrawn on 165 [M6] days. Net operating cash flow was \u00a354,192 [M9].\n\n## Obligations and conduct\nLoan repayments totalled \u00a313,800 [M8] and owner drawings \u00a330,000 [M11], giving debt service cover after drawings of 1.75x [M10]. Returned direct debits in the period: 1 [M7]. VAT paid was \u00a336,158 [M12] with late or missed payments of 0 [M13]; PAYE paid was \u00a319,114 [M14].\n\n## Recommendation\nPolicy outcome: refer. The case needs an analyst decision before any offer: R3 (limit 2 [R3]) is refer; R4 (limit 15 [R4]) is refer.\n"
+ }
+\ No newline at end of file
+diff --git a/examples/cafe_stretched.memo.md b/examples/cafe_stretched.memo.md
+index d206566..6182ad4 100644
+--- a/examples/cafe_stretched.memo.md
++++ b/examples/cafe_stretched.memo.md
+@@ -2,7 +2,7 @@
+ The statements cover 12 [M1] months. Total revenue over the period was £313,135 [M2], averaging £26,112 [M3] a month.
+ 
+ ## Revenue
+-Revenue moved 10.8% [M4], comparing the latest quarter with the earliest. The largest single payer accounted for n/a [M15] of transfer revenue. Unclassified money in was 2.5% [M16] of inflows.
++Revenue moved 10.8% [M4], comparing the latest quarter with the earliest. The largest single payer accounted for n/a [M15] of transfer revenue. Money in that is not trading receipts was 2.5% [M16] of inflows.
+ 
+ ## Cash position
+ The lowest balance reached was -£19,760 [M5], and the account closed overdrawn on 165 [M6] days. Net operating cash flow was £54,192 [M9].
+@@ -15,13 +15,13 @@ Policy outcome: refer. The case needs an analyst decision before any offer: R3 (
+ 
+ 
+ ---
+-APPROVED by A. Analyst (automated, no interactive review) at 2026-11-21 09:08 UTC. Notes: Approved by script (--yes); the draft was not reviewed interactively.
++APPROVED by A. Analyst (automated, no interactive review) at 2026-11-21 22:21 UTC. Notes: Approved by script (--yes); the draft was not reviewed interactively.
+ Grounding check: passed (17 numbers checked, 0 unmatched, 0 missing citations).
+ 
+ ## Appendix: the figures behind this memo
+ 
+ Statement: cafe_stretched.csv, 389 transactions, 2025-10-01 to 2026-09-30, sha256 796b4519fc7a592e
+-Model: fake:offline-template. Policy: uk_sme_default, sha256 334ca78d52759938, overall refer. VAT stagger: 3.
++Model: fake:offline-template. Policy: uk_sme_default, sha256 d6dd697fa7881563, overall refer. VAT stagger: 3.
+ Evidence: every transaction id behind each figure is in the .evidence.json file written beside this memo.
+ 
+ | id | metric | value | method | lines |
+@@ -45,13 +45,13 @@ Evidence: every transaction id behind each figure is in the .evidence.json file
+ | M17 | Total money in | £321,325.13 | Every credit in the period; the money-in buckets (M2, M19-M25) add up to it. | 263 |
+ | M18 | Cash deposits within trading receipts | £0.00 | Cash paid in at a counter or machine. Part of M2, not added to it again. | 0 |
+ | M19 | Own-account transfers in | £0.00 | Credits moved in from the applicant's own pots, savings or accounts. | 0 |
+-| M20 | Director and shareholder funding | £0.00 | Credits from directors or shareholders, and capital introduced. | 0 |
++| M20 | Director and shareholder funding | £8,000.00 | Credits from directors or shareholders, and capital introduced. | 1 |
+ | M21 | Lending drawdowns | £0.00 | Loans and merchant cash advances paid in. | 0 |
+ | M22 | Refunds and returned payments in | £189.91 | Refunds, reversals and direct debits returned unpaid. | 1 |
+ | M23 | HMRC repayments | £0.00 | Credits from HMRC. | 0 |
+ | M24 | Other explained money in | £0.00 | Grants, insurance claims, interest and cashback. | 0 |
+-| M25 | Unexplained money in | £8,000.00 | Credits no rule, firm rule or override explains, and credits whose wording is ambiguous. | 1 |
+-| M26 | Unexplained share of money in | 2.5% | Unexplained money in (M25) as a share of money in less lending drawdowns, returned direct debits and own-account transfers, the denominator M16 uses. | 262 |
++| M25 | Unexplained money in | £0.00 | Credits no rule, firm rule or override explains, and credits whose wording is ambiguous. | 0 |
++| M26 | Unexplained share of money in | 0.0% | Unexplained money in (M25) as a share of money in less lending drawdowns, returned direct debits and own-account transfers, the denominator M16 uses. | 262 |
+ | M27 | Average end-of-day balance | £2,570.75 | The closing balance of every calendar day in the period, carried over days with no transactions, averaged over those days. | 287 |
+ | M28 | Debt service cover including the proposed facility | n/a | No proposed monthly repayment was given: it comes from the case profile, and this statement has none, so cover including the proposed facility cannot be computed. | 0 |
+ 
+@@ -65,4 +65,4 @@ Evidence: every transaction id behind each figure is in the .evidence.json file
+ | R6 | Revenue trend no worse than -15% | M4 | >= -15.0% | pass | Revenue trend is 10.8%; rule requires >= -15. |
+ | R7 | Top customer below 60% of transfer revenue | M15 | < 60.0% | pass | Top customer share of transfer revenue cannot be computed (No customer transfers: revenue is card or gateway settled, which hides who the customers are.); policy says pass when missing. |
+ | R8 | Positive net operating cash flow over the period | M9 | > £0 | pass | Net operating cash flow is £54,192; rule requires > 0. |
+-| R9 | No more than 20% of money in left unexplained | M16 | <= 20.0% | pass | Non-trading money in (share) is 2.5%; rule requires <= 20. |
+\ No newline at end of file
++| R9 | No more than 20% of money in that is not trading receipts | M16 | <= 20.0% | pass | Non-trading money in (share) is 2.5%; rule requires <= 20. |
+\ No newline at end of file
+diff --git a/examples/cafe_stretched.truth.json b/examples/cafe_stretched.truth.json
+index 032f74a..3fae296 100644
+--- a/examples/cafe_stretched.truth.json
++++ b/examples/cafe_stretched.truth.json
+@@ -254,7 +254,7 @@
+     "T00207": "revenue_card_settlement",
+     "T00208": "revenue_card_settlement",
+     "T00209": "revenue_card_settlement",
+-    "T00210": "other",
++    "T00210": "director_funding",
+     "T00211": "revenue_card_settlement",
+     "T00212": "revenue_card_settlement",
+     "T00213": "revenue_card_settlement",
+diff --git a/src/cma/categorise.py b/src/cma/categorise.py
+index 5e946c1..e9cbd53 100644
+--- a/src/cma/categorise.py
++++ b/src/cma/categorise.py
+@@ -7,9 +7,9 @@ or debt service. The model never overrides a rule match.
+ 
+ The rule table is data, not code: src/cma/rules/<id>.yaml, validated on load like the
+ policy (a key repeated in a mapping is refused), with an id and the SHA-256 of the
+-file's bytes. CMA_RULESET chooses the table (default v1). v1 is the table as it was
+-when it lived here, frozen: its hash is pinned in FROZEN_SHA256 and any other bytes are
+-refused, so CMA_RULESET=v1 always reproduces those categories. v2 adds the maintained
++file's bytes. CMA_RULESET chooses the table (default v2; v1 is the rollback). v1 is the
++table as it was when it lived here, frozen: its hash is pinned in FROZEN_SHA256 and any
++other bytes are refused, so CMA_RULESET=v1 always reproduces those categories. v2 adds the maintained
+ lists of R4 (acquirers, gateways, marketplaces, delivery platforms, lenders and merchant
+ cash advance providers, own pots and savings, cash paid in, cash-withdrawal wording,
+ HMRC, refunds, explained non-trading money in). The matching passes below (reversals,
+@@ -89,7 +89,7 @@ INVOICE_REF = re.compile(r"\bINV(?:OICE)?\s*[-#:]?\s*\d+")
+ 
+ RULESET_ENV = "CMA_RULESET"
+ RULESETS = ("v1", "v2")
+-DEFAULT_RULESET = "v1"
++DEFAULT_RULESET = "v2"
+ DIRECTIONS = ("in", "out", "any")
+ TABLE_KEYS = {"id", "frozen", "rules", "category_order"}
+ RULE_KEYS = {"id", "direction", "category"}  # required, plus a pattern or names
+diff --git a/src/cma/llm.py b/src/cma/llm.py
+index 4380c9f..2289b7b 100644
+--- a/src/cma/llm.py
++++ b/src/cma/llm.py
+@@ -62,7 +62,7 @@ class FakeLLM:
+ The statements cover {q('M1')} months. Total revenue over the period was {q('M2')}, averaging {q('M3')} a month.
+ 
+ ## Revenue
+-Revenue moved {q('M4')}, comparing the latest quarter with the earliest. The largest single payer accounted for {q('M15')} of transfer revenue. Unclassified money in was {q('M16')} of inflows.
++Revenue moved {q('M4')}, comparing the latest quarter with the earliest. The largest single payer accounted for {q('M15')} of transfer revenue. Money in that is not trading receipts was {q('M16')} of inflows.
+ 
+ ## Cash position
+ The lowest balance reached was {q('M5')}, and the account closed overdrawn on {q('M6')} days. Net operating cash flow was {q('M9')}.
+diff --git a/src/cma/mcp_server.py b/src/cma/mcp_server.py
+index ed4e8f0..cec7c1f 100644
+--- a/src/cma/mcp_server.py
++++ b/src/cma/mcp_server.py
+@@ -205,6 +205,31 @@ def compute_metrics(path: str, vat_stagger: int | None = None) -> list[dict]:
+     return [m.model_dump() for m in metrics.compute(s, vat_stagger=vat_stagger)]
+ 
+ 
++# The money-in breakdown (R1): total money in, the eight buckets that add up to it, and the
++# cash inside trading receipts, which is part of M2 and not a bucket of its own.
++_BUCKET_IDS = ("M2", "M19", "M20", "M21", "M22", "M23", "M24", "M25")
++
++
++@server.tool()
++def money_in_buckets(path: str, vat_stagger: int | None = None) -> dict:
++    """Read only. Categorise a statement and return total money in (M17), the money-in
++    buckets that add up to it to the penny (trading receipts M2, own-account transfers in
++    M19, director and shareholder funding M20, lending drawdowns M21, refunds and returned
++    payments M22, HMRC repayments M23, other explained M24, unexplained M25) and the cash
++    deposits within trading receipts (M18, part of M2, not added again). Each comes with the
++    ids of the lines behind it, never their descriptions. A statement whose buckets do not
++    reconcile is refused (ValueError)."""
++    s = categorise.categorise(_statement(path))
++    by_id = {m.id: m for m in metrics.compute(s, vat_stagger=vat_stagger)}
++
++    def row(mid: str) -> dict:
++        m = by_id[mid]
++        return {"id": m.id, "name": m.name, "value": m.value, "unit": m.unit, "evidence": list(m.evidence)}
++
++    return {"total_money_in": row("M17"), "buckets": [row(i) for i in _BUCKET_IDS],
++            "cash_deposits_within_trading_receipts": row("M18")}
++
++
+ @server.tool()
+ def check_policy(path: str, policy_path: str | None = None, vat_stagger: int | None = None) -> dict:
+     """Run the lending policy against a statement and return pass/refer/fail per rule."""
+diff --git a/src/cma/policies/uk_sme_default.yaml b/src/cma/policies/uk_sme_default.yaml
+index b39935e..abf1d61 100644
+--- a/src/cma/policies/uk_sme_default.yaml
++++ b/src/cma/policies/uk_sme_default.yaml
+@@ -83,7 +83,7 @@ rules:
+     when_missing: refer
+ 
+   - id: R9
+-    description: No more than 20% of money in left unexplained
++    description: No more than 20% of money in that is not trading receipts
+     metric: M16
+     op: "<="
+     threshold: 20
+diff --git a/src/cma/synth.py b/src/cma/synth.py
+index 8e17b2e..85d8203 100644
+--- a/src/cma/synth.py
++++ b/src/cma/synth.py
+@@ -278,9 +278,10 @@ def generate(
+     # The owner props up the account once, half way through.
+     if p["capital_in"]:
+         mid = starts[len(starts) // 2]
+-        # Under v1 OTHER; under v2, which feature truth is for, director funding (D48).
++        # Director funding under v2, the default ruleset (D48, T11); v1 called it OTHER, which
++        # P7 covers. The statement is byte-identical either way; only the truth names it.
+         events.append((mid + timedelta(days=14), "FPS CREDIT DIRECTOR CAPITAL INTRODUCED", float(p["capital_in"]),
+-                       Category.DIRECTOR_FUNDING if features else Category.OTHER))
++                       Category.DIRECTOR_FUNDING))
+ 
+     # Returned direct debits: a scheduled DD bounces, the bank returns it two days later
+     # and charges a fee, and the payee re-presents it a week after the original.
+@@ -343,7 +344,7 @@ def generate(
+     op = 0.0
+     for _, desc, amt, cat in events:
+         effective = returned_cat.get(desc, cat) if cat == Category.RETURNED_DD else cat
+-        if effective in financing or cat in _NON_TRADING_IN:  # only OTHER without features
++        if effective in financing or cat in _NON_TRADING_IN:  # director funding is non-trading
+             continue
+         op += amt
+     truth.net_operating = round(op, 2)
+diff --git a/tests/test_categorise.py b/tests/test_categorise.py
+index a8bcf7e..9cbc93e 100644
+--- a/tests/test_categorise.py
++++ b/tests/test_categorise.py
+@@ -18,7 +18,8 @@ def _t(desc, amount, tid="T1"):
+         ("DD BRIDGEPOINT FINANCE LOAN", -1150.0, Category.LOAN_REPAYMENT),
+         ("BRIDGEPOINT FINANCE LOAN DRAWDOWN", 20000.0, Category.LOAN_DRAWDOWN),
+         ("HMRC VAT", -6200.0, Category.HMRC_VAT),
+-        ("HMRC VAT REPAYMENT", 900.0, Category.OTHER),
++        # v2 (the default) newly recognises it (docs/v2-newly-recognised.md); v1 gave OTHER.
++        ("HMRC VAT REPAYMENT", 900.0, Category.HMRC_REPAYMENT),
+         ("CARD ACQUIRER SETTLEMENT", 812.4, Category.REVENUE_CARD),
+         ("CARD ACQUIRER SETTLEMENT CHARGEBACK", -60.0, Category.SUPPLIER),
+         ("FPS CREDIT T WHITTAKER INV4411", 1800.0, Category.REVENUE_TRANSFER),
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index 8d51eba..729ac0f 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -59,11 +59,11 @@ def test_unknown_cma_ruleset_is_refused_not_blamed_on_the_model(tmp_path, monkey
+ 
+ 
+ @pytest.mark.contracts
+-@pytest.mark.parametrize("env", [None, "v1"])
+-def test_written_evidence_records_the_ruleset(tmp_path, monkeypatch, env):
+-    """R54: `cma run` writes the ruleset id and the pinned hash of v1 into the evidence
+-    file, with CMA_RULESET unset (the default) and set to v1."""
+-    from cma.categorise import FROZEN_SHA256
++@pytest.mark.parametrize("env, expected", [(None, "v2"), ("v1", "v1"), ("v2", "v2")])
++def test_written_evidence_records_the_ruleset(tmp_path, monkeypatch, env, expected):
++    """R54: `cma run` writes the ruleset id and its hash (v1's pinned) into the evidence
++    file, with CMA_RULESET unset (the default, v2 since T11) and set to v1 or v2."""
++    from cma.categorise import FROZEN_SHA256, load_ruleset
+ 
+     if env is None:
+         monkeypatch.delenv("CMA_RULESET", raising=False)
+@@ -73,7 +73,9 @@ def test_written_evidence_records_the_ruleset(tmp_path, monkeypatch, env):
+     r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A", "--out", str(out)])
+     assert r.exit_code == 0, r.output
+     record = json.loads((tmp_path / "memo.evidence.json").read_text())
+-    assert record["ruleset"] == {"id": "v1", "sha256": FROZEN_SHA256["v1"]}
++    assert record["ruleset"] == {"id": expected, "sha256": load_ruleset(expected).sha256}
++    if expected == "v1":
++        assert record["ruleset"]["sha256"] == FROZEN_SHA256["v1"]
+ 
+ 
+ def test_whitespace_reviewer_is_refused(tmp_path):
+diff --git a/tests/test_mcp_paths.py b/tests/test_mcp_paths.py
+index 8f8e8d0..f680a60 100644
+--- a/tests/test_mcp_paths.py
++++ b/tests/test_mcp_paths.py
+@@ -38,6 +38,15 @@ def test_refuses_other_paths(data, path):
+         mcp_server.statement_summary(path)
+ 
+ 
++@pytest.mark.parametrize("path", ["../outside.csv", "/etc/passwd", "cafe.truth.json", "missing.csv"])
++def test_money_in_buckets_reads_only_inside_the_data_dir(data, path):
++    # T11: the read-only buckets tool goes through the same path check as every tool.
++    (data / "outside.csv").write_text("x")
++    with pytest.raises(ValueError):
++        mcp_server.money_in_buckets(path)
++    assert mcp_server.money_in_buckets("cafe.csv")["total_money_in"]["id"] == "M17"
++
++
+ def test_policy_path_is_checked_too(data):
+     with pytest.raises(ValueError):
+         mcp_server.check_policy("cafe.csv", policy_path="/etc/hosts")
+diff --git a/tests/test_p7_history.py b/tests/test_p7_history.py
+index 0ca406a..35a6038 100644
+--- a/tests/test_p7_history.py
++++ b/tests/test_p7_history.py
+@@ -155,10 +155,13 @@ def test_rollback_a_review_left_pending_here_resumes_under_the_pre_change_versio
+     rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
+     csv_path, _ = synth.write(rows, truth, tmp_path)
+     db, out = tmp_path / "reviews.db", tmp_path / "memo.md"
++    # The rollback is CMA_RULESET=v1 and then the previous wheel: a review drafted under v2
++    # (the default since T11) can hold a category the previous release has no value for
++    # (director_funding here), which it cannot read back.
+     new = subprocess.run(
+         [sys.executable, "-m", "cma.cli", "run", str(csv_path), "--checkpoint-db", str(db), "--thread", "new-1"],
+         cwd=tmp_path, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+-        env=_env(PYTHONPATH=str(ROOT / "src")))
++        env=_env(PYTHONPATH=str(ROOT / "src"), CMA_RULESET="v1"))
+     assert "review id: new-1" in new.stdout, new.stdout + new.stderr
+     old = subprocess.run(
+         [sys.executable, "-m", "cma.cli", "resume", "new-1", "--checkpoint-db", str(db), "--reviewer", "C",
+diff --git a/tests/test_rules.py b/tests/test_rules.py
+index c696262..45291ac 100644
+--- a/tests/test_rules.py
++++ b/tests/test_rules.py
+@@ -346,6 +346,9 @@ def test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1(tmp_pat
+ 
+     rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
+     csv_path, _ = synth.write(rows, truth, tmp_path)
++    # A pre-T01 release categorised with the table now packaged as v1, so draft under v1
++    # (v2 is the default since T11).
++    monkeypatch.setenv("CMA_RULESET", "v1")
+     graph = build(FakeLLM())
+     cfg = {"configurable": {"thread_id": "legacy"}}
+     graph.invoke({"statement_path": str(csv_path)}, cfg)
+@@ -373,7 +376,7 @@ def test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1(tmp_pat
+ 
+ 
+ @pytest.mark.contracts
+-def test_a_t02_checkpoint_with_a_recorded_v1_ruleset_but_no_line_rule_ids_replays_v1(tmp_path):
++def test_a_t02_checkpoint_with_a_recorded_v1_ruleset_but_no_line_rule_ids_replays_v1(tmp_path, monkeypatch):
+     """The release before T03 recorded the ruleset (v1 and its hash) but no rule id on any
+     line. On resume each line's rule id is replayed from that recorded table, not left
+     null; a recorded hash the installed table does not have replays nothing."""
+@@ -384,6 +387,7 @@ def test_a_t02_checkpoint_with_a_recorded_v1_ruleset_but_no_line_rule_ids_replay
+ 
+     rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
+     csv_path, _ = synth.write(rows, truth, tmp_path)
++    monkeypatch.setenv("CMA_RULESET", "v1")  # the T02 release's default table (v2 since T11)
+     graph = build(FakeLLM())
+     cfg = {"configurable": {"thread_id": "t02"}}
+     graph.invoke({"statement_path": str(csv_path)}, cfg)
+diff --git a/tests/test_synth_features.py b/tests/test_synth_features.py
+index f29109f..2385e0c 100644
+--- a/tests/test_synth_features.py
++++ b/tests/test_synth_features.py
+@@ -106,8 +106,10 @@ def test_p17_featured_case_has_every_feature_r47(tmp_path, archetype, profile):
+ 
+ @pytest.mark.invariants
+ def test_p17_byte_identity_of_existing_archetypes_and_profiles(tmp_path):
+-    """Every archetype and profile, at several seeds and lengths, writes the statement and the
+-    truth file it wrote before the features existed (hashes taken at 25a943c, before them)."""
++    """Every archetype and profile, at several seeds and lengths, writes the statement it
++    wrote before the features existed, byte for byte (hashes taken at 25a943c, before them).
++    Its truth file is the one it wrote then but for one change T11 makes (design, Migration):
++    with v2 the default, the director capital line's truth is director_funding, not other."""
+     golden = json.loads(GOLDEN.read_text())
+     assert len(golden) == 45
+     for key, want in golden.items():
+@@ -115,7 +117,13 @@ def test_p17_byte_identity_of_existing_archetypes_and_profiles(tmp_path):
+         rows, truth = synth.generate(archetype, profile, seed=int(seed), months=int(months), end=END)
+         csv_path, truth_path = synth.write(rows, truth, tmp_path / key.replace("/", "_"))
+         assert hashlib.sha256(csv_path.read_bytes()).hexdigest() == want["csv"], key
+-        assert hashlib.sha256(truth_path.read_bytes()).hexdigest() == want["truth"], key
++        data = json.loads(truth_path.read_text())
++        capital = {r["id"] for r in rows if r["description"] == "FPS CREDIT DIRECTOR CAPITAL INTRODUCED"}
++        changed = {i for i, c in data["category_by_id"].items() if c == "director_funding"}
++        assert changed == capital, key
++        data["category_by_id"].update({i: "other" for i in changed})
++        before = json.dumps(data, indent=2, default=str)
++        assert hashlib.sha256(before.encode()).hexdigest() == want["truth"], key
+         assert synth.generate(archetype, profile, seed=int(seed), months=int(months), end=END,
+                               features=())[0] == rows
+ 
+diff --git a/tests/test_v2_default.py b/tests/test_v2_default.py
+new file mode 100644
+index 0000000..a40184f
+--- /dev/null
++++ b/tests/test_v2_default.py
+@@ -0,0 +1,170 @@
++"""T11: v2 is the default ruleset (R10, R53, P7). The committed examples are regenerated
++under it, policy rule R9 and the offline model's M16 sentence say what M16 now measures,
++the appendix carries M17-M28, the MCP server has a read-only money-in buckets tool, and the
++lines v2 newly recognises are listed where a person can read them."""
++
++import json
++import re
++from datetime import date
++from pathlib import Path
++
++import pytest
++from typer.testing import CliRunner
++
++from cma import categorise, ingest, metrics, synth
++from cma.categorise import DEFAULT_RULESET, active_ruleset, load_ruleset
++from cma.cli import app
++from cma.policy import load_policy
++
++ROOT = Path(__file__).resolve().parents[1]
++EXAMPLES = ROOT / "examples"
++NEWLY_RECOGNISED_DOC = ROOT / "docs" / "v2-newly-recognised.md"
++
++
++@pytest.mark.contracts
++def test_v2_is_the_default_ruleset(monkeypatch):
++    monkeypatch.delenv("CMA_RULESET", raising=False)
++    assert DEFAULT_RULESET == "v2"
++    assert active_ruleset().id == "v2"
++    monkeypatch.setenv("CMA_RULESET", "v1")
++    assert active_ruleset().id == "v1"  # the rollback still works
++
++
++@pytest.mark.contracts
++def test_policy_r9_is_worded_for_m16s_name():
++    rules = {r["id"]: r for r in load_policy()["rules"]}
++    assert rules["R9"]["metric"] == "M16"
++    text = rules["R9"]["description"].lower()
++    assert "unexplained" not in text and "not trading receipts" in text
++
++
++@pytest.mark.contracts
++def test_offline_models_m16_sentence_names_non_trading_money_in(tmp_path):
++    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
++    csv, _ = synth.write(rows, truth, tmp_path)
++    out = tmp_path / "memo.md"
++    r = CliRunner().invoke(app, ["run", str(csv), "--yes", "--reviewer", "A", "--out", str(out)])
++    assert r.exit_code == 0, r.output
++    text = out.read_text()
++    assert "Unclassified" not in text
++    assert re.search(r"Money in that is not trading receipts was \S+ \[M16\]", text)
++
++
++# --- the committed examples, regenerated under v2 ------------------------------------------
++
++def _committed_memo_body(text: str) -> str:
++    # The approval line carries the time `cma run` ran; everything else is reproducible.
++    return re.sub(r"(APPROVED by .*? at )\d{4}-\d\d-\d\d \d\d:\d\d UTC", r"\1<time>", text)
++
++
++@pytest.mark.contracts
++def test_committed_example_is_regenerated_under_v2(tmp_path, monkeypatch):
++    """examples/cafe_stretched.memo.md and its evidence are what `cma run` writes today, with
++    the default ruleset, on the committed CSV (README: the output of the offline model)."""
++    monkeypatch.delenv("CMA_RULESET", raising=False)
++    monkeypatch.chdir(ROOT)  # the evidence records the path as given, as the README runs it
++    out = tmp_path / "cafe_stretched.memo.md"
++    r = CliRunner().invoke(app, ["run", "examples/cafe_stretched.csv", "--vat-stagger", "3", "--yes",
++                                 "--reviewer", "A. Analyst", "--out", str(out)])
++    assert r.exit_code == 0, r.output
++    committed = (EXAMPLES / "cafe_stretched.memo.md").read_text()
++    assert _committed_memo_body(out.read_text()) == _committed_memo_body(committed)
++    ev = json.loads((EXAMPLES / "cafe_stretched.memo.evidence.json").read_text())
++    fresh = json.loads((tmp_path / "cafe_stretched.memo.evidence.json").read_text())
++    v2 = load_ruleset("v2")
++    assert ev["ruleset"] == {"id": "v2", "sha256": v2.sha256}
++    for key in ("schema_version", "statement", "model", "vat_stagger", "ruleset", "lines", "metrics",
++                "monthly_summary", "thresholds", "indicators", "policy", "guard", "redrafts", "memo"):
++        assert ev[key] == fresh[key], key
++    # The appendix carries every figure, M17-M28 included (design: Migration).
++    for i in range(1, 29):
++        assert re.search(rf"^\| M{i} \| ", committed, re.MULTILINE), f"M{i}"
++    assert "| M16 | Non-trading money in (share) |" in committed
++
++
++@pytest.mark.contracts
++def test_committed_truth_names_the_director_capital_line_director_funding():
++    truth = json.loads((EXAMPLES / "cafe_stretched.truth.json").read_text())
++    s = categorise.categorise(ingest.load_csv(EXAMPLES / "cafe_stretched.csv"), load_ruleset("v2"))
++    capital = [t for t in s.transactions if t.description == "FPS CREDIT DIRECTOR CAPITAL INTRODUCED"]
++    assert capital
++    for t in capital:
++        assert truth["category_by_id"][t.id] == "director_funding" == t.category.value
++    assert all(truth["category_by_id"][t.id] == t.category.value for t in s.transactions)
++
++
++@pytest.mark.parametrize("archetype", synth.ARCHETYPES)
++@pytest.mark.parametrize("profile", synth.PROFILES)
++def test_generated_truth_matches_v2_categories_without_features(tmp_path, archetype, profile):
++    rows, truth = synth.generate(archetype, profile, end=date(2026, 9, 30))
++    csv, _ = synth.write(rows, truth, tmp_path)
++    s = categorise.categorise(ingest.load_csv(csv), load_ruleset("v2"))
++    assert [t.id for t in s.transactions if t.category.value != truth.category_by_id[t.id]] == []
++
++
++# --- the lines v2 newly recognises, listed for a person (R10) -------------------------------
++
++def _listed_lines() -> set[tuple[str, str, str, str]]:
++    rows = set()
++    for line in NEWLY_RECOGNISED_DOC.read_text().splitlines():
++        cells = [c.strip().strip("`") for c in line.strip().strip("|").split("|")]
++        if len(cells) == 4 and cells[1] in ("in", "out"):
++            rows.add(tuple(cells))
++    return rows
++
++
++@pytest.mark.contracts
++def test_the_newly_recognised_lines_are_listed_in_the_docs():
++    from test_rules_v2 import NEWLY_RECOGNISED
++
++    assert _listed_lines() == NEWLY_RECOGNISED
++    readme = (ROOT / "README.md").read_text()
++    assert "docs/v2-newly-recognised.md" in readme
++
++
++# --- the read-only money-in buckets MCP tool -------------------------------------------------
++
++@pytest.fixture
++def mcp_data(tmp_path, monkeypatch):
++    pytest.importorskip("mcp")
++    home = tmp_path / "home"
++    home.mkdir()
++    (home / "firm.yaml").write_text("offline_lock: false\n")
++    monkeypatch.setenv("CMA_HOME", str(home))
++    data = tmp_path / "data"
++    data.mkdir()
++    (data / "ex.csv").write_bytes((EXAMPLES / "cafe_stretched.csv").read_bytes())
++    monkeypatch.setenv("CMA_DATA_DIR", str(data))
++    return data
++
++
++@pytest.mark.contracts
++def test_mcp_money_in_buckets_tool_returns_the_buckets_with_evidence_ids(mcp_data, monkeypatch):
++    from cma import mcp_server
++
++    monkeypatch.delenv("CMA_RULESET", raising=False)
++    out = mcp_server.money_in_buckets("ex.csv")
++    s = categorise.categorise(ingest.load_csv(mcp_data / "ex.csv"))
++    by_id = {m.id: m for m in metrics.compute(s)}
++    assert out["total_money_in"]["id"] == "M17"
++    assert [b["id"] for b in out["buckets"]] == ["M2", "M19", "M20", "M21", "M22", "M23", "M24", "M25"]
++    assert out["cash_deposits_within_trading_receipts"]["id"] == "M18"
++    for d in [out["total_money_in"], out["cash_deposits_within_trading_receipts"], *out["buckets"]]:
++        m = by_id[d["id"]]
++        assert d == {"id": m.id, "name": m.name, "value": m.value, "unit": m.unit, "evidence": m.evidence}
++    # The buckets add up to total money in, in pence (R1, P1).
++    assert sum(round(b["value"] * 100) for b in out["buckets"]) == round(out["total_money_in"]["value"] * 100)
++    assert next(b for b in out["buckets"] if b["id"] == "M20")["value"] == 8000.0  # v2: director capital
++    assert "STRIPE" not in json.dumps(out) and "DIRECTOR" not in json.dumps(out)  # ids only (R34)
++
++
++@pytest.mark.contracts
++def test_mcp_money_in_buckets_tool_is_registered_and_refuses_under_the_lock(mcp_data, tmp_path):
++    from cma import firm, mcp_server
++
++    assert "money_in_buckets" in {t.name for t in mcp_server.server._tool_manager.list_tools()}
++    with pytest.raises(ValueError):
++        mcp_server.money_in_buckets("../outside.csv")
++    (tmp_path / "home" / "firm.yaml").write_text("offline_lock: true\n")
++    with pytest.raises(firm.OfflineLockError):
++        mcp_server.money_in_buckets("ex.csv")

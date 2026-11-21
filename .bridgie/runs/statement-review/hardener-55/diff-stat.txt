@@ -1,0 +1,18 @@
+ README.md                                  |   10 +-
+ docs/v2-newly-recognised.md                |   31 +
+ examples/cafe_stretched.memo.evidence.json | 2751 ++++++++++++++++++++++++----
+ examples/cafe_stretched.memo.md            |   14 +-
+ examples/cafe_stretched.truth.json         |    2 +-
+ src/cma/categorise.py                      |    8 +-
+ src/cma/llm.py                             |    2 +-
+ src/cma/mcp_server.py                      |   25 +
+ src/cma/policies/uk_sme_default.yaml       |    2 +-
+ src/cma/synth.py                           |    7 +-
+ tests/test_categorise.py                   |    3 +-
+ tests/test_cli.py                          |   14 +-
+ tests/test_mcp_paths.py                    |    9 +
+ tests/test_p7_history.py                   |    5 +-
+ tests/test_rules.py                        |    6 +-
+ tests/test_synth_features.py               |   14 +-
+ tests/test_v2_default.py                   |  170 ++
+ 17 files changed, 2637 insertions(+), 436 deletions(-)
