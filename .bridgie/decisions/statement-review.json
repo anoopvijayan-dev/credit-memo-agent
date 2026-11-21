@@ -5826,12 +5826,12 @@
         "The SDK's own app, its class unchanged, with the lock check added as middleware; R53 says so in the next revision (one change in T17 and two tests)"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "The SDK's app behind a lock check, a wrapper, as 6b43212 builds; R53 says code that checks the app's class sees another class (design default; no build change)",
+      "free_text": "Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-21T00:43:54.630Z",
+      "effect": "recorded",
       "created_at": "2026-11-21T00:43:52.053Z"
     },
     {
