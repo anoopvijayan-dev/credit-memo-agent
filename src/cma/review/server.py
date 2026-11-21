@@ -14,7 +14,7 @@
 - takes the next free port from the one it is given, and prints its URL with the token.
 
 It is one process that serves requests on threads and never forks (R42's scope). It
-renders; it computes no money. Its request log is off, so the token never reaches a log.
+renders what the figures layer computed; it computes no money. Its request log is off, so the token never reaches a log.
 Refusals say only that the request was refused, never what the case holds.
 """
 
@@ -37,6 +37,7 @@ PORT_TRIES = 50  # ports tried from the one given, before giving up
 TOKEN_BYTES = 32
 TOKEN_HEADER = "X-CMA-Token"
 TOKEN_MARK = "__CMA_TOKEN__"  # where the page names its token, filled in when it is served
+SUMMARY_MARK = "__CMA_SUMMARY__"  # where the page holds the case summary, rendered per request
 
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
        "connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
@@ -140,7 +141,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         path = parts.path if parts else None
         if path == "/":
-            self._send(200, self.server.page, "text/html; charset=utf-8")
+            self._send(200, self.server.page_html(), "text/html; charset=utf-8")
         elif path == "/api/case":
             self._send(200, self.server.case_json(), "application/json")
         elif path in self.server.assets:
@@ -182,9 +183,10 @@ class ReviewServer:
         self.httpd = _bind(port)
         self.port = self.httpd.server_port
         self.httpd.token = self.token
-        self.httpd.page = template.replace(TOKEN_MARK.encode(), self.token.encode())
+        self._page = template.replace(TOKEN_MARK.encode(), self.token.encode())
         self.httpd.assets = assets
         self.httpd.case_json = self._case_json
+        self.httpd.page_html = self._page_html
         self._thread: threading.Thread | None = None
 
     @property
@@ -192,13 +194,17 @@ class ReviewServer:
         return f"http://{LOOPBACK}:{self.port}/?token={self.token}"
 
     def _case_json(self) -> bytes:
-        from .. import store
+        """The case summary as data (R3): computed afresh, through the figures layer."""
+        from . import summary
 
-        try:
-            label = store.load_profile(self.folder).get("label")
-        except (OSError, store.CaseStoreError):
-            label = None
-        return json.dumps({"case": self.case_id, "label": label}).encode()
+        return json.dumps(summary.case_summary(self.folder, self.case_id), ensure_ascii=False).encode("utf-8")
+
+    def _page_html(self) -> bytes:
+        """The page with the case summary rendered into it; every case text escaped (R34)."""
+        from . import summary
+
+        html = summary.render(summary.case_summary(self.folder, self.case_id))
+        return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
 
     def serve_forever(self) -> None:
         self.httpd.serve_forever()

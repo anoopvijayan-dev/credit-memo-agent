@@ -44,6 +44,7 @@ from typing import Any
 from . import case as caselog
 from . import store
 from .categorise import _MONEY_IN_ONLY, LineOverride, active_ruleset, categorise
+from .metrics import ReconciliationError
 from .models import CREDIT_BUCKET, Category, Metric, MonthRow, Statement, Transaction
 
 OVERRIDES = "overrides.jsonl"
@@ -262,12 +263,20 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
         statement, sha = loaded
         applied = state.applied.get(account, {})
         bare = statement.model_copy(deep=True)
-        metrics, monthly = _figures(statement, profile, applied)
+        try:
+            metrics, monthly = _figures(statement, profile, applied)
+        except ReconciliationError as e:  # R3: the caller names the account and its lines
+            e.account, e.statement = account, statement
+            raise
         lines = set(applied)
         marked: set[str] = set()
         cells: set[tuple[str, str]] = set()
         if applied:
-            base_metrics, base_monthly = _figures(bare, profile, {})
+            try:
+                base_metrics, base_monthly = _figures(bare, profile, {})
+            except ReconciliationError as e:
+                e.account, e.statement = account, bare
+                raise
             marked = {m.id for m, b in zip(metrics, base_metrics, strict=True) if _rests_on(m, b, lines)}
             base_rows = {r.month: r for r in base_monthly}
             for row in monthly:
