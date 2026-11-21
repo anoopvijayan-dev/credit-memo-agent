@@ -1646,3 +1646,39 @@ def test_the_running_balance_is_checked_as_each_record_is_read(tmp_path, monkeyp
     csv.write_text("id,date,description,amount,balance\n" + "\n".join(rows) + "\n")
     ingest.load_csv(csv, today=date(2026, 6, 1))
     assert at_first and at_first[0] <= 4
+
+
+@pytest.mark.contracts
+def test_both_balance_checks_run_with_no_second_record_read_ahead(tmp_path, monkeypatch):
+    """T04 review 55: each record was held back until the next was read, so the newest-first
+    balance check ran two records ahead. Records are handed out as read: both checks between
+    the first two records run when the second is read (header, two records: three lines)."""
+    reads = [0]
+    calls = []
+    real_next, real_follows = ingest._Feed.__next__, ingest.follows
+
+    def counted(self):
+        reads[0] += 1
+        return real_next(self)
+
+    def watched(*a):
+        calls.append(reads[0])
+        return real_follows(*a)
+
+    monkeypatch.setattr(ingest._Feed, "__next__", counted)
+    monkeypatch.setattr(ingest, "follows", watched)
+    rows = [f"T{k},2026-01-{k + 1:02d},A,1.00,{k + 1}.00" for k in range(20)]
+    csv = tmp_path / "s.csv"
+    csv.write_text("id,date,description,amount,balance\n" + "\n".join(rows) + "\n")
+    ingest.load_csv(csv, today=date(2026, 6, 1))
+    assert len(calls) >= 2 and calls[1] <= 2  # header, then the two records
+
+
+@pytest.mark.contracts
+def test_a_bad_byte_under_a_repeated_blank_column_is_still_found(tmp_path):
+    """T04 review 55: two blank header names collapse in a row's dict, so a clean cell under the
+    second hid a bad byte under the first; bad bytes are found by the record's own cells."""
+    csv = tmp_path / "s.csv"
+    csv.write_bytes(b"id,date,description,amount,balance,,\nT1,2026-01-01,A,1.00,1.00,CAF\xe9,clean\n")
+    with pytest.raises(ingest.StatementError, match="line 2: not UTF-8"):
+        ingest.load_csv(csv, today=date(2026, 6, 1))

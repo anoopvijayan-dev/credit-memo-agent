@@ -354,7 +354,12 @@ def _records(physical: list[str], pos: int, header: list[str], bad: int | None):
     def tail(line: int):
         return (physical[k] for k in range(line - 1, len(physical)))
 
-    pending: tuple[int, dict] | None = None  # held one record, to know whether it is the last
+    def bad_columns(cells: list[str]) -> set:
+        """The columns whose cells hold a bad byte, by position, read from the record's own
+        cells: blank header names that repeat collapse in a row's dict, which would hide a bad
+        byte under the first of them (T04 review 55)."""
+        return {header[k] if k < len(header) else None for k, c in enumerate(cells) if _NOT_UTF8_BYTE.search(c)}
+
     while True:
         # A missing trailing cell reads as "" rather than None, so no check meets a None (T04 review 29).
         reader = csv.DictReader(feed, fieldnames=header, restval="")
@@ -363,24 +368,8 @@ def _records(physical: list[str], pos: int, header: list[str], bad: int | None):
             try:
                 row = next(reader)
             except StopIteration:
-                if pending is not None:
-                    line, last = pending
-                    # A quoted field still open at the end of the file would hold every line
-                    # after its start: refused, naming the line it starts on (T04 review 32);
-                    # the fields wholly before it can still be read (T04 review 38).
-                    if not _split_lines(tail(line))[1] and _ends_in_quotes("".join(physical[line - 1:])):
-                        err = CsvRecordError(f"line {line}: a quoted field is not closed before the end of the file")
-                        cells = _split_lines(tail(line))[0]
-                        err.line, err.row, err.stops = line, last, True
-                        err.readable = set(header[:max(len(cells) - 1, 0)]) - unreadable_cells(last)
-                        yield line, last, err
-                    else:
-                        yield (*pending, None)
                 return
             except csv.Error as e:
-                if pending is not None:
-                    yield (*pending, None)
-                    pending = None
                 line = begin(before)
                 if "field larger than field limit" not in str(e):
                     err = CsvRecordError(f"line {line}: not a readable CSV record ({e})")
@@ -407,37 +396,45 @@ def _records(physical: list[str], pos: int, header: list[str], bad: int | None):
                 err.line, err.row = line, _long_row(cells, header)
                 held = cells[:-1] if open_ else cells
                 err.readable = ({h for h, c in zip(header[:len(held)], held, strict=False) if len(c) <= limit}
-                                - unreadable_cells(err.row))
+                                - bad_columns(cells))
                 err.stops = open_
                 yield line, err.row, err
                 if open_:
                     return
                 feed.pos = line - 1 + used  # reading goes on from the line after it (T04 review 47)
                 break
+            # Each record is handed out as soon as it is read: never a second record ahead
+            # (revision 30, T04 review 55). The reader never reads past a record's own lines,
+            # so a record that reaches the file's last line without a line end outside quotes
+            # is the one whose quoted field is still open at the end of the file.
             line = begin(before)
-            if pending is not None:
-                yield (*pending, None)
-                pending = None
-            bad_cells = unreadable_cells(row)
+            lines = physical[line - 1:feed.pos]
+            cells, ended, _ = _split_lines(iter(lines))
+            open_ = feed.pos >= len(physical) and not ended and _ends_in_quotes("".join(lines))
+            bad_cells = bad_columns(cells) if _NOT_UTF8_BYTE.search("".join(lines)) else set()
+            if not (bad_cells or open_):
+                yield line, row, None
+                continue
             if bad_cells:
                 # A bad byte: the record is named, the first by the byte's offset, with its cells
                 # without one, and reading goes on past it (T04 review 46).
                 err = not_utf8(line, first_bad[0])
                 first_bad[0] = None
-                err.line, err.row, err.readable = line, row, set(header) - bad_cells
-                cells, ended, _ = _split_lines(tail(line))
-                if not ended and _ends_in_quotes("".join(physical[line - 1:])):
-                    # Its quoted field is open to the end of the file and has swallowed every
-                    # line after it: reading stops, and no caller may skip it and read on
-                    # (T04 review 54); its open cell is not readable.
+                if open_:
                     err = CsvRecordError(f"{err}; a quoted field in it is not closed before the end of the file")
-                    err.line, err.row, err.stops = line, row, True
-                    err.readable = set(header[:max(len(cells) - 1, 0)]) - bad_cells
-                yield line, row, err
-                if err.stops:
-                    return
             else:
-                pending = (line, row)
+                # A quoted field still open at the end of the file would hold every line after
+                # its start: refused, naming the line it starts on (T04 review 32).
+                err = CsvRecordError(f"line {line}: a quoted field is not closed before the end of the file")
+            # Readable: the record's cells without a bad byte; with a quoted field left open, only
+            # those wholly before it (T04 reviews 38 and 54). An open record stops reading, so
+            # no caller may skip it and read on (T04 reviews 49 and 54).
+            held = header[:max(len(cells) - 1, 0)] if open_ else header
+            err.line, err.row, err.stops = line, row, open_
+            err.readable = set(held) - bad_cells
+            yield line, row, err
+            if open_:
+                return
 
 
 def load_csv(path: Path, account_name: str | None = None, today: date | None = None,
