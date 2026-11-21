@@ -140,7 +140,9 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         path = parts.path if parts else None
-        if path in ("/", "/api/case"):
+        if path in ("/lines", "/api/lines"):
+            self._lines(path, parts.query)
+        elif path in ("/", "/api/case"):
             # The summary is computed per request; a failure no refusal foresees is answered,
             # naming nothing the case holds, rather than dropping the connection unanswered.
             try:
@@ -157,6 +159,34 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(200, body, kind)
         else:
             self._send(404, b"Not found.\n")
+
+
+    def _lines(self, path: str, query: str) -> None:
+        """The lines behind one figure or monthly cell (R16): as data at /api/lines, as the
+        page at /lines. A request that names no figure or cell of the case is answered 400,
+        naming only what was asked."""
+        from .drilldown import DrillError
+
+        q = parse_qs(query, keep_blank_values=True)
+        args = {}
+        for key in ("account", "figure", "month", "cell"):
+            given = q.get(key, [])
+            if len(given) > 1:
+                self._send(400, f"Give {key} once.\n".encode())
+                return
+            args[key] = given[0] if given else None
+        try:
+            if path == "/lines":
+                body, kind = self.server.lines_html(**args), "text/html; charset=utf-8"
+            else:
+                body, kind = self.server.lines_json(**args), "application/json"
+        except DrillError as e:
+            self._send(400, f"{e}.\n".encode())
+            return
+        except Exception:
+            self._send(500, b"The lines could not be shown.\n")
+            return
+        self._send(200, body, kind)
 
 
 class _HTTPServer(ThreadingHTTPServer):
@@ -195,6 +225,8 @@ class ReviewServer:
         self.httpd.assets = assets
         self.httpd.case_json = self._case_json
         self.httpd.page_html = self._page_html
+        self.httpd.lines_json = self._lines_json
+        self.httpd.lines_html = self._lines_html
         self._thread: threading.Thread | None = None
 
     @property
@@ -211,7 +243,21 @@ class ReviewServer:
         """The page with the case summary rendered into it; every case text escaped (R34)."""
         from . import summary
 
-        html = summary.render(summary.case_summary(self.folder, self.case_id))
+        html = summary.render(summary.case_summary(self.folder, self.case_id), token=self.token)
+        return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
+
+    def _lines_json(self, **target) -> bytes:
+        """The lines behind one figure or monthly cell, as data (R16)."""
+        from . import drilldown
+
+        d = drilldown.lines_behind(self.folder, self.case_id, **target)
+        return json.dumps(d, ensure_ascii=False).encode("utf-8")
+
+    def _lines_html(self, **target) -> bytes:
+        """The page with the lines behind one figure or monthly cell; every case text escaped (R34)."""
+        from . import drilldown
+
+        html = drilldown.render(drilldown.lines_behind(self.folder, self.case_id, **target), self.token)
         return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
 
     def serve_forever(self) -> None:

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import calendar
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 
@@ -76,6 +77,7 @@ BUCKET_METRICS: dict[Bucket, tuple[str, str, str]] = {
 }
 # Left out of the denominator M16 and M26 share: borrowing, money that only undoes a
 # payment, and the applicant's own money moving between its accounts.
+PROFILE_OWN_ACCOUNT = "profile:own_account"  # the rule a case profile's own-account name records (R6)
 NOT_IN_SHARE = {Category.LOAN_DRAWDOWN, Category.RETURNED_DD, Category.OWN_ACCOUNT_TRANSFER}
 
 
@@ -379,6 +381,146 @@ def proposed_repayment_pence(proposed) -> int:
     return p
 
 
+# --- Shared calculations ------------------------------------------------------------------
+# Each is the one place its figure's calculation lives: compute() reads it for the figure,
+# and derived_inputs() for the inputs the drill-down shows beside it (R16), so the inputs
+# shown are always the ones the figure was computed from.
+
+
+def revenue_quarters(rev: list[Transaction], start: date, end: date
+                     ) -> tuple[tuple[list[str], int], tuple[list[str], int]] | None:
+    """M4's two quarters: the earliest and the latest three whole calendar months, each with
+    its trading receipts in pence; None when the statement has fewer than six whole months."""
+    whole = full_months(start, end)
+    if len(whole) < 6:
+        return None
+    by_month: dict[str, int] = defaultdict(int)
+    for t in rev:
+        by_month[_month(t.date)] += pence(t)
+    first, last = whole[:3], whole[-3:]
+    return (first, sum(by_month.get(m, 0) for m in first)), (last, sum(by_month.get(m, 0) for m in last))
+
+
+@dataclass
+class OperatingCash:
+    """M9's parts. operating: its lines, statement order apart from the sent-back credits at
+    the end; trading: the total of its lines other than money in that is not trading
+    receipts; offset: what those sent-back credits net off, never more than was sent to each
+    payer; counted: how much of each sent-back credit counts, in pence; capped: the credit
+    that counts only in part, at most one per payer."""
+
+    operating: list[Transaction]
+    trading: int
+    offset: int
+    counted: dict[str, int]
+    capped: list[str]
+
+    @property
+    def net(self) -> int:
+        return self.trading + self.offset
+
+
+def _eff(t: Transaction, by_id: dict[str, Transaction]) -> Category:
+    """A returned DD counts in the category of the debit it reverses. One whose debit is not
+    in the statement counts as itself (it is refused after the reconciliation)."""
+    return by_id[t.reverses].category if t.reverses in by_id else t.category
+
+
+def operating_cash(txns: list[Transaction], by_id: dict[str, Transaction]) -> OperatingCash:
+    """Net operating cash flow (M9) and the parts it is computed from."""
+    pos = {t.id: i for i, t in enumerate(txns)}
+
+    def total(lines) -> int:
+        return sum(pence(t) for t in lines)
+
+    # Operating cash flow is trading cash: money out that is not financing, and money in
+    # that is revenue or that reverses an operating payment. Money in that nobody has
+    # explained (OTHER: capital introduced, savings, refunds) is left out, so it can never
+    # lift cover; it shows in M16 instead. A returned DD that matches no debit is left out
+    # too, for the same reason.
+
+    # A line the case profile names as one of the applicant's other accounts is the
+    # applicant's own money moving, not operating cash, in either direction (R6): it is never
+    # an operating line, and never sent or sent back in the round trip below. A move to or
+    # from an own pot that the built-in table recognises keeps the treatment v1 gives the same
+    # line, so M1 to M16 do not move under v2 (R10, P7); and with no case profile no line is
+    # named, so M9 is the previous release's (R54).
+    # A returned DD that undoes such a line is the same money coming back, so it is named too.
+    def own_account_named(t: Transaction) -> bool:
+        u = by_id.get(t.reverses, t) if t.reverses else t
+        return u.category == Category.OWN_ACCOUNT_TRANSFER and u.rule_id == PROFILE_OWN_ACCOUNT
+
+    def operating_line(t: Transaction) -> bool:
+        if _eff(t, by_id) in FINANCING or own_account_named(t):
+            return False
+        if pence(t) <= 0:
+            return True
+        if t.category == Category.RETURNED_DD:
+            return t.reverses is not None
+        return t.category in REVENUE_CATEGORIES
+
+    operating = [t for t in txns if operating_line(t)]
+    # Money sent to someone by transfer and sent back by them (a savings account, a
+    # friend, a round trip) nets off: their unexplained credits offset the transfers to
+    # them, but never by more than was sent, so the round trip can't add cash.
+    sent: dict[str, int] = defaultdict(int)
+    for t in txns:
+        if pence(t) < 0 and operating_line(t) and OUTGOING_TRANSFER.search(t.description.upper()):
+            sent[counterparty(t.description)] += -pence(t)
+    back: dict[str, list[Transaction]] = defaultdict(list)
+    for t in txns:
+        if (pence(t) > 0 and t.category in NON_TRADING_IN and not own_account_named(t)
+                and counterparty(t.description) in sent):
+            back[counterparty(t.description)].append(t)
+    offset = sum(min(total(ts), sent[cp]) for cp, ts in back.items())
+    # A derived figure (P2): the cap is allocated to a counterparty's credits in statement
+    # order, so one credit at most counts in part, and only that one is named in the evidence
+    # note; the ones before it count in full and the ones after it not at all (T04 review 6).
+    capped: list[str] = []
+    counted: dict[str, int] = {}
+    for cp, ts in back.items():
+        left = sent[cp]
+        for t in sorted(ts, key=lambda x: pos[x.id]):
+            if 0 < left < pence(t):
+                capped.append(t.id)
+            counted[t.id] = min(left, pence(t))
+            left = max(0, left - pence(t))
+    capped.sort(key=pos.__getitem__)
+    operating += [t for ts in back.values() for t in ts]
+    trading = total(t for t in operating if not (pence(t) > 0 and t.category in NON_TRADING_IN))
+    return OperatingCash(operating, trading, offset, counted, capped)
+
+
+@dataclass
+class VatQuarter:
+    """One VAT quarter M13 judged: its end, the payment's due date, the last day of the Direct
+    Debit collection window, and the payment that stuck within it (None: late or missed)."""
+
+    quarter_end: date
+    due: date
+    window_end: date
+    paid: str | None
+
+
+def vat_quarters(vat: list[Transaction], reversed_ids: set[str], stagger: int, start: date, end: date
+                 ) -> list[VatQuarter]:
+    """Every VAT quarter of the stagger group whose payment window lies in the statement, and
+    the payment counted for it, as M13 counts them."""
+    used: set[str] = set()
+    out: list[VatQuarter] = []
+    for q_end, d in vat_due_dates(stagger, start, end):
+        window_end = _add_working_days(d, VAT_DD_WORKING_DAYS)
+        paid = next(
+            (t for t in vat if t.id not in used and t.id not in reversed_ids and pence(t) < 0
+             and q_end < t.date <= window_end),
+            None,
+        )
+        if paid:
+            used.add(paid.id)
+        out.append(VatQuarter(q_end, d, window_end, paid.id if paid else None))
+    return out
+
+
 def compute(statement: Statement, vat_stagger: int | None = None, proposed_repayment=None) -> list[Metric]:
     """Every figure for the statement. `proposed_repayment` is the proposed facility's monthly
     repayment from the case profile (R13), in pounds, as text, a Decimal, an int or a float;
@@ -410,7 +552,7 @@ def compute(statement: Statement, vat_stagger: int | None = None, proposed_repay
         """A returned DD counts in the category of the debit it reverses. One whose debit is
         not in the statement counts as itself, and is refused after the reconciliation, so it
         never hides an unplaced credit's report (T04 review 6)."""
-        return by_id[t.reverses].category if t.reverses in by_id else t.category
+        return _eff(t, by_id)
 
     def of(*cats: Category) -> list[Transaction]:
         return [t for t in txns if eff(t) in cats]
@@ -422,20 +564,17 @@ def compute(statement: Statement, vat_stagger: int | None = None, proposed_repay
     # Revenue
     rev = [t for t in txns if t.category in REVENUE_CATEGORIES]
     total_revenue = total(rev)
-    rev_by_month: dict[str, int] = defaultdict(int)
-    for t in rev:
-        rev_by_month[_month(t.date)] += pence(t)
     whole = full_months(start, end)
     trend: float | None = None
     trend_note = (
         "Average revenue of the latest quarter of whole calendar months against the earliest quarter, "
         "as a percentage change. On a year-long statement these are opposite seasons."
     )
-    if len(whole) < 6:
+    quarters = revenue_quarters(rev, start, end)
+    if quarters is None:
         trend_note = "Needs more whole calendar months than this statement has."
     else:
-        first3 = sum(rev_by_month.get(m, 0) for m in whole[:3])  # quarters of equal length: the
-        last3 = sum(rev_by_month.get(m, 0) for m in whole[-3:])  # averages' 1/3 cancels
+        (_, first3), (_, last3) = quarters  # quarters of equal length: the averages' 1/3 cancels
         if first3 > 0:
             trend = _ratio(last3 - first3, first3, 2, 100)
         else:
@@ -459,48 +598,9 @@ def compute(statement: Statement, vat_stagger: int | None = None, proposed_repay
     debt_service = -total(loan)
     owner_drawings = -total(drawings)
 
-    # Operating cash flow is trading cash: money out that is not financing, and money in
-    # that is revenue or that reverses an operating payment. Money in that nobody has
-    # explained (OTHER: capital introduced, savings, refunds) is left out, so it can never
-    # lift cover; it shows in M16 instead. A returned DD that matches no debit is left out
-    # too, for the same reason.
     reversed_ids = {t.reverses for t in txns if t.reverses}
-
-    def operating_line(t: Transaction) -> bool:
-        if eff(t) in FINANCING:
-            return False
-        if pence(t) <= 0:
-            return True
-        if t.category == Category.RETURNED_DD:
-            return t.reverses is not None
-        return t.category in REVENUE_CATEGORIES
-
-    operating = [t for t in txns if operating_line(t)]
-    # Money sent to someone by transfer and sent back by them (a savings account, a
-    # friend, a round trip) nets off: their unexplained credits offset the transfers to
-    # them, but never by more than was sent, so the round trip can't add cash.
-    sent: dict[str, int] = defaultdict(int)
-    for t in txns:
-        if pence(t) < 0 and eff(t) not in FINANCING and OUTGOING_TRANSFER.search(t.description.upper()):
-            sent[counterparty(t.description)] += -pence(t)
-    back: dict[str, list[Transaction]] = defaultdict(list)
-    for t in txns:
-        if pence(t) > 0 and t.category in NON_TRADING_IN and counterparty(t.description) in sent:
-            back[counterparty(t.description)].append(t)
-    offset = sum(min(total(ts), sent[cp]) for cp, ts in back.items())
-    # A derived figure (P2): the cap is allocated to a counterparty's credits in statement
-    # order, so one credit at most counts in part, and only that one is named in the evidence
-    # note; the ones before it count in full and the ones after it not at all (T04 review 6).
-    capped: list[str] = []
-    for cp, ts in back.items():
-        left = sent[cp]
-        for t in sorted(ts, key=lambda x: pos[x.id]):
-            if 0 < left < pence(t):
-                capped.append(t.id)
-            left = max(0, left - pence(t))
-    capped.sort(key=pos.__getitem__)
-    operating += [t for ts in back.values() for t in ts]
-    net_operating = total(t for t in operating if not (pence(t) > 0 and t.category in NON_TRADING_IN)) + offset
+    cash_flow = operating_cash(txns, by_id)
+    operating, capped, net_operating = cash_flow.operating, cash_flow.capped, cash_flow.net
     dscr: float | None = None
     dscr_note = (
         "Historical cover of existing debt only: net operating cash flow after owner drawings, "
@@ -550,23 +650,11 @@ def compute(statement: Statement, vat_stagger: int | None = None, proposed_repay
     if vat_stagger is None:
         vat_note = "VAT stagger group not given (it is on the VAT certificate), so due dates are unknown."
     else:
-        due = vat_due_dates(vat_stagger, start, end)
-        if not due:
+        checked = vat_quarters(vat, reversed_ids, vat_stagger, start, end)
+        if not checked:
             vat_note = "No VAT quarter falls wholly inside the statement period."
         else:
-            used: set[str] = set()
-            late_vat = 0
-            for q_end, d in due:
-                window_end = _add_working_days(d, VAT_DD_WORKING_DAYS)
-                paid = next(
-                    (t for t in vat if t.id not in used and t.id not in reversed_ids and pence(t) < 0
-                     and q_end < t.date <= window_end),
-                    None,
-                )
-                if paid:
-                    used.add(paid.id)
-                else:
-                    late_vat += 1
+            late_vat = sum(1 for q in checked if q.paid is None)
 
     # Money in, by bucket (R1). Every credit goes to the bucket its category maps to; M2's
     # lines (REVENUE_CATEGORIES) are the trading receipts bucket.
@@ -757,3 +845,185 @@ def as_table(metrics: list[Metric]) -> str:
     for m in metrics:
         lines.append(f"| {m.id} | {m.name} | {m.display()} | {m.method} |")
     return "\n".join(lines)
+
+
+# --- Drill-down (R16) -------------------------------------------------------------------
+# What the workspace shows beside a figure, a bucket or a monthly cell when the underwriter
+# selects it. Every total and every input is computed here, from the lines' whole pence, so
+# the workspace only renders (R2). Each figure is one of three kinds (P2): a sum figure's
+# lines' signed amounts total it; an outflow figure is a positive amount its lines total
+# negated; a derived figure is not a total of its lines, and shows its inputs and its method.
+
+SUM_FIGURES = EXACT_IDS  # M2, M17, M18 and the money-in buckets M19 to M25
+OUTFLOW_FIGURES = frozenset({"M8", "M11", "M12", "M14"})
+# The figures a derived figure is computed from, shown as its inputs beside its own lines.
+DERIVED_FROM: dict[str, tuple[str, ...]] = {
+    "M3": ("M2",), "M10": ("M9", "M11", "M8"), "M26": ("M25",), "M28": ("M9", "M11", "M8"),
+}
+# The figures read from the close of every day of the period (P2): their inputs are those closes.
+FROM_CLOSES = frozenset({"M6", "M27"})
+
+
+def figure_kind(metric_id: str) -> str:
+    """'sum', 'outflow' or 'derived', as P2 names each figure."""
+    if metric_id in SUM_FIGURES:
+        return "sum"
+    if metric_id in OUTFLOW_FIGURES:
+        return "outflow"
+    return "derived"
+
+
+def money_text(p: int) -> str:
+    """Whole pence as pounds to the penny with thousands separators: -123456 is "-£1,234.56"."""
+    return f"{'-' if p < 0 else ''}£{Decimal(abs(p)) / 100:,.2f}"
+
+
+def lines_total(statement: Statement, ids: list[str]) -> int:
+    """The signed total, in pence, of the amounts of the lines named."""
+    by_id = statement.by_id()
+    return sum(pence(by_id[i]) for i in ids)
+
+
+def daily_closes(statement: Statement, first: date | None = None, last: date | None = None
+                 ) -> list[tuple[date, int, str]]:
+    """The close of every day from `first` to `last` (the whole period by default), carried
+    over days with no lines, with the id of the line that set it: what a figure or cell read
+    from end-of-day balances reads."""
+    eod = end_of_day_balances(statement.transactions)
+    return [(d, bal, line) for d, (bal, line) in sorted(eod.items())
+            if (first is None or d >= first) and (last is None or d <= last)]
+
+
+def _share_parts(statement: Statement, metric_id: str, evidence: list[str]) -> tuple[str, int, list[str]] | None:
+    """A share's numerator, in pence, and the lines counted in it; its denominator is its
+    evidence lines' total."""
+    by_id = statement.by_id()
+    lines = [by_id[i] for i in evidence]
+    if metric_id == "M16":
+        num = [t for t in lines if t.category in NON_TRADING_IN]
+        return "Money in that is not trading receipts", sum(pence(t) for t in num), [t.id for t in num]
+    if metric_id == "M26":
+        num = [t for t in lines if t.category == Category.OTHER]
+        return "Unexplained money in", sum(pence(t) for t in num), [t.id for t in num]
+    if metric_id == "M15":
+        by_payer: dict[str, list[Transaction]] = defaultdict(list)
+        for t in lines:
+            by_payer[counterparty(t.description)].append(t)
+        if not by_payer:
+            return "The largest payer's customer transfers (there are none)", 0, []
+        top = max(by_payer.values(), key=lambda ts: sum(pence(t) for t in ts))
+        return "The largest payer's customer transfers", sum(pence(t) for t in top), [t.id for t in top]
+    return None
+
+
+def derived_inputs(statement: Statement, metrics: list[Metric], metric_id: str,
+                   proposed_repayment=None, vat_stagger: int | None = None) -> dict:
+    """What a derived figure is computed from, for the drill-down (R16): the figures it reads,
+    the period, a share's numerator and denominator, and, for a figure read from end-of-day
+    balances, the close of every day it reads. Values are written as text, money to the penny."""
+    by = {m.id: m for m in metrics}
+    m = by[metric_id]
+    inputs: list[dict] = []
+    closes: list[tuple[date, int, str]] | None = None
+    start, end = statement.start, statement.end
+    days = (end - start).days + 1
+    for fid in DERIVED_FROM.get(metric_id, ()):
+        f = by[fid]
+        inputs.append({"label": f.name, "figure": f.id, "display": f.display_exact()})
+    if metric_id in ("M1", "M3", "M28"):
+        inputs.append({"label": "Period", "figure": None,
+                       "display": f"{start.isoformat()} to {end.isoformat()}, {days} days"})
+    if metric_id == "M28":
+        shown = ("not given" if proposed_repayment is None
+                 else money_text(proposed_repayment_pence(proposed_repayment)))
+        inputs.append({"label": "Proposed monthly repayment (case profile)", "figure": None, "display": shown})
+    if metric_id == "M5" and m.evidence:
+        t = statement.by_id()[m.evidence[0]]
+        inputs.append({"label": f"Running balance after line {t.id}", "figure": None,
+                       "display": money_text(balance_pence(t))})
+    if metric_id in ("M15", "M16", "M26"):
+        parts = _share_parts(statement, metric_id, m.evidence)
+        if parts is not None:
+            label, num, num_lines = parts
+            inputs.append({"label": label, "figure": None, "display": money_text(num), "lines": num_lines})
+            inputs.append({"label": "Of which it is a share (the lines below)", "figure": None,
+                           "display": money_text(lines_total(statement, m.evidence))})
+    if metric_id == "M4":
+        inputs += _trend_inputs(statement)
+    if metric_id == "M7":
+        inputs.append({"label": "Lines marked as returned direct debits (the lines below)", "figure": None,
+                       "display": str(len(m.evidence))})
+    if metric_id == "M9":
+        inputs += _cash_flow_inputs(statement)
+    if metric_id == "M13":
+        inputs += _vat_inputs(statement, vat_stagger)
+    if metric_id in FROM_CLOSES:
+        closes = daily_closes(statement)
+    return {"inputs": inputs, "closes": _closes_out(closes)}
+
+
+def _trend_inputs(statement: Statement) -> list[dict]:
+    """M4's inputs: the trading receipts of the two quarters it compares, from the same
+    calculation (revenue_quarters) the figure is computed from."""
+    rev = [t for t in statement.transactions if t.category in REVENUE_CATEGORIES]
+    quarters = revenue_quarters(rev, statement.start, statement.end)
+    if quarters is None:
+        whole = full_months(statement.start, statement.end)
+        return [{"label": "Whole calendar months in the period", "figure": None,
+                 "display": f"{len(whole)} (6 needed)"}]
+    out = []
+    for name, (months, p) in zip(("Earliest", "Latest"), quarters, strict=True):
+        out.append({"label": f"{name} quarter of whole months ({months[0]} to {months[-1]}), trading receipts",
+                    "figure": None, "display": money_text(p),
+                    "lines": [t.id for t in rev if _month(t.date) in months]})
+    return out
+
+
+def _cash_flow_inputs(statement: Statement) -> list[dict]:
+    """M9's inputs: its operating lines' total, money in that is not trading receipts left
+    out; what money sent back by someone the business paid by transfer nets off; and how much
+    of each such credit counts. The two money inputs add up to the figure."""
+    cash = operating_cash(statement.transactions, statement.by_id())
+    back = [t for t in cash.operating if t.id in cash.counted]
+    out = [{"label": "Operating lines, other than money sent back (total of their signed amounts)",
+            "figure": None, "display": money_text(cash.trading),
+            "lines": [t.id for t in cash.operating if t.id not in cash.counted]},
+           {"label": "Money sent back by someone the business paid by transfer, netted off "
+                     "(never more than was sent to them)", "figure": None, "display": money_text(cash.offset),
+            "lines": [t.id for t in back]}]
+    out += [{"label": f"Line {t.id} counts", "figure": None,
+             "display": f"{money_text(cash.counted[t.id])} of {money_text(pence(t))}"} for t in back]
+    return out
+
+
+def _vat_inputs(statement: Statement, vat_stagger: int | None) -> list[dict]:
+    """M13's inputs: the stagger group, and each quarter it judged, with its due date, the end
+    of its collection window and the payment counted for it, from vat_quarters."""
+    group = {"label": "VAT stagger group (case profile)", "figure": None, "display": "not given"}
+    if vat_stagger is None:
+        return [group]
+    ends = ", ".join(calendar.month_name[m] for m in VAT_STAGGERS[vat_stagger])
+    group["display"] = f"{vat_stagger} (quarters end {ends})"
+    txns, by_id = statement.transactions, statement.by_id()
+    vat = [t for t in txns if _eff(t, by_id) == Category.HMRC_VAT]
+    reversed_ids = {t.reverses for t in txns if t.reverses}
+    return [group] + [
+        {"label": f"Quarter ended {q.quarter_end.isoformat()}: due {q.due.isoformat()}, "
+                  f"collected by {q.window_end.isoformat()}", "figure": None,
+         "display": f"paid by line {q.paid}" if q.paid else "late or missed"}
+        for q in vat_quarters(vat, reversed_ids, vat_stagger, statement.start, statement.end)]
+
+
+def cell_inputs(statement: Statement, row: MonthRow) -> dict:
+    """A monthly balance or overdrawn-day cell's inputs: the close of every day of the month in
+    the period, with the line that set it (P2, R11)."""
+    return {"inputs": [{"label": "Days of the month in the period", "figure": None,
+                        "display": f"{row.start.isoformat()} to {row.end.isoformat()}"}],
+            "closes": _closes_out(daily_closes(statement, row.start, row.end))}
+
+
+def _closes_out(closes) -> list[dict] | None:
+    if closes is None:
+        return None
+    return [{"date": d.isoformat(), "display": money_text(bal), "overdrawn": bal < 0, "line": line}
+            for d, bal, line in closes]

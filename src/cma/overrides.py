@@ -232,6 +232,8 @@ class CaseFigures:
     stale: list[Stale]
     marked: set[str]                # ids of figures that rest on an overridden line
     marked_cells: set[tuple[str, str]]  # (YYYY-MM, cell) of monthly cells that do
+    vat_stagger: int | None = None          # the profile's, as these figures were computed with
+    proposed_repayment: Any = None
 
 
 class CaseNotReconciled(ReconciliationError):
@@ -310,7 +312,8 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
                             cells.add((row.month, cell))
         out[account] = CaseFigures(account, sha, statement, metrics, monthly,
                                    {k: v.ref for k, v in applied.items()},
-                                   [s for s in state.stale if s.account == account], marked, cells)
+                                   [s for s in state.stale if s.account == account], marked, cells,
+                                   profile["vat_stagger"], profile["proposed_monthly_repayment"])
     if failed:  # R3: no figures for any account of the case
         raise CaseNotReconciled(failed)
     return out

@@ -352,10 +352,14 @@ def _random_statement(rng: random.Random) -> tuple[str, list[tuple[str, str]]]:
 
 def _assert_only_escaped(page: str, texts: list[str], *, shown: bool) -> None:
     allowed = {"html", "head", "meta", "title", "link", "script", "body", "header", "h1", "h2", "h3", "p",
-               "main", "section", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "span"}
+               "main", "section", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "span", "a", "strong"}
     p = _parse(page)
     # No text adds markup: every tag is one the workspace writes, with no handler or style.
     assert {t for t, _ in p.tags} <= allowed
+    # A link is the workspace's own, to a figure's or cell's lines or back to the case (R16).
+    for t, a in p.tags:
+        if t == "a":
+            assert [k for k, _ in a] == ["href"] and dict(a)["href"].startswith(("/lines?token=", "/?token="))
     assert not any(k == "style" or k.startswith("on") for _, a in p.tags for k, _ in a)
     assert [t for t, _ in p.tags].count("script") == 1
     page_text = "".join(p.text)
@@ -383,6 +387,11 @@ def test_p8_the_workspace_html_holds_description_text_only_escaped(home, tmp_pat
     _assert_only_escaped(page, [d for _, d in lines], shown=False)
     _assert_only_escaped(page, [label, business], shown=True)
     assert srv.token in page  # the page still names its own token, once, where it should
+    # The drill-down page shows the lines behind a figure, each description only escaped (R16).
+    status, _, lines_page = _get(srv, "/lines?figure=M27")
+    assert status == 200
+    cited = set(next(m for m in overrides.case_figures(folder)["main"].metrics if m.id == "M27").evidence)
+    _assert_only_escaped(lines_page.decode("utf-8"), [d for i, d in lines if i in cited], shown=True)
     # When the case does not reconcile, the lines involved are shown with their descriptions.
     credits = [(i, d) for (i, d), row in zip(lines, body.splitlines()[1:], strict=True)
                if not next(csv.reader([row]))[3].startswith("-")]
