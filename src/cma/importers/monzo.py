@@ -33,7 +33,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from ..categorise import INVOICE_REF
-from ..ingest import CsvRecordError, not_utf8, read_data, shown, unreadable_cells
+from ..ingest import CsvRecordError, not_utf8, read_data, read_header, shown, unreadable_cells
 from ..metrics import (
     AT_LIMIT,
     at_limit,
@@ -151,8 +151,10 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
     # Lines as the file has them (T04 review 20); the records before one the reader
     # cannot read, or before a byte that is not UTF-8, are checked first, so a problem
     # among them is the one reported (T04 review 29).
+    data = Path(src).read_bytes()
     try:
-        header, raw_rows, unreadable = read_data(Path(src).read_bytes())
+        # The header is checked before any record is read (T04 review 51).
+        header = read_header(data)
     except CsvRecordError as e:
         raise MonzoImportError(f"{src}: {e}") from None
     twice = sorted({h for h in header if h and header.count(h) > 1})  # T04 review 14
@@ -163,6 +165,10 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
         raise MonzoImportError(
             f"{src}: not a Monzo export; missing column(s): {', '.join(missing)}"
         )
+    try:
+        header, raw_rows, unreadable = read_data(data)
+    except CsvRecordError as e:
+        raise MonzoImportError(f"{src}: {e}") from None
     if not raw_rows and unreadable is None:
         raise MonzoImportError(f"{src}: no transactions")
 

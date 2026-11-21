@@ -1428,3 +1428,51 @@ def test_monzo_never_writes_a_cell_the_statement_loader_cannot_read(tmp_path, sm
                    "tx_1,01/01/2026,09:00,Faster,ACMEACMEACMEACME,-10.00,GBP,90.00,INV-12345678901\n")
     with pytest.raises(monzo.MonzoImportError, match="line 2: the description would be"):
         monzo.convert(src, tmp_path / "o.csv")
+
+
+@pytest.mark.contracts
+def test_reading_past_many_long_records_reads_each_line_a_bounded_number_of_times(tmp_path, monkeypatch,
+                                                                                    small_field_limit):
+    """T04 review 51: each record with a field too long to read made the reader rebuild the
+    lines and the reader over the rest of the file, so the work grew with the square of the
+    file. One pass now: the lines read stay proportional to the file's lines."""
+    from cma.importers import monzo
+
+    reads = [0]
+    real_next = ingest._Feed.__next__
+    real_split = ingest._split_lines
+
+    def counted_next(self):
+        reads[0] += 1
+        return real_next(self)
+
+    def counted_split(lines):
+        def each():
+            for line in lines:
+                reads[0] += 1
+                yield line
+        return real_split(each())
+
+    monkeypatch.setattr(ingest._Feed, "__next__", counted_next)
+    monkeypatch.setattr(ingest, "_split_lines", counted_split)
+    n = 2000
+    rows = [f"tx_{k},02/01/2026,09:00:00,Card payment,{'N' * 30},-5.00,EUR," for k in range(n)]
+    src = tmp_path / "m.csv"
+    src.write_text(_MONZO_HEAD + "tx_a,01/01/2026,09:00:00,Faster,ACME,-10.00,GBP,90.00\n" + "\n".join(rows) + "\n")
+    assert monzo.convert(src, tmp_path / "o.csv").skipped_non_gbp == n
+    assert reads[0] <= 4 * (n + 2)
+
+
+@pytest.mark.contracts
+def test_monzo_checks_the_header_before_reading_any_record(tmp_path, monkeypatch):
+    """T04 review 51: the whole export was read before its header was checked."""
+    from cma.importers import monzo
+
+    def never(data):
+        raise AssertionError("records were read before the header was checked")
+
+    monkeypatch.setattr(monzo, "read_data", never)
+    src = tmp_path / "m.csv"
+    src.write_text("Transaction ID,Date,Amount\ntx_1,01/01/2026,-1.00\n")
+    with pytest.raises(monzo.MonzoImportError, match="missing column"):
+        monzo.convert(src, tmp_path / "o.csv")
