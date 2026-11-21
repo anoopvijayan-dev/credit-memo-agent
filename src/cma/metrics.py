@@ -37,6 +37,8 @@ from .models import (
     Bucket,
     Category,
     Metric,
+    MonthlyCell,
+    MonthRow,
     Statement,
     Transaction,
 )
@@ -628,6 +630,62 @@ def compute(statement: Statement, vat_stagger: int | None = None) -> list[Metric
                        "direct debits and own-account transfers, the denominator M16 uses."),
                evidence=[t.id for t in inflows]),
     ]
+
+
+def monthly_summary(statement: Statement) -> list[MonthRow]:
+    """One row per calendar month in the period, oldest first (R11).
+
+    Money in is every credit of the month and trading receipts the month's M2 lines, cash
+    deposits included (R55): both are sum figures, so the months add up to M17 and M2 to the
+    penny (P12). Money out is an outflow figure, reported as a positive amount whose lines
+    total it negated (P2, D220). The average and lowest end-of-day balance and the days
+    overdrawn are derived from the close of every day of the month in the period, carried
+    over days with no lines, and cite the line that set each of those closes (P2, D225)."""
+    txns = statement.transactions
+    for t in txns:  # a fraction of a penny is refused, as in compute()
+        pence(t)
+        balance_pence(t)
+    pos = {t.id: i for i, t in enumerate(txns)}
+    eod = end_of_day_balances(txns)
+    start, end = statement.start, statement.end
+
+    def flow(lines: list[Transaction], kind: str) -> MonthlyCell:
+        signed = sum(pence(t) for t in lines)
+        value = -signed if kind == "outflow" else signed
+        return MonthlyCell(value=_gbp(value), unit="GBP", kind=kind, evidence=[t.id for t in lines],
+                           total=_gbp(signed))
+
+    rows: list[MonthRow] = []
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        key = f"{y:04d}-{m:02d}"
+        first, last = max(date(y, m, 1), start), min(_month_end(y, m), end)
+        # By (year, month), not by _month's text: strftime does not pad a year below 1000.
+        lines = [t for t in txns if (t.date.year, t.date.month) == (y, m)]
+        days = [eod[d] for d in sorted(eod) if first <= d <= last]
+        closes = [bal for bal, _ in days]
+        setters = sorted({line_id for _, line_id in days}, key=pos.__getitem__)
+
+        avg_pence = _div_half_even(sum(closes), len(closes))
+        avg: float | None = avg_pence / 100
+        avg_note = None
+        if _whole_pence_exact(avg) != avg_pence:  # a derived figure: n/a with the reason (R2)
+            avg, avg_note = None, "The month's average end-of-day balance is too large to report to the penny."
+        rows.append(MonthRow(
+            month=key,
+            part_month=first != date(y, m, 1) or last != _month_end(y, m),
+            start=first,
+            end=last,
+            money_in=flow([t for t in lines if pence(t) > 0], "sum"),
+            money_out=flow([t for t in lines if pence(t) < 0], "outflow"),
+            trading_receipts=flow([t for t in lines if t.category in REVENUE_CATEGORIES], "sum"),
+            average_balance=MonthlyCell(value=avg, unit="GBP", kind="derived", evidence=setters, note=avg_note),
+            lowest_balance=MonthlyCell(value=_gbp(min(closes)), unit="GBP", kind="derived", evidence=setters),
+            days_overdrawn=MonthlyCell(value=sum(1 for b in closes if b < 0), unit="days", kind="derived",
+                                       evidence=setters),
+        ))
+        y, m = _add_months(y, m, 1)
+    return rows
 
 
 def _reconcile(credits, rev, buckets, money_in, trading, total, pos) -> None:

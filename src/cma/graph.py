@@ -269,6 +269,9 @@ def evidence_record(s: MemoState) -> dict:
                    "reverses": t.reverses} for t, rule_id in zip(s["statement"].transactions, line_rule_ids(s),
                                                                  strict=True)],
         "metrics": [m.model_dump() for m in s["metrics"]],
+        # R11: computed here from the stored lines, as the metrics were, so no new type
+        # travels through the checkpoint (CHECKPOINT_TYPES is unchanged).
+        "monthly_summary": [r.model_dump(mode="json") for r in met.monthly_summary(s["statement"])],
         "policy": s["policy"].model_dump(mode="json"),
         "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
         "redrafts": s.get("redrafts", 0),
