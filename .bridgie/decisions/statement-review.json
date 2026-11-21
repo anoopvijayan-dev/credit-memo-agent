@@ -6479,12 +6479,12 @@
         "kill task"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "take over manually",
+      "free_text": "Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. T17 at a757d6d (review 14), judged against revision 33. An async resume looks the stored lock up the async way and a failed lookup counts as the lock (test_p18_an_async_resume_keeps_the_lock_its_draft_was_made_under, with AsyncSqliteSaver); the request complete allowed on the run's reading is not decided by a second reading (test_p18_a_request_complete_allowed_is_decided_by_the_runs_reading_not_a_second_one); shipped rules keep their actions through a checkpoint (test_r30_a_shipped_rule_is_still_known_after_a_checkpoint_round_trip).",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-21T02:53:24.904Z",
+      "effect": "task T17 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T17",
       "created_at": "2026-11-21T02:47:47.039Z"
     },
     {
