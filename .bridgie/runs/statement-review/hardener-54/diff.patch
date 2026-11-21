@@ -1,0 +1,866 @@
+diff --git a/evals/run_evals.py b/evals/run_evals.py
+index ed2b0d0..ac898e2 100644
+--- a/evals/run_evals.py
++++ b/evals/run_evals.py
+@@ -5,7 +5,13 @@ needed, and every metric that disagrees with the generator's ground truth (M2, M
+ M5-M13, M15, M16), including the inputs to the fail rules (M9, M10). Run with the fake model for a deterministic
+ baseline, or with a real provider to measure it.
+ 
+-Exit code: 1 if any metric disagrees with truth, or if the fake model's memo is not
++Then, per archetype x profile with every opt-in synthetic feature (R47, P17: real acquirers,
++director funding, cash, lenders and a second account the case profile names), it checks under
++the v2 rule table and the generated case profile, on both accounts: every line's category,
++total money in (M17), every money-in bucket with its lines (M2, M19-M25), the cash within
++trading receipts (M18), every indicator with its lines, and the metrics above.
++
++Exit code: 1 if any metric, category, bucket or indicator disagrees with truth, or if the fake model's memo is not
+ grounded (the fake writes from the table, so an ungrounded fake memo is a guard bug).
+ A real model's grounding is measured and reported, not enforced.
+ 
+@@ -26,10 +32,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+ 
+ from langgraph.types import Command
+ 
+-from cma import synth
+-from cma.categorise import active_ruleset
++from cma import categorise, indicators, ingest, metrics, synth
++from cma.categorise import ProfileNames, active_ruleset, load_ruleset
+ from cma.graph import build
+ from cma.llm import get_llm
++from cma.models import Bucket
+ 
+ 
+ def main() -> int:
+@@ -80,7 +87,55 @@ def main() -> int:
+     print(f"\n{grounded}/{len(results)} memos fully grounded; model = {args.llm}; ruleset = {active_ruleset().id}")
+     truth_ok = all(not r["truth_mismatches"] for r in results)
+     fake_ok = args.llm != "fake" or grounded == len(results)
+-    return 0 if truth_ok and fake_ok else 1
++
++    featured = []
++    for archetype in synth.ARCHETYPES:
++        for profile in synth.PROFILES:
++            rows, truth = synth.generate(archetype, profile, end=date(2026, 9, 30), features=synth.FEATURES)
++            stem = f"{archetype}_{profile}_features"
++            csv_path, _ = synth.write(rows, truth, work, stem=stem)
++            mismatches = feature_mismatches(truth, csv_path)
++            featured.append({"case": f"{archetype}/{profile}+features", "lines": len(rows),
++                             "indicators": len(truth.indicators), "truth_mismatches": mismatches})
++    (out_dir / f"{args.llm}.features.json").write_text(json.dumps(featured, indent=2))
++    print(f"\n{'case (v2, case profile)':32} {'lines':>5} {'indicators':>10} truth")
++    for r in featured:
++        print(f"{r['case']:32} {r['lines']:>5} {r['indicators']:>10} "
++              f"{'ok' if not r['truth_mismatches'] else ', '.join(r['truth_mismatches'][:6])}")
++    features_ok = all(not r["truth_mismatches"] for r in featured)
++    print(f"{sum(not r['truth_mismatches'] for r in featured)}/{len(featured)} featured cases match truth "
++          f"(features: {', '.join(synth.FEATURES)})")
++    return 0 if truth_ok and fake_ok and features_ok else 1
++
++
++def feature_mismatches(truth, csv_path: Path) -> list[str]:
++    """What disagrees with the truth of a statement generated with features, on the main
++    account and on every further account the generator wrote beside it (P17). Categorised with
++    the v2 table, whatever CMA_RULESET says: feature truth is v2's, with the case profile."""
++    v2 = load_ruleset("v2")
++    profile = ProfileNames(tuple(truth.case_profile["directors"]), tuple(truth.case_profile["own_accounts"]))
++    accounts = [("main", csv_path, truth.__dict__)]
++    accounts += [(a["key"], csv_path.with_name(f"{csv_path.stem}_{a['key']}.csv"), a) for a in truth.accounts]
++    out: list[str] = []
++    for key, path, t in accounts:
++        s = categorise.categorise(ingest.load_csv(path), v2, profile=profile)
++        out += [f"{key}:category:{x.id}" for x in s.transactions if x.category.value != t["category_by_id"][x.id]]
++        m = {x.id: x for x in metrics.compute(s, vat_stagger=synth.VAT_STAGGER)}
++        if not same(m["M17"].value, t["total_money_in"]):
++            out.append(f"{key}:M17")
++        for bucket, (mid, _, _) in [*metrics.BUCKET_METRICS.items(), (Bucket.TRADING_RECEIPTS, ("M2", "", ""))]:
++            want = t["buckets"][bucket.value]
++            if not same(m[mid].value, want["amount"]) or sorted(m[mid].evidence) != sorted(want["ids"]):
++                out.append(f"{key}:{mid}")
++        cash = t["cash_deposits"]
++        if not same(m["M18"].value, cash["amount"]) or sorted(m["M18"].evidence) != sorted(cash["ids"]):
++            out.append(f"{key}:M18")
++        got = [(i.kind, i.evidence) for i in indicators.raise_indicators(s)]
++        if got != [(i["kind"], i["lines"]) for i in t["indicators"]]:
++            out.append(f"{key}:indicators")
++        if key == "main":
++            out += [f"main:{mid}" for mid, want in truth_metrics(truth).items() if not same(m[mid].value, want)]
++    return out
+ 
+ 
+ def truth_metrics(truth) -> dict[str, float | None]:
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index 93da199..ec17c0d 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -58,11 +58,24 @@ def generate(
+     seed: int = 7,
+     months: int = 12,
+     out: Path = Path("examples"),
++    feature: list[str] = typer.Option(
++        [], "--feature",
++        help=f"Opt-in synthetic feature, repeatable: one of {list(synth.FEATURES)}, or 'all'. The truth then "
++        "holds every bucket, line category and indicator, for the v2 rules and the case profile it gives.",
++    ),
+ ):
+     """Write a synthetic statement CSV and its ground-truth JSON."""
+-    rows, truth = synth.generate(archetype, profile, seed=seed, months=months)
++    features = list(synth.FEATURES) if "all" in feature else feature
++    try:
++        rows, truth = synth.generate(archetype, profile, seed=seed, months=months, features=features)
++    except ValueError as e:
++        console.print(f"[red]Refused.[/red] {escape(str(e))}")
++        raise typer.Exit(code=2) from e
+     csv_path, truth_path = synth.write(rows, truth, out)
+     console.print(f"wrote {csv_path} ({len(rows)} transactions) and {truth_path}")
++    for account in truth.accounts:
++        other = out / f"{csv_path.stem}_{account['key']}.csv"
++        console.print(f"wrote {other} ({len(account['rows'])} transactions), the applicant's {account['key']} account")
+ 
+ 
+ @app.command()
+diff --git a/src/cma/synth.py b/src/cma/synth.py
+index fa4f612..4f0c1d1 100644
+--- a/src/cma/synth.py
++++ b/src/cma/synth.py
+@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
+ from datetime import date, timedelta
+ from pathlib import Path
+ 
+-from .models import Category
++from .models import CREDIT_BUCKET, Category
+ 
+ DEFAULT_END = date(2026, 9, 30)
+ VAT_STAGGER = 3  # quarters end Feb, May, Aug, Nov; due the 7th of Apr, Jul, Oct, Jan.
+@@ -83,6 +83,36 @@ CUSTOMER_NAMES = [
+ ]
+ 
+ 
++# Opt-in features (R47). With none, generate() is exactly as before: every existing archetype
++# and profile gives a byte-identical statement and truth file. With any, the statement gains
++# lines that the v2 rule table and the case profile recognise, and the truth gains every
++# bucket, every line's category and every indicator, all worked out from the generator's own
++# events (P17). Feature truth is the v2 categoriser's with the case profile in truth.case_profile.
++FEATURES = ("acquirers", "director", "cash", "lenders", "two_accounts")
++
++# Real acquirer and gateway payouts (v2's card_acquirers and payment_gateways lists) and a
++# delivery platform, each with the acquirer it is, as the irregular-acquirer indicator groups.
++ACQUIRER_PAYOUTS = (("SUMUP PAYMENTS LTD", "SUMUP"), ("STRIPE PAYMENTS UK", "STRIPE"),
++                    ("DELIVEROO UK LTD", None))
++PAYOUTS_A_MONTH = {"card": 22, "bacs": 7, "gateway": 9}  # each channel's receipts in a month
++DIRECTOR_NAME = "AMARA OKAFOR"  # fictional; named as a director in the case profile
++LENDER = "IWOCA LTD"
++CASH_DEPOSIT_DESC = "CASH PAID IN AT BRANCH"
++CASH_WITHDRAWAL_DESC = "CASH WITHDRAWAL HIGH ST"
++
++# The shipped indicator thresholds (cma/thresholds/indicators.yaml), restated here so the
++# truth does not come from the module it checks.
++TRUTH_THRESHOLDS = {
++    "large_credit_multiple": 5, "single_cash_pence": 250_000, "cash_month_share_pct": 50,
++    "round_trip_days": 7, "round_trip_tolerance_pct": 10, "returned_dd_count": 1,
++    "overdrawn_run_days": 7, "irregular_multiple": 3, "irregular_min_credits": 3,
++}
++# Money in that is not trading receipts, a drawdown or a returned DD (M9 and M16 leave it out).
++_NON_TRADING_IN = {Category.OTHER, Category.OWN_ACCOUNT_TRANSFER, Category.DIRECTOR_FUNDING, Category.REFUND_IN,
++                   Category.HMRC_REPAYMENT, Category.OTHER_EXPLAINED_IN}
++_TRADING = {Category.REVENUE_CARD, Category.REVENUE_TRANSFER, Category.CASH_DEPOSIT}
++
++
+ @dataclass
+ class Truth:
+     """What the generator knows that the agent must rediscover."""
+@@ -107,6 +137,26 @@ class Truth:
+     vat_stagger: int = VAT_STAGGER
+     late_vat_count: int = 0
+     category_by_id: dict[str, str] = field(default_factory=dict)
++    # Set only with features (left out of the truth file otherwise, so it stays byte-identical).
++    features: list[str] = field(default_factory=list)
++    case_profile: dict[str, list[str]] = field(default_factory=dict)
++    total_money_in: float = 0.0
++    buckets: dict[str, dict] = field(default_factory=dict)
++    cash_deposits: dict = field(default_factory=dict)
++    indicators: list[dict] = field(default_factory=list)
++    accounts: list[dict] = field(default_factory=list)
++
++    def to_json(self) -> dict:
++        """The truth file's content. A truth with no features has exactly the fields it had
++        before features existed."""
++        d = dict(self.__dict__)
++        if not self.features:
++            for k in ("features", "case_profile", "total_money_in", "buckets", "cash_deposits", "indicators",
++                      "accounts"):
++                d.pop(k)
++        else:
++            d["accounts"] = [{k: v for k, v in a.items() if k != "rows"} for a in self.accounts]
++        return d
+ 
+ 
+ def _month_starts(end: date, months: int) -> list[date]:
+@@ -133,8 +183,14 @@ def generate(
+     seed: int = 7,
+     months: int = 12,
+     end: date | None = None,
++    features: tuple[str, ...] | list[str] | frozenset[str] = (),
+ ) -> tuple[list[dict], Truth]:
+-    """Return (rows, truth). Rows are plain dicts ready for CSV."""
++    """Return (rows, truth). Rows are plain dicts ready for CSV. `features` (FEATURES) are
++    opt-in; with "two_accounts" the second account's rows are in truth.accounts."""
++    unknown = sorted(set(features) - set(FEATURES))
++    if unknown:
++        raise ValueError(f"unknown feature {unknown[0]!r}; choose from {list(FEATURES)}")
++    features = [f for f in FEATURES if f in set(features)]
+     if archetype not in ARCHETYPES:
+         raise ValueError(f"unknown archetype {archetype!r}; choose from {list(ARCHETYPES)}")
+     if profile not in PROFILES:
+@@ -222,7 +278,9 @@ def generate(
+     # The owner props up the account once, half way through.
+     if p["capital_in"]:
+         mid = starts[len(starts) // 2]
+-        events.append((mid + timedelta(days=14), "FPS CREDIT DIRECTOR CAPITAL INTRODUCED", float(p["capital_in"]), Category.OTHER))
++        # Under v1 OTHER; under v2, which feature truth is for, director funding (D48).
++        events.append((mid + timedelta(days=14), "FPS CREDIT DIRECTOR CAPITAL INTRODUCED", float(p["capital_in"]),
++                       Category.DIRECTOR_FUNDING if features else Category.OTHER))
+ 
+     # Returned direct debits: a scheduled DD bounces, the bank returns it two days later
+     # and charges a fee, and the payee re-presents it a week after the original.
+@@ -237,6 +295,13 @@ def generate(
+         events.append((d + timedelta(days=7), desc, amt, cat))
+         truth.returned_dd_count += 1
+ 
++    # Opt-in features, after every draw from `rng`, from an rng of their own: with none the
++    # statement is exactly as before.
++    other = None
++    if features:
++        acquirer_of, other = _feature_events(events, truth, a, p, starts, features,
++                                             random.Random(f"features:{archetype}:{profile}:{seed}"))
++
+     # Order, then walk the balance.
+     events.sort(key=lambda e: (e[0], e[2] < 0, e[1]))
+     balance = float(p["opening_balance"])
+@@ -278,14 +343,15 @@ def generate(
+     op = 0.0
+     for _, desc, amt, cat in events:
+         effective = returned_cat.get(desc, cat) if cat == Category.RETURNED_DD else cat
+-        if effective in financing or cat == Category.OTHER:
++        if effective in financing or cat in _NON_TRADING_IN:  # only OTHER without features
+             continue
+         op += amt
+     truth.net_operating = round(op, 2)
+     if truth.total_debt_service:
+         truth.debt_cover = round((truth.net_operating - truth.total_owner_drawings) / truth.total_debt_service, 4)
+-    money_in = sum(a for _, _, a, c in events if a > 0 and c not in (Category.RETURNED_DD, Category.LOAN_DRAWDOWN))
+-    other_in = sum(a for _, _, a, c in events if a > 0 and c == Category.OTHER)
++    money_in = sum(a for _, _, a, c in events
++                   if a > 0 and c not in (Category.RETURNED_DD, Category.LOAN_DRAWDOWN, Category.OWN_ACCOUNT_TRANSFER))
++    other_in = sum(a for _, _, a, c in events if a > 0 and c in _NON_TRADING_IN and c != Category.OWN_ACCOUNT_TRANSFER)
+     truth.unclassified_share = round(other_in / money_in * 100, 2) if money_in else None
+     period_days = (events[-1][0] - events[0][0]).days + 1
+     truth.average_monthly_revenue = round(truth.total_revenue / (period_days / (365.25 / 12)), 2)
+@@ -297,9 +363,229 @@ def generate(
+     truth.monthly_revenue = {k: round(v, 2) for k, v in truth.monthly_revenue.items()}
+     if by_customer:
+         truth.top_customer_share = round(max(by_customer.values()) / sum(by_customer.values()) * 100, 2)
++    if features:
++        lines = _lines(rows, truth.category_by_id, {r["id"]: acquirer_of.get(r["description"]) for r in rows})
++        _money_in_truth(truth.__dict__, lines)
++        truth.indicators = indicator_truth(lines)
++        if other is not None:
++            truth.accounts = [other]
+     return rows, truth
+ 
+ 
++def _reserve_name(account_name: str) -> str:
++    """The applicant's second account: a reserve account in the business's name."""
++    return f"{account_name.split()[0]} BUSINESS RESERVE"
++
++
++def _feature_events(events: list, truth: Truth, a: dict, p: dict, starts: list[date], features: list[str],
++                    frng: random.Random) -> tuple[dict[str, str | None], dict | None]:
++    """Add the lines of each feature to `events`, keep the truth's revenue and debt service in
++    step, and return (the acquirer each acquirer payout is, the second account or None)."""
++    truth.features = list(features)
++    profile: dict[str, list[str]] = {"directors": [], "own_accounts": []}
++    acquirer_of: dict[str, str | None] = {}
++    mid = starts[len(starts) // 2]
++    # A payout about the size of the archetype's own typical receipt.
++    base = a["monthly_revenue"] * p["revenue_mult"] / PAYOUTS_A_MONTH[a["channel"]]
++
++    def month_days(s: date, weekday: int) -> list[date]:
++        n = calendar.monthrange(s.year, s.month)[1]
++        return [s + timedelta(i) for i in range(n) if (s + timedelta(i)).weekday() == weekday]
++
++    def trading(d: date, desc: str, amt: float, cat: Category) -> None:
++        events.append((d, desc, amt, cat))
++        key = d.strftime("%Y-%m")
++        truth.monthly_revenue[key] += amt
++        truth.total_revenue += amt
++
++    if "acquirers" in features:
++        # Fortnightly payouts from two real acquirers and, in the other weeks, a delivery
++        # platform; one SumUp payout four times the usual, which the irregular-acquirer
++        # indicator flags.
++        for desc, acquirer in ACQUIRER_PAYOUTS:
++            acquirer_of[desc] = acquirer
++        for s in starts:
++            for i, d in enumerate(month_days(s, 2)):
++                for desc, _ in (ACQUIRER_PAYOUTS[:2] if i % 2 == 0 else ACQUIRER_PAYOUTS[2:]):
++                    trading(d, desc, round(base * frng.uniform(0.8, 1.2), 2), Category.REVENUE_CARD)
++        trading(mid + timedelta(days=12), ACQUIRER_PAYOUTS[0][0], round(base * 4, 2), Category.REVENUE_CARD)
++
++    if "director" in features:
++        # A director pays in by name (the case profile names them, R5) and lends by director
++        # loan wording (the v2 table, R4).
++        profile["directors"].append(DIRECTOR_NAME)
++        events.append((starts[min(2, len(starts) - 1)] + timedelta(days=9), f"FPS CREDIT {DIRECTOR_NAME}", 6000.0,
++                       Category.DIRECTOR_FUNDING))
++        events.append((starts[-1] + timedelta(days=16), "DIRECTOR LOAN A OKAFOR", 2500.0, Category.DIRECTOR_FUNDING))
++
++    if "cash" in features:
++        # Cash takings paid in every Monday, below the single-deposit limit; one deposit at or
++        # above it; and cash withdrawn and paid back in two days later, within 10% (R47, D31).
++        for s in starts:
++            for d in month_days(s, 0):
++                trading(d, CASH_DEPOSIT_DESC, round(frng.uniform(250, 900), 2), Category.CASH_DEPOSIT)
++        trading(mid + timedelta(days=11), CASH_DEPOSIT_DESC, 3200.0, Category.CASH_DEPOSIT)
++        out = starts[max(0, len(starts) // 2 - 1)] + timedelta(days=17)
++        events.append((out, CASH_WITHDRAWAL_DESC, -1500.0, Category.SUPPLIER))
++        trading(out + timedelta(days=2), CASH_DEPOSIT_DESC, 1450.0, Category.CASH_DEPOSIT)
++
++    if "lenders" in features:
++        # A named lender pays a loan in and takes monthly repayments from the month after.
++        at = len(starts) // 3
++        events.append((starts[at] + timedelta(days=3), LENDER, 15000.0, Category.LOAN_DRAWDOWN))
++        for s in starts[at + 1:]:
++            events.append((s + timedelta(days=14), f"DD {LENDER}", -1375.0, Category.LOAN_REPAYMENT))
++            truth.total_debt_service += 1375.0
++
++    other = None
++    if "two_accounts" in features:
++        # Money moved to and from the applicant's reserve account, which the case profile names
++        # as an own account (R6); the reserve account's own statement names the main account.
++        reserve = _reserve_name(a["account_name"])
++        profile["own_accounts"] += [reserve, a["account_name"]]
++        mirror: list[tuple[date, str, float, Category]] = []
++        for i, s in enumerate(starts):
++            d = s + timedelta(days=19)
++            events.append((d, f"FPS TO {reserve}", -1000.0, Category.OWN_ACCOUNT_TRANSFER))
++            mirror.append((d, f"FPS CREDIT {a['account_name']}", 1000.0, Category.OWN_ACCOUNT_TRANSFER))
++            if i % 3 == 2:
++                d = s + timedelta(days=5)
++                events.append((d, f"FPS CREDIT {reserve}", 2500.0, Category.OWN_ACCOUNT_TRANSFER))
++                mirror.append((d, f"FPS TO {a['account_name']}", -2500.0, Category.OWN_ACCOUNT_TRANSFER))
++            mirror.append((s + timedelta(days=26), "GROSS INTEREST", round(frng.uniform(3, 9), 2),
++                           Category.OTHER_EXPLAINED_IN))
++        mirror.sort(key=lambda e: (e[0], e[2] < 0, e[1]))
++        rows, cats = _walk(mirror, RESERVE_OPENING)
++        other = {"key": "reserve", "account_name": reserve, "opening_balance": float(RESERVE_OPENING),
++                 "rows": rows, "category_by_id": cats}
++        lines = _lines(rows, cats, {})
++        _money_in_truth(other, lines)
++        other["indicators"] = indicator_truth(lines)
++    truth.case_profile = profile
++    return acquirer_of, other
++
++
++RESERVE_OPENING = 20_000
++
++
++def _walk(events: list[tuple[date, str, float, Category]], opening: float) -> tuple[list[dict], dict[str, str]]:
++    """Rows and each line's category for events already in statement order."""
++    balance, rows, cats = float(opening), [], {}
++    for i, (d, desc, amt, cat) in enumerate(events, start=1):
++        balance = round(balance + amt, 2)
++        tid = f"T{i:05d}"
++        rows.append({"id": tid, "date": d.isoformat(), "description": desc, "amount": f"{amt:.2f}",
++                     "balance": f"{balance:.2f}"})
++        cats[tid] = cat.value
++    return rows, cats
++
++
++def _pence(text: str) -> int:
++    whole, _, frac = text.lstrip("-").partition(".")
++    p = int(whole) * 100 + int((frac + "00")[:2])
++    return -p if text.startswith("-") else p
++
++
++def _lines(rows: list[dict], cats: dict[str, str], acquirer: dict[str, str | None]) -> list[dict]:
++    return [{"id": r["id"], "date": date.fromisoformat(r["date"]), "desc": r["description"],
++             "pence": _pence(r["amount"]), "balance": _pence(r["balance"]), "cat": Category(cats[r["id"]]),
++             "acquirer": acquirer.get(r["id"])} for r in rows]
++
++
++def _money_in_truth(target: dict, lines: list[dict]) -> None:
++    """Total money in, every money-in bucket and the cash within trading receipts, each with
++    its lines (R1, R55), from the generator's own categories."""
++    credits = [x for x in lines if x["pence"] > 0]
++    buckets: dict[str, dict] = {}
++    for b in dict.fromkeys(CREDIT_BUCKET.values()):
++        ids = [x["id"] for x in credits if CREDIT_BUCKET[x["cat"]] == b]
++        buckets[b.value] = {"amount": sum(x["pence"] for x in credits if x["id"] in set(ids)) / 100, "ids": ids}
++    target["total_money_in"] = sum(x["pence"] for x in credits) / 100
++    target["buckets"] = buckets
++    cash = [x for x in credits if x["cat"] == Category.CASH_DEPOSIT]
++    target["cash_deposits"] = {"amount": sum(x["pence"] for x in cash) / 100, "ids": [x["id"] for x in cash]}
++
++
++def _median2(xs: list[int]) -> int:
++    """Twice the median, so it stays an integer."""
++    s, n = sorted(xs), len(xs)
++    return 2 * s[n // 2] if n % 2 else s[n // 2 - 1] + s[n // 2]
++
++
++def indicator_truth(lines: list[dict]) -> list[dict]:
++    """Every indicator the shipped thresholds raise on these lines, as [{kind, lines}], in the
++    order of the thresholds file and then of the statement. The generator writes no gambling
++    payment, so none is raised."""
++    th = TRUTH_THRESHOLDS
++    pos = {x["id"]: i for i, x in enumerate(lines)}
++    out: list[dict] = []
++
++    def fire(kind: str, ids: list[str]) -> None:
++        out.append({"kind": kind, "lines": sorted(dict.fromkeys(ids), key=pos.__getitem__)})
++
++    credits = [x for x in lines if x["pence"] > 0]
++    trading = [x for x in credits if x["cat"] in _TRADING]
++    cash = [x for x in credits if x["cat"] == Category.CASH_DEPOSIT]
++    if trading:
++        typical2 = _median2([x["pence"] for x in trading])
++        for x in credits:
++            if 2 * x["pence"] >= th["large_credit_multiple"] * typical2:
++                fire("large_credit", [x["id"]])
++    for x in cash:
++        if x["pence"] >= th["single_cash_pence"]:
++            fire("single_cash_deposit", [x["id"]])
++    months: dict[tuple[int, int], list[dict]] = {}
++    for x in trading:
++        months.setdefault((x["date"].year, x["date"].month), []).append(x)
++    for _, xs in sorted(months.items()):
++        month_cash = [x for x in xs if x["cat"] == Category.CASH_DEPOSIT]
++        c, tr = sum(x["pence"] for x in month_cash), sum(x["pence"] for x in xs)
++        if c > 0 and c * 100 > th["cash_month_share_pct"] * tr:
++            fire("cash_heavy_month", [x["id"] for x in month_cash])
++    withdrawals = [x for x in lines if x["desc"] == CASH_WITHDRAWAL_DESC and x["pence"] < 0]
++    for d in cash:
++        matches = [w for w in withdrawals
++                   if 0 <= (d["date"] - w["date"]).days <= th["round_trip_days"] and pos[w["id"]] < pos[d["id"]]
++                   and abs(d["pence"] + w["pence"]) * 100 <= th["round_trip_tolerance_pct"] * -w["pence"]]
++        if matches:
++            fire("cash_round_trip", [*(w["id"] for w in matches), d["id"]])
++    returned = [x for x in lines if x["cat"] == Category.RETURNED_DD]
++    if len(returned) >= th["returned_dd_count"]:
++        for x in returned:
++            fire("returned_dd", [x["id"]])
++    closes: dict[date, dict] = {}
++    for x in lines:
++        closes[x["date"]] = x
++    day, last, current, run = min(closes), max(closes), None, []
++    while True:
++        current = closes.get(day, current)
++        if current["balance"] < 0:
++            run.append(current["id"])
++        else:
++            if len(run) >= th["overdrawn_run_days"]:
++                fire("overdrawn_run", run)
++            run = []
++        if day == last:
++            break
++        day += timedelta(days=1)
++    if len(run) >= th["overdrawn_run_days"]:
++        fire("overdrawn_run", run)
++    by_acquirer: dict[str, list[dict]] = {}
++    for x in credits:
++        if x["acquirer"]:
++            by_acquirer.setdefault(x["acquirer"], []).append(x)
++    irregular = []
++    for xs in by_acquirer.values():
++        if len(xs) < th["irregular_min_credits"]:
++            continue
++        med2 = _median2([x["pence"] for x in xs])
++        m = th["irregular_multiple"]
++        irregular += [x for x in xs if 2 * x["pence"] >= m * med2 or 2 * x["pence"] * m <= med2]
++    for x in sorted(irregular, key=lambda x: pos[x["id"]]):
++        fire("irregular_acquirer", [x["id"]])
++    return out
++
++
+ def _working_days_after(d: date, n: int) -> date:
+     while n:
+         d += timedelta(days=1)
+@@ -308,14 +594,22 @@ def _working_days_after(d: date, n: int) -> date:
+     return d
+ 
+ 
++def _write_csv(path: Path, rows: list[dict]) -> None:
++    with path.open("w", newline="") as f:
++        w = csv.DictWriter(f, fieldnames=["id", "date", "description", "amount", "balance"])
++        w.writeheader()
++        w.writerows(rows)
++
++
+ def write(rows: list[dict], truth: Truth, out_dir: Path, stem: str | None = None) -> tuple[Path, Path]:
++    """Write STEM.csv and STEM.truth.json, and each further account's statement as
++    STEM_KEY.csv (its truth is in STEM.truth.json, under accounts)."""
+     out_dir.mkdir(parents=True, exist_ok=True)
+     stem = stem or f"{truth.archetype}_{truth.profile}"
+     csv_path = out_dir / f"{stem}.csv"
+     truth_path = out_dir / f"{stem}.truth.json"
+-    with csv_path.open("w", newline="") as f:
+-        w = csv.DictWriter(f, fieldnames=["id", "date", "description", "amount", "balance"])
+-        w.writeheader()
+-        w.writerows(rows)
+-    truth_path.write_text(json.dumps(truth.__dict__, indent=2, default=str))
++    _write_csv(csv_path, rows)
++    for account in truth.accounts:
++        _write_csv(out_dir / f"{stem}_{account['key']}.csv", account["rows"])
++    truth_path.write_text(json.dumps(truth.to_json(), indent=2, default=str))
+     return csv_path, truth_path
+diff --git a/tests/golden/synth_archetypes.sha256.json b/tests/golden/synth_archetypes.sha256.json
+new file mode 100644
+index 0000000..a57c8f4
+--- /dev/null
++++ b/tests/golden/synth_archetypes.sha256.json
+@@ -0,0 +1,182 @@
++{
++ "cafe/good/11/6": {
++  "csv": "ff777ff8050d1a6da37efa2fb0a41adf15066949ed35667409641976945fc676",
++  "truth": "2d0d099cf6d6dda7e84ec9c70dc7047e54e19ea997b8ffdb871c838ec552bf0a"
++ },
++ "cafe/good/3/12": {
++  "csv": "3f72f84c38d9d25a9a552755cbe81768ac9ce3dcb0788dd6a8bae85eb9b891bd",
++  "truth": "33a05b6f070954aeb88eb2fe5a70040263fe00589e7afb792c177251dd0c7f01"
++ },
++ "cafe/good/5/24": {
++  "csv": "235daadbbe7195bcb1a53fb5c1d0779e8a22c854853b4c30c75f9c79acdf765c",
++  "truth": "74cae94e910127c6780e23ebc8dee15cb0067597246ec60e6940c0333928f829"
++ },
++ "cafe/good/7/1": {
++  "csv": "32d7f41236f48f894ed6d17a8826943d9510dd0fd15d9e4caffa5bc5965d0571",
++  "truth": "7d5a26d1fb0bf0409c88a2c1b655480b7b41098bf32bd21126f80bb4e2643b9e"
++ },
++ "cafe/good/7/12": {
++  "csv": "728d8abf24bcedc18cd0d88cc2c913eef874d4d97abbac744d2f378d823f8e12",
++  "truth": "11b2d99cac5f960b21dd01bb4faa87077d9eb3879cd057bbcb38ed24de56c540"
++ },
++ "cafe/poor/11/6": {
++  "csv": "5b9285c72f3d5bb5dc401a766a4d623ecd4f4b6c0893f455dd05c1a0243bddab",
++  "truth": "b3e9c409048c0366c41c91f93adbccce046ea82b913ca6633142a7a99f19f342"
++ },
++ "cafe/poor/3/12": {
++  "csv": "053b6c461bf0ec0e1e96e33c0cd9091960d26ac9f8caac3fa1a887c5c7568bcc",
++  "truth": "1dc1411109944b4b83fba57a65b3bde8aac78cab6d34c439e76b214fc6076b68"
++ },
++ "cafe/poor/5/24": {
++  "csv": "9b5fd539a83c13ebf7c9dc691d863934219fc9880ef158fc4e0e9571102206a9",
++  "truth": "032b0a2ac57ba003d6adb3f69bceeb6e6fcf9301367220098769853893c8ed3e"
++ },
++ "cafe/poor/7/1": {
++  "csv": "4cf32277d401d7cc4f7f15e83d7331f34da70e6b1f87b68e775e386397b22a4b",
++  "truth": "d8e80e3efd3290709c4584f5f58c3f631d0050e2902a277c3c704c98adfd7fc6"
++ },
++ "cafe/poor/7/12": {
++  "csv": "fbba1e0af2208c5c8a2b1b7987e2556dae79cc2b52e2bda7f32ab65e46f4e38a",
++  "truth": "12042822d692345921ec4cf96ca3aaf8beda72171defb07bb77cc4e14889b908"
++ },
++ "cafe/stretched/11/6": {
++  "csv": "ebfa63d2cddd015d5afb02ab3323e962b355be149fdcba17ba620393ebadf5ac",
++  "truth": "8d1b0c9c89ccdde8cbcc88499fd4387eafa76e438852688a34e9b4b88c9208b9"
++ },
++ "cafe/stretched/3/12": {
++  "csv": "c98be2f10c19cc230a01ffd7133952bc0313b25e36c1659d5d0a6c046a255d71",
++  "truth": "b260e9c8ae2a5c5be2646422de1f2d48368c1e8d262f933edc7c3f401dd076c7"
++ },
++ "cafe/stretched/5/24": {
++  "csv": "bd04bad06da2dd9f508aeafa79d6705a16db83b0afce19c9284980df2ec5ce56",
++  "truth": "2027f4d8382c78d5ae2a310f257b266b99ada10ef18f6c23ae7767f140391124"
++ },
++ "cafe/stretched/7/1": {
++  "csv": "89f324339670f93301f3c3cf815cfb760642511466a741cd9ca170ce48d7cec6",
++  "truth": "c057f02c8ec844989e0239751da683bb6f8fb54fa9488cef2864460225bacf58"
++ },
++ "cafe/stretched/7/12": {
++  "csv": "796b4519fc7a592e81807271a1fd65d1a6e07d57f5e4479153e44b8497d3360d",
++  "truth": "c21c603c1ced73727ea3e56a75ff4c4618f417a8a336ceabee1e99e1b347984e"
++ },
++ "ecommerce/good/11/6": {
++  "csv": "726fa17ba9eca587ab866b0e4f1dff86b2fff6d8edf95694de5d04b402951e2a",
++  "truth": "cffabebaa44154f76de1de9341b3c34185ff2b8390757dcd94e16f92bfdece43"
++ },
++ "ecommerce/good/3/12": {
++  "csv": "5d007098460d4215127f7feae3598387aeff66dc9cd3f01eaaec17d345dc4de1",
++  "truth": "9a3749c0cf1da0654af3f84b2f971dd7505d1c70d887f7bbbe768d0f11d63070"
++ },
++ "ecommerce/good/5/24": {
++  "csv": "ea744f0f2243b10e3337abb289008cd1550ca014f17471bdebac1091522092e5",
++  "truth": "2a086a499bfb8b4652e862d7efb0506a4f7b0a337219afafe9256237122f27e1"
++ },
++ "ecommerce/good/7/1": {
++  "csv": "d02cc2fda219156a94829a612ec173e36701e7b69b5754ac68b190140fd2d858",
++  "truth": "73449405ef8c63c6fc8096a36fd42124ce07f5307f845f9764af9602100a14cc"
++ },
++ "ecommerce/good/7/12": {
++  "csv": "e8b39d208c782bd37ddfbfb971b174fb672d6d56cd937b8824db7f9274f4f6db",
++  "truth": "d088ee95f7120c16f4d7e26171d4b6f4370d1ecb12f9fbe9766d966149b9b70e"
++ },
++ "ecommerce/poor/11/6": {
++  "csv": "5f1c4726196b32a6bdb01e3555be6b8a6d669320a25dc48b82a2afbae2389d96",
++  "truth": "3e54697ad936511854b3ec5f9e7be04e6a783baa84873aba3e16a26a6cc59018"
++ },
++ "ecommerce/poor/3/12": {
++  "csv": "175dd099e4b7d3a9a52291c757041d5199e7721a50316af8cc7d720940576e0b",
++  "truth": "1472540a560f8753155f0b56e960ee7fee0fbea1aa80e4fbcc8de873bebb377a"
++ },
++ "ecommerce/poor/5/24": {
++  "csv": "ec3a43938a2fc38f943387b145a95f15e5eec6ce9ff4c995406e14e95ed6ea74",
++  "truth": "b6d95b15d0d3c9cb493531b33a081eedb118bc8fdac9e8bb4a6dc9ec71a4bf58"
++ },
++ "ecommerce/poor/7/1": {
++  "csv": "7abb6513392f02e56b0cdf62e4e20144a6778274783effec920088e7276cd85a",
++  "truth": "b854a8dd13a713d228cee6ec8df08d5653d5cc074997b31d2d114915864dc2c8"
++ },
++ "ecommerce/poor/7/12": {
++  "csv": "e18de72730ce2f8c53a076d53e6aa1a02005349c1c745ba8cd3c4883dde972e1",
++  "truth": "11fb9120a620f019586fa514bc7b4206efd8815bfab010714f6baba1b5474a02"
++ },
++ "ecommerce/stretched/11/6": {
++  "csv": "5e6f8f14d3196e03b1d5a1e1f07e44c744991d559f18da45b89ae31450271e14",
++  "truth": "94e387d94905c3fd033a7ab15677c0eef66137ca9f406c5b5adc68f193f87c2f"
++ },
++ "ecommerce/stretched/3/12": {
++  "csv": "1451bab4e5c9e529d1d8a139ff566260fa6fd40d0ee95a269ce6af08c3b66e13",
++  "truth": "240cfd55221a87d7bad257f268f5270c6fde1503306f66d2af3f99159d46cd39"
++ },
++ "ecommerce/stretched/5/24": {
++  "csv": "e21faaf75859c1d45696a36d810b6db00aba664446ecae24e21794270dac1d1f",
++  "truth": "a4bde56af7c8749dfd6701a677fa17c9e643967d4a62a9a3d2c188cceaef45ab"
++ },
++ "ecommerce/stretched/7/1": {
++  "csv": "b2807635d641eff412feca206d456e6b146a68c047ac83eb0fe70b83b08833eb",
++  "truth": "889f60afddc51ae27774dfee0ee2589dbd79e9ffc3a0d5a2b9f9aec2645abe7c"
++ },
++ "ecommerce/stretched/7/12": {
++  "csv": "1fd719d5d0b6cd16ffb32299395c6dbc484962c2897efd364fa8b51b454b888e",
++  "truth": "932865d50f4b1f9e44955b7b9793857ffa12c8eb78e52fd711aa082875a073bb"
++ },
++ "trades/good/11/6": {
++  "csv": "062ca47aea3b40cbba856dee82f74f4e3b4f4c92878a1f4918726b4fb5b94d9c",
++  "truth": "33829295d38bce0afd798758eb36479b6894a46a2ab805126f80657a1cbd9ef7"
++ },
++ "trades/good/3/12": {
++  "csv": "c537e8d694e7c026aae1753df0b014b35cbb4dbd0f408df32dffbc86136b0850",
++  "truth": "3cf2d76e1cce097d8c0f8b5253204a9ec29de488c7775653f739a190e1977296"
++ },
++ "trades/good/5/24": {
++  "csv": "2d39359f9ee49ad6274150db856ec7232810c38911274ad2bba7922581b615a2",
++  "truth": "ac7b993b8aaf8e0535eef484192a37f63303dbd6ca6737e837d39153b3ca4d8b"
++ },
++ "trades/good/7/1": {
++  "csv": "c44fc6f20a7eb97c3efc7c8e8ccad56f07a806eac4eda1ddd08eee423c417234",
++  "truth": "467a20ef2ea6342dd3b84c0ec7f89246427dd6f314673662f8d1ef222fcb9595"
++ },
++ "trades/good/7/12": {
++  "csv": "73b216d77f1a771a377a4a076dae077cfecb909e104c3530784302cd145a9b9e",
++  "truth": "a45e77d61b5313c82d54b28dcff3a0e6b52b64bbddadfdf0fe3cd1ebebae2283"
++ },
++ "trades/poor/11/6": {
++  "csv": "ae8ffadcba93967257a1f7815f4d03c0473ccdad50a60d81b463d486afa62856",
++  "truth": "564a667f8d2311259fe62020e2ceb2d1c62655af5c4319a3352d0d3c357d4e90"
++ },
++ "trades/poor/3/12": {
++  "csv": "7d5fe19b96a7b7ee12cc6dd1b2efec60f6082c183a59fa84202abb9265c153bc",
++  "truth": "3f531853cb22bfc42a5d14239c85fa07e94ea81751ab953db5534e6dd02a08ea"
++ },
++ "trades/poor/5/24": {
++  "csv": "eb382b9e023f67790a7e63a36fa5dede0df45a809df52ed89e5f581157ead35e",
++  "truth": "1a9464f56303be4036b695832a9ae641c6c41ad170fa5c575a71f7588cf0b99f"
++ },
++ "trades/poor/7/1": {
++  "csv": "bc5ee0508c7881149dc21ad741f10490b459b7987fd02090bdc488e7e83777ae",
++  "truth": "7cbf5d93563c9b2d49a05025d27b0305fe13ba5ea6b9623e1b24aa4efb577630"
++ },
++ "trades/poor/7/12": {
++  "csv": "c927f48a3fa417c4e7023b33478f71853ef953f8b08a0bf61081fb5236cfa3ab",
++  "truth": "203204de85888c505326bee3799e77313d5ae9adc4d7aa759f9fb7f899e293dd"
++ },
++ "trades/stretched/11/6": {
++  "csv": "962e0901e2a81ccc6c1c49b754ca6f6c4f13c4744b659a9d7b7cd35678dd2fcc",
++  "truth": "b5ddb8509e56e32b0ca31fbea11a928bfddf75b8ff4432313d81681f4abf032e"
++ },
++ "trades/stretched/3/12": {
++  "csv": "b4feaf7145afedb5d44950e2fdc598c1412f5d2f19ed1781c1f05c53000e5013",
++  "truth": "f3e7dae2e42cdbeb7db0cabb8bb51cd132214eeb062f016835c799182b9829d7"
++ },
++ "trades/stretched/5/24": {
++  "csv": "8d0da246b550276070e782acba100abbf2031c02496cac7e21b2bf82048eafe0",
++  "truth": "68e3d413b07268223516358edf3f047797552b4c5d6b94e2c782884840a61b33"
++ },
++ "trades/stretched/7/1": {
++  "csv": "0924c9d7e95dc3209bd407cb1ba2ef6d3ab278f33b89efc7b4722f5f30f994f7",
++  "truth": "b84634f9b66ab0badf461a770066b35e4ec833eb92a9275730826d91ab0101f0"
++ },
++ "trades/stretched/7/12": {
++  "csv": "ec24bd3430f313dafb0a39aea80e4f14122b501819ae6f3aba40ff1453c82d6c",
++  "truth": "14a79411ccf14a6573055cf776c015cf42e010f3873aa863da931f7e6019c333"
++ }
++}
+\ No newline at end of file
+diff --git a/tests/test_synth_features.py b/tests/test_synth_features.py
+new file mode 100644
+index 0000000..a24c81a
+--- /dev/null
++++ b/tests/test_synth_features.py
+@@ -0,0 +1,156 @@
++"""Opt-in synthetic features (R47, P17): real acquirers, director funding, cash deposits (one
++at or above the single-deposit limit, one paid in after a similar withdrawal), lenders, and a
++second account whose transfers the case profile names as own accounts. Every bucket, every
++line's category and every indicator equals the generator's truth, and every existing
++archetype and profile still produces a byte-identical statement."""
++
++import hashlib
++import json
++import sys
++from datetime import date
++from pathlib import Path
++
++import pytest
++from typer.testing import CliRunner
++
++from cma import categorise, indicators, ingest, metrics, synth
++from cma.categorise import ProfileNames, load_ruleset
++from cma.cli import app
++from cma.models import Bucket, Category
++
++ROOT = Path(__file__).resolve().parents[1]
++GOLDEN = ROOT / "tests" / "golden" / "synth_archetypes.sha256.json"
++END = date(2026, 9, 30)
++CASES = [(a, p) for a in synth.ARCHETYPES for p in synth.PROFILES]
++# M2 is the trading-receipts bucket; the other seven are M19-M25 (R1).
++BUCKET_IDS = {Bucket.TRADING_RECEIPTS: "M2", **{b: mid for b, (mid, _, _) in metrics.BUCKET_METRICS.items()}}
++
++
++def _accounts(tmp_path, archetype, profile, features=synth.FEATURES, seed=7, months=12):
++    """Write the case and read each account back through the loader, categorised with v2 and
++    the generated case profile. Returns (truth, [(account truth, statement)])."""
++    rows, truth = synth.generate(archetype, profile, seed=seed, months=months, end=END, features=features)
++    csv_path, _ = synth.write(rows, truth, tmp_path, stem="case")
++    profile_names = ProfileNames(tuple(truth.case_profile["directors"]), tuple(truth.case_profile["own_accounts"]))
++    v2 = load_ruleset("v2")
++    out = [(truth.__dict__, csv_path)] + [(a, tmp_path / f"case_{a['key']}.csv") for a in truth.accounts]
++    return truth, [(t, categorise.categorise(ingest.load_csv(p), v2, profile=profile_names)) for t, p in out]
++
++
++def _assert_matches_truth(t, s):
++    assert {x.id: x.category.value for x in s.transactions} == t["category_by_id"]
++    m = {x.id: x for x in metrics.compute(s, vat_stagger=synth.VAT_STAGGER)}
++    assert m["M17"].value == pytest.approx(t["total_money_in"], abs=0.001)
++    for bucket, mid in BUCKET_IDS.items():
++        want = t["buckets"][bucket.value]
++        assert m[mid].value == pytest.approx(want["amount"], abs=0.001), mid
++        assert sorted(m[mid].evidence) == sorted(want["ids"]), mid
++    assert m["M18"].value == pytest.approx(t["cash_deposits"]["amount"], abs=0.001)
++    assert sorted(m["M18"].evidence) == sorted(t["cash_deposits"]["ids"])
++    got = [(i.kind, i.evidence) for i in indicators.raise_indicators(s)]
++    assert got == [(i["kind"], i["lines"]) for i in t["indicators"]]
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("archetype,profile", CASES)
++def test_p17_featured_case_matches_truth(tmp_path, archetype, profile):
++    _, accounts = _accounts(tmp_path, archetype, profile)
++    assert len(accounts) == 2  # the business account and the reserve account the profile names
++    for t, s in accounts:
++        _assert_matches_truth(t, s)
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("features", [(f,) for f in synth.FEATURES] + [("cash", "lenders"), ("director", "two_accounts")])
++@pytest.mark.parametrize("seed,months", [(3, 12), (11, 6), (5, 24)])
++def test_p17_any_feature_set_matches_truth(tmp_path, features, seed, months):
++    for archetype in synth.ARCHETYPES:
++        truth, accounts = _accounts(tmp_path / archetype, archetype, "stretched", features, seed, months)
++        assert truth.features == list(features)
++        for t, s in accounts:
++            _assert_matches_truth(t, s)
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("archetype,profile", CASES)
++def test_p17_featured_case_has_every_feature_r47(tmp_path, archetype, profile):
++    """R47's ingredients are there, each with the truth P17 checks."""
++    _, [(main, s), (reserve, rs)] = _accounts(tmp_path, archetype, profile)
++    by_id = s.by_id()
++    rules = {x.id: x.rule_id for x in s.transactions}
++    # Real acquirer names, from v2's acquirer and gateway lists, are trading receipts.
++    acquired = {rules[i] for i in main["buckets"][Bucket.TRADING_RECEIPTS.value]["ids"]}
++    assert {"v2:card_acquirers", "v2:payment_gateways", "v2:delivery_platforms"} <= acquired
++    # Director funding, by the case profile's name and by the table's wording.
++    director = main["buckets"][Bucket.DIRECTOR_FUNDING.value]["ids"]
++    assert {"profile:director", "v2:director_funding"} <= {rules[i] for i in director}
++    # Own-account transfers across two accounts, named in the profile, in both accounts.
++    assert main["buckets"][Bucket.OWN_ACCOUNT_IN.value]["ids"]
++    assert reserve["buckets"][Bucket.OWN_ACCOUNT_IN.value]["ids"]
++    for st in (s, rs):
++        moves = [x for x in st.transactions if x.category == Category.OWN_ACCOUNT_TRANSFER]
++        assert moves and all(x.rule_id == "profile:own_account" for x in moves)
++        assert any(x.amount < 0 for x in moves) and any(x.amount > 0 for x in moves)
++    # Lender lines: a named lender's drawdown and its repayments.
++    assert main["buckets"][Bucket.LENDING_DRAWDOWNS.value]["ids"]
++    assert any(x.category == Category.LOAN_REPAYMENT and x.rule_id == "v2:lender_repayment" for x in s.transactions)
++    # Cash: one deposit at or above the single-deposit limit, and one paid in after a similar
++    # withdrawal, each flagged.
++    flagged = {i["kind"]: i["lines"] for i in main["indicators"]}
++    at_limit = flagged["single_cash_deposit"]
++    assert at_limit and all(by_id[i].amount >= 2500 for i in at_limit)
++    trip = flagged["cash_round_trip"]
++    assert by_id[trip[0]].amount < 0 and by_id[trip[-1]].category == Category.CASH_DEPOSIT
++    assert "irregular_acquirer" in flagged
++
++
++@pytest.mark.invariants
++def test_p17_byte_identity_of_existing_archetypes_and_profiles(tmp_path):
++    """Every archetype and profile, at several seeds and lengths, writes the statement and the
++    truth file it wrote before the features existed (hashes taken at 25a943c, before them)."""
++    golden = json.loads(GOLDEN.read_text())
++    assert len(golden) == 45
++    for key, want in golden.items():
++        archetype, profile, seed, months = key.split("/")
++        rows, truth = synth.generate(archetype, profile, seed=int(seed), months=int(months), end=END)
++        csv_path, truth_path = synth.write(rows, truth, tmp_path / key.replace("/", "_"))
++        assert hashlib.sha256(csv_path.read_bytes()).hexdigest() == want["csv"], key
++        assert hashlib.sha256(truth_path.read_bytes()).hexdigest() == want["truth"], key
++        assert synth.generate(archetype, profile, seed=int(seed), months=int(months), end=END,
++                              features=())[0] == rows
++
++
++@pytest.mark.contracts
++def test_generate_cli_writes_the_featured_case(tmp_path):
++    r = CliRunner().invoke(app, ["generate", "--archetype", "trades", "--profile", "good", "--out", str(tmp_path),
++                                 "--feature", "all"])
++    assert r.exit_code == 0, r.output
++    truth = json.loads((tmp_path / "trades_good.truth.json").read_text())
++    assert truth["features"] == list(synth.FEATURES)
++    assert truth["case_profile"]["own_accounts"] and truth["case_profile"]["directors"]
++    assert "rows" not in truth["accounts"][0]
++    assert ingest.load_csv(tmp_path / "trades_good_reserve.csv").transactions
++    r = CliRunner().invoke(app, ["generate", "--out", str(tmp_path), "--feature", "cash", "--feature", "lenders"])
++    assert r.exit_code == 0, r.output
++    assert json.loads((tmp_path / "cafe_stretched.truth.json").read_text())["features"] == ["cash", "lenders"]
++    r = CliRunner().invoke(app, ["generate", "--out", str(tmp_path), "--feature", "crypto"])
++    assert r.exit_code == 2 and "unknown feature" in r.output
++
++
++@pytest.mark.contracts
++def test_evals_report_a_disagreement_with_feature_truth(tmp_path):
++    """The evals' feature check is not vacuous: a truth that disagrees is reported."""
++    sys.path.insert(0, str(ROOT / "evals"))
++    try:
++        import run_evals
++    finally:
++        sys.path.remove(str(ROOT / "evals"))
++    rows, truth = synth.generate("cafe", "good", end=END, features=synth.FEATURES)
++    csv_path, _ = synth.write(rows, truth, tmp_path, stem="case")
++    assert run_evals.feature_mismatches(truth, csv_path) == []
++    tid = truth.buckets[Bucket.DIRECTOR_FUNDING.value]["ids"][0]
++    truth.category_by_id[tid] = Category.OTHER.value
++    truth.indicators = truth.indicators[1:]
++    truth.accounts[0]["buckets"][Bucket.OTHER_EXPLAINED_IN.value]["amount"] += 0.01
++    found = run_evals.feature_mismatches(truth, csv_path)
++    assert f"main:category:{tid}" in found and "main:indicators" in found and "reserve:M24" in found

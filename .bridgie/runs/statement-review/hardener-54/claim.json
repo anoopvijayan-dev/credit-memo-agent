@@ -1,0 +1,57 @@
+{
+  "task": "T10",
+  "claims": [
+    {
+      "text": "Lint and compile tiers pass at the T10 branch head.",
+      "proof_cmd": "ruff check src tests evals; python -m compileall -q src",
+      "proof_output": "All checks passed! / compile-ok"
+    },
+    {
+      "text": "Full suite passes, including test_synth_features.py (R47, P17) and the existing synth tests.",
+      "proof_cmd": "python -m pytest -q",
+      "proof_output": "2288 passed in 276.35s (0:04:36)"
+    },
+    {
+      "text": "P17 invariants tier: every featured archetype x profile, every single feature and two pairs at three seeds/lengths, match truth for every line category, M17, every bucket with its lines (M2, M19-M25), M18 and every indicator, on both accounts; plus the byte-identity test.",
+      "proof_cmd": "python -m pytest -q -m invariants -k p17",
+      "proof_output": "40 passed, 2248 deselected in 10.43s"
+    },
+    {
+      "text": "Offline evals tier exits 0 and checks feature truth on 9/9 featured cases (evals extended, per R47).",
+      "proof_cmd": "set -o pipefail; python evals/run_evals.py --llm fake; echo evals_exit=$?",
+      "proof_output": "9/9 featured cases match truth (features: acquirers, director, cash, lenders, two_accounts) / evals_exit=0"
+    },
+    {
+      "text": "Byte identity checked independently of the committed golden file: the pre-change generator (git show 25a943c:src/cma/synth.py, loaded in-process, nothing written) and the new one give identical rows and identical truth JSON for all 9 archetype/profile pairs at 6 seed/length combinations, including two not in the golden file.",
+      "proof_cmd": "git show 25a943c:src/cma/synth.py | python -c '<load as cma.synth_old; compare generate() rows and json.dumps(truth) vs new to_json() for (7,12),(3,12),(11,6),(5,24),(7,1),(1,3)>'",
+      "proof_output": "identical 54 cases incl seed 1/3 months not in golden; featured output deterministic"
+    },
+    {
+      "text": "Idempotency/determinism: generating the same featured case twice gives identical rows and truth (features draw from their own seeded rng after every original draw). The committed example CSV is reproduced byte-for-byte by the default generator; no file under examples/ changed.",
+      "proof_cmd": "python -c '<generate cafe/stretched, write CSV to memory, compare with examples/cafe_stretched.csv>'; git diff 25a943c --stat",
+      "proof_output": "True; stat lists only evals/run_evals.py, src/cma/cli.py, src/cma/synth.py, tests/golden/synth_archetypes.sha256.json, tests/test_synth_features.py"
+    },
+    {
+      "text": "Failure mode / input validation at the new entry point: an unknown --feature is refused with exit 2 naming it, before anything is written; generate() raises ValueError for it.",
+      "proof_cmd": "python -m pytest -q tests/test_synth_features.py::test_generate_cli_writes_the_featured_case",
+      "proof_output": "passed (asserts exit_code == 2 and 'unknown feature' in output); included in 75 passed for test_synth_features.py + test_cli.py"
+    },
+    {
+      "text": "Eval feature check is not vacuous: a corrupted category, a dropped indicator and a penny on the reserve account's M24 are each reported.",
+      "proof_cmd": "python -m pytest -q tests/test_synth_features.py::test_evals_report_a_disagreement_with_feature_truth",
+      "proof_output": "passed"
+    },
+    {
+      "text": "Data/migration: no stored format or migration; features are opt-in and the truth file of a featureless run keeps exactly its old fields (Truth.to_json). Rollback is omitting --feature. Security/PII: no new network, secret or dependency; director and account names are fictional constants. Performance: featured eval loop runs within the evals tier above.",
+      "proof_cmd": "git diff 25a943c -- pyproject.toml | wc -l; python -m pytest -q -m invariants -k byte_identity",
+      "proof_output": "0 (no dependency change); byte-identity test passed within the 40-test p17 run"
+    },
+    {
+      "text": "Docs: README now documents cma generate --feature, the feature names, the extra reserve CSV and the byte-identity promise.",
+      "proof_cmd": "git show --stat 60b8d53; python -m pytest -q tests/test_synth_features.py tests/test_cli.py",
+      "proof_output": "README.md | 7 +++++++; 75 passed in 20.93s"
+    }
+  ],
+  "files_changed": ["README.md"],
+  "notes": "Gaps for the owner, none needing code here: (1) Observability/alert: no remote alerting by design (design Observability); the alert for this change is the evals and P17 tiers exiting 1 in CI. (2) Golden hashes and the in-process identity check were run on Python 3.13 only here; CI's 3.11/3.12 runs will exercise the golden test. (3) No changelog file exists in the repo, so the release note is the README line. (4) TRUTH_THRESHOLDS in synth.py restates the shipped indicator thresholds on purpose; if indicators.yaml changes, feature truth must be updated with it (the P17 test will fail and say so)."
+}
