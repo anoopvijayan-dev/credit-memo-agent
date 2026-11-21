@@ -31,6 +31,7 @@ the process exits. Pass a durable checkpointer (`sqlite_checkpointer(path)`, nee
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import re
 from contextlib import contextmanager
@@ -401,7 +402,11 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
         ids = redraft_ids(g, s["metrics"], s["policy"]) if s.get("guard_feedback") and g else None
         user = draft_prompt(s["statement"], s["metrics"], s["policy"], redraft=ids)
         if isinstance(llm, HostedLLM):
-            memo = llm.complete(SYSTEM_PROMPT, user, offline_lock=s["offline_lock"], reading=_run_reading_of(config))
+            # A resume's own lock, which its reading at resume found (or the draft's, if that was
+            # on), decides its hosted requests, as its evidence records (T17 review 13).
+            resumed = ((config or {}).get("configurable") or {}).get(_RESUME_KEY)
+            lock = s["offline_lock"] if resumed is None else resumed
+            memo = llm.complete(SYSTEM_PROMPT, user, offline_lock=lock, reading=_run_reading_of(config))
         else:
             memo = llm.complete(SYSTEM_PROMPT, user)
         return {"memo": memo, "redrafts": s.get("redrafts", 0)}
@@ -494,7 +499,11 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
             # draft's reading or one handed to build(), even with firm.yaml unchanged, and for a
             # draft from before the lock (stored None) too (R29 revision 32, T17 reviews 11, 12).
             now = _read_or_locked()
-            return None, stored is True or now is None or now.offline_lock is not False
+            if now is not None and not firm.take_for_run(now):
+                now = None
+            # The resume's reading travels with it, so a hosted request it makes (a draft or a
+            # redraft, for a review paused before drafting) is checked against it (T17 review 13).
+            return now, stored is True or now is None or now.offline_lock is not False
         reading = handed.pop() if handed else None
         if reading is None or not firm.take_for_run(reading):
             reading = firm.load()  # a reading drives one run only (T17 review 6)
@@ -525,6 +534,29 @@ def _without_network_tracers(callbacks):
         manager.inheritable_handlers = keep(manager.inheritable_handlers)
         return manager
     return keep(callbacks) if callbacks else callbacks
+
+
+def _untraced_inherited_config():
+    """Under the lock, the runnable context the graph is called from loses its LangSmith
+    tracers for the run: LangGraph merges a caller's inherited callbacks with the run's own,
+    so a tracer inherited from the calling runnable would trace the run (R29, T17 review 13).
+    Returns the token to restore it, or None when there is nothing to take out."""
+    from langchain_core.runnables.config import var_child_runnable_config
+
+    inherited = var_child_runnable_config.get()
+    callbacks = (inherited or {}).get("callbacks")
+    if not callbacks:
+        return None
+    return var_child_runnable_config.set({**inherited, "callbacks": _without_network_tracers(callbacks)})
+
+
+def _reset_inherited_config(token) -> None:
+    from langchain_core.runnables.config import var_child_runnable_config
+
+    # A stream finished in another context (closed by the garbage collector): the context it
+    # changed is gone with it.
+    with contextlib.suppress(ValueError):
+        var_child_runnable_config.reset(token)
 
 
 def _run_reading_of(config) -> firm.FirmConfig | None:
@@ -596,11 +628,14 @@ def _untraced_under_lock(graph, run_reading) -> None:
                 a = (a[0], config, *a[2:])
             if reading is not None:
                 firm.begin_run(reading)
+        inherited = _untraced_inherited_config() if locked else None
         marks = (_IN_RUN.set((id(graph), locked)), _DELEGATE.set(id(graph))) if mark else None
-        return locked, (marks, reading), a, k
+        return locked, (marks, reading, inherited), a, k
 
     def end(token) -> None:
         if token is not None:
+            if token[2] is not None:
+                _reset_inherited_config(token[2])
             if token[0] is not None:
                 _DELEGATE.reset(token[0][1])
                 _IN_RUN.reset(token[0][0])

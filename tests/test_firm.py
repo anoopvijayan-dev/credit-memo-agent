@@ -1299,6 +1299,107 @@ def test_p5_a_custom_rule_equal_to_a_shipped_one_is_sent_in_the_shipped_spelling
 
 
 @pytest.mark.invariants
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_p18_the_sdk_follows_no_redirect_and_checks_the_lock_before_every_request(home, monkeypatch, provider):
+    """T17 review 13 / R29: both SDKs follow redirects by default, so one `complete` could send
+    a second HTTP request past its one lock check; their HTTP client now follows none and checks
+    the lock before every request it sends."""
+    sdk = pytest.importorskip(provider)
+    import importlib
+
+    base = sdk._base_client
+    httpx = importlib.import_module("httpx2" if "httpx2" in base.__dict__ else "httpx")
+    sent = []
+
+    def handler(request):
+        sent.append(request.url.path)
+        return httpx.Response(307, headers={"location": "https://elsewhere.example/steal"})
+
+    real = sdk.Anthropic if provider == "anthropic" else sdk.OpenAI
+
+    def make(**kwargs):
+        return real(api_key="test", http_client=httpx.Client(transport=httpx.MockTransport(handler)), **kwargs)
+
+    monkeypatch.setattr(sdk, "Anthropic" if provider == "anthropic" else "OpenAI", make)
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    model = llm.get_llm(provider)
+    with pytest.raises(Exception):  # noqa: B017 - the SDK's own error for a 307 it does not follow
+        model.complete("s", "u")
+    assert len(sent) == 1  # the redirect was not followed
+
+    # The lock turned on between `complete`'s check and the SDK's request: the HTTP client's
+    # own check refuses before anything is sent, and the refusal is the lock's own.
+    sent.clear()
+    real_check = model._check
+    monkeypatch.setattr(model, "_check", lambda *a: real_check(*a) or (home / "firm.yaml").write_text("offline_lock: true\n"))
+    with pytest.raises(firm.OfflineLockError):
+        model.complete("s", "u")
+    assert sent == []
+
+
+@pytest.mark.invariants
+def test_p18_a_tracer_inherited_from_the_calling_runnable_is_taken_out_under_the_lock(home, no_network, monkeypatch, tmp_path):
+    """T17 review 13 / R29: a graph called from inside another runnable inherits its callbacks
+    through the runnable context; only explicitly passed callbacks were filtered, so an inherited
+    LangSmith tracer stayed installed under the lock."""
+    from langchain_core.runnables import RunnableLambda
+    from langchain_core.tracers.langchain import LangChainTracer
+
+    names = []
+    monkeypatch.setattr(LangChainTracer, "_start_trace", lambda self, run: names.append((run.name, id(self))), raising=False)
+    monkeypatch.setattr(LangChainTracer, "_persist_run", lambda self, run: names.append((run.name, id(self))), raising=False)
+    monkeypatch.setattr(LangChainTracer, "_persist_run_single", lambda self, run: None, raising=False)
+    monkeypatch.setattr(LangChainTracer, "_update_run_single", lambda self, run: None, raising=False)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    graph = build(llm.FakeLLM())
+
+    def calling_runnable(x):
+        return graph.invoke(x, {"configurable": {"thread_id": "inner"}})
+
+    tracer = LangChainTracer(client=types.SimpleNamespace())
+    RunnableLambda(calling_runnable).invoke({"statement_path": str(_statement(tmp_path))}, {"callbacks": [tracer]})
+    assert {n for n, _ in names} <= {"calling_runnable"} and no_network == []
+
+
+@pytest.mark.invariants
+def test_p18_a_resume_that_drafts_is_checked_against_the_lock_it_read_at_resume(home, no_network, monkeypatch, tmp_path):
+    """T17 review 13 / R29: a review resumed before its draft (a checkpoint paused there) sent its
+    hosted request under the draft's lock, the client reading firm.yaml again; the lock its
+    reading found at resume decides, as its evidence records."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    import cma.graph as g
+
+    sent = []
+
+    class Hosted(llm.HostedLLM):
+        name = "test"
+
+        def _send(self, system, user):
+            sent.append(1)
+            return llm.FakeLLM().complete(system, user)
+
+    saver = InMemorySaver()
+    cfg = {"configurable": {"thread_id": "t"}}
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    graph = build(Hosted(), checkpointer=saver)
+    graph.invoke({"statement_path": str(_statement(tmp_path))}, cfg)
+    graph.update_state(cfg, {}, as_node="policy")  # paused again before its draft
+    sent.clear()
+    (home / "firm.yaml").write_text("offline_lock: true\n")  # the lock the resume reads
+    real_prompt = g.draft_prompt
+
+    def turned_off_again(*a, **k):
+        (home / "firm.yaml").write_text("offline_lock: false\n")
+        return real_prompt(*a, **k)
+
+    monkeypatch.setattr(g, "draft_prompt", turned_off_again)
+    with pytest.raises(firm.OfflineLockError):
+        build(Hosted(), checkpointer=saver).invoke(None, cfg)
+    assert sent == [] and no_network == []
+
+
+@pytest.mark.invariants
 def test_p5_a_custom_rules_limits_never_reach_the_prompt(home, tmp_path):
     """T17 review 10 / P5: a custom rule's threshold, a number that can come from the case, reached
     the prompt in its requirement and detail cells."""

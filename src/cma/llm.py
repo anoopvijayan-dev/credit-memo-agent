@@ -89,6 +89,34 @@ def _require_unlocked_now(what: str, firm_config: "firm.FirmConfig | None") -> N
         firm_config.require_offline_off(what)
 
 
+def _checked_http(client, what: str) -> None:
+    """The SDK client's own HTTP client follows no redirect and checks the offline lock before
+    every HTTP request it sends, so no request leaves past the lock, a redirect or a retry
+    included (R29, T17 review 13). A stand-in client without one is left as it is."""
+    http = getattr(client, "_client", None)
+    if http is None or not hasattr(http, "event_hooks"):
+        return
+    http.follow_redirects = False
+
+    def check(request) -> None:
+        firm.require_unlocked(what)
+
+    hooks = dict(http.event_hooks)
+    hooks["request"] = [*hooks.get("request", []), check]
+    http.event_hooks = hooks
+
+
+def _lock_error_in(e: BaseException) -> "firm.OfflineLockError | None":
+    """The lock refusal behind an SDK error: the SDK wraps what its HTTP client raised."""
+    seen = set()
+    while e is not None and id(e) not in seen:
+        if isinstance(e, firm.OfflineLockError):
+            return e
+        seen.add(id(e))
+        e = e.__cause__ or e.__context__
+    return None
+
+
 class HostedLLM:
     """A model that runs off this machine. Every way it can send data checks the offline
     lock first: making the client, and every request.
@@ -117,7 +145,13 @@ class HostedLLM:
     def complete(self, system: str, user: str, *, offline_lock: bool | None = None,
                  reading: "firm.FirmConfig | None" = None) -> str:
         self._check(f"A request to a hosted model ({self.name})", offline_lock, reading)
-        return self._send(system, user)
+        try:
+            return self._send(system, user)
+        except Exception as e:
+            refused = _lock_error_in(e)
+            if refused is not None and refused is not e:
+                raise refused from None  # the lock's own refusal, not the SDK's wrapping of it
+            raise
 
     def _send(self, system: str, user: str) -> str:
         raise NotImplementedError
@@ -131,6 +165,7 @@ class AnthropicLLM(HostedLLM):
         import anthropic
 
         self.client = anthropic.Anthropic(timeout=120.0, max_retries=0)
+        _checked_http(self.client, "A request to a hosted model (anthropic)")
         self.model = model or os.getenv("CMA_ANTHROPIC_MODEL", "claude-sonnet-5-5")
 
     def _send(self, system: str, user: str) -> str:
@@ -153,6 +188,7 @@ class OpenAILLM(HostedLLM):
         from openai import OpenAI
 
         self.client = OpenAI(timeout=120.0, max_retries=0)
+        _checked_http(self.client, "A request to a hosted model (openai)")
         self.model = model or os.getenv("CMA_OPENAI_MODEL", "gpt-4.1")
 
     def _send(self, system: str, user: str) -> str:
