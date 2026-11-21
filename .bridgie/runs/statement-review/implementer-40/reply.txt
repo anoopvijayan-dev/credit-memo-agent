@@ -1,0 +1,41 @@
+T15 is built: `cma case purge` deletes the whole case folder and adds one line to `purge_ledger.jsonl` holding only the case id, the time and who purged it. The new purge tests pass (9), ruff and compileall are clean, and the full suite passes (1926 tests). I haven't committed anything; the changes are in the T15 worktree for the runner.
+
+- **How it works:** `store.purge_case` first takes the case as a writer, so a save running in another window finishes first or the purge is refused. While it holds the case it renames the folder to `cases/.purging-<id>`, so no other command can find the case. It then deletes everything, read-only input files included. Only after every file is gone does it append the ledger line, as `case`, `purged_at` (UTC) and `by`. The ledger file is owner-only (0600) and synced to disk after each line.
+- **Command:** `cma case purge CASE` asks before deleting, and `--yes` skips the question. An unknown or malformed id is refused with exit 2 and nothing is written to the ledger. Answering no deletes nothing (exit 1).
+- **Interrupted purge:** if deletion fails part-way, the `.purging-<id>` folder is left behind with no ledger line. Running the same purge again deletes what is left and then records it.
+- **Tests:** they check that no file under the case root is named by the purged id and that another case is untouched. They also check that the ledger line has exactly those three keys and contains none of the director's name, the label, the transaction descriptions or the amounts. Other tests cover purging while another writer holds the case and purging a case whose log is broken.
+- **Who purged it:** recorded as the operating-system user, the same way sign-off records it. No typed name is asked for, so nothing beyond the three fields is stored.
+- **Windows:** a folder whose lock files are open can't be renamed there, so the rename happens just after the writer lock is released. A writer that slips into that gap finds its lock files moved and refuses its next step. CI runs on Linux, so this path hasn't been tested on Windows.
+- **Case log:** purge writes nothing to the case's own log, because that log is deleted with the case. The ledger is the only record.
+
+I also added a short `cma case purge` entry to `README.md`.
+
+```json
+{
+  "task": "T15",
+  "claims": [
+    {
+      "text": "R35: store.purge_case deletes every file of the case (the folder is renamed out of use while the case is held as a writer, then removed, read-only inputs included) and appends to <case root>/purge_ledger.jsonl one line whose only keys are case, purged_at (UTC) and by (the OS user). Tests assert no file or folder under the case root is named by the purged id, another case is untouched, the ledger line has exactly those three keys, and the ledger text holds none of the director name, label/business name, transaction description or amounts.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_case_purge.py",
+      "proof_output": "9 passed in 0.77s"
+    },
+    {
+      "text": "Production caller: `cma case purge CASE [--yes]` asks before deleting (refusal deletes nothing, exit 1), refuses an unknown or malformed id with exit 2 and no ledger line, purges and prints the case id, time and OS user only; a purge stopped part-way (tombstone .purging-<id> left) writes no ledger line and is finished by purging again. A purge is refused (case.CaseLocked) while another writer holds the case, and works on a case whose log is broken.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_case_purge.py",
+      "proof_output": "9 passed in 0.77s"
+    },
+    {
+      "text": "Lint, compile and the full suite pass with the change.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q -x",
+      "proof_output": "All checks passed!\n1926 passed in 127.21s (0:02:07)"
+    }
+  ],
+  "files_changed": [
+    "src/cma/store.py",
+    "src/cma/cli.py",
+    "tests/test_case_purge.py",
+    "README.md"
+  ],
+  "notes": "No findings were passed in, so there are no dispositions. 'Who purged it' is recorded as the operating-system user (getpass.getuser), as R22 records the OS user for sign-off; no typed name is asked, so nothing beyond R35's three fields is kept. The ledger line is written only after every file is gone, so a purge interrupted mid-delete leaves cases/.purging-<id> (out of use: no command finds the case) and no ledger line; running `cma case purge <id>` again finishes and records it. On Windows, where a folder with open lock handles cannot be renamed, the rename happens just after the writer lock is released; a writer that slips in there has its lock files moved away and refuses its next step (R42). Purge appends no case-log entry because the log is deleted with the case; the firm-level ledger is the record. Changes are left uncommitted in the worktree for the runner."
+}
+```
