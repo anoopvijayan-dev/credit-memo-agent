@@ -97,6 +97,17 @@ def test_malformed_field_map_is_refused_naming_the_problem(text, why):
         pack.parse_field_map(text, "memo_fields.yaml")
 
 
+@pytest.mark.contracts
+@pytest.mark.parametrize("placeholder", ["{M2.__class__}", "{M2[0]}", "{0}", "{}", "{M2!r}"])
+def test_field_map_template_cannot_reach_attributes_indexes_or_positions(placeholder):
+    """A firm's template is data: str.format must never get a field name that walks an
+    attribute or an index, or a positional slot, so a template cannot read anything but the
+    figure it names (security: input validated at the boundary)."""
+    text = f"fields:\n  - id: a\n    title: A\n    figures: [M2]\n    template: '{placeholder}'\n"
+    with pytest.raises(pack.FieldMapError):
+        pack.parse_field_map(text, "memo_fields.yaml")
+
+
 def test_firm_field_map_orders_the_sections(home, tmp_path):
     case_id, folder = _case(tmp_path)
     (home / "memo_fields.yaml").write_text(
