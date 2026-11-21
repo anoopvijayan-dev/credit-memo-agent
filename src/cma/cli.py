@@ -58,11 +58,24 @@ def generate(
     seed: int = 7,
     months: int = 12,
     out: Path = Path("examples"),
+    feature: list[str] = typer.Option(
+        [], "--feature",
+        help=f"Opt-in synthetic feature, repeatable: one of {list(synth.FEATURES)}, or 'all'. The truth then "
+        "holds every bucket, line category and indicator, for the v2 rules and the case profile it gives.",
+    ),
 ):
     """Write a synthetic statement CSV and its ground-truth JSON."""
-    rows, truth = synth.generate(archetype, profile, seed=seed, months=months)
+    features = list(synth.FEATURES) if "all" in feature else feature
+    try:
+        rows, truth = synth.generate(archetype, profile, seed=seed, months=months, features=features)
+    except ValueError as e:
+        console.print(f"[red]Refused.[/red] {escape(str(e))}")
+        raise typer.Exit(code=2) from e
     csv_path, truth_path = synth.write(rows, truth, out)
     console.print(f"wrote {csv_path} ({len(rows)} transactions) and {truth_path}")
+    for account in truth.accounts:
+        other = out / f"{csv_path.stem}_{account['key']}.csv"
+        console.print(f"wrote {other} ({len(account['rows'])} transactions), the applicant's {account['key']} account")
 
 
 @app.command()

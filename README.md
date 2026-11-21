@@ -29,6 +29,13 @@ pip install -e ".[dev]"
 # with a ground-truth file alongside it).
 cma generate --archetype cafe --profile stretched --out examples
 
+# Opt-in features (repeat --feature, or --feature all): acquirers, director, cash,
+# lenders, two_accounts. The truth file then holds every money-in bucket, every line's
+# category and every indicator, for the v2 rules and the case profile it records;
+# two_accounts also writes the reserve account as cafe_stretched_reserve.csv.
+# Without --feature the statement and truth are byte-identical to earlier releases.
+cma generate --archetype cafe --profile stretched --out /tmp/cma-demo --feature all
+
 # Run the memo graph. It stops, asks your name, and asks you to approve.
 # --vat-stagger is the HMRC stagger group from the VAT certificate (the examples use 3).
 cma run examples/cafe_stretched.csv --vat-stagger 3
