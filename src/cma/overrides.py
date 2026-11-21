@@ -325,13 +325,17 @@ def _figures(statement: Statement, sha: str, profile: dict[str, Any], applied: d
 def _bare_figures(statement: Statement, sha: str, profile: dict[str, Any]):
     """The figures `statement` (read with hash `sha`) gives with no override applied; only
     ever compared with. `statement` is not touched."""
-    ruleset = active_ruleset()
-    key = (sha, ruleset.id, ruleset.sha256, _profile_key(profile))
+    key = _bare_key(sha, profile)
     got = _BARE.get(key)
     if got is None:
         got = _figures(_copy(statement), sha, profile, {})
         _BARE.put(key, got)
     return got
+
+
+def _bare_key(sha: str, profile: dict[str, Any]) -> tuple:
+    ruleset = active_ruleset()
+    return (sha, ruleset.id, ruleset.sha256, _profile_key(profile))
 
 
 def _rests_on(a, b, lines: set[str]) -> bool:
@@ -362,6 +366,8 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
             e.account, e.statement = account, statement
             failed.append(e)
             continue
+        if not applied:  # these are the figures with no override: kept, so the first save on
+            _BARE.put(_bare_key(sha, profile), (metrics, monthly))  # this case need not redo them (R52)
         lines = set(applied)
         marked: set[str] = set()
         cells: set[tuple[str, str]] = set()

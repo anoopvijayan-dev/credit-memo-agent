@@ -565,3 +565,59 @@ def test_the_kept_figures_follow_the_rule_table(home, tmp_path, monkeypatch):
     monkeypatch.setenv("CMA_RULESET", "v1")
     v1 = overrides.case_figures(folder)["main"].statement.by_id()["L4"].category
     assert v2 == Category.CASH_DEPOSIT and v1 != v2  # no categories kept from the other table
+
+
+def _clear_kept():
+    from cma import overrides
+
+    for memo in (overrides._PARSED, overrides._BARE, overrides._CLASSES):
+        memo._items.clear()
+
+
+def _marks(folder):
+    from cma import overrides
+
+    return {a: (sorted(f.marked), sorted(f.marked_cells), [(m.id, m.value, m.evidence) for m in f.metrics])
+            for a, f in overrides.case_figures(folder).items()}
+
+
+def test_marks_with_the_kept_figures_are_what_a_fresh_process_gives(home, tmp_path):
+    """The figures kept from the case's first, override-free computation mark each override's
+    figures exactly as a computation with nothing kept does, override after override (R17, R52)."""
+    from cma import overrides
+
+    _case_id, folder = _case(tmp_path, _big(2_000))
+    _clear_kept()
+    base = overrides.case_figures(folder)["main"]  # the page opens: the override-free figures are kept
+    assert not base.marked
+    rng = random.Random(22)
+    credits = [t for t in base.statement.transactions if t.amount > 0]
+    position = len(case.for_case(folder).entries())
+    for t in rng.sample(credits, 4):
+        new = next(c for c in sorted(valid_categories(t), key=lambda c: c.value) if c != t.category)
+        overrides.add_override(folder, t.id, new.value, reason="checked", name="Pat", expected=position)
+        position = len(case.for_case(folder).entries())
+        kept = _marks(folder)
+        _clear_kept()
+        assert kept == _marks(folder)
+        assert kept["main"][0]  # something now rests on an override
+
+
+def test_a_form_save_does_not_recompute_the_case_before_sending_the_browser_back(home, tmp_path, serve,
+                                                                                 monkeypatch):
+    from cma.review import summary
+
+    case_id, folder = _case(tmp_path)
+    srv = serve(case_id)
+    position = _summary(srv)["position"]
+    calls = []
+    real = summary.case_summary
+    monkeypatch.setattr(summary, "case_summary", lambda *a, **k: calls.append(a) or real(*a, **k))
+    form = urlencode({"account": "main", "line": "L2", "category": "director_funding", "reason": "loan",
+                      "name": "Pat", "expected": position, "back": "/"})
+    status, _, _ = _request(srv, "POST", "/override?token=" + srv.token, form,
+                            kind="application/x-www-form-urlencoded", token=False)
+    assert status == 303 and calls == []  # the page it goes back to is built once, on the GET
+    assert _entries(folder)[-1] == "override"
+    status, reply = _override(srv, position + 1, line="L1", category="director_funding")
+    assert status == 200 and reply["case"]["state"] == "shown" and len(calls) == 1  # data still recomputes

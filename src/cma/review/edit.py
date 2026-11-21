@@ -96,10 +96,13 @@ def _resolve(folder: Path, fields: dict[str, Any]) -> dict[str, Any]:
     return {"recorded": True, "seq": seq, "action": action}
 
 
-def answer(folder: Path, case_id: str, kind: str, fields: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+def answer(folder: Path, case_id: str, kind: str, fields: dict[str, Any], *,
+           recompute: bool = True) -> tuple[int, dict[str, Any]]:
     """Save one override ('override') or resolve one stale override ('stale'), and the HTTP
     status and reply: on success the saved change, the case log position now and the case
-    summary recomputed (R17, R52); otherwise why nothing was recorded."""
+    summary recomputed (R17, R52); otherwise why nothing was recorded. A page form, which
+    sends the browser back to the page (303) to be built afresh, asks for no recomputed
+    summary (`recompute` false), so a save is not computed twice before the page shows it."""
     from . import summary
 
     folder = Path(folder)
@@ -127,6 +130,8 @@ def answer(folder: Path, case_id: str, kind: str, fields: dict[str, Any]) -> tup
     except OSError as e:
         return 500, {"refused": f"A file of the case could not be read ({e.strerror or type(e).__name__}); "
                                 "nothing was recorded."}
+    if not recompute:
+        return 200, done
     try:
         shown = summary.case_summary(folder, case_id)
     except Exception:  # the save is recorded; only the recomputed view failed

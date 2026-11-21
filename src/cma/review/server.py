@@ -222,7 +222,7 @@ class _Handler(BaseHTTPRequestHandler):
         if fields is None:
             return
         try:
-            status, reply = self.server.save(kind, fields)
+            status, reply = self.server.save(kind, fields, shape == "data")
         except Exception:
             status, reply = 500, {"error": "The change could not be saved."}
         if shape == "data":
@@ -338,11 +338,12 @@ class ReviewServer:
         html = drilldown.render(drilldown.lines_behind(self.folder, self.case_id, **target), self.token)
         return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
 
-    def _save(self, kind: str, fields: dict) -> tuple[int, dict]:
-        """One write from the workspace: its status and reply, the recomputed case included (R17, R52)."""
+    def _save(self, kind: str, fields: dict, recompute: bool = True) -> tuple[int, dict]:
+        """One write from the workspace: its status and reply, the recomputed case included for
+        a data path (R17, R52); a page form is sent back to the page, which is built afresh."""
         from . import edit
 
-        return edit.answer(self.folder, self.case_id, kind, fields)
+        return edit.answer(self.folder, self.case_id, kind, fields, recompute=recompute)
 
     def _outcome_html(self, status: int, reply: dict) -> bytes:
         from . import edit
