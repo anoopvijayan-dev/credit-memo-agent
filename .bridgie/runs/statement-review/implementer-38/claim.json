@@ -1,0 +1,53 @@
+{
+  "task": "T13",
+  "claims": [
+    {
+      "text": "A profile change reads the profile, and the bytes it would restore, only while holding the case: store.update_profile applies the caller's change to the profile as it stands under the lock, and `cma case profile` passes its options as such a change, so two overlapping runs keep both changes and each profile_changed entry lists fields against the profile it actually changed.",
+      "proof_cmd": "python -m pytest -v -m contracts tests/test_case_store.py -k overlapping",
+      "proof_output": "tests/test_case_store.py::test_overlapping_profile_changes_keep_both PASSED"
+    },
+    {
+      "text": "A profile change the log refuses puts back the profile read under the lock, so case.yaml matches the profile_sha256 of the last logged entry.",
+      "proof_cmd": "python -m pytest -v -m contracts tests/test_case_store.py -k refused_profile",
+      "proof_output": "tests/test_case_store.py::test_a_refused_profile_change_puts_back_the_profile_the_log_last_recorded PASSED"
+    },
+    {
+      "text": "Whether a file was imported is decided by the case log (an import entry with its input_sha256), checked again while holding the case, not by the copy in inputs/. Files left by an import whose entry never reached the log are replaced, and importing the file again appends the entry; a file the log records is still 'already imported' with no change (R39).",
+      "proof_cmd": "python -m pytest -v -m contracts tests/test_case_store.py -k \"never_reached or left_without or same_file_again\"",
+      "proof_output": "test_importing_the_same_file_again_leaves_the_case_unchanged PASSED\ntest_an_import_whose_entry_never_reached_the_log_is_recorded_when_imported_again PASSED\ntest_a_statement_left_without_its_entry_is_replaced_by_the_next_import PASSED"
+    },
+    {
+      "text": "Account keys and case ids are matched with re.fullmatch, so 'main\\n' is refused as an account key and a case id with a trailing newline is refused as not a case id.",
+      "proof_cmd": "python -m pytest -v -m contracts tests/test_case_store.py -k trailing_newline",
+      "proof_output": "test_an_account_key_with_a_trailing_newline_is_refused[main\\n] PASSED\ntest_an_account_key_with_a_trailing_newline_is_refused[main\\r] PASSED\ntest_an_account_key_with_a_trailing_newline_is_refused[ main] PASSED\ntest_a_case_id_with_a_trailing_newline_is_refused PASSED"
+    },
+    {
+      "text": "Lint, compile, the full suite, the marker tiers and the evals pass.",
+      "proof_cmd": "ruff check src tests evals; python -m compileall -q src; python -m pytest -q -rs; python -m pytest -q -m contracts; python -m pytest -q -m invariants; python -m pytest -q -m dual_run; python evals/run_evals.py",
+      "proof_output": "All checks passed!\n1876 passed in 128.60s\n445 passed, 1431 deselected\n804 passed, 1072 deselected\n84 passed, 1792 deselected\n9/9 memos fully grounded; model = fake; ruleset = v1"
+    }
+  ],
+  "files_changed": [
+    "src/cma/store.py",
+    "src/cma/cli.py",
+    "tests/test_case_store.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major: Concurrent update: set_profile reads the old profile (line 358) and the bytes it would restore (line 362) before _recorded takes the case lock, and the CLI builds the new profile from a load_profile call outside the lock (cli.py:524). Two overlapping `cma case profile` runs lose one change; a refused append's undo restores a profile from before both runs.",
+      "disposition": "reproduced",
+      "evidence": "_recorded now yields a _Save holding the log entries read under the lock; the body sets the entry data and undo steps. New store.update_profile(folder, update) reads the profile and the restore bytes inside the lock and applies `update` to it; set_profile wraps it. `cma case profile` passes its options (and --from) as an update applied to the current profile. Tests test_overlapping_profile_changes_keep_both (another window saves a director between the CLI's start and its save; both changes kept, fields logged per change, last profile_sha256 matches case.yaml) and test_a_refused_profile_change_puts_back_the_profile_the_log_last_recorded fail on the previous commit and pass now."
+    },
+    {
+      "finding": "major: Partial failure: import_file puts inputs/<sha> and statements/<account>.csv in place before the log entry; a crash or a SaveNotConfirmed save whose entry a repair removes leaves the import with no log entry, and re-importing returns already=True from the inputs/ file, so the import is never logged.",
+      "disposition": "reproduced",
+      "evidence": "import_file decides 'already imported' and 'account already has a statement' from the case log's import entries, read while holding the case (a look before the conversion too, as a fast path). Leftover inputs/<sha>.* and an unlogged statements/<account>.csv are replaced, with undo steps that restore what was there. test_an_import_whose_entry_never_reached_the_log_is_recorded_when_imported_again (SaveNotConfirmed leaves the files with no entry; `cma case import` again prints 'imported account main', appends the entry, a third run prints 'already imported', case check exits 0) and test_a_statement_left_without_its_entry_is_replaced_by_the_next_import fail on the previous commit and pass now."
+    },
+    {
+      "finding": "minor: Boundary values: ACCOUNT_KEY uses `$`, which also matches before a trailing newline, so account 'main\\n' is accepted and creates a second statement file.",
+      "disposition": "reproduced",
+      "evidence": "ACCOUNT_KEY and CASE_ID are now matched with re.fullmatch (and a non-str account is refused). test_an_account_key_with_a_trailing_newline_is_refused[main\\n] and test_a_case_id_with_a_trailing_newline_is_refused fail on the previous commit and pass now."
+    }
+  ],
+  "notes": "update_profile is the new entry point for read-modify-write profile changes; set_profile(folder, profile) remains a whole-profile replacement (by design it replaces whatever is there). An import whose save is SaveNotConfirmed still keeps its files, as R42 asks; if its entry is in the log the next import reports 'already imported', and if a repair drops it the next import records it. Changes are uncommitted in the worktree for the runner to commit."
+}

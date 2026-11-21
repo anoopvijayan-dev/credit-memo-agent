@@ -1,0 +1,1104 @@
+diff --git a/README.md b/README.md
+index c8847ae..2fd78f5 100644
+--- a/README.md
++++ b/README.md
+@@ -51,6 +51,13 @@ cma resume case-7 --checkpoint-db private/reviews.sqlite
+ # (git-ignored, as are *.csv, memo files, evidence files and databases anywhere).
+ cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out private/mine.csv
+ 
++# A case: a folder under the case root (CMA_HOME, default private/cma; owner-only, and
++# refused inside a git tree that does not ignore it). Each command is logged in the case.
++cma case new --demo --label "Cafe trial"          # prints a random case id
++cma case profile <id> --director "Jane Doe" --own-account "ACME HOLDINGS" --proposed-repayment 1500
++cma case import <id> private/statement.csv --format csv
++cma case import <id> "private/Monzo Data Export.csv" --format monzo --account monzo --opening-balance 123.45
++
+ # Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
+ # first entry that was changed, removed, reordered or left half written.
+ cma case check private/cma/cases/<id>
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index 659736c..1337982 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -462,6 +462,107 @@ def import_monzo(
+     console.print("Check the closing balance against your Monzo app before trusting any metric.")
+ 
+ 
++@contextmanager
++def _case_errors():
++    """A refusal from the case store or its log, said without a traceback. Exit 2 for a
++    refusal, 3 for a broken log, 4 while another window holds the case or a save is not
++    confirmed (check the case log)."""
++    from . import case, store
++
++    try:
++        yield
++    except store.CaseStoreError as e:
++        console.print(f"[red]Refused.[/red] {escape(str(e))}")
++        raise typer.Exit(code=2) from None
++    except case.CaseLogBroken as e:
++        console.print(f"[red]Case log broken:[/red] entry {e.first_bad} {escape(e.reason)}. Nothing was changed.")
++        raise typer.Exit(code=3) from None
++    except case.SaveNotConfirmed as e:
++        console.print(f"[red]Not confirmed.[/red] {escape(str(e))}")
++        raise typer.Exit(code=4) from None
++    except (case.CaseLocked, case.LogConflict) as e:
++        console.print(f"[red]Not recorded.[/red] {escape(str(e))}")
++        raise typer.Exit(code=4) from None
++    except FirmConfigError as e:
++        console.print(f"[red]Refused.[/red] {escape(str(e))}")
++        raise typer.Exit(code=2) from None
++
++
++@case_app.command("new")
++def case_new(
++    demo: bool = typer.Option(False, "--demo", help="Synthetic data or your own statements, not an applicant's (R48)."),
++    label: str | None = typer.Option(None, "--label", help="Your own label for the case. Kept in the case folder."),
++):
++    """Make a case under the case root (CMA_HOME, or private/cma) and print its random id."""
++    from . import store
++
++    with _case_errors():
++        case_id = store.new_case(label=label, demo=demo)
++    console.print(case_id)
++
++
++@case_app.command("profile")
++def case_profile(
++    case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
++    from_file: Path | None = typer.Option(None, "--from", help="A YAML profile to replace the whole profile with."),
++    label: str | None = typer.Option(None, "--label"),
++    demo: bool | None = typer.Option(None, "--demo/--not-demo"),
++    business_name: str | None = typer.Option(None, "--business-name"),
++    director: list[str] | None = typer.Option(None, "--director", help="Repeat for each; replaces the list."),
++    shareholder: list[str] | None = typer.Option(None, "--shareholder", help="Repeat for each; replaces the list."),
++    own_account: list[str] | None = typer.Option(
++        None, "--own-account", help="The applicant's other accounts; repeat for each; replaces the list."),
++    vat_stagger: int | None = typer.Option(None, "--vat-stagger", help="1, 2 or 3."),
++    proposed_repayment: str | None = typer.Option(
++        None, "--proposed-repayment", help="The proposed facility's monthly repayment, in pounds."),
++):
++    """Show a case's profile, or change it. Every change is checked and logged (R42)."""
++    from . import store
++
++    with _case_errors():
++        folder = store.case_folder(case_id)
++        replacement = None
++        if from_file is not None:
++            if not from_file.is_file():
++                raise store.CaseStoreError(f"no file at {from_file}")
++            replacement = store.parse_profile(from_file.read_bytes(), str(from_file))
++        changes = {key: value for key, value in (
++            ("label", label), ("demo", demo), ("business_name", business_name),
++            ("directors", director), ("shareholders", shareholder), ("own_accounts", own_account),
++            ("vat_stagger", vat_stagger), ("proposed_monthly_repayment", proposed_repayment))
++            if value is not None and value != []}
++
++        def update(current: dict) -> dict:
++            # Applied to the profile as it stands once the case is held, so a change made
++            # meanwhile by another window is kept (T13 review 2).
++            return {**(replacement if replacement is not None else current), **changes}
++
++        profile = store.update_profile(folder, update)
++    console.print(escape(store._profile_bytes(profile).decode("utf-8")).rstrip())
++
++
++@case_app.command("import")
++def case_import(
++    case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
++    file: Path = typer.Argument(..., help="The bank file. Copied into the case; nothing is uploaded."),
++    fmt: str = typer.Option(..., "--format", help="csv (the five-column statement) or monzo (a Monzo export)."),
++    account: str = typer.Option("main", "--account", help="A short key for the account, such as main or savings."),
++    opening_balance: str | None = typer.Option(
++        None, help="Monzo only: the balance just before the first transaction, when the export has no Balance column."),
++):
++    """Import a statement into a case: the original kept by hash, the statement per account (R31, R42)."""
++    from . import store
++
++    with _case_errors():
++        folder = store.case_folder(case_id)
++        r = store.import_file(folder, file, fmt, account=account, opening_balance=opening_balance)
++    if r.already:
++        console.print(f"already imported (sha256 {r.input_sha256[:12]}); the case is unchanged")
++        return
++    console.print(f"imported account {r.account}: {r.lines} transactions, {r.start} to {r.end} "
++                  f"(sha256 {r.input_sha256[:12]})")
++
++
+ @case_app.command("check")
+ def case_check(folder: Path = typer.Argument(..., help="The case folder (cases/<id>).")):
+     """Load a case's log and check its hash chain against its head file (R43).
+diff --git a/src/cma/store.py b/src/cma/store.py
+new file mode 100644
+index 0000000..867f6b2
+--- /dev/null
++++ b/src/cma/store.py
+@@ -0,0 +1,487 @@
++"""The case store (C3, R31): the case root, case folders, the case profile and imports.
++
++    <case root>/                 CMA_HOME, or private/cma under the working directory
++      cases/<random id>/
++        case.yaml                the profile (validated; see PROFILE_FIELDS)
++        inputs/<sha256>.<ext>    each imported file as it arrived, read-only, named by hash
++        statements/<account>.csv the five-column statement the loader reads, one per account
++        log.jsonl (+ .head, .gate, .lock)   the case log (case.py)
++
++The root and every folder under it are readable only by the operating-system user who
++made them (0700), and every file this module writes is 0600 (inputs 0400), so a case's
++statements, profile, logs and outputs never sit where another user can read them (R31).
++A root inside a git working tree that does not ignore it is refused before anything is
++made, because a case committed by mistake would publish an applicant's bank data (R31).
++
++Every change to a case (its creation, a profile change, an import) is appended to the case
++log while this process holds the case (R42), after the files are in place; if the log
++refuses the entry, the files are put back as they were, so the log and the folder agree.
++Messages name files by hash or account key, never by their content.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import os
++import re
++import secrets
++import shutil
++import subprocess
++import tempfile
++from collections.abc import Callable, Iterator
++from contextlib import contextmanager, suppress
++from dataclasses import dataclass, field
++from decimal import Decimal, InvalidOperation
++from pathlib import Path
++from typing import Any
++
++import yaml
++
++from . import case as caselog
++from . import firm
++
++CASES = "cases"
++PROFILE = "case.yaml"
++INPUTS = "inputs"
++STATEMENTS = "statements"
++FORMATS = ("csv", "monzo")
++# Matched with fullmatch: `$` alone would also take a key ending in a newline (T13 review 2).
++CASE_ID = re.compile(r"[0-9a-f]{16}")  # random; never the applicant's name
++ACCOUNT_KEY = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
++DIR_MODE, FILE_MODE, INPUT_MODE = 0o700, 0o600, 0o400
++LIMIT_PENCE = 10_000_000_000_000 * 100  # R2's limit, for the proposed repayment too
++
++# The profile (case.yaml). Every key is optional in the file; a missing key is its default.
++PROFILE_FIELDS: dict[str, Any] = {
++    "label": None,                    # the underwriter's own label for the case
++    "demo": False,                    # synthetic data or the owner's own statements (R48, D23)
++    "business_name": None,
++    "directors": [],                  # directors' names (R5)
++    "shareholders": [],               # shareholders' names (R5)
++    "own_accounts": [],               # the applicant's other accounts (R6)
++    "vat_stagger": None,              # HMRC stagger group 1, 2 or 3
++    "proposed_monthly_repayment": None,  # GBP text with at most two decimals (R13)
++}
++LIST_FIELDS = ("directors", "shareholders", "own_accounts")
++TEXT_FIELDS = ("label", "business_name")
++
++
++class CaseStoreError(ValueError):
++    """The case root, a case folder, the profile or an import is refused; nothing changed."""
++
++
++class CaseRootInGit(CaseStoreError):
++    """The case root lies inside a git working tree that does not ignore it (R31)."""
++
++
++# --- the case root ---------------------------------------------------------------------
++
++
++def _git_env() -> dict[str, str]:
++    # The repository is found from the path, never from a GIT_DIR the caller's shell set.
++    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
++
++
++def _enclosing_repo(path: Path) -> Path | None:
++    """The nearest folder at or above `path` that holds a .git, or None."""
++    for folder in (path, *path.parents):
++        if (folder / ".git").exists():
++            return folder
++    return None
++
++
++def check_not_in_git(root: Path) -> None:
++    """Refuse a case root inside a git working tree unless git ignores it (R31). A tree git
++    cannot be asked about (no git installed, an error) is refused too: unknown is not
++    ignored."""
++    root = Path(root).resolve()
++    repo = _enclosing_repo(root)
++    if repo is None:
++        return
++    rel = root.relative_to(repo).as_posix()
++    if rel == ".":
++        raise CaseRootInGit(f"case root {root} is a git working tree itself; choose a folder git ignores, "
++                            "or set CMA_HOME outside the repository")
++    try:
++        # A trailing slash asks about the folder, so a folder-only pattern (cma/) matches a
++        # root not made yet.
++        done = subprocess.run(["git", "-C", str(repo), "check-ignore", "-q", "--", rel + "/"],
++                              env=_git_env(), capture_output=True, timeout=30, check=False)
++    except (OSError, subprocess.SubprocessError) as e:
++        raise CaseRootInGit(f"case root {root} is inside the git working tree {repo}, and git could not "
++                            f"say whether it is ignored ({type(e).__name__}); refused") from None
++    if done.returncode == 0:
++        return
++    if done.returncode == 1:
++        raise CaseRootInGit(f"case root {root} is inside the git working tree {repo} and git does not "
++                            f"ignore it: add {rel}/ to .gitignore, or set CMA_HOME outside the repository")
++    raise CaseRootInGit(f"case root {root} is inside the git working tree {repo}, and git could not say "
++                        "whether it is ignored; refused")
++
++
++def _private_dir(path: Path) -> None:
++    """Make `path` (one level) owner-only, or make an existing one so. A folder another user
++    owns is refused: this user cannot keep it private."""
++    try:
++        path.mkdir(mode=DIR_MODE)
++    except FileExistsError:
++        if not path.is_dir() or path.is_symlink():
++            raise CaseStoreError(f"{path} is not a folder") from None
++    st = path.stat()
++    if hasattr(os, "getuid") and st.st_uid != os.getuid():
++        raise CaseStoreError(f"{path} belongs to another user; a case folder must be this user's own")
++    if st.st_mode & 0o777 != DIR_MODE:
++        os.chmod(path, DIR_MODE)  # mkdir's mode is narrowed by the umask, never widened; set it
++
++
++def ensure_root(root: Path | None = None) -> Path:
++    """The case root, made owner-only, with its cases folder. Checked against git first, so
++    nothing is made inside a tree that does not ignore it."""
++    root = Path(root).resolve() if root is not None else firm.case_root()
++    check_not_in_git(root)
++    root.parent.mkdir(parents=True, exist_ok=True)
++    _private_dir(root)
++    _private_dir(root / CASES)
++    return root
++
++
++def case_folder(case_id: str, root: Path | None = None) -> Path:
++    """The folder of an existing case, after checking the root as ensure_root does."""
++    if not isinstance(case_id, str) or not CASE_ID.fullmatch(case_id):
++        raise CaseStoreError("a case id is 16 lowercase hex characters, as `cma case new` prints it")
++    root = ensure_root(root)
++    folder = root / CASES / case_id
++    if not (folder / PROFILE).is_file():
++        raise CaseStoreError(f"no case {case_id} under {root}")
++    return folder
++
++
++# --- files -----------------------------------------------------------------------------
++
++
++def _write_private(target: Path, data: bytes, mode: int = FILE_MODE) -> None:
++    """Write `data` beside `target` and rename it into place: a reader sees the old file or
++    the new one, never part of one, and the file is never readable by another user."""
++    fd, name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".part", dir=target.parent)
++    try:
++        with os.fdopen(fd, "wb") as f:
++            f.write(data)
++            f.flush()
++            os.fsync(f.fileno())
++        os.chmod(name, mode)
++        os.replace(name, target)
++    except BaseException:
++        with suppress(OSError):
++            os.unlink(name)
++        raise
++
++
++@dataclass
++class _Save:
++    """What a body under _recorded hands back: the entry to append (None appends nothing),
++    and the steps that put the folder back if the entry is not recorded."""
++
++    entries: list
++    data: dict[str, Any] | None = None
++    undo: list = field(default_factory=list)
++
++
++@contextmanager
++def _recorded(folder: Path, event: str) -> Iterator[_Save]:
++    """Hold the case, check its log whole, let the body read the case and change files, then
++    append `event` with the data the body set. Everything the body reads, it reads while
++    the case is held, so a change it bases on the case cannot be based on a stale read
++    (T13 review 2). If the log refuses the entry (or the body fails), the undo steps run,
++    so the folder is as before. A save the log could not confirm keeps its files: its entry
++    may be in the log (R42), and `cma case check` says."""
++    log = caselog.for_case(folder)
++    with log.writer():
++        head = log.require_intact()
++        save = _Save(entries=log.entries())
++        try:
++            yield save
++            if save.data is not None:
++                log.append(event, save.data, expected=head.position)
++        except caselog.SaveNotConfirmed:
++            raise
++        except BaseException:
++            for step in reversed(save.undo):
++                with suppress(OSError):
++                    step()
++            raise
++
++
++def _restorer(path: Path, mode: int = FILE_MODE):
++    """An undo step that puts `path` back as it is now: its bytes, or no file."""
++    before = path.read_bytes() if path.is_file() else None
++    if before is None:
++        return lambda: path.unlink(missing_ok=True)
++    return lambda: _write_private(path, before, mode)
++
++
++# --- the profile -----------------------------------------------------------------------
++
++
++class _Loader(firm._UniqueKeyLoader):
++    """safe_load with a key given twice refused (firm.yaml's rule)."""
++
++
++def _name(value: Any, where: str) -> str:
++    if not isinstance(value, str):
++        raise CaseStoreError(f"{where} must be text")
++    value = value.strip()
++    # A value of only spaces, dashes or dots names no one and would match everywhere (D72).
++    if not any(ch.isalnum() for ch in value):
++        raise CaseStoreError(f"{where} names no one: it has no letter or digit")
++    if len(value) > 200:
++        raise CaseStoreError(f"{where} is longer than 200 characters")
++    return value
++
++
++def _repayment(value: Any) -> str:
++    where = "proposed_monthly_repayment"
++    if isinstance(value, bool):
++        raise CaseStoreError(f"{where} must be an amount in pounds, such as 1500.00")
++    if isinstance(value, float):
++        value = repr(value)  # YAML read 1500.50 as a float; its shortest form is the text typed
++    if isinstance(value, int):
++        value = str(value)
++    if not isinstance(value, str):
++        raise CaseStoreError(f"{where} must be an amount in pounds, such as 1500.00")
++    text = value.strip().replace(",", "").removeprefix("£")
++    try:
++        amount = Decimal(text)
++    except InvalidOperation:
++        raise CaseStoreError(f"{where} must be an amount in pounds, such as 1500.00") from None
++    if not amount.is_finite() or amount.as_tuple().exponent < -2:
++        raise CaseStoreError(f"{where} must be pounds with at most two decimals")
++    if amount <= 0:
++        raise CaseStoreError(f"{where} must be more than £0.00")
++    if amount * 100 >= LIMIT_PENCE:
++        raise CaseStoreError(f"{where} reaches £10,000,000,000,000; no figure could be reported to the penny")
++    return f"{amount:.2f}"
++
++
++def validate_profile(raw: Any) -> dict[str, Any]:
++    """The profile a case.yaml holds, every field checked; CaseStoreError naming the field
++    otherwise. Unknown keys are refused, never ignored: a misspelt key would drop a director."""
++    if raw is None:
++        raw = {}
++    if not isinstance(raw, dict):
++        raise CaseStoreError("the profile must be a mapping of field: value")
++    unknown = sorted(str(k) for k in raw if k not in PROFILE_FIELDS)
++    if unknown:
++        raise CaseStoreError(f"unknown profile field(s): {', '.join(unknown)}; "
++                             f"known fields are {', '.join(PROFILE_FIELDS)}")
++    out = {k: (list(v) if isinstance(v, list) else v) for k, v in PROFILE_FIELDS.items()}
++    for key, value in raw.items():
++        if value is None:
++            if key in LIST_FIELDS:
++                out[key] = []
++            elif key == "demo":
++                raise CaseStoreError("demo must be true or false")
++            continue
++        if key in TEXT_FIELDS:
++            out[key] = _name(value, key)
++        elif key == "demo":
++            if not isinstance(value, bool):
++                raise CaseStoreError("demo must be true or false")
++            out[key] = value
++        elif key in LIST_FIELDS:
++            if not isinstance(value, list):
++                raise CaseStoreError(f"{key} must be a list of names")
++            names = [_name(v, f"{key} item {i}") for i, v in enumerate(value, 1)]
++            if len({n.upper() for n in names}) != len(names):
++                raise CaseStoreError(f"{key} names someone twice")
++            out[key] = names
++        elif key == "vat_stagger":
++            if type(value) is not int or value not in (1, 2, 3):  # not 1.0, not true
++                raise CaseStoreError("vat_stagger must be 1, 2 or 3")
++            out[key] = value
++        elif key == "proposed_monthly_repayment":
++            out[key] = _repayment(value)
++    return out
++
++
++def _profile_bytes(profile: dict[str, Any]) -> bytes:
++    return yaml.safe_dump(profile, sort_keys=False, allow_unicode=True).encode("utf-8")
++
++
++def profile_sha256(profile: dict[str, Any]) -> str:
++    """What evidence and the log record of a profile: its hash, never its names."""
++    return hashlib.sha256(_profile_bytes(validate_profile(profile))).hexdigest()
++
++
++def parse_profile(data: bytes, where: str = PROFILE) -> dict[str, Any]:
++    try:
++        raw = yaml.load(data.decode("utf-8"), Loader=_Loader)  # _Loader is a SafeLoader
++    except UnicodeDecodeError:
++        raise CaseStoreError(f"{where} is not UTF-8 text") from None
++    except firm._RepeatedKey as e:
++        raise CaseStoreError(f"{where}: the key {e.key!r} is given more than once; keep one") from None
++    except yaml.YAMLError as e:
++        mark = getattr(e, "problem_mark", None)
++        at = f" (line {mark.line + 1})" if mark is not None else ""
++        raise CaseStoreError(f"{where} is not valid YAML{at}") from None
++    try:
++        return validate_profile(raw)
++    except CaseStoreError as e:
++        raise CaseStoreError(f"{where}: {e}") from None
++
++
++def load_profile(folder: Path) -> dict[str, Any]:
++    return parse_profile((Path(folder) / PROFILE).read_bytes(), str(Path(folder) / PROFILE))
++
++
++def profile_names(profile: dict[str, Any]):
++    """The names the categoriser matches (R5, R6)."""
++    from .categorise import ProfileNames
++
++    return ProfileNames(directors=tuple(profile["directors"]) + tuple(profile["shareholders"]),
++                        own_accounts=tuple(profile["own_accounts"]))
++
++
++# --- commands --------------------------------------------------------------------------
++
++
++def new_case(*, label: str | None = None, demo: bool = False, root: Path | None = None) -> str:
++    """Make a case folder with a random id, its profile and its first log entry."""
++    profile = validate_profile({"label": label, "demo": demo})
++    root = ensure_root(root)
++    for _ in range(8):
++        case_id = secrets.token_hex(8)
++        folder = root / CASES / case_id
++        try:
++            folder.mkdir(mode=DIR_MODE)
++        except FileExistsError:
++            continue
++        break
++    else:  # pragma: no cover - 64 random bits colliding eight times
++        raise CaseStoreError("could not pick an unused case id")
++    try:
++        os.chmod(folder, DIR_MODE)
++        for sub in (INPUTS, STATEMENTS):
++            _private_dir(folder / sub)
++        _write_private(folder / PROFILE, _profile_bytes(profile))
++        log = caselog.for_case(folder)
++        with log.writer():
++            log.append("case_created", {"case": case_id, "demo": profile["demo"],
++                                        "profile_sha256": profile_sha256(profile)}, expected=0)
++    except BaseException:
++        shutil.rmtree(folder, ignore_errors=True)  # no half-made case is left behind
++        raise
++    return case_id
++
++
++def update_profile(folder: Path, update: Callable[[dict[str, Any]], dict[str, Any]]) -> dict[str, Any]:
++    """Change a case's profile and log the change (R42). `update` is given the profile as it
++    stands once this process holds the case, and returns the new one, which is checked. So
++    two overlapping changes are made one after the other, the second on the first's
++    result, never on a profile read before the first was saved (T13 review 2)."""
++    folder = Path(folder)
++    target = folder / PROFILE
++    with _recorded(folder, "profile_changed") as save:
++        old = load_profile(folder)
++        new = validate_profile(update({k: (list(v) if isinstance(v, list) else v) for k, v in old.items()}))
++        if new == old:
++            return new  # nothing changed, so nothing is logged
++        save.undo.append(_restorer(target))
++        _write_private(target, _profile_bytes(new))
++        save.data = {"fields": sorted(k for k in PROFILE_FIELDS if new[k] != old[k]),
++                     "profile_sha256": profile_sha256(new)}
++    return new
++
++
++def set_profile(folder: Path, profile: dict[str, Any]) -> dict[str, Any]:
++    """Replace a case's profile with `profile`, checked, and log the change (R42)."""
++    new = validate_profile(profile)
++    return update_profile(folder, lambda _old: new)
++
++
++@dataclass(frozen=True)
++class Imported:
++    account: str
++    input_sha256: str
++    lines: int
++    start: str
++    end: str
++    already: bool = False
++
++
++def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
++                opening_balance: str | None = None) -> Imported:
++    """Import a bank file into a case: the original into inputs/ by its hash, the converted
++    statement into statements/<account>.csv, checked by the statement loader, and one log
++    entry (R42). The same file imported again leaves the case unchanged (R39)."""
++    from .importers import monzo
++    from .ingest import StatementError, load_csv
++
++    folder = Path(folder)
++    if fmt not in FORMATS:
++        raise CaseStoreError(f"unknown format {fmt!r}; use one of {', '.join(FORMATS)}")
++    if not isinstance(account, str) or not ACCOUNT_KEY.fullmatch(account):
++        raise CaseStoreError("an account key is lowercase letters, digits, _ and -, starting with a "
++                             "letter or digit, at most 32 characters")
++    src = Path(src)
++    if not src.is_file():
++        raise CaseStoreError(f"no file at {src}")
++    data = src.read_bytes()  # read once; hashed and converted from these bytes
++    sha = hashlib.sha256(data).hexdigest()
++    # Whether a file was imported is what the case log says, never whether its copy is in
++    # inputs/: a copy whose entry never reached the log (a crash between the two, or a save
++    # not confirmed whose entry a repair dropped) is a leftover, and importing the file
++    # again records it (T13 review 2). A look before the work; the decision is made again
++    # below, holding the case.
++    with suppress(caselog.CaseLogError):
++        if any(_imported(e, sha) for e in caselog.for_case(folder).entries()):
++            return Imported(account, sha, 0, "", "", already=True)
++    statement = folder / STATEMENTS / f"{account}.csv"
++
++    suffix = "".join(s.lower() for s in src.suffixes[-1:] if re.fullmatch(r"\.[A-Za-z0-9]{1,8}", s))
++    inp = folder / INPUTS / f"{sha}{suffix or '.csv'}"
++    with tempfile.TemporaryDirectory(dir=folder) as work:
++        work = Path(work)
++        os.chmod(work, DIR_MODE)
++        if fmt == "monzo":
++            raw = work / "export.csv"
++            converted = work / "statement.csv"
++            _write_private(raw, data)
++            _write_private(converted, b"")  # made 0600 before the importer writes into it
++            try:
++                monzo.convert(raw, converted, opening_balance)
++            except monzo.MonzoImportError as e:
++                raise CaseStoreError(f"import refused: {str(e).replace(str(raw), src.name)}") from None
++            out = converted.read_bytes()
++        else:
++            if opening_balance is not None:
++                raise CaseStoreError("--opening-balance is for a Monzo export; a statement CSV has its balances")
++            out = data
++        try:
++            stmt = load_csv(statement, account_name=account, data=out)
++        except StatementError as e:
++            raise CaseStoreError(f"import refused: {str(e).replace(str(statement), src.name)}") from None
++
++        entry = {"account": account, "format": fmt, "input_sha256": sha,
++                 "statement_sha256": hashlib.sha256(out).hexdigest(), "lines": len(stmt.transactions),
++                 "start": stmt.start.isoformat(), "end": stmt.end.isoformat()}
++        with _recorded(folder, "import") as save:
++            if any(_imported(e, sha) for e in save.entries):
++                return Imported(account, sha, 0, "", "", already=True)  # R39: nothing changes
++            if any(e.event == "import" and e.data.get("account") == account for e in save.entries):
++                raise CaseStoreError(f"account {account} already has a statement in this case; "
++                                     "import another account with --account")
++            # Files left by an import whose entry is not in the log are replaced.
++            for left in (folder / INPUTS).glob(sha + ".*"):
++                if left != inp and left.name.split(".", 1)[0] == sha:
++                    save.undo.append(_restorer(left, INPUT_MODE))
++                    left.unlink()
++            save.undo.append(_restorer(inp, INPUT_MODE))
++            _write_private(inp, data, INPUT_MODE)
++            save.undo.append(_restorer(statement))
++            _write_private(statement, out)
++            save.data = entry
++    return Imported(account, sha, entry["lines"], entry["start"], entry["end"])
++
++
++def _imported(entry, sha: str) -> bool:
++    return entry.event == "import" and entry.data.get("input_sha256") == sha
+diff --git a/tests/test_case_store.py b/tests/test_case_store.py
+new file mode 100644
+index 0000000..a9f740a
+--- /dev/null
++++ b/tests/test_case_store.py
+@@ -0,0 +1,475 @@
++"""The case store (R31): the case root, `cma case new`, `profile` and `import`.
++
++Permission tests: the root and every folder under it are 0700 and every file 0600 (inputs
++0400). Git-ignore tests: a root inside a git working tree that does not ignore it is
++refused before anything is made. Log-entry tests: each command appends to the case log."""
++
++import csv
++import os
++import shutil
++import stat
++import subprocess
++
++import pytest
++from typer.testing import CliRunner
++
++from cma import case, store
++from cma.cli import app
++
++runner = CliRunner()
++STATEMENT = ("id,date,description,amount,balance\n"
++             "L1,2026-01-05,CARD SETTLEMENT STRIPE,500.00,1500.00\n"
++             "L2,2026-01-06,DD COUNCIL,-100.00,1400.00\n")
++MONZO_HEADER = ["Transaction ID", "Date", "Time", "Type", "Name", "Amount", "Currency"]
++posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
++needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    return root
++
++
++def _statement(tmp_path, body=STATEMENT, name="statement.csv"):
++    p = tmp_path / name
++    p.write_text(body)
++    return p
++
++
++def _monzo(tmp_path):
++    p = tmp_path / "monzo.csv"
++    with p.open("w", newline="") as f:
++        w = csv.writer(f)
++        w.writerow(MONZO_HEADER)
++        w.writerow(["tx_001", "05/01/2026", "12:00:00", "Faster payment", "Acme Ltd", "250.00", "GBP"])
++        w.writerow(["tx_002", "06/01/2026", "09:00:00", "Card payment", "Corner Shop", "-12.40", "GBP"])
++    return p
++
++
++def _events(folder):
++    return [(e.event, e.data) for e in case.for_case(folder).entries()]
++
++
++def _git(repo, *args):
++    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True,
++                   env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
++
++
++# --- permissions -----------------------------------------------------------------------
++
++
++@posix_only
++@pytest.mark.contracts
++def test_case_root_folders_and_files_are_owner_only(home, tmp_path):
++    old = os.umask(0o022)  # an ordinary umask would leave files readable by others
++    try:
++        cid = store.new_case(label="Cafe", demo=True)
++        folder = home / "cases" / cid
++        store.import_file(folder, _statement(tmp_path), "csv")
++        store.set_profile(folder, {**store.load_profile(folder), "directors": ["Jane Doe"]})
++    finally:
++        os.umask(old)
++    for d in (home, home / "cases", folder, folder / "inputs", folder / "statements"):
++        assert stat.S_IMODE(d.stat().st_mode) == 0o700, d
++    for f in folder.rglob("*"):
++        if f.is_file():
++            mode = stat.S_IMODE(f.stat().st_mode)
++            assert mode & 0o077 == 0, (f, oct(mode))  # nothing for group or others
++    (inp,) = (folder / "inputs").iterdir()
++    assert stat.S_IMODE(inp.stat().st_mode) == 0o400  # the original, read-only
++
++
++@posix_only
++@pytest.mark.contracts
++def test_an_existing_root_open_to_others_is_made_owner_only(home):
++    home.mkdir(mode=0o755)
++    os.chmod(home, 0o755)
++    store.new_case()
++    assert stat.S_IMODE(home.stat().st_mode) == 0o700
++
++
++@pytest.mark.contracts
++def test_case_ids_are_random_and_never_the_label(home):
++    a, b = store.new_case(label="Acme Ltd"), store.new_case(label="Acme Ltd")
++    assert a != b and store.CASE_ID.match(a) and "acme" not in a.lower()
++
++
++# --- git ignore ------------------------------------------------------------------------
++
++
++@needs_git
++@pytest.mark.contracts
++def test_root_inside_a_git_tree_that_does_not_ignore_it_is_refused(tmp_path, monkeypatch):
++    repo = tmp_path / "repo"
++    repo.mkdir()
++    _git(repo, "init", "-q")
++    monkeypatch.setenv("CMA_HOME", str(repo / "cases-here"))
++    with pytest.raises(store.CaseRootInGit, match="does not ignore it"):
++        store.new_case()
++    assert not (repo / "cases-here").exists()  # refused before anything was made
++    r = runner.invoke(app, ["case", "new"])
++    assert r.exit_code == 2 and "does not ignore" in r.output
++    assert not (repo / "cases-here").exists()
++
++
++@needs_git
++@pytest.mark.contracts
++@pytest.mark.parametrize("pattern", ["cases-here/", "cases-here", "/cases-here/", "private/"])
++def test_root_inside_a_git_tree_that_ignores_it_is_allowed(tmp_path, monkeypatch, pattern):
++    repo = tmp_path / "repo"
++    repo.mkdir()
++    _git(repo, "init", "-q")
++    (repo / ".gitignore").write_text(pattern + "\n")
++    root = repo / ("private/cma" if pattern == "private/" else "cases-here")
++    monkeypatch.setenv("CMA_HOME", str(root))
++    cid = store.new_case()
++    assert (root / "cases" / cid / "case.yaml").is_file()
++
++
++@needs_git
++@pytest.mark.contracts
++def test_root_that_is_the_git_tree_itself_is_refused(tmp_path, monkeypatch):
++    repo = tmp_path / "repo"
++    repo.mkdir()
++    _git(repo, "init", "-q")
++    monkeypatch.setenv("CMA_HOME", str(repo))
++    with pytest.raises(store.CaseRootInGit):
++        store.new_case()
++
++
++@pytest.mark.contracts
++def test_root_in_a_tree_git_cannot_be_asked_about_is_refused(tmp_path, monkeypatch):
++    repo = tmp_path / "repo"
++    (repo / ".git").mkdir(parents=True)  # looks like a work tree; git finds no repository
++    monkeypatch.setenv("CMA_HOME", str(repo / "cma"))
++    monkeypatch.setenv("PATH", str(tmp_path / "no-git-here"))  # and no git to ask
++    with pytest.raises(store.CaseRootInGit, match="could not"):
++        store.new_case()
++    assert not (repo / "cma").exists()
++
++
++@needs_git
++@pytest.mark.contracts
++def test_existing_root_later_unignored_is_refused_by_every_command(tmp_path, monkeypatch):
++    repo = tmp_path / "repo"
++    repo.mkdir()
++    _git(repo, "init", "-q")
++    (repo / ".gitignore").write_text("cma/\n")
++    monkeypatch.setenv("CMA_HOME", str(repo / "cma"))
++    cid = store.new_case()
++    (repo / ".gitignore").write_text("")
++    with pytest.raises(store.CaseRootInGit):
++        store.case_folder(cid)
++    r = runner.invoke(app, ["case", "profile", cid])
++    assert r.exit_code == 2
++
++
++# --- cma case new ----------------------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_case_new_logs_its_creation_and_writes_the_profile(home):
++    r = runner.invoke(app, ["case", "new", "--demo", "--label", "Cafe trial"])
++    assert r.exit_code == 0, r.output
++    cid = r.output.strip()
++    folder = home / "cases" / cid
++    p = store.load_profile(folder)
++    assert p["demo"] is True and p["label"] == "Cafe trial"
++    ((event, data),) = _events(folder)
++    assert event == "case_created" and data["case"] == cid and data["demo"] is True
++    assert data["profile_sha256"] == store.profile_sha256(p)
++    assert "Cafe trial" not in str(data)  # the log records the profile's hash, not its text
++    assert runner.invoke(app, ["case", "check", str(folder)]).exit_code == 0
++
++
++# --- cma case profile ------------------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_profile_change_is_validated_written_and_logged(home):
++    cid = store.new_case()
++    r = runner.invoke(app, ["case", "profile", cid, "--director", "Jane Doe", "--shareholder", "Acme Holdco",
++                            "--own-account", "ACME HOLDINGS", "--proposed-repayment", "1,500.5",
++                            "--business-name", "Acme Cafe Ltd", "--vat-stagger", "2"])
++    assert r.exit_code == 0, r.output
++    folder = home / "cases" / cid
++    p = store.load_profile(folder)
++    assert p["directors"] == ["Jane Doe"] and p["shareholders"] == ["Acme Holdco"]
++    assert p["own_accounts"] == ["ACME HOLDINGS"] and p["proposed_monthly_repayment"] == "1500.50"
++    assert p["vat_stagger"] == 2 and p["demo"] is False
++    events = _events(folder)
++    assert [e for e, _ in events] == ["case_created", "profile_changed"]
++    assert events[1][1] == {"fields": ["business_name", "directors", "own_accounts", "proposed_monthly_repayment",
++                                       "shareholders", "vat_stagger"],
++                            "profile_sha256": store.profile_sha256(p)}
++    names = store.profile_names(p)
++    assert names.directors == ("Jane Doe", "Acme Holdco") and names.own_accounts == ("ACME HOLDINGS",)
++    # The same values again change nothing, so nothing more is logged.
++    assert runner.invoke(app, ["case", "profile", cid, "--vat-stagger", "2"]).exit_code == 0
++    assert len(_events(folder)) == 2
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("body, match", [
++    ("director: [Jane]\n", "unknown profile field"),
++    ("directors: [Jane]\ndirectors: [John]\n", "more than once"),
++    ("directors: ['---']\n", "names no one"),
++    ("directors: Jane\n", "list of names"),
++    ("directors: [Jane, JANE]\n", "twice"),
++    ("demo: yes please\n", "true or false"),
++    ("vat_stagger: 4\n", "1, 2 or 3"),
++    ("vat_stagger: 1.0\n", "1, 2 or 3"),
++    ("vat_stagger: true\n", "1, 2 or 3"),
++    ("proposed_monthly_repayment: 12.345\n", "two decimals"),
++    ("proposed_monthly_repayment: -5\n", "more than"),
++    ("proposed_monthly_repayment: 10000000000000\n", "10,000,000,000,000"),
++    ("proposed_monthly_repayment: true\n", "amount"),
++    ("[unclosed\n", "not valid YAML"),
++])
++def test_a_malformed_profile_is_refused_and_nothing_changes(home, tmp_path, body, match):
++    cid = store.new_case()
++    folder = home / "cases" / cid
++    before = (folder / "case.yaml").read_bytes()
++    src = tmp_path / "profile.yaml"
++    src.write_text(body)
++    with pytest.raises(store.CaseStoreError, match=match):
++        store.parse_profile(src.read_bytes())
++    r = runner.invoke(app, ["case", "profile", cid, "--from", str(src)])
++    assert r.exit_code == 2
++    assert (folder / "case.yaml").read_bytes() == before and len(_events(folder)) == 1
++
++
++@pytest.mark.contracts
++def test_profile_file_replaces_the_whole_profile(home, tmp_path):
++    cid = store.new_case(label="x")
++    src = tmp_path / "p.yaml"
++    src.write_text("demo: true\ndirectors: [Jane Doe]\nproposed_monthly_repayment: 1500.50\n")
++    assert runner.invoke(app, ["case", "profile", cid, "--from", str(src)]).exit_code == 0
++    p = store.load_profile(home / "cases" / cid)
++    assert p["label"] is None and p["demo"] is True and p["proposed_monthly_repayment"] == "1500.50"
++
++
++@pytest.mark.contracts
++def test_unknown_case_id_is_refused(home):
++    assert runner.invoke(app, ["case", "profile", "../../etc"]).exit_code == 2
++    assert runner.invoke(app, ["case", "profile", "0" * 16]).exit_code == 2
++
++
++# --- cma case import -------------------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_csv_import_keeps_the_original_by_hash_and_the_statement_per_account(home, tmp_path):
++    import hashlib
++
++    cid = store.new_case()
++    folder = home / "cases" / cid
++    src = _statement(tmp_path)
++    r = runner.invoke(app, ["case", "import", cid, str(src), "--format", "csv"])
++    assert r.exit_code == 0, r.output
++    sha = hashlib.sha256(src.read_bytes()).hexdigest()
++    assert (folder / "inputs" / f"{sha}.csv").read_bytes() == src.read_bytes()
++    assert (folder / "statements" / "main.csv").read_bytes() == src.read_bytes()
++    events = _events(folder)
++    assert [e for e, _ in events] == ["case_created", "import"]
++    assert events[1][1] == {"account": "main", "format": "csv", "input_sha256": sha,
++                            "statement_sha256": sha, "lines": 2, "start": "2026-01-05", "end": "2026-01-06"}
++    assert runner.invoke(app, ["case", "check", str(folder)]).exit_code == 0
++
++
++@pytest.mark.contracts
++def test_monzo_import_converts_into_the_account_statement(home, tmp_path):
++    from cma import ingest
++
++    cid = store.new_case()
++    folder = home / "cases" / cid
++    r = runner.invoke(app, ["case", "import", cid, str(_monzo(tmp_path)), "--format", "monzo",
++                            "--account", "monzo", "--opening-balance", "100.00"])
++    assert r.exit_code == 0, r.output
++    s = ingest.load_csv(folder / "statements" / "monzo.csv")
++    assert [t.id for t in s.transactions] == ["tx_001", "tx_002"]
++    assert s.transactions[-1].balance == pytest.approx(337.60)
++    ((event, data),) = _events(folder)[1:]
++    assert event == "import" and data["format"] == "monzo" and data["account"] == "monzo" and data["lines"] == 2
++    assert data["statement_sha256"] != data["input_sha256"]
++    assert not [p for p in folder.iterdir() if p.name.startswith("tmp")]  # no work folder left
++
++
++@pytest.mark.contracts
++def test_importing_the_same_file_again_leaves_the_case_unchanged(home, tmp_path):
++    cid = store.new_case()
++    folder = home / "cases" / cid
++    src = _statement(tmp_path)
++    store.import_file(folder, src, "csv")
++    head = case.for_case(folder).verify().head
++    r = runner.invoke(app, ["case", "import", cid, str(src), "--format", "csv", "--account", "other"])
++    assert r.exit_code == 0 and "already imported" in r.output
++    assert case.for_case(folder).verify().head == head
++    assert sorted(p.name for p in (folder / "statements").iterdir()) == ["main.csv"]
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("body", [
++    "id,date,description,amount,balance\nL1,2026-01-05,X,abc,1.00\n",  # not a number
++    "id,date,description,amount,balance\nL1,2026-01-05,X,10000000000000.00,1.00\n",  # at the R2 limit
++])
++def test_a_refused_statement_leaves_the_case_unchanged(home, tmp_path, body):
++    cid = store.new_case()
++    folder = home / "cases" / cid
++    r = runner.invoke(app, ["case", "import", cid, str(_statement(tmp_path, body)), "--format", "csv"])
++    assert r.exit_code == 2, r.output
++    assert list((folder / "inputs").iterdir()) == [] and list((folder / "statements").iterdir()) == []
++    assert len(_events(folder)) == 1
++    assert not [p for p in folder.iterdir() if p.name.startswith("tmp")]  # no work folder left
++
++
++@pytest.mark.contracts
++def test_a_second_statement_for_one_account_is_refused(home, tmp_path):
++    cid = store.new_case()
++    folder = home / "cases" / cid
++    store.import_file(folder, _statement(tmp_path), "csv")
++    other = _statement(tmp_path, STATEMENT.replace("L2", "L3"), "other.csv")
++    with pytest.raises(store.CaseStoreError, match="already has a statement"):
++        store.import_file(folder, other, "csv")
++    store.import_file(folder, other, "csv", account="savings")
++    assert [e for e, _ in _events(folder)] == ["case_created", "import", "import"]
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("account", ["../x", "Main", "", "a" * 33])
++def test_an_account_key_that_is_not_a_plain_key_is_refused(home, tmp_path, account):
++    folder = home / "cases" / store.new_case()
++    with pytest.raises(store.CaseStoreError, match="account key"):
++        store.import_file(folder, _statement(tmp_path), "csv", account=account)
++
++
++@pytest.mark.contracts
++def test_an_import_the_log_refuses_puts_the_files_back(home, tmp_path, monkeypatch):
++    folder = home / "cases" / store.new_case()
++
++    def refuse(self, *a, **k):
++        raise case.SaveNotRecorded("refused for the test; the save was not recorded")
++
++    monkeypatch.setattr(case.CaseLog, "append", refuse)
++    with pytest.raises(case.SaveNotRecorded):
++        store.import_file(folder, _statement(tmp_path), "csv")
++    assert list((folder / "inputs").iterdir()) == [] and list((folder / "statements").iterdir()) == []
++
++
++@pytest.mark.contracts
++def test_an_import_into_a_broken_log_is_refused(home, tmp_path):
++    folder = home / "cases" / store.new_case()
++    log = folder / "log.jsonl"
++    log.write_bytes(log.read_bytes().replace(b'"demo":false', b'"demo":true '))
++    r = runner.invoke(app, ["case", "import", folder.name, str(_statement(tmp_path)), "--format", "csv"])
++    assert r.exit_code == 3, r.output
++    assert list((folder / "statements").iterdir()) == []
++
++
++@pytest.mark.contracts
++def test_store_writes_only_under_the_case_root(home, tmp_path):
++    before = sorted(p.name for p in tmp_path.iterdir())
++    cid = store.new_case()
++    store.import_file(home / "cases" / cid, _statement(tmp_path), "csv")
++    after = sorted(p.name for p in tmp_path.iterdir())
++    assert set(after) - set(before) == {"statement.csv", "cma-home"}
++
++
++# --- review 2: reads under the lock, the log decides an import, keys end where they end ---
++
++
++@pytest.mark.contracts
++def test_overlapping_profile_changes_keep_both(home, monkeypatch):
++    """A `cma case profile` that read the profile before another one saved builds its change
++    on the profile as it stands once it holds the case, so neither change is lost."""
++    import threading
++
++    cid = store.new_case()
++    folder = home / "cases" / cid
++    real = store.update_profile
++
++    def other_window_saves_first(f, update):
++        t = threading.Thread(target=real, args=(f, lambda p: {**p, "directors": ["Jane Doe"]}))
++        t.start()
++        t.join()
++        return real(f, update)
++
++    monkeypatch.setattr(store, "update_profile", other_window_saves_first)
++    r = runner.invoke(app, ["case", "profile", cid, "--vat-stagger", "2"])
++    assert r.exit_code == 0, r.output
++    profile = store.load_profile(folder)
++    assert profile["directors"] == ["Jane Doe"] and profile["vat_stagger"] == 2
++    events = _events(folder)
++    assert [d["fields"] for e, d in events if e == "profile_changed"] == [["directors"], ["vat_stagger"]]
++    assert events[-1][1]["profile_sha256"] == store.profile_sha256(profile)
++
++
++@pytest.mark.contracts
++def test_a_refused_profile_change_puts_back_the_profile_the_log_last_recorded(home, monkeypatch):
++    folder = home / "cases" / store.new_case()
++    store.update_profile(folder, lambda p: {**p, "directors": ["Jane Doe"]})
++
++    def refuse(self, *a, **k):
++        raise case.SaveNotRecorded("refused for the test; the save was not recorded")
++
++    monkeypatch.setattr(case.CaseLog, "append", refuse)
++    with pytest.raises(case.SaveNotRecorded):
++        store.update_profile(folder, lambda p: {**p, "vat_stagger": 2})
++    profile = store.load_profile(folder)
++    assert profile["directors"] == ["Jane Doe"] and profile["vat_stagger"] is None
++    assert _events(folder)[-1][1]["profile_sha256"] == store.profile_sha256(profile)
++
++
++@pytest.mark.contracts
++def test_an_import_whose_entry_never_reached_the_log_is_recorded_when_imported_again(home, tmp_path, monkeypatch):
++    """Files an import left without its log entry (a save not confirmed whose entry a repair
++    dropped, or a crash between the files and the entry) do not make the file 'already
++    imported': importing it again appends the entry (R42, R39)."""
++    cid = store.new_case()
++    folder = home / "cases" / cid
++    src = _statement(tmp_path)
++
++    def not_confirmed(self, *a, **k):
++        raise case.SaveNotConfirmed("for the test; whether the save is in the log is not confirmed")
++
++    with monkeypatch.context() as m:
++        m.setattr(case.CaseLog, "append", not_confirmed)
++        with pytest.raises(case.SaveNotConfirmed):
++            store.import_file(folder, src, "csv")
++    assert (folder / "statements" / "main.csv").exists() and len(list((folder / "inputs").iterdir())) == 1
++    assert [e for e, _ in _events(folder)] == ["case_created"]
++
++    r = runner.invoke(app, ["case", "import", cid, str(src), "--format", "csv"])
++    assert r.exit_code == 0 and "imported account main" in r.output, r.output
++    assert [e for e, _ in _events(folder)] == ["case_created", "import"]
++    r = runner.invoke(app, ["case", "import", cid, str(src), "--format", "csv"])
++    assert "already imported" in r.output
++    assert [e for e, _ in _events(folder)] == ["case_created", "import"]
++    assert runner.invoke(app, ["case", "check", str(folder)]).exit_code == 0
++
++
++@pytest.mark.contracts
++def test_a_statement_left_without_its_entry_is_replaced_by_the_next_import(home, tmp_path):
++    folder = home / "cases" / store.new_case()
++    (folder / "statements" / "main.csv").write_text("left over by a crash\n")
++    store.import_file(folder, _statement(tmp_path), "csv")
++    assert (folder / "statements" / "main.csv").read_text() == STATEMENT
++    assert [e for e, _ in _events(folder)] == ["case_created", "import"]
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("account", ["main\n", "main\r", " main"])
++def test_an_account_key_with_a_trailing_newline_is_refused(home, tmp_path, account):
++    folder = home / "cases" / store.new_case()
++    with pytest.raises(store.CaseStoreError, match="account key"):
++        store.import_file(folder, _statement(tmp_path), "csv", account=account)
++    assert list((folder / "statements").iterdir()) == []
++
++
++@pytest.mark.contracts
++def test_a_case_id_with_a_trailing_newline_is_refused(home):
++    cid = store.new_case()
++    with pytest.raises(store.CaseStoreError, match="16 lowercase hex"):
++        store.case_folder(cid + "\n")
