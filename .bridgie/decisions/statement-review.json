@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 290,
+  "next_id": 293,
   "decisions": [
     {
       "id": "D1",
@@ -5812,6 +5812,66 @@
       "decided_at": "2026-11-21T00:28:40.911Z",
       "effect": "changes requested: Owner decision of 2026-11-20, given in chat: accept these as edge cases outside the guarantee and push development forward. Write one scope limit under R29 and R53, keeping everything else in revision 29. With the offline lock off, the MCP server hands out its ASGI apps (sse_app, streamable_http_app) as the previous release did (R53). Such an app reads the offline lock at start-up and before every request and, once the lock is on, fails its start-up, answers every HTTP request with 503 and closes every websocket, so no request is served and nothing of the server runs; under the lock no app is handed out (R29). A listening socket that an embedder's own ASGI server opens for a saved app with lifespan events turned off is that server's doing and outside R29: refusing to hand out an app at all, the only way to keep such a server from binding, would break R53. Write a second scope limit under R2: the statement loader and cma import monzo read the file into memory, decode it and split it into lines before reading its records; they then read the records one at a time, in one pass, and check each record once the next has been read (one record ahead, which is how a quoted field left open to the end of the file is told from a last record), and cma import monzo stops at the first problem it meets. Reading the file as a stream, and checking a record before the next one has been read, are outside R2.; re-run bridgie shape statement-review",
       "created_at": "2026-11-21T00:28:40.894Z"
+    },
+    {
+      "id": "D290",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-30"
+      },
+      "context": "What the MCP server's ASGI factories hand out while the lock is off (R53, D289; T17 at 6b43212). D289 says the server hands out its ASGI apps as the previous release did. 6b43212 hands out the SDK's app inside a lock check: a wrapper whose call reads the lock and whose every other attribute is the SDK app's (LockCheckedASGI, src/cma/mcp_server.py:82-107). Its class is not the SDK's, which verify-184 named as a minor change to the public return type. Revision 30's R53 says so (design default; no build change). The alternative hands out the SDK's own app, its class unchanged, with the lock check added to it as middleware that sees its start-up and every request, so an embedder's class check keeps working. That costs one change in T17 and its two tests that assert the wrapper's class (tests/test_firm.py:600 and :663).",
+      "options": [
+        "The SDK's app behind a lock check, a wrapper, as 6b43212 builds; R53 says code that checks the app's class sees another class (design default; no build change)",
+        "The SDK's own app, its class unchanged, with the lock check added as middleware; R53 says so in the next revision (one change in T17 and two tests)"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T00:43:52.053Z"
+    },
+    {
+      "id": "D291",
+      "type": "question",
+      "raised_by": {
+        "seat": "shaper",
+        "run": "shaper-30"
+      },
+      "context": "When a lock turned on takes effect for a run already going (R29, P18; T17 at 6b43212, not yet reviewed). R29 is a state requirement: WHILE the lock is on, no hosted client is made and no network connection is opened. verify-182 and verify-184 each probed a reading of firm.yaml used after the lock changed. 6b43212 binds a reading to its run and firm folder (src/cma/firm.py:128-162), so the reading a run takes as it starts decides its hosted client, its hosted requests while it runs and its tracing. Two corners remain. A lock turned on during a run does not stop that run's later hosted requests, such as a redraft. A resume in a long-lived process judges 'on now' by the graph's latest reading where it has one (src/cma/graph.py:427), which can date from before the lock was turned on. The design default: a lock turned on takes effect from the next run, so a run's evidence never records a lock other than the one that governed it; a resume reads firm.yaml as it resumes; R29 and P18 say so in the next revision. That costs one line in T17. The alternative reads firm.yaml before every hosted request, so a run stops at its next request once the lock is on and writes no memo. That costs a file read per request and a run that can fail part-way with nothing recorded.",
+      "options": [
+        "From the next run: a run keeps the lock its reading found as it started, and a resume reads firm.yaml as it resumes; say it in R29 and P18 in the next revision (design default; T17 changes the resume's read before its review)",
+        "At once: every hosted request reads firm.yaml as it is made, so a run stops at its next request once the lock is on and writes no memo (T17 changes its request check before its review)"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T00:43:52.069Z"
+    },
+    {
+      "id": "D292",
+      "type": "approve_design",
+      "raised_by": null,
+      "context": "Approve the design and requirements (R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R18 R19 R20 R21 R22 R23 R24 R25 R26 R27 R28 R29 R30 R31 R32 R33 R34 R35 R36 R37 R38 R39 R40 R41 R42 R43 R44 R45 R46 R47 R48 R50 R51 R52 R53 R54 R55 R56 P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20) for 'statement-review'? Branch bridgie/statement-review from claude/busy-ride-h88y5r.",
+      "options": [
+        "approve",
+        "request changes"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T00:43:52.089Z"
     }
   ]
 }
