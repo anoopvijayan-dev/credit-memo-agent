@@ -1,0 +1,619 @@
+diff --git a/src/cma/firm.py b/src/cma/firm.py
+index 48fe874..675432a 100644
+--- a/src/cma/firm.py
++++ b/src/cma/firm.py
+@@ -68,6 +68,7 @@ class FirmConfig:
+     offline_lock: bool = True
+     show_policy_verdict: bool = True
+     paths: tuple[tuple[str, str], ...] = tuple(DEFAULT_PATHS.items())
++    named: tuple[str, ...] = ()  # the paths firm.yaml names itself, not left at their defaults
+ 
+     def _path(self, key: str) -> Path:
+         return self.root / dict(self.paths)[key]  # an absolute path replaces the root
+@@ -80,6 +81,11 @@ class FirmConfig:
+     def thresholds_path(self) -> Path:
+         return self._path("thresholds")
+ 
++    def names_path(self, key: str) -> bool:
++        """Whether firm.yaml itself names the file for `key`: the firm chose that file, so a
++        missing one is refused, never replaced by the packaged default."""
++        return key in self.named
++
+     @property
+     def memo_fields_path(self) -> Path:
+         return self._path("memo_fields")
+@@ -265,6 +271,7 @@ def _load(root: Path | None = None, data: bytes | None = None) -> FirmConfig:
+             else:
+                 problems.append(f"{key} must be true or false")
+     paths = dict(DEFAULT_PATHS)
++    named: list[str] = []
+     raw_paths = data.get("paths")
+     if raw_paths is None:  # absent, or `paths:` with nothing under it
+         raw_paths = {}
+@@ -278,6 +285,7 @@ def _load(root: Path | None = None, data: bytes | None = None) -> FirmConfig:
+             problems.append(f"paths.{key} must be a file path")
+         else:
+             paths[key] = value
++            named.append(key)
+     if problems:
+         raise FirmConfigError(f"{path}: " + "; ".join(problems))
+-    return FirmConfig(root=root, paths=tuple(paths.items()), **flags)
++    return FirmConfig(root=root, paths=tuple(paths.items()), named=tuple(named), **flags)
+diff --git a/src/cma/indicators.py b/src/cma/indicators.py
+index 47aea94..9756b6e 100644
+--- a/src/cma/indicators.py
++++ b/src/cma/indicators.py
+@@ -456,3 +456,15 @@ def judgement_queue(statement: Statement, indicators: list[Indicator],
+                 e["indicator_kinds"].append(ind.kind)
+     order = sorted(entries, key=lambda i: (-abs(pence(by_id[i])), pos[i]))
+     return [QueueEntry(line_id=i, amount=by_id[i].amount, **entries[i]) for i in order]
++
++
++def case_judgement_queue(accounts: list[tuple[str, Statement, list[QueueEntry]]]) -> list[tuple[str, QueueEntry]]:
++    """One case's judgement queue across its accounts (R15): each account's queue, as
++    judgement_queue() gave it, merged largest amount first (by size, either way), then in
++    account order, then in each queue's own order. Each entry is given with its account."""
++    rows = []
++    for n, (account, statement, queue) in enumerate(accounts):
++        by_id = {t.id: t for t in statement.transactions}
++        rows += [(-abs(pence(by_id[e.line_id])), n, k, account, e) for k, e in enumerate(queue)]
++    rows.sort(key=lambda r: r[:3])
++    return [(account, e) for *_, account, e in rows]
+diff --git a/src/cma/review/static/app.css b/src/cma/review/static/app.css
+index 0fcf2cb..e1234d9 100644
+--- a/src/cma/review/static/app.css
++++ b/src/cma/review/static/app.css
+@@ -12,3 +12,6 @@ tr.within td:nth-child(2) { padding-left: 1.5rem; font-style: italic; }
+ tr.total td { font-weight: 600; border-top: 2px solid #8888; }
+ .overridden, .part { font-size: 0.8rem; opacity: 0.75; }
+ .refusal { border: 2px solid #c33; padding: 0.5rem 1rem; }
++.indicator { margin: 0 0 0.75rem; }
++.illustrative, .firm, .note, .none { font-size: 0.8rem; opacity: 0.8; }
++.threshold { white-space: nowrap; }
+diff --git a/src/cma/review/summary.py b/src/cma/review/summary.py
+index 3ef034e..10d115b 100644
+--- a/src/cma/review/summary.py
++++ b/src/cma/review/summary.py
+@@ -8,6 +8,14 @@ and render() turns into the page's HTML:
+ - for each account, the money-in breakdown (trading receipts M2 with the cash inside it M18,
+   then M19 to M25, adding up to total money in M17), every figure, and the monthly summary,
+   money to the penny as every table shows it (R2);
++- the judgement queue, listed first: every line a person has to decide, across the case's
++  accounts, largest amount first (R15), each with why it is listed, the indicators that
++  flagged it and, for an ambiguous credit, its candidates and the bucket each would give;
++- for each account, the indicators panel: each indicator with its lines and the thresholds it
++  fired at, a threshold still at its shipped value labelled illustrative (R14). Indicators
++  are raised by the figures layer (indicators.py) from the firm's thresholds file, the case
++  root's indicators.yaml or the path firm.yaml gives, when there is one, and the packaged,
++  illustrative file otherwise;
+ - or, when the money-in buckets do not reconcile with total money in, or a credit is in no
+   bucket or in more than one, in any account, no figures at all, for any account: only each
+   failing account's difference in pence and the lines involved (R3);
+@@ -27,10 +35,19 @@ from pathlib import Path
+ from typing import Any
+ 
+ from .. import case as caselog
+-from .. import metrics, overrides, store
++from .. import firm, metrics, overrides, store
++from .. import indicators as ind
+ from ..categorise import RulesetError
+ from ..ingest import StatementError
+-from ..models import Metric, MonthlyCell, format_value, money_exact
++from ..models import (
++    Indicator,
++    Metric,
++    MonthlyCell,
++    QueueEntry,
++    Transaction,
++    format_value,
++    money_exact,
++)
+ 
+ BREAKDOWN = ("M2", "M19", "M20", "M21", "M22", "M23", "M24", "M25")  # the money-in buckets (R1)
+ TOTAL, CASH = "M17", "M18"
+@@ -41,6 +58,21 @@ PROFILE_TITLES = {"directors": "Directors", "shareholders": "Shareholders", "own
+ CELLS = (("money_in", "Money in"), ("money_out", "Money out"), ("trading_receipts", "Trading receipts"),
+          ("average_balance", "Average end-of-day balance"), ("lowest_balance", "Lowest end-of-day balance"),
+          ("days_overdrawn", "Days overdrawn"))
++INDICATOR_TITLES = {
++    "large_credit": "Single credit large against typical trading receipts",
++    "single_cash_deposit": "Cash deposit at or above the single-deposit limit",
++    "cash_heavy_month": "Month with cash deposits above a share of its trading receipts",
++    "cash_round_trip": "Cash paid in soon after a similar cash withdrawal",
++    "gambling": "Payment to a gambling operator",
++    "returned_dd": "Returned direct debit",
++    "overdrawn_run": "Run of consecutive overdrawn days",
++    "irregular_acquirer": "Irregular credit from a named acquirer",
++}
++REASON_TITLES = {"unexplained": "unexplained", "ambiguous": "ambiguous",
++                 "possible_own_account_transfer": "possible own-account transfer", "indicator": "flagged"}
++UNIT_SUFFIX = {"pct": "%", "times": " times", "days": " days", "count": ""}
++ILLUSTRATIVE = ("Thresholds marked illustrative are still at the values shipped with this tool; they are "
++                "not your firm's lending policy.")
+ 
+ 
+ def _figure(m: Metric, marked: set[str]) -> dict[str, Any]:
+@@ -59,9 +91,52 @@ def _cell(c: MonthlyCell, overridden: bool) -> dict[str, Any]:
+             "lines": len(c.evidence), "overridden": overridden}
+ 
+ 
+-def _account(f: overrides.CaseFigures) -> dict[str, Any]:
++def _line(t: Transaction) -> dict[str, Any]:
++    return {"id": t.id, "date": t.date.isoformat(), "description": t.description, "amount": money_exact(t.amount),
++            "category": t.category.value if t.category else None, "rule": t.rule_id}
++
++
++def _threshold_shown(value: str, unit: str) -> str:
++    """A threshold as the thresholds file gives it, money to the penny (R2)."""
++    if unit == "GBP":  # value is pounds_text: exact pounds and pence, formatted, never through a float
++        return f"£{Decimal(value):,.2f}"
++    return f"{value}{UNIT_SUFFIX.get(unit, '')}"
++
++
++def _indicator(i: Indicator, lines: dict[str, Transaction]) -> dict[str, Any]:
++    return {"id": i.id, "kind": i.kind, "title": INDICATOR_TITLES.get(i.kind, i.kind), "reason": i.reason,
++            "illustrative": i.illustrative,
++            "thresholds": [{"key": th.key, "value": th.value, "unit": th.unit,
++                            "shown": _threshold_shown(th.value, th.unit), "illustrative": th.illustrative}
++                           for th in i.thresholds],
++            "lines": [_line(lines[x]) for x in i.evidence]}
++
++
++def _queue_entry(account: str, e: QueueEntry, lines: dict[str, Transaction],
++                 kinds: dict[str, str]) -> dict[str, Any]:
++    return {"account": account, "line": _line(lines[e.line_id]), "reasons": list(e.reasons),
++            "indicators": [{"id": i, "kind": kinds[i]} for i in e.indicators],
++            "candidates": [{"rule_id": c.rule_id, "category": c.category.value if c.category else None,
++                            "bucket": c.bucket.value if c.bucket else None} for c in e.candidates],
++            "pairs_with": list(e.pairs_with)}
++
++
++def case_thresholds() -> ind.Thresholds:
++    """The firm's thresholds file when the case root has one (firm.yaml can name another),
++    or the packaged, illustrative one (R14). A malformed file is refused naming its line, and
++    a file firm.yaml names that is not there is refused naming it, as `cma run --thresholds`
++    refuses it: no case opens with flags the firm did not choose."""
++    config = firm.load()
++    path = config.thresholds_path
++    if config.names_path("thresholds") or path.exists():
++        return ind.load_thresholds(path)
++    return ind.shipped()
++
++
++def _account(f: overrides.CaseFigures, raised: list[Indicator]) -> dict[str, Any]:
+     by_id = {m.id: m for m in f.metrics}
+     txns = f.statement.transactions
++    lines = {t.id: t for t in txns}
+     return {
+         "account": f.account,
+         "statement_sha256": f.statement_sha256,
+@@ -75,6 +150,7 @@ def _account(f: overrides.CaseFigures) -> dict[str, Any]:
+                      "end": r.end.isoformat(),
+                      **{key: _cell(getattr(r, key), (r.month, key) in f.marked_cells) for key, _ in CELLS}}
+                     for r in f.monthly],
++        "indicators": [_indicator(i, lines) for i in raised],
+     }
+ 
+ 
+@@ -108,7 +184,8 @@ def refusal(e: Exception) -> dict[str, Any] | None:
+     if isinstance(e, caselog.CaseLogBroken):
+         return {"state": "refused", "refusal": f"The case log is broken at entry {e.first_bad}: {e.reason}. "
+                                                "No figures are shown until it is resolved."}
+-    if isinstance(e, (store.CaseStoreError, StatementError, metrics.AmountError, RulesetError)):
++    if isinstance(e, (store.CaseStoreError, StatementError, metrics.AmountError, RulesetError,
++                      ind.ThresholdsError, firm.FirmConfigError)):
+         return {"state": "refused", "refusal": f"{str(e).rstrip('.')}. No figures are shown for this case."}
+     if isinstance(e, OSError):
+         return {"state": "refused",
+@@ -131,7 +208,8 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+     """The case as the workspace shows it, computed afresh from its files."""
+     folder = Path(folder)
+     out: dict[str, Any] = {"case": case_id, "label": None, "business_name": None, "profile": None,
+-                           "state": "shown", "accounts": [], "reconciliation": None, "refusal": None}
++                           "state": "shown", "accounts": [], "queue": [], "thresholds": None,
++                           "reconciliation": None, "refusal": None}
+     try:
+         profile = store.load_profile(folder)
+         out["label"], out["business_name"] = profile.get("label"), profile.get("business_name")
+@@ -147,7 +225,22 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+     if refused is not None:
+         out.update(refused)
+         return out
+-    out["accounts"] = [_account(f) for f in figures.values()]
++    try:  # R14: the indicators and the queue, raised by the figures layer
++        thresholds = case_thresholds()
++        raised = {a: ind.raise_indicators(f.statement, thresholds) for a, f in figures.items()}
++    except Exception as e:
++        refused = refusal(e)
++        if refused is None:
++            raise
++        out.update(refused)
++        return out
++    out["thresholds"] = {"source": thresholds.source, "sha256": thresholds.sha256,
++                         "shipped": thresholds.sha256 == ind.shipped().sha256}
++    out["accounts"] = [_account(f, raised[a]) for a, f in figures.items()]
++    queues = [(a, f.statement, ind.judgement_queue(f.statement, raised[a])) for a, f in figures.items()]
++    lines = {a: {t.id: t for t in f.statement.transactions} for a, f in figures.items()}
++    kinds = {a: {i.id: i.kind for i in raised[a]} for a in figures}
++    out["queue"] = [_queue_entry(a, e, lines[a], kinds[a]) for a, e in ind.case_judgement_queue(queues)]
+     if not out["accounts"]:
+         out["state"] = "empty"
+     return out
+@@ -180,7 +273,8 @@ def _figure_row(f: dict[str, Any], cls: str = "", href: str | None = None) -> st
+             f'<td class="num">{_e(f["display"])}</td><td class="num">{_e(f["lines"])}</td></tr>')
+ 
+ 
+-def _account_html(a: dict[str, Any], token: str | None = None) -> str:
++def _account_html(a: dict[str, Any], token: str | None = None,
++                  thresholds: dict[str, Any] | None = None) -> str:
+     acct = a["account"]
+     period = f'{_e(a["period"]["start"])} to {_e(a["period"]["end"])}, ' if a["period"] else ""
+     head = '<thead><tr><th>Id</th><th>Figure</th><th class="num">Value</th><th class="num">Lines</th></tr></thead>'
+@@ -217,7 +311,66 @@ def _account_html(a: dict[str, Any], token: str | None = None) -> str:
+                + f'</tr></thead><tbody>{"".join(month_rows)}</tbody></table>')
+     return (f'<section class="account"><h2>Account {_e(a["account"])}</h2>'
+             f'<p class="period">{period}{_e(a["line_count"])} lines</p>'
+-            f'<h3>Money in</h3>{breakdown}<h3>Figures</h3>{figures}<h3>Monthly summary</h3>{monthly}</section>')
++            f'<h3>Money in</h3>{breakdown}<h3>Figures</h3>{figures}<h3>Monthly summary</h3>{monthly}'
++            f'{_indicators_html(a["indicators"], acct, thresholds)}</section>')
++
++
++def _line_cells(x: dict[str, Any]) -> str:
++    return (f'<td>{_e(x["id"])}</td><td>{_e(x["date"])}</td><td>{_e(x["description"])}</td>'
++            f'<td class="num">{_e(x["amount"])}</td><td>{_e(x["category"])}</td>')
++
++
++LINE_HEAD = ('<th>Line</th><th>Date</th><th>Description</th><th class="num">Amount</th><th>Category</th>')
++
++
++def _threshold_html(th: dict[str, Any]) -> str:
++    mark = (' <span class="illustrative">illustrative: the shipped value</span>' if th["illustrative"]
++            else ' <span class="firm">firm threshold</span>')
++    return f'<span class="threshold">{_e(th["key"])} {_e(th["shown"])}{mark}</span>'
++
++
++def _indicators_html(indicators: list[dict[str, Any]], account: str = "",
++                     thresholds: dict[str, Any] | None = None) -> str:
++    """Each indicator with the thresholds it fired at and the lines behind it (R14), and the
++    thresholds file they were raised from, so a firm can see whose file decided the flags."""
++    source = (f'<p class="thresholds-source">Thresholds from {_e(thresholds["source"])}'
++              f'{" (shipped with this tool)" if thresholds["shipped"] else ""}.</p>' if thresholds else "")
++    note = f'<p class="note">{_e(ILLUSTRATIVE)}</p>{source}'
++    if not indicators:
++        return f'<section class="indicators"><h3>Indicators</h3><p>No indicator fired.</p>{note}</section>'
++    parts = []
++    for i in indicators:
++        ths = "; ".join(_threshold_html(th) for th in i["thresholds"])
++        rows = "".join(f"<tr>{_line_cells(x)}</tr>" for x in i["lines"])
++        parts.append(f'<section class="indicator" id="indicator-{_e(account)}-{_e(i["id"])}"><p><strong>{_e(i["id"])} '
++                     f'{_e(i["title"])}</strong>: {_e(i["reason"])}</p><p>Threshold that fired: {ths}</p>'
++                     f'<table class="lines"><thead><tr>{LINE_HEAD}</tr></thead><tbody>{rows}</tbody></table>'
++                     '</section>')
++    return f'<section class="indicators"><h3>Indicators</h3>{note}{"".join(parts)}</section>'
++
++
++def _candidate_html(c: dict[str, Any]) -> str:
++    bucket = _e(c["bucket"]) if c["bucket"] else '<span class="none">no bucket</span>'
++    return f'{_e(c["rule_id"])} ({bucket})'
++
++
++def _queue_html(queue: list[dict[str, Any]]) -> str:
++    """The judgement queue, listed first, largest amount first (R15)."""
++    if not queue:
++        return ('<section id="judgement-queue"><h2>Judgement queue</h2>'
++                '<p>No line needs a decision.</p></section>')
++    rows = []
++    for e in queue:
++        why = ", ".join(_e(REASON_TITLES.get(r, r)) for r in e["reasons"])
++        flags = ", ".join(f'{_e(i["id"])} {_e(INDICATOR_TITLES.get(i["kind"], i["kind"]))}' for i in e["indicators"])
++        cands = "; ".join(_candidate_html(c) for c in e["candidates"])
++        pairs = ", ".join(_e(p) for p in e["pairs_with"])
++        rows.append(f'<tr><td>{_e(e["account"])}</td>{_line_cells(e["line"])}<td>{why}</td><td>{flags}</td>'
++                    f'<td>{cands}{(" pairs with " + pairs) if pairs else ""}</td></tr>')
++    return ('<section id="judgement-queue"><h2>Judgement queue</h2>'
++            '<p>The lines a person has to decide, largest amount first.</p>'
++            f'<table class="queue"><thead><tr><th>Account</th>{LINE_HEAD}<th>Why listed</th><th>Indicators</th>'
++            f'<th>Candidates</th></tr></thead><tbody>{"".join(rows)}</tbody></table></section>')
+ 
+ 
+ def _pounds(text: str) -> str:
+@@ -264,6 +417,8 @@ def render(summary: dict[str, Any], token: str | None = None) -> str:
+     names = [x for x in (summary["business_name"], summary["label"]) if x]
+     head = (f'<section id="summary-head"><p class="case-name">{_e(" — ".join(names))}</p></section>'
+             if names else "")
++    if summary["state"] == "shown":
++        head += _queue_html(summary.get("queue") or [])  # listed first (R15)
+     head += _profile_html(summary.get("profile"))
+     state = summary["state"]
+     if state == "not_reconciled":
+@@ -273,4 +428,4 @@ def render(summary: dict[str, Any], token: str | None = None) -> str:
+                 f'<p>{_e(summary["refusal"])}</p></section>')
+     if state == "empty":
+         return head + '<section id="empty"><p>No statement has been imported into this case yet.</p></section>'
+-    return head + "".join(_account_html(a, token) for a in summary["accounts"])
++    return head + "".join(_account_html(a, token, summary.get("thresholds")) for a in summary["accounts"])
+diff --git a/tests/test_workspace_indicators.py b/tests/test_workspace_indicators.py
+new file mode 100644
+index 0000000..424086a
+--- /dev/null
++++ b/tests/test_workspace_indicators.py
+@@ -0,0 +1,279 @@
++"""T43: the workspace's indicators panel and judgement queue (C5; R14, R15, P19).
++
++The case view lists the judgement queue first, before the money-in breakdown and the figures,
++largest amount first (by size, either way), and an indicators panel with each indicator's
++lines and the thresholds that fired, a threshold still at its shipped value labelled
++illustrative (R14). Indicators and the queue come from the figures layer (indicators.py),
++raised from the firm's thresholds file when the case root has one, the packaged one otherwise.
++
++Each test talks to a real server running in a thread, through /api/case and the page."""
++
++import csv
++import io
++import re
++
++import pytest
++
++from cma import store
++from cma.review import server as rs
++from tests.test_workspace_summary import _api, _assert_only_escaped, _get, _page
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    monkeypatch.setenv("CMA_RULESET", "v2")  # cash paid in is a cash deposit (R55)
++    return root
++
++
++@pytest.fixture
++def serve():
++    servers = []
++
++    def start(case_id):
++        srv = rs.start(store.case_folder(case_id), case_id, port=0)
++        srv.serve_in_thread()
++        servers.append(srv)
++        return srv
++
++    yield start
++    for srv in servers:
++        srv.close()
++
++
++def _statement(rows: list[tuple[str, str, str]]) -> str:
++    """A five-column statement from (date, description, amount) rows, its balance walked in pence."""
++    out = io.StringIO()
++    w = csv.writer(out, lineterminator="\n")
++    w.writerow(["id", "date", "description", "amount", "balance"])
++    balance = 1_000_000
++    for n, (day, desc, amount) in enumerate(rows, start=1):
++        balance += round(float(amount) * 100)
++        w.writerow([f"L{n}", day, desc, amount, f"{balance // 100}.{balance % 100:02d}"])
++    return out.getvalue()
++
++
++QUEUE = _statement([
++    ("2026-01-05", "CARD SETTLEMENT STRIPE", "6000.00"),  # L1 trading receipts: not queued
++    ("2026-01-06", "FPS CREDIT J BLOGGS", "300.25"),      # L2 unexplained
++    ("2026-01-07", "CASH PAID IN", "2500.00"),            # L3 cash at the single-deposit limit
++    ("2026-01-08", "FPS CREDIT A SMITH", "4000.00"),      # L4 unexplained
++    ("2026-01-09", "DD COUNCIL", "-100.00"),              # L5 supplier: not queued
++    ("2026-01-10", "FPS CREDIT C JONES", "0.99"),         # L6 unexplained
++    ("2026-01-11", "FPS CREDIT D LEE", "300.25"),         # L7 unexplained, same size as L2
++    ("2026-01-12", "CARD PAYMENT BET365", "-5000.00"),    # L8 gambling: flagged, the largest
++    ("2026-01-13", "CASH PAID IN", "2499.99"),            # L9 cash below the limit: not queued
++])
++# Cash is £4,999.99 of the month's £10,999.99 trading receipts, below the shipped 50%, and no
++# credit is five times the median trading receipt, so only the lines named above are flagged.
++
++
++def _case(tmp_path, body, *, label="t43"):
++    case_id = store.new_case(label=label)
++    folder = store.case_folder(case_id)
++    src = tmp_path / "main.csv"
++    src.write_text(body, encoding="utf-8")
++    store.import_file(folder, src, "csv", account="main")
++    return case_id, folder
++
++
++def _indicator(data, kind):
++    return [i for i in data["accounts"][0]["indicators"] if i["kind"] == kind]
++
++
++@pytest.mark.contracts
++def test_the_queue_is_largest_amount_first_by_size_either_way(home, tmp_path, serve):
++    case_id, _ = _case(tmp_path, QUEUE)
++    data = _api(serve(case_id))
++    queue = data["queue"]
++    # L8 (-£5,000, gambling), L4 (£4,000), L3 (£2,500, cash at the limit), then L2 and L7 at
++    # £300.25 in statement order, then L6; explained lines that nothing flagged are not queued.
++    assert [e["line"]["id"] for e in queue] == ["L8", "L4", "L3", "L2", "L7", "L6"]
++    assert [e["line"]["amount"] for e in queue] == ["-£5,000.00", "£4,000.00", "£2,500.00", "£300.25",
++                                                     "£300.25", "£0.99"]
++    assert {e["account"] for e in queue} == {"main"}
++    assert queue[1]["reasons"] == ["unexplained"] and queue[0]["reasons"] == ["indicator"]
++    assert [i["kind"] for i in queue[0]["indicators"]] == ["gambling"]
++
++
++@pytest.mark.contracts
++def test_a_cash_deposit_at_the_single_deposit_limit_is_in_the_queue_with_its_indicator(home, tmp_path, serve):
++    case_id, _ = _case(tmp_path, QUEUE)
++    data = _api(serve(case_id))
++    (flag,) = _indicator(data, "single_cash_deposit")
++    assert [x["id"] for x in flag["lines"]] == ["L3"]  # £2,499.99 (L9) is below the limit
++    assert flag["lines"][0]["category"] == "cash_deposit" and flag["lines"][0]["amount"] == "£2,500.00"
++    (th,) = flag["thresholds"]
++    assert th["key"] == "single_cash_deposit.amount_at_least" and th["shown"] == "£2,500.00"
++    assert th["illustrative"] is True and flag["illustrative"] is True
++    entry = next(e for e in data["queue"] if e["line"]["id"] == "L3")
++    assert entry["reasons"] == ["indicator"]
++    assert entry["indicators"] == [{"id": flag["id"], "kind": "single_cash_deposit"}]
++    assert "L9" not in [e["line"]["id"] for e in data["queue"]]
++
++
++@pytest.mark.invariants
++def test_p19_every_cash_deposit_at_or_above_the_limit_is_in_the_workspace_queue_with_its_indicator(
++        home, tmp_path, serve):
++    body = _statement([("2026-02-01", "CASH PAID IN", a) for a in ("2500.00", "2499.99", "9000.00", "2500.01")]
++                      + [("2026-02-02", "CARD SETTLEMENT STRIPE", "50000.00")])  # cash under half the month
++    case_id, _ = _case(tmp_path, body)
++    data = _api(serve(case_id))
++    flags = _indicator(data, "single_cash_deposit")
++    assert sorted(x["id"] for f in flags for x in f["lines"]) == ["L1", "L3", "L4"]
++    queued = {e["line"]["id"]: e for e in data["queue"]}
++    for f in flags:
++        (line,) = f["lines"]
++        assert {"id": f["id"], "kind": "single_cash_deposit"} in queued[line["id"]]["indicators"]
++    assert "L2" not in queued
++
++
++@pytest.mark.contracts
++def test_the_page_lists_the_queue_first_and_the_indicators_panel_with_its_thresholds(home, tmp_path, serve):
++    case_id, _ = _case(tmp_path, QUEUE)
++    page = _page(serve(case_id))
++    q, ind, money = page.index('id="judgement-queue"'), page.index('class="indicators"'), page.index("Money in</h3>")
++    assert q < page.index('id="profile"') and q < money < ind
++    queue_html = page[q:page.index("</section>", q)]
++    assert [m for m in re.findall(r"<td>(L\d+)</td>", queue_html)] == ["L8", "L4", "L3", "L2", "L7", "L6"]
++    panel = page[ind:page.index("</section>", ind)]
++    assert "single_cash_deposit.amount_at_least" in panel and "£2,500.00" in panel
++    assert "illustrative" in panel and "not your firm" in panel
++    assert "Cash deposit at or above the single-deposit limit" in panel
++    assert "<td>L3</td>" in panel  # the indicator's line
++
++
++@pytest.mark.contracts
++def test_a_firm_threshold_is_not_labelled_illustrative_and_decides_what_fires(home, tmp_path, serve):
++    from cma.indicators import default_thresholds_text
++
++    home.mkdir(parents=True, exist_ok=True)
++    (home / "indicators.yaml").write_text(
++        default_thresholds_text().replace("amount_at_least: 2500.00", "amount_at_least: 2499.99"), encoding="utf-8")
++    case_id, _ = _case(tmp_path, QUEUE)
++    data = _api(serve(case_id))
++    flags = _indicator(data, "single_cash_deposit")
++    assert [x["id"] for f in flags for x in f["lines"]] == ["L3", "L9"]
++    for f in flags:
++        (th,) = f["thresholds"]
++        assert th["shown"] == "£2,499.99" and th["illustrative"] is False and f["illustrative"] is False
++    assert "L9" in [e["line"]["id"] for e in data["queue"]]
++    (gamb,) = _indicator(data, "gambling")
++    assert gamb["thresholds"][0]["illustrative"] is True  # still at its shipped value
++    assert data["thresholds"]["source"].endswith("indicators.yaml") and not data["thresholds"]["shipped"]
++    page = _page(serve(case_id))
++    panel = page[page.index('class="indicators"'):]
++    assert "£2,499.99" in panel
++
++
++@pytest.mark.contracts
++def test_a_malformed_firm_thresholds_file_shows_no_figures(home, tmp_path, serve):
++    home.mkdir(parents=True, exist_ok=True)
++    (home / "indicators.yaml").write_text("large_credit: [\n", encoding="utf-8")
++    case_id, _ = _case(tmp_path, QUEUE)
++    data = _api(serve(case_id))
++    assert data["state"] == "refused" and data["accounts"] == [] and data["queue"] == []
++    assert "indicators.yaml" in data["refusal"] and "line" in data["refusal"]
++
++
++@pytest.mark.contracts
++def test_an_ambiguous_credit_in_the_queue_shows_its_candidates_and_their_buckets(home, tmp_path, serve):
++    case_id, _ = _case(tmp_path, _statement([("2026-03-01", "FPS CREDIT CASH DEPOSIT", "120.00")]))
++    data = _api(serve(case_id))
++    (entry,) = data["queue"]
++    assert entry["reasons"] == ["unexplained", "ambiguous"]
++    by_rule = {c["rule_id"]: c["bucket"] for c in entry["candidates"]}
++    assert by_rule["cash_paid_in"] == "trading_receipts" and None in by_rule.values()  # the rail gives none
++    page = _page(serve(case_id))
++    assert "cash_paid_in" in page and "no bucket" in page
++
++
++@pytest.mark.invariants
++def test_p8_queue_and_indicator_lines_show_descriptions_only_escaped(home, tmp_path, serve):
++    desc = '<script>x</script> CASH PAID IN & </td>'
++    body = _statement([("2026-01-05", desc, "3000.00"), ("2026-01-06", '<b>FPS CREDIT</b> "Q"', "10.00")])
++    case_id, _ = _case(tmp_path, body)
++    srv = serve(case_id)
++    data = _api(srv)
++    assert data["queue"][0]["line"]["description"] == desc
++    _assert_only_escaped(_page(srv), [desc, '<b>FPS CREDIT</b> "Q"'], shown=True)
++
++
++@pytest.mark.contracts
++def test_a_case_that_cannot_be_shown_has_no_queue(home, serve):
++    case_id = store.new_case(label="empty")
++    data = _api(serve(case_id))
++    assert data["state"] == "empty" and data["queue"] == []
++    status, _, _ = _get(serve(case_id), "/")
++    assert status == 200
++
++
++@pytest.mark.contracts
++def test_a_case_s_queue_merges_its_accounts_largest_amount_first():
++    from datetime import date
++
++    from cma.indicators import case_judgement_queue
++    from cma.models import QueueEntry, Statement, Transaction
++
++    def st(*amounts):
++        return Statement(account_name="x", transactions=[Transaction(id=f"L{n}", date=date(2026, 1, n), description="X", amount=a,
++                                                   balance=0.0) for n, a in enumerate(amounts, start=1)])
++
++    def q(statement):
++        order = sorted(statement.transactions, key=lambda t: -abs(t.amount))
++        return [QueueEntry(line_id=t.id, amount=t.amount, reasons=["unexplained"]) for t in order]
++
++    a, b = st(10.0, 300.0), st(-300.0, 50.0)
++    merged = case_judgement_queue([("a", a, q(a)), ("b", b, q(b))])
++    assert [(acct, e.line_id) for acct, e in merged] == [("a", "L2"), ("b", "L1"), ("b", "L2"), ("a", "L1")]
++
++
++@pytest.mark.contracts
++def test_an_override_takes_a_line_out_of_the_queue_and_its_cash_indicator(home, tmp_path, serve):
++    from cma import overrides
++
++    case_id, folder = _case(tmp_path, QUEUE)
++    overrides.add_override(folder, "L4", "revenue_transfer", reason="invoice 17", name="A Person")
++    overrides.add_override(folder, "L3", "director_funding", reason="owner's own cash", name="A Person")
++    data = _api(serve(case_id))
++    assert [e["line"]["id"] for e in data["queue"]] == ["L8", "L2", "L7", "L6"]
++    assert _indicator(data, "single_cash_deposit") == []  # L3 is no longer a cash deposit
++
++
++@pytest.mark.contracts
++def test_a_thresholds_file_firm_yaml_names_but_missing_shows_no_figures(home, tmp_path, serve):
++    """R14: firm.yaml names the firm's editable thresholds file; if it is not there, the case is
++    refused naming it, as `cma run --thresholds` refuses, never opened with the shipped flags."""
++    home.mkdir(parents=True, exist_ok=True)
++    (home / "firm.yaml").write_text("paths:\n  thresholds: firm_thresholds.yaml\n", encoding="utf-8")
++    case_id, _ = _case(tmp_path, QUEUE)
++    data = _api(serve(case_id))
++    assert data["state"] == "refused" and data["accounts"] == [] and data["queue"] == []
++    assert "firm_thresholds.yaml" in data["refusal"] and "no such file" in data["refusal"]
++
++
++@pytest.mark.contracts
++def test_with_no_firm_thresholds_file_the_shipped_ones_raise_the_indicators(home, tmp_path, serve):
++    """No firm.yaml path and no indicators.yaml at the case root: the packaged thresholds, labelled
++    illustrative, and the page says which file they came from."""
++    case_id, _ = _case(tmp_path, QUEUE)
++    data = _api(serve(case_id))
++    assert data["state"] == "shown" and data["thresholds"]["shipped"]
++    assert "L3" in [e["line"]["id"] for e in data["queue"]]
++    page = _page(serve(case_id))
++    panel = page[page.index('class="indicators"'):]
++    assert data["thresholds"]["source"] in panel
++
++
++@pytest.mark.contracts
++def test_indicator_sections_of_two_accounts_have_distinct_ids(home, tmp_path, serve):
++    """Indicator ids restart for each account, so the page's element ids carry the account."""
++    case_id, folder = _case(tmp_path, _statement([("2026-01-05", "CARD PAYMENT BET365", "-50.00")]))
++    second = tmp_path / "second.csv"
++    second.write_text(_statement([("2026-02-05", "CARD PAYMENT BET365", "-70.00")]), encoding="utf-8")
++    store.import_file(folder, second, "csv", account="second")
++    page = _page(serve(case_id))
++    ids = re.findall(r'id="(indicator-[^"]+)"', page)
++    assert len(ids) == len(set(ids)) >= 2
++    assert "indicator-main-I1" in ids and "indicator-second-I1" in ids

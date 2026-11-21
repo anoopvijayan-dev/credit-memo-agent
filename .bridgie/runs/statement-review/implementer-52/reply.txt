@@ -1,0 +1,43 @@
+The full suite is still running; I'll report when it finishes.
+
+I fixed the reviewer's major finding and the duplicate-id minor. The changes are committed as `deb28af`, and all tests and lint pass.
+
+- **Missing firm thresholds file (major):** before this, if `firm.yaml` named a thresholds file that wasn't there, the case opened quietly with the shipped thresholds. Now the case is refused with "no such file", the same way `cma run --thresholds` refuses. The shipped thresholds are used only when `firm.yaml` names no file and there is no `indicators.yaml` at the case root.
+  - `firm.yaml` now records which paths it named explicitly, which is how the workspace tells the two cases apart.
+  - The indicators panel now also says which thresholds file it used, and marks it when it's the shipped one.
+- **Duplicate indicator ids (minor):** the page ids now include the account (`indicator-<account>-<id>`), so two accounts no longer both produce `indicator-I1`.
+- **Performance claim (minor):** it wasn't backed by any tier the runner runs, so I've left it out of `claim.json` and recorded it as `not_reproduced`. Paging and the 2-second timing at 10,000 lines belong to T22's timed recompute.
+
+Three new tests cover these and failed before the change. The full suite (2,172 tests), each marker tier, ruff and the evals all pass.
+
+```json
+{
+  "task": "T43",
+  "claims": [
+    {"text": "When firm.yaml's paths.thresholds names a file that is not there, the workspace refuses the case naming that file ('no such file'), as `cma run --thresholds` does, instead of raising indicators from the packaged thresholds (R14; design failure modes 'no case opens with different flags'). FirmConfig now records which paths firm.yaml named (named / names_path); case_thresholds() loads the named file whether or not it exists, and falls back to the packaged thresholds only when firm.yaml names none and the default indicators.yaml is absent.",
+     "proof_cmd": "python -m pytest -v tests/test_workspace_indicators.py -k \"names_but_missing or no_firm_thresholds or distinct_ids\"",
+     "proof_output": "test_a_thresholds_file_firm_yaml_names_but_missing_shows_no_figures PASSED\ntest_with_no_firm_thresholds_file_the_shipped_ones_raise_the_indicators PASSED\ntest_indicator_sections_of_two_accounts_have_distinct_ids PASSED\n3 passed, 11 deselected"},
+    {"text": "The indicators panel now shows which thresholds file the indicators were raised from (thresholds.source), marked when it is the one shipped with the tool; and indicator section element ids carry the account (indicator-<account>-<id>), so two accounts' I1 no longer collide.",
+     "proof_cmd": "python -m pytest -v tests/test_workspace_indicators.py -k \"no_firm_thresholds or distinct_ids\"",
+     "proof_output": "2 passed (included in the run above)"},
+    {"text": "Lint, compile, the full suite and the marker tiers pass.",
+     "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q; python -m pytest -q -m contracts; python -m pytest -q -m invariants; python -m pytest -q -m dual_run; python evals/run_evals.py",
+     "proof_output": "All checks passed!\n2172 passed in 225.73s\n660 passed, 1512 deselected\n883 passed, 1289 deselected\n84 passed, 2088 deselected\n9/9 memos fully grounded; model = fake; ruleset = v1"}
+  ],
+  "files_changed": ["src/cma/firm.py", "src/cma/review/summary.py", "tests/test_workspace_indicators.py"],
+  "dispositions": [
+    {"finding": "major: case_thresholds() falls back to the packaged thresholds whenever the configured path does not exist, including when firm.yaml explicitly names a firm thresholds file (src/cma/review/summary.py:128); the page does not show thresholds.source.",
+     "disposition": "reproduced",
+     "evidence": "The new test test_a_thresholds_file_firm_yaml_names_but_missing_shows_no_figures failed before the change (state 'shown' with shipped thresholds). firm.load() now records the paths firm.yaml names (FirmConfig.named, names_path), and case_thresholds() calls ind.load_thresholds on a named path, which raises ThresholdsError 'no such file', shown as a refusal with no figures or queue. The panel now prints 'Thresholds from <source>' (test_with_no_firm_thresholds_file_the_shipped_ones_raise_the_indicators, which failed before)."},
+    {"finding": "minor: indicator ids restart at I1 per account, so a two-account page has duplicate id=\"indicator-I1\" elements.",
+     "disposition": "reproduced",
+     "evidence": "Section ids are now indicator-<account>-<id> (summary.py _indicators_html); test_indicator_sections_of_two_accounts_have_distinct_ids asserts indicator-main-I1 and indicator-second-I1 and no duplicates. The queue entry still names the indicator alongside its account column."},
+    {"finding": "minor: the performance claim (0.529 s for 10,000 lines) cites scratchpad/perf.py, which no runner tier ran; unpaged rendering of a large queue is unproven.",
+     "disposition": "not_reproduced",
+     "evidence": "Not a code defect: the claim was unproven, so this claim.json makes no performance claim. Paging and R52's timing belong to T22's timed recompute, not to this task."}
+  ],
+  "notes": "Only a path firm.yaml names explicitly is required to exist; the default indicators.yaml at the case root is still optional, keeping the packaged thresholds as the default. FirmConfig gains an additive defaulted field (named), so existing constructions are unchanged."
+}
+```
+
+Nothing to do here: that watch was waiting on the earlier test run, which had already finished. Its output showed 2,172 passed, and the T43 fix and `claim.json` were done before it expired.

@@ -1,0 +1,55 @@
+{
+  "task": "T43",
+  "claims": [
+    {
+      "text": "Failure modes: a thresholds file that firm.yaml names (paths.thresholds) but that is missing refuses the case naming the file ('no such file'), as `cma run --thresholds` does, instead of silently raising from the packaged thresholds (reviewer major at summary.py:128). FirmConfig.named records which paths firm.yaml itself names; case_thresholds() loads the named path whether or not it exists.",
+      "proof_cmd": "python -m pytest tests/test_workspace_indicators.py -v -k 'names_but_missing or shipped_ones or malformed'",
+      "proof_output": "test_a_malformed_firm_thresholds_file_shows_no_figures PASSED; test_a_thresholds_file_firm_yaml_names_but_missing_shows_no_figures PASSED; test_with_no_firm_thresholds_file_the_shipped_ones_raise_the_indicators PASSED"
+    },
+    {
+      "text": "Observability: the indicators panel names the thresholds file the flags were raised from (thresholds.source, with '(shipped with this tool)' when it is the packaged file), so the underwriter can see whose file decided the flags.",
+      "proof_cmd": "python -m pytest tests/test_workspace_indicators.py -v -k 'shipped_ones or firm_threshold_is_not'",
+      "proof_output": "test_a_firm_threshold_is_not_labelled_illustrative_and_decides_what_fires PASSED; test_with_no_firm_thresholds_file_the_shipped_ones_raise_the_indicators PASSED"
+    },
+    {
+      "text": "R14/R15: the queue is listed first, largest amount first by size either way; a cash deposit at the single-deposit limit is in the queue with its indicator; P19 over several deposits; a firm threshold is not labelled illustrative; indicator element ids are distinct across accounts.",
+      "proof_cmd": "python -m pytest tests/test_workspace_indicators.py -v",
+      "proof_output": "14 passed (queue order, cash-at-limit, p19, page order, firm threshold, malformed file, ambiguous candidates, p8 escaping, empty case, multi-account merge, override, firm.yaml-named missing file, shipped fallback, distinct ids)"
+    },
+    {
+      "text": "Security: no new entry point; the queue and panel are served only through the existing token-checked /api/case and page. Payer descriptions in queue and indicator lines are only shown escaped (P8 test).",
+      "proof_cmd": "python -m pytest tests/test_workspace_indicators.py -v -k p8; grep -n token src/cma/review/server.py | head -3",
+      "proof_output": "test_p8_queue_and_indicator_lines_show_descriptions_only_escaped PASSED; server.py:6-7 'issues a new random session token at each launch, and refuses every request that does not carry it'"
+    },
+    {
+      "text": "Data/migration: additive only. FirmConfig gains a defaulted `named` field; summary JSON gains `queue` and `thresholds` keys; no stored data, log format or committed figure changes. Rollback is a reinstall; nothing to repair.",
+      "proof_cmd": "python -m pytest -q",
+      "proof_output": "2172 passed in 211.88s"
+    },
+    {
+      "text": "Lint and full suite pass on the change.",
+      "proof_cmd": "ruff check src tests && python -m pytest -q",
+      "proof_output": "All checks passed!; 2172 passed"
+    },
+    {
+      "text": "Performance: indicators and the queue are recomputed per /api/case request from the figures layer; the merge is one sort over queued lines (O(n log n)); not separately timed. Not applicable beyond R52's existing target (T22 owns the timed recompute).",
+      "proof_cmd": "grep -n 'rows.sort' src/cma/indicators.py",
+      "proof_output": "indicators.py: rows.sort(key=lambda r: r[:3]) in case_judgement_queue"
+    }
+  ],
+  "files_changed": [
+    "src/cma/firm.py",
+    "src/cma/indicators.py",
+    "src/cma/review/summary.py",
+    "src/cma/review/static/app.css",
+    "tests/test_workspace_indicators.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major: case_thresholds() falls back to the packaged thresholds when firm.yaml's paths.thresholds names a missing file (src/cma/review/summary.py:128); the page does not show thresholds.source",
+      "disposition": "reproduced",
+      "evidence": "Fixed in deb28af: summary.py:131 loads the configured path when config.names_path('thresholds'), so ind.load_thresholds raises ThresholdsError '<path>: no such file' (indicators.py:114), which refusal() turns into a refused case with no figures; the panel now prints 'Thresholds from <source>'. test_a_thresholds_file_firm_yaml_names_but_missing_shows_no_figures PASSED."
+    }
+  ],
+  "notes": "Gaps for the owner: (1) no structured log line/event records which thresholds file raised a case's indicators; the design's case-log events (Observability) belong to the pack/sign-off tasks, so thresholds.source/sha256 should be carried into the snapshot and pack evidence there (T24/T27). (2) No README/docs line yet for the workspace queue and indicators panel. (3) The indicators panel is not behind a flag; rollback is reinstall, which the design accepts for workspace features. (4) Default-path indicators.yaml that is absent still falls back to the shipped file, as the design's 'packaged, validated YAML file that the firm can replace' allows."
+}
