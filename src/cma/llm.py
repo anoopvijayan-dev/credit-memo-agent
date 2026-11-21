@@ -77,6 +77,18 @@ Policy outcome: {outcome}. {'The case meets policy and can proceed to approval.'
         return memo
 
 
+def _require_unlocked_now(what: str, firm_config: "firm.FirmConfig | None") -> None:
+    """A hosted client is built only on a reading of firm.yaml with the lock off that load()
+    made: the run's own, when it hands it in, or one read now. A FirmConfig the caller built
+    can only refuse, never stand in for a reading (R29, T17 review 4)."""
+    if firm_config is not None and firm.is_reading(firm_config):
+        firm_config.require_offline_off(what)
+        return
+    firm.load().require_offline_off(what)
+    if firm_config is not None:
+        firm_config.require_offline_off(what)
+
+
 class HostedLLM:
     """A model that runs off this machine. Every way it can send data checks the offline
     lock first: making the client, and every request.
@@ -89,14 +101,22 @@ class HostedLLM:
 
     name = "hosted"
 
-    def _check(self, what: str, offline_lock: bool | None) -> None:
-        if offline_lock is None:
-            firm.require_unlocked(what)
+    def _check(self, what: str, offline_lock: bool | None, reading: "firm.FirmConfig | None") -> None:
+        # Never on the caller's word (R29, T17 review 4): a request is allowed only by a
+        # reading of firm.yaml that load() made, the run's own when it hands it in, or one read
+        # now. A bare offline_lock value, or a FirmConfig the caller built, can only refuse.
+        if reading is not None and firm.is_reading(reading):
+            reading.require_offline_off(what)
         else:
-            firm.refuse_if_locked(offline_lock, what)
+            firm.require_unlocked(what)
+            if reading is not None:
+                reading.require_offline_off(what)
+        if offline_lock is not None:
+            firm.refuse_if_locked(offline_lock is not False, what)
 
-    def complete(self, system: str, user: str, *, offline_lock: bool | None = None) -> str:
-        self._check(f"A request to a hosted model ({self.name})", offline_lock)
+    def complete(self, system: str, user: str, *, offline_lock: bool | None = None,
+                 reading: "firm.FirmConfig | None" = None) -> str:
+        self._check(f"A request to a hosted model ({self.name})", offline_lock, reading)
         return self._send(system, user)
 
     def _send(self, system: str, user: str) -> str:
@@ -107,7 +127,7 @@ class AnthropicLLM(HostedLLM):
     name = "anthropic"
 
     def __init__(self, model: str | None = None, *, firm_config: firm.FirmConfig | None = None):
-        (firm_config or firm.load()).require_offline_off("A hosted model (anthropic)")
+        _require_unlocked_now("A hosted model (anthropic)", firm_config)
         import anthropic
 
         self.client = anthropic.Anthropic(timeout=120.0, max_retries=0)
@@ -129,7 +149,7 @@ class OpenAILLM(HostedLLM):
     name = "openai"
 
     def __init__(self, model: str | None = None, *, firm_config: firm.FirmConfig | None = None):
-        (firm_config or firm.load()).require_offline_off("A hosted model (openai)")
+        _require_unlocked_now("A hosted model (openai)", firm_config)
         from openai import OpenAI
 
         self.client = OpenAI(timeout=120.0, max_retries=0)

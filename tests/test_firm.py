@@ -572,18 +572,50 @@ def test_p18_hosted_sdk_sends_one_attempt_per_lock_check(home, monkeypatch, prov
 
 @pytest.mark.invariants
 @pytest.mark.parametrize("factory", ["streamable_http_app", "sse_app"])
-@pytest.mark.parametrize("lock", ["offline_lock: false\n", "offline_lock: true\n"])
-def test_p18_no_asgi_app_is_handed_out_whatever_the_lock(home, no_network, monkeypatch, tmp_path, factory, lock):
-    """T17 review 1 / R29: an ASGI server could open its socket for a saved app before any
-    check inside it runs (lifespan off), so the server hands out no ASGI app at all."""
+def test_p18_an_asgi_app_is_refused_under_the_lock(home, no_network, monkeypatch, tmp_path, factory):
+    """R29: under the offline lock no ASGI app of the MCP server is handed out."""
     pytest.importorskip("mcp")
     from cma import mcp_server
 
     monkeypatch.setenv("CMA_DATA_DIR", str(tmp_path))
-    (home / "firm.yaml").write_text(lock)
-    with pytest.raises(mcp_server.NoASGIApp, match="ASGI"):
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    with pytest.raises(firm.OfflineLockError, match="offline lock"):
         getattr(mcp_server.server, factory)()
-    assert issubclass(mcp_server.NoASGIApp, firm.OfflineLockError) and no_network == []
+    assert no_network == []
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("factory", ["streamable_http_app", "sse_app"])
+def test_an_asgi_app_handed_out_with_the_lock_off_refuses_once_it_is_on(home, no_network, monkeypatch, tmp_path,
+                                                                        factory):
+    """T17 review 4 / R53: with the lock off the factories hand out an app, as before this
+    change, so embedders keep working; the app reads the lock at start-up and before every
+    request, so one saved earlier serves nothing once the lock is on (R29, T17 review 1)."""
+    pytest.importorskip("mcp")
+    from cma import mcp_server
+
+    monkeypatch.setenv("CMA_DATA_DIR", str(tmp_path))
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    app = getattr(mcp_server.server, factory)()
+    assert isinstance(app, mcp_server.LockCheckedASGI) and callable(app)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    async def http_receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def lifespan_receive():
+        return {"type": "lifespan.startup"}
+
+    asyncio.run(app({"type": "http", "method": "POST", "path": "/mcp", "headers": []}, http_receive, send))
+    assert sent[0]["type"] == "http.response.start" and sent[0]["status"] == 503
+    sent.clear()
+    asyncio.run(app({"type": "lifespan"}, lifespan_receive, send))
+    assert sent == [{"type": "lifespan.startup.failed", "message": sent[0]["message"]}]
+    assert "offline lock" in sent[0]["message"] and no_network == []
 
 
 
@@ -627,9 +659,8 @@ def test_http_transports_still_start_when_lock_is_off(home, monkeypatch, tmp_pat
     monkeypatch.setattr(uvicorn.Server, "serve", serve)
     start(mcp_server.server)
     assert len(served) == 1 and callable(served[0])
-    # The app built for that run is not handed out afterwards either.
-    with pytest.raises(mcp_server.NoASGIApp):
-        mcp_server.server.sse_app()
+    # Outside a run method an app is handed out only as a lock-checked one (T17 review 4).
+    assert isinstance(mcp_server.server.sse_app(), mcp_server.LockCheckedASGI)
 
 
 @pytest.mark.invariants
@@ -784,3 +815,49 @@ def test_p18_http_start_binds_no_socket_under_the_lock(home, monkeypatch, tmp_pa
         with contextlib.suppress(_BindStopped, SystemExit, BaseExceptionGroup):
             asyncio.run(start(host="127.0.0.1", port=0))
         assert bound and bound[0][0] == "127.0.0.1"
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("sdk", ["anthropic", "openai"])
+def test_p18_a_hosted_client_never_takes_the_callers_word_for_the_lock(home, no_network, sdks, sdk):
+    """T17 review 4 / R29: a FirmConfig the caller built with the lock off, or a bare
+    offline_lock=False, let a direct caller build a client or send a request while firm.yaml
+    has the lock on. Only a reading load() made can allow either."""
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    forged = firm.FirmConfig(root=home, offline_lock=False)
+    cls = llm.AnthropicLLM if sdk == "anthropic" else llm.OpenAILLM
+    with pytest.raises(firm.OfflineLockError):
+        cls(firm_config=forged)
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    client = cls()
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    with pytest.raises(firm.OfflineLockError):
+        client.complete("s", "u", offline_lock=False)
+    with pytest.raises(firm.OfflineLockError):
+        client.complete("s", "u", reading=forged)
+    assert [c for c in sdks if c[1] == "request"] == [] and no_network == []
+
+
+@pytest.mark.invariants
+def test_p18_the_graph_runs_untraced_under_the_lock_whatever_the_environment(home, no_network, monkeypatch, tmp_path):
+    """T17 review 4 / R29: LangSmith tracing, turned on in the environment, would send the
+    graph's steps, statement data among them, off the machine under the offline lock."""
+    from langsmith import utils as ls_utils
+
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+    monkeypatch.setenv("LANGSMITH_API_KEY", "dummy")
+    monkeypatch.setattr(ls_utils, "get_env_var", lambda name, *a, **k: {"TRACING": "true", "TRACING_V2": "true",
+                                                                         "API_KEY": "dummy"}.get(name, k.get("default")))
+    seen = []
+
+    class Watching(llm.FakeLLM):
+        def complete(self, system, user, **k):
+            seen.append(ls_utils.tracing_is_enabled())
+            return super().complete(system, user)
+
+    assert ls_utils.tracing_is_enabled()  # the environment turns tracing on
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    graph = build(Watching())
+    graph.invoke({"statement_path": str(_statement(tmp_path))}, {"configurable": {"thread_id": "t"}})
+    assert seen and not any(seen) and no_network == []

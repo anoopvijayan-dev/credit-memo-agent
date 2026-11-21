@@ -34,13 +34,15 @@ from __future__ import annotations
 import hashlib
 import re
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import TypedDict
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import interrupt
+from langgraph.types import Command, interrupt
 from pydantic import ValidationError
 
 from . import categorise as cat
@@ -294,9 +296,10 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
     later run of this graph reads firm.yaml at its own start."""
     llm = llm or get_llm()
     handed = [firm_config] if firm_config is not None else []
+    readings: dict[object, firm.FirmConfig] = {}  # each run's one reading, by thread (T17 review 4)
 
-    def load(s: MemoState) -> MemoState:
-        reading = handed.pop() if handed else firm.load()
+    def load(s: MemoState, config: RunnableConfig) -> MemoState:
+        reading = readings.get(_thread(config)) or (handed.pop() if handed else firm.load())
         path = Path(s["statement_path"])
         statement = ingest.load_csv(path)
         return {
@@ -328,12 +331,12 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
         p = pol.load_policy(Path(s["policy_path"])) if s.get("policy_path") else None
         return {"policy": pol.evaluate(s["metrics"], p)}
 
-    def draft(s: MemoState) -> MemoState:
+    def draft(s: MemoState, config: RunnableConfig) -> MemoState:
         g = s.get("guard")
         ids = redraft_ids(g, s["metrics"], s["policy"]) if s.get("guard_feedback") and g else None
         user = draft_prompt(s["statement"], s["metrics"], s["policy"], redraft=ids)
         if isinstance(llm, HostedLLM):
-            memo = llm.complete(SYSTEM_PROMPT, user, offline_lock=s["offline_lock"])
+            memo = llm.complete(SYSTEM_PROMPT, user, offline_lock=s["offline_lock"], reading=readings.get(_thread(config)))
         else:
             memo = llm.complete(SYSTEM_PROMPT, user)
         return {"memo": memo, "redrafts": s.get("redrafts", 0)}
@@ -407,4 +410,109 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
     g.add_edge("redraft", "draft")
     g.add_edge("review", "finalise")
     g.add_edge("finalise", END)
-    return g.compile(checkpointer=checkpointer or default_checkpointer())
+    compiled = g.compile(checkpointer=checkpointer or default_checkpointer())
+
+    def run_reading(graph_input, config):
+        """The run's one reading of firm.yaml, taken as it starts: the one handed to build() for
+        its first run, or read now. A resumed run keeps the lock its first reading recorded."""
+        if graph_input is None or isinstance(graph_input, Command):
+            try:
+                stored = compiled_get_state(config).values.get("offline_lock")
+            except Exception:
+                stored = None
+            if stored is not None:
+                return None, stored is not False
+        reading = handed.pop() if handed else firm.load()
+        readings[_thread(config)] = reading  # the load step records it; requests are checked against it
+        return reading, reading.offline_lock is not False
+
+    compiled_get_state = compiled.get_state
+    _untraced_under_lock(compiled, run_reading)
+    return compiled
+
+
+def _thread(config) -> object:
+    return ((config or {}).get("configurable") or {}).get("thread_id")
+
+
+# Set while a run started through one of the wrappers below is going: LangGraph's invoke
+# runs through its own stream, which must not take a second reading of firm.yaml.
+_IN_RUN: ContextVar[bool | None] = ContextVar("cma_in_run", default=None)
+
+
+def _untraced_under_lock(graph, run_reading) -> None:
+    """Every way of running the graph (invoke and stream, and their async forms) takes the
+    run's one reading of firm.yaml as it starts (run_reading keeps it for the run's steps by
+    thread), and under the offline lock runs with
+    LangSmith tracing off, whatever the environment says: a trace would send statement data
+    off the machine (R29, T17 review 4)."""
+    import langsmith
+
+    real_invoke, real_stream = graph.invoke, graph.stream
+    real_ainvoke, real_astream = graph.ainvoke, graph.astream
+
+    def config_of(a, k):
+        return k.get("config", a[1] if len(a) > 1 else None)
+
+    def start(a, k) -> tuple[bool, object]:
+        """Whether this run is under the lock, and the token to end it; a call nested in a run
+        already going (invoke's own stream) keeps that run's reading."""
+        outer = _IN_RUN.get()
+        if outer is not None:
+            return outer, None
+        _, locked = run_reading(a[0] if a else k.get("input"), config_of(a, k))
+        return locked, _IN_RUN.set(locked)
+
+    def end(token) -> None:
+        if token is not None:
+            _IN_RUN.reset(token)
+
+    def invoke(*a, **k):
+        locked, token = start(a, k)
+        try:
+            if locked:
+                with langsmith.tracing_context(enabled=False):
+                    return real_invoke(*a, **k)
+            return real_invoke(*a, **k)
+        finally:
+            end(token)
+
+    def stream(*a, **k):
+        def run():
+            locked, token = start(a, k)
+            try:
+                if locked:
+                    with langsmith.tracing_context(enabled=False):
+                        yield from real_stream(*a, **k)
+                else:
+                    yield from real_stream(*a, **k)
+            finally:
+                end(token)
+        return run()
+
+    async def ainvoke(*a, **k):
+        locked, token = start(a, k)
+        try:
+            if locked:
+                with langsmith.tracing_context(enabled=False):
+                    return await real_ainvoke(*a, **k)
+            return await real_ainvoke(*a, **k)
+        finally:
+            end(token)
+
+    def astream(*a, **k):
+        async def run():
+            locked, token = start(a, k)
+            try:
+                if locked:
+                    with langsmith.tracing_context(enabled=False):
+                        async for item in real_astream(*a, **k):
+                            yield item
+                else:
+                    async for item in real_astream(*a, **k):
+                        yield item
+            finally:
+                end(token)
+        return run()
+
+    graph.invoke, graph.stream, graph.ainvoke, graph.astream = invoke, stream, ainvoke, astream

@@ -19,6 +19,7 @@ server starts, so under the lock neither gets as far as a network call.
 from __future__ import annotations
 
 import os
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -113,7 +114,26 @@ def case_root() -> Path:
     return Path(raw).resolve() if raw else (Path.cwd() / "private" / "cma").resolve()
 
 
+# Every reading load() makes, by identity: a hosted client or request accepts only one of
+# these as a run's reading, never a FirmConfig a caller made (R29, T17 review 4).
+_READINGS: dict[int, weakref.ref] = {}
+
+
+def is_reading(config: object) -> bool:
+    """Whether `config` is a reading load() made, not a FirmConfig made by its caller."""
+    ref = _READINGS.get(id(config))
+    return ref is not None and ref() is config
+
+
 def load(root: Path | None = None) -> FirmConfig:
+    """firm.yaml, read now."""
+    config = _load(root)
+    key = id(config)
+    _READINGS[key] = weakref.ref(config, lambda _ref, k=key: _READINGS.pop(k, None))
+    return config
+
+
+def _load(root: Path | None = None) -> FirmConfig:
     root = root or case_root()
     path = root / FILE_NAME
     if not path.is_file():

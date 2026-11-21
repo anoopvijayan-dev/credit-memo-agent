@@ -61,21 +61,50 @@ class LockedMCPServer(MCPServer):
         finally:
             _BUILDING_FOR_RUN.reset(token)
 
-    # No ASGI app is handed out: a saved app can be served later by an ASGI server that
-    # opens its socket before the app is ever called (with lifespan off, nothing of the
-    # app's runs first), so no check inside it can keep the server from listening under the
-    # lock (R29, T17 review 1). The server starts only through the run methods above, each
-    # of which reads the lock and then builds its app and serves it in the same call; only
-    # that build, inside a run method, gets an app (T17 review 2).
+    # An ASGI app is handed out only while the lock is off, as before this change (R53, T17
+    # review 4); under the lock it is refused (R29). The app handed out reads the lock again
+    # at start-up and before every request, so one saved while the lock was off refuses
+    # everything once the lock is on (T17 review 1). Inside a run method, past its lock
+    # check, the app it serves is built as the SDK builds it (T17 review 2).
     def sse_app(self, *args, **kwargs):
-        if not _BUILDING_FOR_RUN.get():
-            raise NoASGIApp()
-        return super().sse_app(*args, **kwargs)
+        if _BUILDING_FOR_RUN.get():
+            return super().sse_app(*args, **kwargs)
+        firm.require_unlocked("Handing out the MCP server's ASGI app")
+        return LockCheckedASGI(super().sse_app(*args, **kwargs))
 
     def streamable_http_app(self, *args, **kwargs):
-        if not _BUILDING_FOR_RUN.get():
-            raise NoASGIApp()
-        return super().streamable_http_app(*args, **kwargs)
+        if _BUILDING_FOR_RUN.get():
+            return super().streamable_http_app(*args, **kwargs)
+        firm.require_unlocked("Handing out the MCP server's ASGI app")
+        return LockCheckedASGI(super().streamable_http_app(*args, **kwargs))
+
+
+class LockCheckedASGI:
+    """An MCP ASGI app handed out while the offline lock was off. It reads the lock again at
+    start-up and before every request: once the lock is on, start-up fails, an HTTP request
+    gets 503 and a websocket is closed, and nothing of the server's runs (R29). Any other
+    attribute is the wrapped app's, so an embedder can still mount or inspect it (R53)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    def __getattr__(self, name):
+        return getattr(self.app, name)
+
+    async def __call__(self, scope, receive, send):
+        problem = _lock_problem("Serving the MCP server")
+        if problem is None:
+            return await self.app(scope, receive, send)
+        if scope["type"] == "lifespan":
+            while (await receive())["type"] != "lifespan.startup":
+                pass
+            await send({"type": "lifespan.startup.failed", "message": problem})
+        elif scope["type"] == "http":
+            await send({"type": "http.response.start", "status": 503,
+                        "headers": [(b"content-type", b"text/plain; charset=utf-8")]})
+            await send({"type": "http.response.body", "body": problem.encode()})
+        elif scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1013})
 
 
 # Set only while one of the run methods above, past its lock check, builds the app it serves.
@@ -83,9 +112,8 @@ _BUILDING_FOR_RUN: ContextVar[bool] = ContextVar("cma_mcp_building_for_run", def
 
 
 class NoASGIApp(firm.OfflineLockError):
-    """An ASGI app of the MCP server was asked for: refused whatever the offline lock, since
-    serving it could open a socket before any lock check (R29). A kind of OfflineLockError,
-    so a caller that handles the lock's refusal handles this one too."""
+    """Kept for callers that import it. Since T17 review 4 an ASGI app is refused only under
+    the lock, with the lock's own OfflineLockError, which this is a kind of."""
 
     def __init__(self) -> None:
         super().__init__("The MCP server does not hand out an ASGI app: an ASGI server could open its "
