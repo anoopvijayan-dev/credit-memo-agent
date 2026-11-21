@@ -577,6 +577,89 @@ def case_import(
                   f"(sha256 {r.input_sha256[:12]})")
 
 
+@case_app.command("override")
+def case_override(
+    case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
+    line: str = typer.Argument(..., help="The line's id in its statement."),
+    category: str = typer.Argument(..., help="The category to give it; only one valid for the line's direction."),
+    reason: str = typer.Option(..., "--reason", prompt="Reason", help="Why the line is this category."),
+    name: str = typer.Option(..., "--name", prompt="Your name", help="Your name, as typed."),
+    account: str = typer.Option("main", "--account", help="The account key the line is in."),
+    expected: int | None = typer.Option(None, "--expected", help="The case log position you last saw."),
+):
+    """Change one line's category, with a reason and your name (R17). Only the category
+    changes (R18); the override goes to the case's override log and its case log, and the
+    figures are recomputed from the statements and the whole log."""
+    from . import overrides, store
+
+    with _case_errors():
+        folder = store.case_folder(case_id)
+        r = overrides.add_override(folder, line, category, reason=reason, name=name, account=account,
+                                   expected=expected)
+    if not r.recorded:
+        console.print(f"line {escape(line)} is already {r.old}; nothing was recorded")
+        return
+    console.print(f"override {r.seq}: line {escape(line)} {r.old} -> {r.new}")
+
+
+@case_app.command("overrides")
+def case_overrides(case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed.")):
+    """List the case's overrides: applied, stale (until confirmed or dropped; R19),
+    superseded by a later one, or dropped."""
+    from . import overrides, store
+
+    with _case_errors():
+        rows = overrides.listing(store.case_folder(case_id))
+    if not rows:
+        console.print("no overrides")
+    for o, status in rows:  # one line each, so a narrow terminal never splits a status
+        console.print(f"{o.seq}  {o.account}  line {o.line}  {o.old} -> {o.new}  "
+                      f"by {o.name} ({o.os_user}) at {o.at}  [{status}]", soft_wrap=True,
+                      markup=False)
+
+
+@case_app.command("resolve-override")
+def case_resolve_override(
+    case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
+    seq: int = typer.Argument(..., help="The stale override's number."),
+    confirm: bool = typer.Option(False, "--confirm", help="Apply it to the statement as it is now."),
+    drop: bool = typer.Option(False, "--drop", help="Never apply it."),
+    name: str = typer.Option(..., "--name", prompt="Your name", help="Your name, as typed."),
+):
+    """Confirm or drop a stale override (R19)."""
+    from . import overrides, store
+
+    if confirm == drop:
+        console.print("[red]Refused.[/red] give one of --confirm or --drop")
+        raise typer.Exit(code=2)
+    with _case_errors():
+        overrides.resolve_stale(store.case_folder(case_id), seq, "confirm" if confirm else "drop", name=name)
+    console.print(f"override {seq} {'confirmed' if confirm else 'dropped'}")
+
+
+@case_app.command("figures")
+def case_figures(case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed.")):
+    """Print the case's figures, recomputed from its statements and the whole override log;
+    a figure marked * rests on an overridden line (R17). Stale overrides are listed, not
+    applied (R19)."""
+    from . import overrides, store
+
+    with _case_errors():
+        views = overrides.case_figures(store.case_folder(case_id))
+    for account, f in views.items():
+        table = Table(title=f"Figures: account {account}")
+        for col in ("ID", "Metric", "Value", "Lines", ""):
+            table.add_column(col)
+        for m in f.metrics:
+            table.add_row(m.id, m.name, m.display_exact(), str(len(m.evidence)), "*" if m.id in f.marked else "")
+        console.print(table)
+        if f.marked:
+            console.print(f"* rests on an overridden line ({len(f.overridden)} lines overridden)")
+        for s in f.stale:
+            console.print(f"[yellow]stale override {s.seq}[/yellow]: line {escape(s.line)} -> {s.new} "
+                          f"({s.why}); not applied until confirmed or dropped")
+
+
 @case_app.command("purge")
 def case_purge(
     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
