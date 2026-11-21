@@ -227,3 +227,15 @@ def test_a_case_s_queue_merges_its_accounts_largest_amount_first():
     a, b = st(10.0, 300.0), st(-300.0, 50.0)
     merged = case_judgement_queue([("a", a, q(a)), ("b", b, q(b))])
     assert [(acct, e.line_id) for acct, e in merged] == [("a", "L2"), ("b", "L1"), ("b", "L2"), ("a", "L1")]
+
+
+@pytest.mark.contracts
+def test_an_override_takes_a_line_out_of_the_queue_and_its_cash_indicator(home, tmp_path, serve):
+    from cma import overrides
+
+    case_id, folder = _case(tmp_path, QUEUE)
+    overrides.add_override(folder, "L4", "revenue_transfer", reason="invoice 17", name="A Person")
+    overrides.add_override(folder, "L3", "director_funding", reason="owner's own cash", name="A Person")
+    data = _api(serve(case_id))
+    assert [e["line"]["id"] for e in data["queue"]] == ["L8", "L2", "L7", "L6"]
+    assert _indicator(data, "single_cash_deposit") == []  # L3 is no longer a cash deposit
