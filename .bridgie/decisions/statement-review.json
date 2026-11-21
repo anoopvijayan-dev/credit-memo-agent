@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 318,
+  "next_id": 319,
   "decisions": [
     {
       "id": "D1",
@@ -6366,6 +6366,26 @@
       "decided_at": "2026-11-21T02:19:51.289Z",
       "effect": "design approved",
       "created_at": "2026-11-21T02:19:49.179Z"
+    },
+    {
+      "id": "D318",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (src/cma/firm.py:68 defaults the lock on. src/cma/llm.py:79 and :104 gate client creation and requests. src/cma/mcp_server.py:45, :69, :103, :112 and :167 gate startup, app factories, requests and tools. src/cma/graph.py:292 and :301 retain the effective resume lock in evidence. The named legacy evidence and unchanged-file resume tests passed, but src/cma/graph.py:464-473 allows a pre-lock checkpoint's resume to consume an earlier configuration reading.); P5 fail (The hosted redraft and custom-limit masking tests ran and passed. The period at src/cma/graph.py:248 is allowed under revision 33. src/cma/graph.py:194-201 and :221-226 still admit a supplied policy's own numeric spelling through the rule detail, which src/cma/policy.py:90 builds from the original YAML number.); P18 fail (The runner exercised both SDKs on retryable 503s, both native HTTP transports at bind, delayed startup of a saved app, and same-object nested tracer filtering. Those cases passed. The separate resume read is conditional on a stored lock field at src/cma/graph.py:464, while P18 incorporates R29's fresh-reading requirement for resumes.); major: A resume of a pre-lock checkpoint can consume a firm configuration supplied at graph construction instead of reading firm.yaml at resume. The legacy evidence fix preserves the result it receives, but cannot make that result a fresh reading. This also affects P18. at src/cma/graph.py:464; major: A rule that compares equal to a shipped rule can still send text specific to the supplied policy. The comparison normalizes numeric thresholds, but the prompt's detail keeps the original spelling of the parsed YAML number. at src/cma/policy.py:90; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T02:22:12.405Z"
     }
   ]
 }
