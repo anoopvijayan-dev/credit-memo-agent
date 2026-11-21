@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 300,
+  "next_id": 301,
   "decisions": [
     {
       "id": "D1",
@@ -6012,6 +6012,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T01:17:11.478Z"
+    },
+    {
+      "id": "D300",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (src/cma/firm.py:68 defaults the lock on. src/cma/llm.py:104, src/cma/graph.py:288 and src/cma/graph.py:363 connect the normal hosted dispatch and evidence to the run's lock. src/cma/mcp_server.py:69, :97 and :167 gate app factories, ASGI traffic and tool reads. Native startup still has a gap after the lifespan check, and the graph leaves explicit network tracing callbacks installed under the lock.); P5 fail (invariants-5.log confirms the hosted redraft and custom-rule failure-action collision tests ran and passed. src/cma/graph.py:190 still infers provenance from field equality, so a sentinel reused as the ID of an otherwise exact custom copy of a packaged rule reaches the prompt.); P18 fail (invariants-5.log confirms both retryable-503 SDK cases, locked starts for both native HTTP transports, rejection of requests by the native app after locking, and rejection of a delayed saved-app startup. src/cma/mcp_server.py:111 lets native Uvicorn proceed to its bind after the app's one startup lock check, with no check at the native bind boundary.); major: A native HTTP start can bind its listening socket after the firm turns the lock on. Revision 30 excludes early binds by an embedder's server, while this listener belongs to the native MCP runner. at src/cma/mcp_server.py:111; major: Disabling ambient LangSmith tracing leaves a LangChainTracer passed in the graph's callback configuration active. That callback can export graph inputs and statement data under the offline lock. at src/cma/graph.py:535; major: The whole-rule comparison treats equality with packaged fields as proof that a custom rule ID came from the package. An exact custom copy still discloses the supplied sentinel ID. at src/cma/graph.py:196; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T01:20:44.521Z"
     }
   ]
 }
