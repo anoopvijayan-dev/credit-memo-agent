@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-209/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (Checked amount conversion and flow limits at src/cma/metrics.py:95 and src/cma/ingest.py:591, the large-balance diagnostic at src/cma/metrics.py:188, M3 at src/cma/metrics.py:567, and penny display at src/cma/cli.py:415 and src/cma/graph.py:175. The runner passed the large-value regressions and the same-offset Monzo regression. Monzo still sorts by wall-clock strings when the timestamps carry different offsets.); major: Monzo drops the UTC offset before the running-balance walk orders timestamps. When an offset changes, the importer can reject a consistent export or reconstruct balances in the wrong transaction order. at src/cma/importers/monzo.py:84; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-214/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: major: Rows are sorted by their UTC moment (line 305) but each is written with its local date, d = when.date() (lines 84-86, 341). When offsets differ near midnight, the written statement's dates run against its row order. cma import monzo succeeds, then the statement loader refuses the file or reads it reversed. ImportResult start and end (line 350) take the same local dates, so they are wrong too. at src/cma/importers/monzo.py:341; reviewer verdict fail"
     },
     {
       "id": "T06",

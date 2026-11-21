@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 328,
+  "next_id": 329,
   "decisions": [
     {
       "id": "D1",
@@ -6566,6 +6566,26 @@
       "decided_at": "2026-11-21T08:22:52.690Z",
       "effect": "task T17 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T17",
       "created_at": "2026-11-21T05:15:36.597Z"
+    },
+    {
+      "id": "D328",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: major: Rows are sorted by their UTC moment (line 305) but each is written with its local date, d = when.date() (lines 84-86, 341). When offsets differ near midnight, the written statement's dates run against its row order. cma import monzo succeeds, then the statement loader refuses the file or reads it reversed. ImportResult start and end (line 350) take the same local dates, so they are wrong too. at src/cma/importers/monzo.py:341; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T08:29:59.081Z"
     }
   ]
 }
