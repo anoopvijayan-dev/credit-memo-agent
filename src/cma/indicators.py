@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from bisect import bisect_left
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
@@ -201,7 +202,10 @@ def _value(section: str, key: str, kind: str, node, refuse) -> object:
         return d
     if not _INTEGER.fullmatch(text):
         refuse(_line(node), f"{where} {text!r} must be a whole number")
-    n = int(text)
+    try:
+        n = int(text)
+    except ValueError:  # more digits than Python converts (sys.get_int_max_str_digits)
+        refuse(_line(node), f"{where} has too many digits to be a whole number")
     if kind == "count" and n < 1:
         refuse(_line(node), f"{where} {text!r} must be at least 1")
     return n
@@ -234,8 +238,8 @@ def _names_regex(names: tuple[str, ...]) -> re.Pattern[str]:
     return re.compile(names_pattern(names))
 
 
-def _is_withdrawal(t: Transaction) -> bool:
-    return (t.rule_id or "").split(":", 1)[-1] == WITHDRAWAL_RULE and pence(t) < 0
+def _is_withdrawal(t: Transaction, amount: int) -> bool:
+    return (t.rule_id or "").split(":", 1)[-1] == WITHDRAWAL_RULE and amount < 0
 
 
 def raise_indicators(statement: Statement, thresholds: Thresholds | None = None) -> list[Indicator]:
@@ -244,8 +248,8 @@ def raise_indicators(statement: Statement, thresholds: Thresholds | None = None)
     t_ = thresholds or shipped()
     txns = statement.transactions
     for t in txns:  # a fraction of a penny is refused, as in metrics.compute()
-        pence(t)
         balance_pence(t)
+    amt = {t.id: pence(t) for t in txns}  # each line's pence, converted once
     pos = {t.id: i for i, t in enumerate(txns)}
     found: list[tuple[str, list[tuple[str, str]], list[str], str]] = []
 
@@ -253,26 +257,26 @@ def raise_indicators(statement: Statement, thresholds: Thresholds | None = None)
         ids = [x if isinstance(x, str) else x.id for x in lines]
         found.append((kind, keys, sorted(dict.fromkeys(ids), key=pos.__getitem__), reason))
 
-    credits = [t for t in txns if pence(t) > 0]
+    credits = [t for t in txns if amt[t.id] > 0]
     trading = [t for t in credits if t.category in REVENUE_CATEGORIES]
     cash = [t for t in credits if t.category == Category.CASH_DEPOSIT]
 
     # A single credit large against the typical (median) trading receipt.
     k = Fraction(t_.value("large_credit", "multiple_of_typical"))
     if trading:
-        typical = _median([pence(t) for t in trading])
+        typical = _median([amt[t.id] for t in trading])
         for t in credits:
-            if pence(t) >= k * typical:
+            if amt[t.id] >= k * typical:
                 fire("large_credit", [("large_credit", "multiple_of_typical")], [t],
-                     f"A credit of {_money(pence(t))} is at least {k} times the median of the period's "
+                     f"A credit of {_money(amt[t.id])} is at least {k} times the median of the period's "
                      f"{len(trading)} trading receipts.")
 
     # Each cash deposit at or above the single-deposit limit.
     limit = t_.value("single_cash_deposit", "amount_at_least")
     for t in cash:
-        if pence(t) >= limit:
+        if amt[t.id] >= limit:
             fire("single_cash_deposit", [("single_cash_deposit", "amount_at_least")], [t],
-                 f"A cash deposit of {_money(pence(t))} is at or above the single-deposit limit of {_money(limit)}.")
+                 f"A cash deposit of {_money(amt[t.id])} is at or above the single-deposit limit of {_money(limit)}.")
 
     # A calendar month whose cash is above a share of its trading receipts.
     share = t_.value("cash_heavy_month", "share_above_pct")
@@ -281,7 +285,7 @@ def raise_indicators(statement: Statement, thresholds: Thresholds | None = None)
         by_month[(t.date.year, t.date.month)].append(t)
     for (y, m), ts in sorted(by_month.items()):
         month_cash = [t for t in ts if t.category == Category.CASH_DEPOSIT]
-        c, tr = sum(pence(t) for t in month_cash), sum(pence(t) for t in ts)
+        c, tr = sum(amt[t.id] for t in month_cash), sum(amt[t.id] for t in ts)
         if c > 0 and c * 100 > share * tr:
             fire("cash_heavy_month", [("cash_heavy_month", "share_above_pct")], month_cash,
                  f"In {y:04d}-{m:02d} cash deposits of {_money(c)} are above {share}% of the month's "
@@ -290,24 +294,29 @@ def raise_indicators(statement: Statement, thresholds: Thresholds | None = None)
     # Cash paid in within a window after a similar cash withdrawal.
     days = t_.value("cash_round_trip", "within_days")
     tol = t_.value("cash_round_trip", "tolerance_pct")
-    withdrawals = [t for t in txns if _is_withdrawal(t)]
+    # Withdrawals in (day, position) order, so each deposit's window is found by bisection
+    # rather than by reading every withdrawal (R52: 10,000 lines recompute in about 2 seconds).
+    withdrawals = sorted((t for t in txns if _is_withdrawal(t, amt[t.id])),
+                         key=lambda w: (w.date.toordinal(), pos[w.id]))
+    keys = [(w.date.toordinal(), pos[w.id]) for w in withdrawals]
     for d in cash:
-        matches = [w for w in withdrawals
-                   if (w.date, pos[w.id]) < (d.date, pos[d.id]) and (d.date - w.date).days <= days
-                   and abs(pence(d) + pence(w)) * 100 <= tol * -pence(w)]
+        here = d.date.toordinal()
+        window = withdrawals[bisect_left(keys, (here - days, -1)):bisect_left(keys, (here, pos[d.id]))]
+        matches = sorted((w for w in window if abs(amt[d.id] + amt[w.id]) * 100 <= tol * -amt[w.id]),
+                         key=lambda w: pos[w.id])
         if matches:
             fire("cash_round_trip", [("cash_round_trip", "within_days"), ("cash_round_trip", "tolerance_pct")],
                  [*matches, d],
-                 f"A cash deposit of {_money(pence(d))} was paid in within {days} days after a cash withdrawal "
+                 f"A cash deposit of {_money(amt[d.id])} was paid in within {days} days after a cash withdrawal "
                  f"within {tol}% of its amount.")
 
     # Payments to gambling operators.
     least = t_.value("gambling", "amount_at_least")
     operators = _names_regex(t_.value("gambling", "operators"))
     for t in txns:
-        if pence(t) < 0 and -pence(t) >= least and operators.search(_fold(t.description)):
+        if amt[t.id] < 0 and -amt[t.id] >= least and operators.search(_fold(t.description)):
             fire("gambling", [("gambling", "amount_at_least")], [t],
-                 f"A payment of {_money(pence(t))} to a listed gambling operator.")
+                 f"A payment of {_money(amt[t.id])} to a listed gambling operator.")
 
     # Returned direct debits.
     returned = [t for t in txns if t.category == Category.RETURNED_DD]
@@ -342,11 +351,11 @@ def raise_indicators(statement: Statement, thresholds: Thresholds | None = None)
     for ts in by_acquirer.values():
         if len(ts) < least_credits:
             continue
-        med = _median([pence(t) for t in ts])
-        irregular += [(t, len(ts)) for t in ts if pence(t) >= mult * med or pence(t) * mult <= med]
+        med = _median([amt[t.id] for t in ts])
+        irregular += [(t, len(ts)) for t in ts if amt[t.id] >= mult * med or amt[t.id] * mult <= med]
     for t, n in sorted(irregular, key=lambda x: pos[x[0].id]):
         fire("irregular_acquirer", [("irregular_acquirer", "multiple_of_median"), ("irregular_acquirer", "min_credits")],
-             [t], f"A credit of {_money(pence(t))} from a named acquirer is at least {mult} times above or below "
+             [t], f"A credit of {_money(amt[t.id])} from a named acquirer is at least {mult} times above or below "
                   f"the median of its {n} credits in the period.")
 
     out = []

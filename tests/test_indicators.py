@@ -330,3 +330,62 @@ def test_the_committed_example_indicators_are_what_the_code_raises_from_its_line
     s = categorise.categorise(ingest.load_csv(examples / "cafe_stretched.csv"), load_ruleset(record["ruleset"]["id"]))
     assert [i.model_dump(mode="json") for i in raise_indicators(s)] == record["indicators"]
     assert record["thresholds"]["sha256"] == load_thresholds().sha256
+
+
+@pytest.mark.contracts
+def test_an_integer_threshold_with_too_many_digits_is_refused_naming_its_line(tmp_path):
+    # Python refuses to convert an integer string of more than 4,300 digits; that must reach
+    # the caller as the file's own refusal, naming the line, not as a bare ValueError.
+    huge = "9" * 5000
+    with pytest.raises(ThresholdsError) as e:
+        _thresholds(tmp_path, overdrawn_run__days_at_least=huge)
+    text = (tmp_path / "indicators.yaml").read_text().splitlines()
+    want = 1 + next(n for n, x in enumerate(text) if x == f"  days_at_least: {huge}")
+    assert f"line {want}" in str(e.value) and "days_at_least" in str(e.value)
+
+
+@pytest.mark.contracts
+def test_the_cash_round_trip_window_is_found_by_date_and_position_at_scale():
+    # 10,000 lines: 5,000 withdrawals of £100.00 and 5,000 deposits of £100.00, twenty a day.
+    # Every deposit follows a same-day withdrawal, so every deposit fires; a deposit's lines are
+    # the withdrawals within the window before it, never one after it.
+    import time
+    from datetime import timedelta
+
+    rows, d0 = [], date(2026, 1, 1)
+    for i in range(5000):
+        d = d0 + timedelta(days=i // 20)
+        rows += [(f"W{i}", d, "CASH WITHDRAWAL", -100.00), (f"D{i}", d, "CASH PAID IN", 100.00)]
+    s = _statement(rows)
+    start = time.perf_counter()
+    found = raise_indicators(s)
+    elapsed = time.perf_counter() - start
+    trips = _of("cash_round_trip", found)
+    assert len(trips) == 5000
+    pos = {t.id: n for n, t in enumerate(s.transactions)}
+    for trip in trips:
+        dep = trip.evidence[-1]
+        assert dep.startswith("D") and all(pos[w] < pos[dep] for w in trip.evidence[:-1])
+    # The first deposit's window is the one withdrawal before it; the last day's last deposit
+    # sees every withdrawal of the 7 days before it and of its own day.
+    assert trips[0].evidence == ["W0", "D0"]
+    assert len(trips[-1].evidence) == 1 + 20 * 8
+    assert elapsed < 5, elapsed  # was over 7 s before the window was bisected (R52 target 2 s)
+
+
+@pytest.mark.contracts
+def test_the_evidence_reads_the_thresholds_the_run_kept_not_the_file_as_it_is_now(tmp_path):
+    # A resumed review writes its evidence from the text its run read at the start, so a file
+    # edited or removed while the review waits changes nothing it records; a checkpoint from
+    # before indicators existed holds no text and reads the packaged file.
+    from cma.graph import run_thresholds
+
+    firm = tmp_path / "firm.yaml"
+    kept = indicators.default_thresholds_text().replace("amount_at_least: 2500.00", "amount_at_least: 2000")
+    firm.write_text("not: [valid")  # the file as it is now: malformed
+    t = run_thresholds({"thresholds_path": str(firm), "thresholds_text": kept})
+    assert t.value("single_cash_deposit", "amount_at_least") == 200000 and t.source == str(firm)
+    firm.unlink()
+    assert run_thresholds({"thresholds_path": str(firm), "thresholds_text": kept}).sha256 == t.sha256
+    old = run_thresholds({"statement_path": "x.csv"})
+    assert old.sha256 == load_thresholds().sha256 and old.source == "cma/thresholds/indicators.yaml"
