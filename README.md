@@ -51,6 +51,13 @@ cma resume case-7 --checkpoint-db private/reviews.sqlite
 # (git-ignored, as are *.csv, memo files, evidence files and databases anywhere).
 cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out private/mine.csv
 
+# A case: a folder under the case root (CMA_HOME, default private/cma; owner-only, and
+# refused inside a git tree that does not ignore it). Each command is logged in the case.
+cma case new --demo --label "Cafe trial"          # prints a random case id
+cma case profile <id> --director "Jane Doe" --own-account "ACME HOLDINGS" --proposed-repayment 1500
+cma case import <id> private/statement.csv --format csv
+cma case import <id> "private/Monzo Data Export.csv" --format monzo --account monzo --opening-balance 123.45
+
 # Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
 # first entry that was changed, removed, reordered or left half written.
 cma case check private/cma/cases/<id>

@@ -462,6 +462,115 @@ def import_monzo(
     console.print("Check the closing balance against your Monzo app before trusting any metric.")
 
 
+@contextmanager
+def _case_errors():
+    """A refusal from the case store or its log, said without a traceback. Exit 2 for a
+    refusal, 3 for a broken log, 4 while another window holds the case or a save is not
+    confirmed (check the case log)."""
+    from . import case, store
+
+    try:
+        yield
+    except store.CaseStoreError as e:
+        console.print(f"[red]Refused.[/red] {escape(str(e))}")
+        raise typer.Exit(code=2) from None
+    except case.CaseLogBroken as e:
+        console.print(f"[red]Case log broken:[/red] entry {e.first_bad} {escape(e.reason)}. Nothing was changed.")
+        raise typer.Exit(code=3) from None
+    except case.SaveNotConfirmed as e:
+        console.print(f"[red]Not confirmed.[/red] {escape(str(e))}")
+        raise typer.Exit(code=4) from None
+    except (case.CaseLocked, case.LogConflict) as e:
+        console.print(f"[red]Not recorded.[/red] {escape(str(e))}")
+        raise typer.Exit(code=4) from None
+    except FirmConfigError as e:
+        console.print(f"[red]Refused.[/red] {escape(str(e))}")
+        raise typer.Exit(code=2) from None
+    except OSError as e:
+        # The file system refused a step outside a save (the case root cannot be made, a
+        # file cannot be read). Said as a refusal, never a traceback; a save's own errors
+        # reach here as SaveNotRecorded or SaveNotConfirmed (R42).
+        what = e.strerror or type(e).__name__
+        where = f" ({e.filename})" if e.filename else ""
+        console.print(f"[red]Refused.[/red] {escape(what + where)}; nothing was recorded in the case.")
+        raise typer.Exit(code=2) from None
+
+
+@case_app.command("new")
+def case_new(
+    demo: bool = typer.Option(False, "--demo", help="Synthetic data or your own statements, not an applicant's (R48)."),
+    label: str | None = typer.Option(None, "--label", help="Your own label for the case. Kept in the case folder."),
+):
+    """Make a case under the case root (CMA_HOME, or private/cma) and print its random id."""
+    from . import store
+
+    with _case_errors():
+        case_id = store.new_case(label=label, demo=demo)
+    console.print(case_id)
+
+
+@case_app.command("profile")
+def case_profile(
+    case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
+    from_file: Path | None = typer.Option(None, "--from", help="A YAML profile to replace the whole profile with."),
+    label: str | None = typer.Option(None, "--label"),
+    demo: bool | None = typer.Option(None, "--demo/--not-demo"),
+    business_name: str | None = typer.Option(None, "--business-name"),
+    director: list[str] | None = typer.Option(None, "--director", help="Repeat for each; replaces the list."),
+    shareholder: list[str] | None = typer.Option(None, "--shareholder", help="Repeat for each; replaces the list."),
+    own_account: list[str] | None = typer.Option(
+        None, "--own-account", help="The applicant's other accounts; repeat for each; replaces the list."),
+    vat_stagger: int | None = typer.Option(None, "--vat-stagger", help="1, 2 or 3."),
+    proposed_repayment: str | None = typer.Option(
+        None, "--proposed-repayment", help="The proposed facility's monthly repayment, in pounds."),
+):
+    """Show a case's profile, or change it. Every change is checked and logged (R42)."""
+    from . import store
+
+    with _case_errors():
+        folder = store.case_folder(case_id)
+        replacement = None
+        if from_file is not None:
+            if not from_file.is_file():
+                raise store.CaseStoreError(f"no file at {from_file}")
+            replacement = store.parse_profile(from_file.read_bytes(), str(from_file))
+        changes = {key: value for key, value in (
+            ("label", label), ("demo", demo), ("business_name", business_name),
+            ("directors", director), ("shareholders", shareholder), ("own_accounts", own_account),
+            ("vat_stagger", vat_stagger), ("proposed_monthly_repayment", proposed_repayment))
+            if value is not None and value != []}
+
+        def update(current: dict) -> dict:
+            # Applied to the profile as it stands once the case is held, so a change made
+            # meanwhile by another window is kept (T13 review 2).
+            return {**(replacement if replacement is not None else current), **changes}
+
+        profile = store.update_profile(folder, update)
+    console.print(escape(store._profile_bytes(profile).decode("utf-8")).rstrip())
+
+
+@case_app.command("import")
+def case_import(
+    case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
+    file: Path = typer.Argument(..., help="The bank file. Copied into the case; nothing is uploaded."),
+    fmt: str = typer.Option(..., "--format", help="csv (the five-column statement) or monzo (a Monzo export)."),
+    account: str = typer.Option("main", "--account", help="A short key for the account, such as main or savings."),
+    opening_balance: str | None = typer.Option(
+        None, help="Monzo only: the balance just before the first transaction, when the export has no Balance column."),
+):
+    """Import a statement into a case: the original kept by hash, the statement per account (R31, R42)."""
+    from . import store
+
+    with _case_errors():
+        folder = store.case_folder(case_id)
+        r = store.import_file(folder, file, fmt, account=account, opening_balance=opening_balance)
+    if r.already:
+        console.print(f"already imported (sha256 {r.input_sha256[:12]}); the case is unchanged")
+        return
+    console.print(f"imported account {r.account}: {r.lines} transactions, {r.start} to {r.end} "
+                  f"(sha256 {r.input_sha256[:12]})")
+
+
 @case_app.command("check")
 def case_check(folder: Path = typer.Argument(..., help="The case folder (cases/<id>).")):
     """Load a case's log and check its hash chain against its head file (R43).
