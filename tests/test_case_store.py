@@ -330,7 +330,8 @@ def test_a_second_statement_for_one_account_is_refused(home, tmp_path):
     cid = store.new_case()
     folder = home / "cases" / cid
     store.import_file(folder, _statement(tmp_path), "csv")
-    other = _statement(tmp_path, STATEMENT.replace("L2", "L3"), "other.csv")
+    # another account: its own lines, not the main account's (date, amount) pairs (R40)
+    other = _statement(tmp_path, STATEMENT.replace("L2", "L3").replace(",500.00,", ",75.00,"), "other.csv")
     with pytest.raises(store.CaseStoreError, match="already has a statement"):
         store.import_file(folder, other, "csv")
     store.import_file(folder, other, "csv", account="savings")
@@ -484,3 +485,81 @@ def test_a_case_id_with_a_trailing_newline_is_refused(home):
     cid = store.new_case()
     with pytest.raises(store.CaseStoreError, match="16 lowercase hex"):
         store.case_folder(cid + "\n")
+
+
+# --- T32: the same file twice (R39, P9) and the same account twice (R40) -----------------
+
+
+def _case_state(folder):
+    """Every file in the case folder and its bytes, the case log's head included."""
+    return {str(p.relative_to(folder)): p.read_bytes() for p in sorted(folder.rglob("*")) if p.is_file()}
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("fmt", ["csv", "monzo"])
+def test_p9_importing_a_file_twice_leaves_the_same_state_and_log_head_as_once(home, tmp_path, fmt):
+    """P9: for any import file, importing it twice leaves the same case state and the same
+    case log head as importing it once, whatever account key the second import names."""
+    folder = home / "cases" / store.new_case()
+    src = _statement(tmp_path) if fmt == "csv" else _monzo(tmp_path)
+    opening = "100.00" if fmt == "monzo" else None
+    store.import_file(folder, src, fmt, opening_balance=opening)
+    head = case.for_case(folder).verify().head
+    once = _case_state(folder)
+    for account in ("main", "other"):
+        r = store.import_file(folder, src, fmt, account=account, opening_balance=opening)
+        assert r.already
+        assert case.for_case(folder).verify().head == head
+        assert _case_state(folder) == once
+    cli = runner.invoke(app, ["case", "import", folder.name, str(src), "--format", fmt]
+                        + (["--opening-balance", opening] if opening else []))
+    assert cli.exit_code == 0 and "already imported" in " ".join(cli.output.split()), cli.output
+    assert _case_state(folder) == once
+
+
+DUPLICATE = ("id,date,description,amount,balance\n"  # the same account, its own ids and wording
+             "X9,2026-01-05,STRIPE PAYOUT,500.00,1500.00\n"
+             "X10,2026-01-06,DIRECT DEBIT COUNCIL,-100.00,1400.00\n"
+             "X11,2026-01-07,CARD SHOP,-20.00,1380.00\n")
+
+
+@pytest.mark.contracts
+def test_an_account_sharing_most_date_amount_pairs_with_an_overlapping_one_is_refused(home, tmp_path):
+    """R40: a new account that overlaps an existing account in period and shares most of its
+    (date, amount) pairs is not added, and the refusal says it is probably the same account."""
+    cid = store.new_case()
+    folder = home / "cases" / cid
+    store.import_file(folder, _statement(tmp_path), "csv")
+    head = case.for_case(folder).verify().head
+    before = _case_state(folder)
+    dup = _statement(tmp_path, DUPLICATE, "same-account-again.csv")
+    with pytest.raises(store.CaseStoreError, match="probably the same account imported twice"):
+        store.import_file(folder, dup, "csv", account="savings")
+    r = runner.invoke(app, ["case", "import", cid, str(dup), "--format", "csv", "--account", "savings"])
+    assert r.exit_code == 2 and "probably the same account" in " ".join(r.output.split()), r.output
+    assert "STRIPE" not in r.output and "500.00" not in r.output  # names no cell's value
+    assert case.for_case(folder).verify().head == head and _case_state(folder) == before
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("body", [
+    # overlaps in period, but shares only one of its three pairs
+    "id,date,description,amount,balance\n"
+    "S1,2026-01-05,FROM MAIN,500.00,500.00\n"
+    "S2,2026-01-06,INTEREST,1.00,501.00\n"
+    "S3,2026-01-07,INTEREST,2.00,503.00\n",
+    # the same (date, amount) pairs a month later: the periods do not overlap
+    "id,date,description,amount,balance\n"
+    "S1,2026-02-05,STRIPE PAYOUT,500.00,1500.00\n"
+    "S2,2026-02-06,DD COUNCIL,-100.00,1400.00\n",
+    # own-account transfers: the other side of each line has the opposite sign
+    "id,date,description,amount,balance\n"
+    "S1,2026-01-05,FROM MAIN,-500.00,1500.00\n"
+    "S2,2026-01-06,TO MAIN,100.00,1600.00\n",
+])
+def test_an_account_that_is_not_the_same_one_is_added(home, tmp_path, body):
+    folder = home / "cases" / store.new_case()
+    store.import_file(folder, _statement(tmp_path), "csv")
+    r = store.import_file(folder, _statement(tmp_path, body, "savings.csv"), "csv", account="savings")
+    assert not r.already
+    assert [e for e, _ in _events(folder)] == ["case_created", "import", "import"]

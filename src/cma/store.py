@@ -598,6 +598,12 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
             if any(e.event == "import" and e.data.get("account") == account for e in save.entries):
                 raise CaseStoreError(f"account {account} already has a statement in this case; "
                                      "import another account with --account")
+            same = _same_account(folder, save.entries, stmt)
+            if same is not None:
+                raise CaseStoreError(
+                    f"account {account} overlaps account {same[0]} from {same[1]} to {same[2]} and "
+                    f"shares {same[3]} of its {same[4]} (date, amount) pairs there: it is probably "
+                    "the same account imported twice, so it was not added (R40)")
             # Files left by an import whose entry is not in the log are replaced.
             for left in (folder / INPUTS).glob(sha + ".*"):
                 if left != inp and left.name.split(".", 1)[0] == sha:
@@ -613,6 +619,40 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
 
 def _imported(entry, sha: str) -> bool:
     return entry.event == "import" and entry.data.get("input_sha256") == sha
+
+
+def _same_account(folder: Path, entries, new) -> tuple[str, str, str, int, int] | None:
+    """The first account already in the case that the new statement is probably a copy of
+    (R40): their periods overlap, and more than half of the new statement's lines dated in
+    the overlap have a line of that account on the same date for the same signed amount, each
+    line of either matched once. Returned as (account, overlap start, overlap end, pairs
+    shared, the new statement's lines in the overlap); None when there is none. Read while
+    the case is held, from the statements the log's import entries name."""
+    from collections import Counter
+
+    from . import ingest, metrics
+
+    def pairs(stmt, start, end) -> Counter:
+        return Counter((t.date, metrics.pence(t)) for t in stmt.transactions if start <= t.date <= end)
+
+    for e in entries:
+        if e.event != "import":
+            continue
+        account = e.data.get("account")
+        path = folder / STATEMENTS / f"{account}.csv"
+        try:
+            old = ingest.load_csv(path, account_name=account, data=path.read_bytes())
+        except (OSError, ingest.StatementError):
+            continue  # a statement that cannot be read is no evidence either way
+        start, end = max(old.start, new.start), min(old.end, new.end)
+        if start > end:
+            continue
+        ours = pairs(new, start, end)
+        n = sum(ours.values())
+        shared = sum((ours & pairs(old, start, end)).values())
+        if n and shared * 2 > n:
+            return account, start.isoformat(), end.isoformat(), shared, n
+    return None
 
 
 # --- purge (R35) -----------------------------------------------------------------------
