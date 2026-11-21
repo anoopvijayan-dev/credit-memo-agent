@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 327,
+  "next_id": 328,
   "decisions": [
     {
       "id": "D1",
@@ -6546,6 +6546,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T05:12:44.136Z"
+    },
+    {
+      "id": "D327",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (src/cma/firm.py:68 defaults the lock on, src/cma/mcp_server.py:40–119 checks startup and ASGI requests, and src/cma/graph.py:324–342 serializes the lock. Runner coverage confirms native bind refusal, inherited tracer removal, and resume evidence after finalisation. The request gate at src/cma/firm.py:191 accepts a reading from a different active run, and src/cma/graph.py:421–423 updates the destination during a drafting resume without recording that resume's lock until finalisation.); R30 fail (src/cma/graph.py:236–290 builds the tables, period, placeholder and redraft IDs. Runner coverage confirms custom masks, exact-copy rendering and current checkpoint serialization. The legacy fallback at src/cma/graph.py:228–232 exposes rules whose failure or missing-figure action differs from the shipped rule.); P5 fail (The runner exercised initial and redraft sentinels, custom IDs and limits, and shipped numeric spellings. The legacy rule comparison at src/cma/graph.py:228–232 admits custom policy text to both prompt paths at src/cma/graph.py:256–271 when both stored actions are absent.); P18 fail (The runner confirmed constructor refusal, retryable 503 handling, redirect refusal, native MCP bind refusal, saved ASGI refusal and the async locked-resume path. src/cma/llm.py:147–154 accepts a reading that belongs to a different invocation because src/cma/firm.py:188–191 checks activity and firm root without checking invocation ownership.); major: A separate caller can use the unlocked reading of a suspended stream to dispatch a hosted request after the firm locks. The registry authorizes the reading by object identity and active status, with no check that the request belongs to that stream. This also fails R29. at src/cma/firm.py:191; major: A resume that drafts and pauses again can produce evidence that omits the resume's effective lock. The draft writes the new model and destination, while finalise is the first node to write resume_offline_lock. at src/cma/graph.py:421; major: A legacy custom rule is treated as shipped even when its failure or missing-figure action differs. The missing actions are precisely the fields needed to make the exact-match decision. The rule's text and ID enter the prompt, and its ID is eligible for redraft feedback. This also fails P5 when the case contains that custom rule's text. at src/cma/graph.py:232; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T05:15:36.597Z"
     }
   ]
 }
