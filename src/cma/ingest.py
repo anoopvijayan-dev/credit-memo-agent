@@ -390,6 +390,11 @@ def _records(physical: list[str], pos: int, header: list[str], bad: int | None):
                     # its start: reading stops here, and no rule of the caller's may skip the
                     # record and leave those lines unread (T04 review 49).
                     message += "; a quoted field in it is not closed before the end of the file"
+                if bad_columns(cells):
+                    # A bad byte in another of its cells is named with it, never dropped by
+                    # the record being too long as well (T04 review 58).
+                    message += "; " + str(not_utf8(line, first_bad[0])).removeprefix(f"line {line}: ")
+                    first_bad[0] = None
                 err = CsvRecordError(message, too_long=True)
                 err.line, err.row = line, _long_row(cells, header)
                 held = cells[:-1] if open_ else cells

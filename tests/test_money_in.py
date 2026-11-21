@@ -728,6 +728,20 @@ def test_blank_trailing_columns_are_still_accepted(tmp_path):
 
 
 @pytest.mark.contracts
+def test_a_record_too_long_to_read_with_a_bad_byte_names_both(tmp_path):
+    """T04 review 58 / R2: a record with a field too long to read and a separate cell that is not
+    UTF-8 was refused as too long only; the bad byte was found and then dropped."""
+    csv = tmp_path / "s.csv"
+    csv.write_bytes(b"id,date,description,amount,balance\nT1,2026-01-01,A,5.00,5.00\n"
+                    b"T2,2026-01-02,B\xff," + b"1" * 200_000 + b",5.00\n")
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    shown = str(e.value)
+    assert "line 3: a field is too long to read (amount): longer than 131,072 characters" in shown
+    assert "not UTF-8 (byte 76)" in shown
+
+
+@pytest.mark.contracts
 def test_an_amount_longer_than_the_csv_reader_reads_is_refused_naming_its_line(tmp_path):
     """T04 review 19: the CSV reader stopped on a field past its size limit before any check,
     and `cma run` reported it as a model call failure."""

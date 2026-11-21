@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from .metrics import compare
+from .metrics import compare, limit_pence
 from .models import Metric, PolicyResult, RuleOutcome, RuleResult
 
 OPS = {">=": operator.ge, "<=": operator.le, ">": operator.gt, "<": operator.lt, "==": operator.eq}
@@ -47,7 +47,10 @@ def load_policy(path: Path | None = None) -> dict:
     return policy
 
 
-def validate(policy: object, source: str = "policy", metric_ids: set[str] | None = None) -> None:
+def validate(policy: object, source: str = "policy", metric_ids: set[str] | None = None,
+             money_ids: set[str] | None = None) -> None:
+    """`money_ids`: the metrics in pounds, whose limits must be whole pence, since money is
+    compared in pence (R2, T04 review 58)."""
     problems: list[str] = []
     if not isinstance(policy, dict):
         raise PolicyError(f"{source}: not a mapping")
@@ -77,6 +80,9 @@ def validate(policy: object, source: str = "policy", metric_ids: set[str] | None
         for key in ("threshold", "refer_below", "refer_above"):
             if key in r and (isinstance(r[key], bool) or not isinstance(r[key], int | float)):
                 problems.append(f"{where}: {key} must be a number")
+            elif (key in r and money_ids is not None and r.get("metric") in money_ids
+                  and limit_pence(r[key]) is None):
+                problems.append(f"{where}: {key} {r[key]!r} must be a whole number of pence")
         if metric_ids is not None and r.get("metric") not in metric_ids:
             problems.append(f"{where}: unknown metric {r.get('metric')!r}")
     if problems:
@@ -118,7 +124,12 @@ def reevaluate(stored: PolicyResult, before: list[Metric], now: list[Metric],
             raise OutcomeUnknown(f"{e}, and the policy it came from cannot be read ({pe})") from None
         if not stored.policy_sha256 or policy["_sha256"] != stored.policy_sha256:
             raise OutcomeUnknown(f"{e}, and the policy file is not the one the review was drafted with") from None
-        return evaluate(now, policy)
+        try:
+            return evaluate(now, policy)
+        except PolicyError as pe:
+            # The policy the review was drafted with may hold a money limit this release
+            # refuses, one that is not whole pence (T04 review 58).
+            raise OutcomeUnknown(f"{e}, and the policy it came from is refused now ({pe})") from None
 
 
 def _from_stored(stored: PolicyResult, before: list[Metric], now: list[Metric]) -> PolicyResult:
@@ -142,6 +153,12 @@ def _from_stored(stored: PolicyResult, before: list[Metric], now: list[Metric]) 
             # policy can say its outcome (T04 review 22).
             raise OutcomeUnknown(f"{r.metric_id}, which rule {r.rule_id} reads, changed and its stored "
                                  "result does not hold the rule")
+        if r.unit == "GBP" and any(x is not None and limit_pence(x) is None
+                                   for x in (r.threshold, r.refer_below, r.refer_above)):
+            # A money limit that is not whole pence, which an earlier release admitted: money is
+            # compared in pence, so only the policy can say (T04 review 58).
+            raise OutcomeUnknown(f"{r.metric_id}, which rule {r.rule_id} reads, changed and its stored "
+                                 "limit is not a whole number of pence")
         was, will = _band(r, old.value if old else None), _band(r, new.value)
         if will[0] == "missing" or (will[0] == "fail" and was[0] != "fail"):
             raise OutcomeUnknown(f"{r.metric_id}, which rule {r.rule_id} reads, now "
@@ -166,7 +183,7 @@ def _from_stored(stored: PolicyResult, before: list[Metric], now: list[Metric]) 
 def evaluate(metrics: list[Metric], policy: dict | None = None) -> PolicyResult:
     policy = policy or load_policy()
     by_id = {m.id: m for m in metrics}
-    validate(policy, metric_ids=set(by_id))
+    validate(policy, metric_ids=set(by_id), money_ids={i for i, m in by_id.items() if m.unit == "GBP"})
     results: list[RuleResult] = []
     for rule in policy["rules"]:
         m = by_id[rule["metric"]]

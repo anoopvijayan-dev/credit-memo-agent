@@ -132,12 +132,25 @@ def running_balances(opening: int, amounts) -> list[int]:
     return out
 
 
+def limit_pence(limit: float) -> int | None:
+    """A money limit's whole pence, read exactly from the decimal it is written as; None if it
+    is not a whole number of pence (T04 review 58)."""
+    return text_pence(repr(limit) if isinstance(limit, float) else str(limit))
+
+
 def compare(value: float, op: str, limit: float, unit: str) -> bool:
-    """`value op limit` for a figure and a policy limit. A money figure is compared exactly, as
-    the decimals both are written as, never as binary floats, here in the figures layer
-    (R2, T04 review 57); any other figure as the number it is."""
+    """`value op limit` for a figure and a policy limit. A money figure is compared in pence
+    here in the figures layer, never as binary floats (R2, T04 reviews 57 and 58): the limit
+    as the whole pence a policy is checked to give it, the figure as the exact pence its
+    decimal says (an average, M3, can hold a fraction of a penny). Any other figure is
+    compared as the number it is."""
     if unit == "GBP":
-        a, b = Decimal(repr(float(value))), Decimal(str(limit))
+        b = limit_pence(limit)
+        if b is None:
+            raise ValueError(f"money limit {limit!r} is not a whole number of pence")
+        a = float_pence(value)
+        if a is None:
+            a = Decimal(repr(float(value))) * 100
     else:
         a, b = value, limit
     return {">=": a >= b, "<=": a <= b, ">": a > b, "<": a < b, "==": a == b}[op]
