@@ -106,8 +106,10 @@ def test_p17_featured_case_has_every_feature_r47(tmp_path, archetype, profile):
 
 @pytest.mark.invariants
 def test_p17_byte_identity_of_existing_archetypes_and_profiles(tmp_path):
-    """Every archetype and profile, at several seeds and lengths, writes the statement and the
-    truth file it wrote before the features existed (hashes taken at 25a943c, before them)."""
+    """Every archetype and profile, at several seeds and lengths, writes the statement it
+    wrote before the features existed, byte for byte (hashes taken at 25a943c, before them).
+    Its truth file is the one it wrote then but for one change T11 makes (design, Migration):
+    with v2 the default, the director capital line's truth is director_funding, not other."""
     golden = json.loads(GOLDEN.read_text())
     assert len(golden) == 45
     for key, want in golden.items():
@@ -115,7 +117,13 @@ def test_p17_byte_identity_of_existing_archetypes_and_profiles(tmp_path):
         rows, truth = synth.generate(archetype, profile, seed=int(seed), months=int(months), end=END)
         csv_path, truth_path = synth.write(rows, truth, tmp_path / key.replace("/", "_"))
         assert hashlib.sha256(csv_path.read_bytes()).hexdigest() == want["csv"], key
-        assert hashlib.sha256(truth_path.read_bytes()).hexdigest() == want["truth"], key
+        data = json.loads(truth_path.read_text())
+        capital = {r["id"] for r in rows if r["description"] == "FPS CREDIT DIRECTOR CAPITAL INTRODUCED"}
+        changed = {i for i, c in data["category_by_id"].items() if c == "director_funding"}
+        assert changed == capital, key
+        data["category_by_id"].update({i: "other" for i in changed})
+        before = json.dumps(data, indent=2, default=str)
+        assert hashlib.sha256(before.encode()).hexdigest() == want["truth"], key
         assert synth.generate(archetype, profile, seed=int(seed), months=int(months), end=END,
                               features=())[0] == rows
 

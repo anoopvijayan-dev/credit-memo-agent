@@ -102,14 +102,16 @@ cma case check private/cma/cases/<id>
 # operating-system user. A purge stopped part-way is finished by running it again.
 cma case purge <id>
 
-# Choose the categorisation table (src/cma/rules/<id>.yaml; default v1). v1 is the
+# Choose the categorisation table (src/cma/rules/<id>.yaml; default v2). v1 is the
 # original table, frozen; v2 adds real UK acquirers, gateways, marketplaces, delivery
 # platforms, lenders and merchant cash advance providers, own pots and savings, cash
 # paid in (counted as trading receipts), cash-withdrawal wording, HMRC repayments,
 # refunds and explained non-trading credits. An unknown id is refused. The evidence
 # file records the table's id and hash, and under "lines" each line's id, category and
-# the rule that set it (no descriptions). CMA_RULESET=v1 is the rollback.
-CMA_RULESET=v2 cma run examples/cafe_stretched.csv
+# the rule that set it (no descriptions). CMA_RULESET=v1 is the rollback. The committed
+# lines whose category v2 changes are listed in docs/v2-newly-recognised.md; M1-M16 do
+# not move on any committed case or fixture.
+CMA_RULESET=v1 cma run examples/cafe_stretched.csv
 
 # Use a real model instead of the offline one. The offline lock in firm.yaml (under
 # CMA_HOME, default private/cma) is on by default and refuses hosted models and the MCP
@@ -139,7 +141,7 @@ example.
 | Draft | `graph.py` + `llm.py` | The model gets the metrics table and the policy table, nothing else, and must tag every figure ([Mn]) and threshold ([Rn]). |
 | Guard | `guard.py` | Reads every number in the memo, in digits or words, back against the table: value at the precision written, unit, sign, and the tag right after it. |
 | Review | `graph.py` | LangGraph `interrupt()`; resumes only with a named reviewer's decision. The final memo carries an appendix of every figure, rule, the model and file hashes. |
-| MCP server | `mcp_server.py` | Exposes metrics, policy and evidence lookup as tools for any MCP client; reads only .csv/.yaml under `CMA_DATA_DIR`; refuses to start while the offline lock is on. |
+| MCP server | `mcp_server.py` | Exposes metrics, the money-in buckets (`money_in_buckets`, read only, line ids only), policy and evidence lookup as tools for any MCP client; reads only .csv/.yaml under `CMA_DATA_DIR`; refuses to start while the offline lock is on. |
 | Evals | `evals/run_evals.py` | Runs all nine cases, reports grounding rate, redrafts and agreement with ground truth on nine metrics. Fails CI if any metric disagrees with truth or the offline memo is ungrounded. |
 
 ## Evaluation

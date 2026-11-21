@@ -346,6 +346,9 @@ def test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1(tmp_pat
 
     rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
     csv_path, _ = synth.write(rows, truth, tmp_path)
+    # A pre-T01 release categorised with the table now packaged as v1, so draft under v1
+    # (v2 is the default since T11).
+    monkeypatch.setenv("CMA_RULESET", "v1")
     graph = build(FakeLLM())
     cfg = {"configurable": {"thread_id": "legacy"}}
     graph.invoke({"statement_path": str(csv_path)}, cfg)
@@ -373,7 +376,7 @@ def test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1(tmp_pat
 
 
 @pytest.mark.contracts
-def test_a_t02_checkpoint_with_a_recorded_v1_ruleset_but_no_line_rule_ids_replays_v1(tmp_path):
+def test_a_t02_checkpoint_with_a_recorded_v1_ruleset_but_no_line_rule_ids_replays_v1(tmp_path, monkeypatch):
     """The release before T03 recorded the ruleset (v1 and its hash) but no rule id on any
     line. On resume each line's rule id is replayed from that recorded table, not left
     null; a recorded hash the installed table does not have replays nothing."""
@@ -384,6 +387,7 @@ def test_a_t02_checkpoint_with_a_recorded_v1_ruleset_but_no_line_rule_ids_replay
 
     rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
     csv_path, _ = synth.write(rows, truth, tmp_path)
+    monkeypatch.setenv("CMA_RULESET", "v1")  # the T02 release's default table (v2 since T11)
     graph = build(FakeLLM())
     cfg = {"configurable": {"thread_id": "t02"}}
     graph.invoke({"statement_path": str(csv_path)}, cfg)
