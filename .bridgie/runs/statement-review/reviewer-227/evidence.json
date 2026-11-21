@@ -1,0 +1,36 @@
+{
+  "task": "T13",
+  "criteria": [
+    {
+      "id": "R31",
+      "tier": "adversarial",
+      "check": "One case root: firm.case_root() (src/cma/firm.py:113-115, CMA_HOME or private/cma) is the only root store.py uses (ensure_root, store.py:139-147), and every command reaches a case through case_folder (store.py:150-159), which runs ensure_root again. Owner-only: _private_dir (store.py:122-136) makes the root, cases/, inputs/ and statements/ 0700, chmods an existing open folder, and refuses a symlink or a folder another uid owns; new_case chmods the case folder 0700; _write_private uses mkstemp and chmods 0600 (0400 for inputs) before the rename (store.py:165-179); case.py opens log, gate and lock 0o600 (case.py:848,874,1210); the monzo work folder is mkdtemp, chmod 0700. Git: check_not_in_git (store.py:91-119) runs before anything is made, refuses a root that is the tree itself, asks `git check-ignore -q -- rel/` with GIT_* stripped and no shell, and refuses on exit 1 or any error. Runner evidence: contracts-4.log and specified-3.log show all 51 tests/test_case_store.py tests PASSED, including the owner-only test under umask 022, the open-root narrowing test, the not-ignored refusal (nothing made), four ignored-pattern forms, the root-is-the-tree and git-cannot-answer refusals, and the later-unignored refusal for every command. Log entries: new_case, update_profile and import_file each append one entry under the case lock (store.py:327-329, 351-358, 466-484), tested by the case_new, profile_change and csv_import log tests. Both attempt-1 majors are fixed: the profile is read, updated and its undo captured inside _recorded, and 'already imported' is decided from the case log under the lock, with leftover inputs and statements replaced.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-227/contracts-4.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/store.py",
+      "line": 440,
+      "criterion": "R31",
+      "claim": "_recorded, which appends the import entry, is nested inside `with tempfile.TemporaryDirectory(dir=folder)`. If removing the work folder fails after the entry was recorded, the OSError reaches cli._case_errors, which prints 'Refused. ...; nothing was recorded in the case.' with exit 2, although the import is in the case log and its files are in place.",
+      "repro": "Make the TemporaryDirectory cleanup raise after the _recorded block exits (monkeypatch shutil.rmtree to raise PermissionError), then run `cma case import <id> statement.csv --format csv`: output says nothing was recorded, exit 2, yet `cma case check` shows the import entry and statements/main.csv exists."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/store.py",
+      "line": 330,
+      "criterion": "R31",
+      "claim": "new_case deletes the whole case folder with shutil.rmtree on any exception, SaveNotConfirmed included. The CLI then tells the user to check the case log (exit 4), but the folder and log are gone and the id was never printed, so nothing is left to check.",
+      "repro": "Monkeypatch case.CaseLog.append to raise case.SaveNotConfirmed and run `cma case new`: output 'Not confirmed. ... check the case log', exit 4, and cases/ holds no folder for the id the message names."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
