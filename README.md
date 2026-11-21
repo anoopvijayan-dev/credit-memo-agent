@@ -60,6 +60,17 @@ cma case profile <id> --director "Jane Doe" --own-account "ACME HOLDINGS" --prop
 cma case import <id> private/statement.csv --format csv
 cma case import <id> "private/Monzo Data Export.csv" --format monzo --account monzo --opening-balance 123.45
 
+# Correct one line's category (only the category; one valid for the line's direction),
+# with a reason and your typed name. The override goes to overrides.jsonl and the case
+# log with your operating-system user and the UTC time. `cma case figures` recomputes
+# every figure from the statements and the whole override log and marks with * each one
+# that rests on an overridden line. An override whose line is gone, or whose statement
+# changed since it was recorded, is stale and not applied until you confirm or drop it.
+cma case override <id> L42 director_funding --reason "director's own transfer" --name "Pat"
+cma case overrides <id>                           # applied, stale, superseded or dropped
+cma case figures <id>
+cma case resolve-override <id> 3 --confirm --name "Pat"   # or --drop
+
 # Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
 # first entry that was changed, removed, reordered or left half written.
 cma case check private/cma/cases/<id>
