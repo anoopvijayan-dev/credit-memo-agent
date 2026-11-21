@@ -36,7 +36,6 @@ from .models import Statement, Transaction
 __all__ = ["MAX_STATEMENT_PENCE", "StatementError", "load_csv"]
 
 REQUIRED = ("id", "date", "description", "amount", "balance")
-MAX_REPORTED = 20
 
 
 class StatementError(ValueError):
@@ -57,9 +56,8 @@ class StatementError(ValueError):
         whole = [p for p, k in pairs if order[k] == 0]
         limit = [p for p, k in pairs if order[k] == 1]
         rest = [p for p, k in pairs if order[k] == 2]
-        shown = whole + limit + rest[:max(0, MAX_REPORTED - len(whole) - len(limit))]
-        more = f"\n  … and {len(problems) - len(shown)} more" if len(problems) > len(shown) else ""
-        super().__init__(f"{path}: {len(problems)} problem(s)\n  " + "\n  ".join(shown) + more)
+        # Every problem found is named (revision 31, T04 review 57).
+        super().__init__(f"{path}: {len(problems)} problem(s)\n  " + "\n  ".join(whole + limit + rest))
 
 
 AMOUNT = re.compile(r"^[-+]?\d+(?:\.\d{1,2})?$")
@@ -475,7 +473,6 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         problems.append(text)
         kinds.append(kind)
 
-    extra_amounts: list[int] = []  # a readable amount in a record that cannot be read whole
     parsed: list[tuple[int, str, date | None, str, float | None, float | None]] = []
     seen: dict[str, int] = {}
     def check(i: int, r: dict, readable: set | None = None) -> None:
@@ -518,10 +515,11 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
             elif values[field] is None:
                 add("line", f"line {i}: {field} {shown(raw)} is not a plain number like {example} "
                                 "(under £10,000,000,000,000)")
-        if whole:
-            parsed.append((i, tid, d, (r["description"] or "").strip(), values["amount"], values["balance"]))
-        elif values.get("amount") is not None:
-            extra_amounts.append(float_pence(values["amount"]))  # it still counts toward the flows
+        # A record that cannot be read whole takes part in the checks across records with the
+        # fields it has (its date, amount and balance), and its amount counts toward money in
+        # or out (T04 reviews 37 and 57); the statement is refused, so it is never kept.
+        description = (r["description"] or "").strip() if can("description") else ""
+        parsed.append((i, tid, d, description, values.get("amount"), values.get("balance")))
 
     any_record = False
     for line, row, problem in records:
@@ -568,7 +566,7 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         if balance is not None:
             prev_balance = balance
 
-    for name in flows_at_limit([float_pence(a) for _, _, _, _, a, _ in parsed if a is not None] + extra_amounts):
+    for name in flows_at_limit([float_pence(a) for _, _, _, _, a, _ in parsed if a is not None]):
         add("flow", f"{name} totals {AT_LIMIT}: no figure could be reported to the penny")  # each named
     if problems:
         raise StatementError(path, problems, kinds)

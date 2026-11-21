@@ -132,6 +132,17 @@ def running_balances(opening: int, amounts) -> list[int]:
     return out
 
 
+def compare(value: float, op: str, limit: float, unit: str) -> bool:
+    """`value op limit` for a figure and a policy limit. A money figure is compared exactly, as
+    the decimals both are written as, never as binary floats, here in the figures layer
+    (R2, T04 review 57); any other figure as the number it is."""
+    if unit == "GBP":
+        a, b = Decimal(repr(float(value))), Decimal(str(limit))
+    else:
+        a, b = value, limit
+    return {">=": a >= b, "<=": a <= b, ">": a > b, "<": a < b, "==": a == b}[op]
+
+
 def pounds_text(p: int) -> str:
     """Whole pence written as pounds with two decimals, exactly: -1234 is "-12.34"."""
     sign = "-" if p < 0 else ""

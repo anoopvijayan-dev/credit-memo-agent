@@ -1670,3 +1670,46 @@ def test_every_readable_field_of_a_record_that_cannot_be_read_whole_is_checked(t
     assert "line 3: a field is too long to read (description)" in shown
     assert "line 3: duplicate id T1" in shown and "line 3: date '2026-13-01' is not YYYY-MM-DD" in shown
     assert "line 3: amount 'x' is not a plain number" in shown and "line 3: balance 'y' is not a plain number" in shown
+
+
+@pytest.mark.contracts
+def test_a_partial_last_record_takes_part_in_the_checks_across_records(tmp_path):
+    """T04 review 57: the last record, with a field too long to read, gave its readable amount to
+    the flows but dropped its readable date and balance from the checks across records."""
+    csv = tmp_path / "s.csv"
+    csv.write_text("id,date,amount,balance,description\nT1,2026-01-01,1.00,1.00,A\nT2,2026-01-03,1.00,2.00,B\n"
+                   "T3,2026-01-02,1.00,9.00," + "D" * 200_000 + "\n")
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    shown = str(e.value)
+    assert "line 4: date 2026-01-02 is out of order (after 2026-01-03)" in shown
+    assert "line 4: running balance 9.00 does not follow from previous 2.00 + 1.00" in shown
+
+
+@pytest.mark.contracts
+def test_every_problem_found_is_named(tmp_path):
+    """T04 review 57 / revision 31: the refusal named the first twenty problems only."""
+    rows = [f"T{k},not-a-date,A,1.00,1.00" for k in range(40)]
+    csv = tmp_path / "s.csv"
+    csv.write_text("id,date,description,amount,balance\n" + "\n".join(rows) + "\n")
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    assert all(f"line {k + 2}: date 'not-a-date' is not YYYY-MM-DD" in str(e.value) for k in range(40))
+    assert "more" not in str(e.value)
+
+
+@pytest.mark.contracts
+def test_policy_compares_money_figures_in_the_figures_layer(tmp_path, monkeypatch):
+    """T04 review 57 / R2: policy rules compared GBP figures with their limits as raw floats in
+    policy.py; every comparison of a figure with a limit goes through metrics.compare."""
+    from cma import policy
+
+    seen = []
+    real = metrics.compare
+    monkeypatch.setattr(policy, "compare", lambda *a: seen.append(a) or real(*a))
+    st = _synthetic(tmp_path, "cafe", "good", "v1")
+    result = policy.evaluate(metrics.compute(st))
+    gbp = [a for a in seen if a[3] == "GBP"]
+    assert seen and result.rules and len(seen) >= len(result.rules)
+    assert all(isinstance(a[0], float) for a in gbp)
+    assert metrics.compare(0.3, ">=", 0.3, "GBP") and not metrics.compare(0.29, ">=", 0.3, "GBP")

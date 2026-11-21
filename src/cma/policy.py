@@ -14,6 +14,7 @@ from pathlib import Path
 
 import yaml
 
+from .metrics import compare
 from .models import Metric, PolicyResult, RuleOutcome, RuleResult
 
 OPS = {">=": operator.ge, "<=": operator.le, ">": operator.gt, "<": operator.lt, "==": operator.eq}
@@ -95,9 +96,10 @@ def _band(r: RuleResult, v: float | None) -> tuple:
     referral bands it falls in."""
     if v is None:
         return ("missing",)
-    if not OPS[r.op](v, r.threshold):
+    if not compare(v, r.op, r.threshold, r.unit):
         return ("fail",)
-    return ("pass", r.refer_below is not None and v < r.refer_below, r.refer_above is not None and v > r.refer_above)
+    return ("pass", r.refer_below is not None and compare(v, "<", r.refer_below, r.unit),
+            r.refer_above is not None and compare(v, ">", r.refer_above, r.unit))
 
 
 def reevaluate(stored: PolicyResult, before: list[Metric], now: list[Metric],
@@ -173,14 +175,15 @@ def evaluate(metrics: list[Metric], policy: dict | None = None) -> PolicyResult:
             outcome = RuleOutcome(rule.get("when_missing", "refer"))
             detail = f"{m.name} cannot be computed ({m.method}); policy says {outcome.value} when missing."
         else:
-            passed = OPS[rule["op"]](m.value, rule["threshold"])
+            # Compared in the figures layer: a money figure exactly (R2, T04 review 57).
+            passed = compare(m.value, rule["op"], rule["threshold"], m.unit)
             if passed:
                 outcome = RuleOutcome.PASS
                 # Soft bands: close to the threshold still gets a human look.
-                if "refer_below" in rule and m.value < rule["refer_below"]:
+                if "refer_below" in rule and compare(m.value, "<", rule["refer_below"], m.unit):
                     outcome = RuleOutcome.REFER
                     req += f", referred below {rule['refer_below']}"
-                if "refer_above" in rule and m.value > rule["refer_above"]:
+                if "refer_above" in rule and compare(m.value, ">", rule["refer_above"], m.unit):
                     outcome = RuleOutcome.REFER
                     req += f", referred above {rule['refer_above']}"
             else:
