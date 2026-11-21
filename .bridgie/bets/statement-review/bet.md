@@ -465,6 +465,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-21 D306 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-21 D302 (question): Write D291 into R29 and P18 in the next revision, with the answers to the other T17 questions, keeping every id (design default) — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. → recorded [Anoop Vijayan]
 - 2026-11-21 D303 (question): State the window in R29 and P18: a lock turned on after the runner's check and before its bind is outside them, the socket serves no request, and the next start is refused (design default; no build change) — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. → recorded [Anoop Vijayan]
+- 2026-11-21 D304 (question): Take LangSmith tracers out under the lock, as 9b10daa does. Any other callback a caller hands a run is the caller's code and outside R29, as an embedder's own server is. Say so in R29 in the next revision (design default) — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. → recorded [Anoop Vijayan]
 
 ## Idea
 

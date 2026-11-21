@@ -6106,12 +6106,12 @@
         "Refuse, under the lock, a run handed any LangSmith tracer, naming the lock, so the caller learns its tracer was not used (one change in T17)"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "Take LangSmith tracers out under the lock, as 9b10daa does. Any other callback a caller hands a run is the caller's code and outside R29, as an embedder's own server is. Say so in R29 in the next revision (design default)",
+      "free_text": "Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-21T01:33:23.596Z",
+      "effect": "recorded",
       "created_at": "2026-11-21T01:33:20.488Z"
     },
     {
