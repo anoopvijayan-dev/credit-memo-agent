@@ -660,7 +660,8 @@ def monthly_summary(statement: Statement) -> list[MonthRow]:
     while (y, m) <= (end.year, end.month):
         key = f"{y:04d}-{m:02d}"
         first, last = max(date(y, m, 1), start), min(_month_end(y, m), end)
-        lines = [t for t in txns if _month(t.date) == key]
+        # By (year, month), not by _month's text: strftime does not pad a year below 1000.
+        lines = [t for t in txns if (t.date.year, t.date.month) == (y, m)]
         days = [eod[d] for d in sorted(eod) if first <= d <= last]
         closes = [bal for bal, _ in days]
         setters = sorted({line_id for _, line_id in days}, key=pos.__getitem__)
