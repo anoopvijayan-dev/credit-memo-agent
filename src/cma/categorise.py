@@ -1389,19 +1389,24 @@ def link_reversals(statement: Statement) -> Statement:
     """
     taken: set[str] = set()
     txns = statement.transactions
+
+    from .metrics import size_pence  # the figures layer does the arithmetic (R2, T04 review 12)
+
     # Debits by (amount in pence, payee), in statement order: each returned DD looks only
     # at the debits it could undo, latest first, not back through the whole statement.
     debits: dict[tuple[int, str], list[int]] = {}
     for j, o in enumerate(txns):
-        if o.amount < 0 and o.category not in (Category.RETURNED_DD, None):
-            debits.setdefault((round(-o.amount * 100), counterparty(o.description)), []).append(j)
+        p = size_pence(o)
+        if p is not None and o.amount < 0 and o.category not in (Category.RETURNED_DD, None):
+            debits.setdefault((p, counterparty(o.description)), []).append(j)
     for i, r in enumerate(txns):
-        if r.category != Category.RETURNED_DD or r.amount <= 0:
+        p = size_pence(r)
+        if r.category != Category.RETURNED_DD or p is None or r.amount <= 0:
             continue
-        candidates = debits.get((round(r.amount * 100), counterparty(r.description)), [])
+        candidates = debits.get((p, counterparty(r.description)), [])  # same pence, same payee
         for j in reversed(candidates[: bisect.bisect_left(candidates, i)]):
             o = txns[j]
-            if o.id not in taken and abs(o.amount + r.amount) < 0.005:
+            if o.id not in taken:
                 r.reverses = o.id
                 taken.add(o.id)
                 break

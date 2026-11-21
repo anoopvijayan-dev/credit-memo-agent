@@ -678,3 +678,20 @@ def test_rule_tables_keep_lf_line_endings_on_every_checkout():
     if out.returncode != 0:
         pytest.skip("not a git checkout")
     assert out.stdout.strip().endswith("eol: lf"), out.stdout
+
+
+def test_m16_is_renamed_from_the_previous_releases_name():
+    # R10: M16's name says it measures money in that is not trading receipts. The previous
+    # release, the source the dual run compares against (tests/previous_release.py BASE),
+    # called it "Unclassified inflows"; T01 renamed it. T04 review 43 read a branch that
+    # already holds T01 as the previous release; this pins the release the spec means.
+    import subprocess
+
+    from tests.previous_release import BASE, REPO
+
+    old = subprocess.run(["git", "-C", str(REPO), "show", f"{BASE}:src/cma/metrics.py"],
+                         check=True, capture_output=True, text=True).stdout
+    assert 'id="M16", name="Unclassified inflows"' in old
+    path = Path(__file__).parents[1] / "examples" / "cafe_stretched.csv"
+    m16 = next(m for m in metrics.compute(categorise.categorise(ingest.load_csv(path))) if m.id == "M16")
+    assert m16.name != "Unclassified inflows" and "non-trading" in m16.name.lower()

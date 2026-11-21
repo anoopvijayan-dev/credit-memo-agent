@@ -8,6 +8,7 @@ to the statement lines behind it.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Literal
 
@@ -125,10 +126,26 @@ class Metric(BaseModel):
     evidence: list[str] = Field(
         default_factory=list, description="Transaction ids this figure was computed from."
     )
+    evidence_note: list[str] | None = Field(
+        default=None,
+        description=("Ids of evidence lines the figure counts only in part (M9: a credit from someone the "
+                     "business paid by transfer, offsetting no more than was sent to them). Ids only; never "
+                     "shown in the method sentence or a prompt (R30)."),
+    )
 
     def display(self) -> str:
         """The figure as the memo should quote it. Negative figures keep their minus sign."""
         return format_value(self.value, self.unit)
+
+    def display_exact(self) -> str:
+        """The figure to the penny when it is money, for tables that show the money-in
+        buckets beside total money in, so the shown parts add up to the shown whole."""
+        if self.unit == "GBP" and self.value is not None:
+            # From the decimal the float reads back as, never by rounding the binary value,
+            # so the shown pence are the counted ones (T04 review 3).
+            exact = Decimal(repr(self.value)).quantize(Decimal("0.01"))
+            return f"{'-' if exact < 0 else ''}£{abs(exact):,.2f}"
+        return self.display()
 
 
 # How many decimals each unit is shown with. The memo copies figures as shown, and the
