@@ -6302,12 +6302,12 @@
         "kill task"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "take over manually",
+      "free_text": "Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. T04 at the latest commit (review 58), judged against the latest revision. Money limits must be whole pence: the validator refuses others (test_a_money_limit_that_is_not_whole_pence_is_refused), metrics.compare compares money in pence (test_money_figures_are_compared_with_their_limits_in_pence), and a stored limit that is not whole pence is not replayed (test_a_stored_money_limit_that_is_not_whole_pence_is_not_replayed). A record too long to read names a bad byte in another of its cells (test_a_record_too_long_to_read_with_a_bad_byte_names_both).",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-21T02:22:40.931Z",
+      "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-21T02:09:01.552Z"
     },
     {
