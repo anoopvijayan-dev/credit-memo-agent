@@ -687,7 +687,7 @@ def test_m16_is_renamed_from_the_previous_releases_name():
     # already holds T01 as the previous release; this pins the release the spec means.
     import subprocess
 
-    from tests.previous_release import BASE, REPO
+    from previous_release import BASE, REPO
 
     old = subprocess.run(["git", "-C", str(REPO), "show", f"{BASE}:src/cma/metrics.py"],
                          check=True, capture_output=True, text=True).stdout
