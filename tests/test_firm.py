@@ -938,7 +938,8 @@ def test_p18_a_resumed_review_is_untraced_once_the_lock_is_on(home, no_network, 
 
 @pytest.mark.invariants
 def test_p18_an_unchanged_firm_yaml_is_read_once_in_a_whole_cli_run(home, no_network, sdks, monkeypatch, tmp_path):
-    """The review step reuses its thread's reading while firm.yaml is unchanged (T17 review 6)."""
+    """The draft takes one reading and the resume, a run of its own, takes one more as it
+    resumes, even with firm.yaml unchanged (T17 reviews 6 and 11)."""
     (home / "firm.yaml").write_text("offline_lock: false\n")
     reads = []
     real_load = firm.load
@@ -947,7 +948,7 @@ def test_p18_an_unchanged_firm_yaml_is_read_once_in_a_whole_cli_run(home, no_net
     r = CliRunner().invoke(app, ["run", str(_statement(tmp_path)), "--llm", "anthropic", "--yes",
                                  "--reviewer", "A", "--out", str(tmp_path / "memo.md")])
     assert r.exit_code == 0, r.output
-    assert len(reads) == 1 and no_network == []
+    assert len(reads) == 2 and no_network == []
 
 
 @pytest.mark.invariants
@@ -1188,6 +1189,66 @@ def test_p18_evidence_records_the_lock_in_force_when_the_review_was_resumed(home
     final = build(llm.FakeLLM(), checkpointer=saver).invoke(Command(resume={"approved": True, "reviewer": "A"}), cfg)
     egress = evidence_record({**final, "ruleset": None})["egress"]
     assert egress["offline_lock"] is False and egress["resume_offline_lock"] is True
+
+
+@pytest.mark.invariants
+def test_p18_a_separate_run_on_the_same_graph_object_takes_its_own_tracer_filtering(home, no_network, monkeypatch, tmp_path):
+    """T17 review 11 / R29: a run started on the same graph object during one of its own runs was
+    taken for invoke's own stream, so a LangSmith tracer handed to it stayed in its callbacks."""
+    from langchain_core.tracers.langchain import LangChainTracer
+
+    import cma.graph as g
+
+    seen = []
+    monkeypatch.setattr(LangChainTracer, "_start_trace", lambda self, run: seen.append(run), raising=False)
+    monkeypatch.setattr(LangChainTracer, "_persist_run", lambda self, run: seen.append(run), raising=False)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    inner_done, handed = [], []
+    real_strip = g._without_network_tracers
+    monkeypatch.setattr(g, "_without_network_tracers", lambda cbs: handed.append(cbs) or real_strip(cbs))
+
+    class Outer(llm.FakeLLM):
+        def complete(self, system, user, **k):
+            if not inner_done:
+                tracer = LangChainTracer(client=types.SimpleNamespace())
+                inner_done.append(1)
+                graph.invoke({"statement_path": str(_statement(tmp_path))},
+                             {"configurable": {"thread_id": "inner"}, "callbacks": [tracer]})
+            return super().complete(system, user)
+
+    graph = build(Outer())
+    graph.invoke({"statement_path": str(_statement(tmp_path))}, {"configurable": {"thread_id": "outer"}})
+    assert inner_done and seen == [] and no_network == []
+    assert any(cbs and any(isinstance(c, LangChainTracer) for c in cbs) for cbs in handed)
+
+
+@pytest.mark.invariants
+def test_p18_a_resume_takes_its_own_reading_with_firm_yaml_unchanged(home, no_network, monkeypatch, tmp_path):
+    """T17 review 11 / R29: with firm.yaml unchanged, a resume on the same graph reused the
+    draft's reading; revision 32 has a resume read firm.yaml as it resumes."""
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
+
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    reads = []
+    real_load = firm.load
+    monkeypatch.setattr(firm, "load", lambda *a, **k: reads.append(1) or real_load(*a, **k))
+    cfg = {"configurable": {"thread_id": "t"}}
+    graph = build(llm.FakeLLM(), checkpointer=InMemorySaver())
+    graph.invoke({"statement_path": str(_statement(tmp_path))}, cfg)
+    drafted = len(reads)
+    graph.invoke(Command(resume={"approved": True, "reviewer": "A"}), cfg)
+    assert drafted == 1 and len(reads) == 2 and no_network == []
+
+
+def test_r29_evidence_of_a_pre_lock_draft_keeps_the_lock_in_force_at_resume():
+    """T17 review 11 / R29: the evidence of a draft made before the offline lock existed dropped
+    the lock its resume recorded at finalisation."""
+    import cma.graph as g
+
+    egress = g._egress({"model": "fake:echo", "resume_offline_lock": True})
+    assert egress["offline_lock"] is False and egress["resume_offline_lock"] is True
+    assert "resume_offline_lock" not in g._egress({"model": "fake:echo"})
 
 
 @pytest.mark.invariants

@@ -298,8 +298,13 @@ def _egress(s: MemoState) -> dict:
             out["resume_offline_lock"] = s["resume_offline_lock"]
         return out
     model = s.get("model") or "-"
-    return {"offline_lock": False, "destination": "offline" if model.startswith("fake:") else model,
-            "recorded": "at resume; the draft predates the offline lock"}
+    out = {"offline_lock": False, "destination": "offline" if model.startswith("fake:") else model,
+           "recorded": "at resume; the draft predates the offline lock"}
+    if s.get("resume_offline_lock") is not None:
+        # The lock in force as the review resumed, recorded at finalisation, for a draft from
+        # before the lock too (T17 review 11).
+        out["resume_offline_lock"] = s["resume_offline_lock"]
+    return out
 
 
 def evidence_record(s: MemoState) -> dict:
@@ -328,7 +333,6 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
     later run of this graph reads firm.yaml at its own start."""
     llm = llm or get_llm()
     handed = [firm_config] if firm_config is not None else []
-    thread_reading: dict[object, firm.FirmConfig] = {}  # the reading each thread last ran on here
 
     def load(s: MemoState, config: RunnableConfig) -> MemoState:
         reading = _run_reading_of(config) or (handed.pop() if handed else firm.load())
@@ -458,16 +462,14 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
             except Exception:
                 stored = None
             if stored is not None:
-                # The thread's own reading, while firm.yaml is unchanged since it; otherwise
-                # firm.yaml read now, never another invocation's reading (T17 review 6).
-                own = thread_reading.get(_thread(config))
-                now = own if own is not None and firm.unchanged_since(own) else _read_or_locked()
+                # A resume is a run of its own and reads firm.yaml as it resumes, never reusing
+                # the draft's reading, even with firm.yaml unchanged (R29 revision 32, T17 review 11).
+                now = _read_or_locked()
                 return None, stored is not False or now is None or now.offline_lock is not False
         reading = handed.pop() if handed else None
         if reading is None or not firm.take_for_run(reading):
             reading = firm.load()  # a reading drives one run only (T17 review 6)
             firm.take_for_run(reading)
-        thread_reading[_thread(config)] = reading
         return reading, reading.offline_lock is not False
 
     compiled_get_state = compiled.get_state
@@ -496,10 +498,6 @@ def _without_network_tracers(callbacks):
     return keep(callbacks) if callbacks else callbacks
 
 
-def _thread(config) -> object:
-    return ((config or {}).get("configurable") or {}).get("thread_id")
-
-
 def _run_reading_of(config) -> firm.FirmConfig | None:
     return ((config or {}).get("configurable") or {}).get(_READING_KEY)
 
@@ -514,6 +512,10 @@ def _read_or_locked() -> firm.FirmConfig | None:
 # Set while a run started through one of the wrappers below is going: LangGraph's invoke
 # runs through its own stream, which must not take a second reading of firm.yaml.
 _IN_RUN: ContextVar[tuple | None] = ContextVar("cma_in_run", default=None)
+# Set by invoke and ainvoke for the one call LangGraph makes to its own stream, and taken by
+# that call: any later call on the same graph object, from a node or a callback, is a run of
+# its own, with its own reading and its own tracer filtering (T17 review 11).
+_DELEGATE: ContextVar[int | None] = ContextVar("cma_delegate", default=None)
 
 
 def _untraced_under_lock(graph, run_reading) -> None:
@@ -537,10 +539,11 @@ def _untraced_under_lock(graph, run_reading) -> None:
         since they run to the end before returning: a stream suspended between items marks
         nothing, so no other run started meanwhile takes its decision (T17 review 8)."""
         outer = _IN_RUN.get()
-        if outer is not None and outer[0] == id(graph):
-            # Only this graph's own nested call (invoke's stream) keeps the run's decision; a
-            # separate graph run inside it takes its own reading and its own tracer filtering
-            # (T17 review 10).
+        if outer is not None and outer[0] == id(graph) and _DELEGATE.get() == id(graph):
+            # Only invoke's own call to its stream keeps the run's decision, once; a separate
+            # run inside it, on this graph or another, takes its own reading and its own tracer
+            # filtering (T17 reviews 10 and 11).
+            _DELEGATE.set(None)
             return outer[1], None, a, k
         graph_input = a[0] if a else k.get("input")
         reading, locked = run_reading(graph_input, config_of(a, k))
@@ -564,12 +567,14 @@ def _untraced_under_lock(graph, run_reading) -> None:
                 a = (a[0], config, *a[2:])
             if reading is not None:
                 firm.begin_run(reading)
-        return locked, ((_IN_RUN.set((id(graph), locked)) if mark else None), reading), a, k
+        marks = (_IN_RUN.set((id(graph), locked)), _DELEGATE.set(id(graph))) if mark else None
+        return locked, (marks, reading), a, k
 
     def end(token) -> None:
         if token is not None:
             if token[0] is not None:
-                _IN_RUN.reset(token[0])
+                _DELEGATE.reset(token[0][1])
+                _IN_RUN.reset(token[0][0])
             if token[1] is not None:
                 firm.end_run(token[1])
 
