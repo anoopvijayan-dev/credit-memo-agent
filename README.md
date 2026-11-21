@@ -52,9 +52,13 @@ cma resume case-7 --checkpoint-db private/reviews.sqlite
 cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out private/mine.csv
 
 # Choose the categorisation table (src/cma/rules/<id>.yaml; default v1). v1 is the
-# original table, frozen; an unknown id is refused. The evidence file records the
-# table's id and hash.
-CMA_RULESET=v1 cma run examples/cafe_stretched.csv
+# original table, frozen; v2 adds real UK acquirers, gateways, marketplaces, delivery
+# platforms, lenders and merchant cash advance providers, own pots and savings, cash
+# paid in (counted as trading receipts), cash-withdrawal wording, HMRC repayments,
+# refunds and explained non-trading credits. An unknown id is refused. The evidence
+# file records the table's id and hash, and under "lines" each line's id, category and
+# the rule that set it (no descriptions). CMA_RULESET=v1 is the rollback.
+CMA_RULESET=v2 cma run examples/cafe_stretched.csv
 
 # Use a real model instead of the offline one.
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
@@ -71,8 +75,8 @@ example.
 | Synthetic data | `synth.py` | Three business archetypes (café, trades, e-commerce) × three risk profiles (good, stretched, poor). Seeded. Writes the ground truth next to each statement. |
 | Ingest | `ingest.py` | CSV in: `id, date, description, amount, balance`. Refuses duplicate ids, non-ISO or future dates, out-of-order dates, loose amounts and a broken balance chain; reads newest-first files. |
 | Import | `importers/monzo.py` | Monzo export → statement CSV, locally. Monzo Flex is read as a loan. |
-| Categoriser | `categorise.py` + `cma/rules/v1.yaml` | Ordered regex rules, direction-aware, kept as validated data and chosen by `CMA_RULESET`. A transfer in is revenue only with an invoice reference. Returned DDs are linked to the debit they undo. Unmatched lines are `OTHER`, never guessed. |
-| Metrics | `metrics.py` | Sixteen figures (revenue, trend, lowest balance, days overdrawn, returned DDs, debt service cover after drawings, VAT timeliness by stagger group, non-trading money in…). Each carries the transaction ids it came from; a figure that can't be computed is n/a with the reason, never a placeholder. |
+| Categoriser | `categorise.py` + `cma/rules/v1.yaml`, `v2.yaml` | Ordered regex rules and name lists, direction-aware, kept as validated data and chosen by `CMA_RULESET`. Precedence: per-line override, protected rules (the line-type cues: returned DD, own-pot moves, HMRC, refunds; then lenders, director, capital introduced, shareholder, generic loan wording), profile names, an ambiguous verdict, firm rules, the rest of the table, the default; each line records its rule id. Under v2 a credit whose matching rules point to two or more money-in buckets (cues first; names only when no cue matches), or that has a payment rail with cash paid-in wording, is ambiguous: it stays `OTHER` (unexplained, never trading receipts) and records `v2:conflict:` with every rule it matched in either stage, the rail included, until a person overrides it or the profile names the payer. Inside one bucket the table's `category_order` picks the category (cash deposit, customer transfer, card settlement; returned payment, refund), never rule order. Names match as whole words in any script. A transfer in is revenue only with an invoice reference. Returned DDs are linked to the debit they undo. Unmatched lines are `OTHER`, never guessed. |
+| Metrics | `metrics.py` | Twenty-eight figures (revenue, trend, lowest balance, days overdrawn, returned DDs, debt service cover after drawings, VAT timeliness by stagger group, non-trading money in (M16), total money in (M17), cash inside trading receipts (M18), the seven other money-in buckets (M19-M25), the unexplained share (M26), average end-of-day balance (M27) and debt service cover including a proposed facility (M28, n/a with the reason in `cma run`, which has no case profile)…), added up in integer pence. Each carries the transaction ids it came from; a figure that can't be computed is n/a with the reason, never a placeholder. If the money-in buckets do not add up to total money in to the penny, no figures are shown: `cma run` exits 6 naming the difference in pence and the lines. |
 | Policy | `cma/policies/uk_sme_default.yaml` | Nine illustrative rules with pass / refer / fail, and what a missing figure means. Validated on load. Edit the YAML, not the code. |
 | Draft | `graph.py` + `llm.py` | The model gets the metrics table and the policy table, nothing else, and must tag every figure ([Mn]) and threshold ([Rn]). |
 | Guard | `guard.py` | Reads every number in the memo, in digits or words, back against the table: value at the precision written, unit, sign, and the tag right after it. |
