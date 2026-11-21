@@ -1,0 +1,26 @@
+{
+  "task": "T18",
+  "claims": [
+    {
+      "text": "R33: `cma review CASE` (src/cma/cli.py review_workspace) starts a loopback-only server (src/cma/review/server.py). It binds 127.0.0.1 only and refuses any other bind address. Each launch issues a new secrets.token_urlsafe(32) token. A request is refused with 403 unless it carries exactly one valid token, in ?token= or X-CMA-Token, compared with hmac.compare_digest. A request is also refused when its Host is not exactly one header equal to 127.0.0.1:<port>: no Host, a repeated Host, localhost, another port, a rebound name or an HTTP/1.0 request with no Host are all refused. Only allow-listed assets bundled in the package are served, matched against the exact path, so traversal, absolute-form targets, unknown paths and the template itself return 404. Every response carries a strict CSP (default-src 'none'; script-src 'self'; no unsafe-inline, frame-ancestors 'none'), nosniff, no-referrer and no-store. The page has no inline script, style or event handler. No Access-Control-* header is ever sent, and a foreign Origin is refused. The server takes the next free port from --port (default 8765), says so when none is free, prints the URL with its token, and keeps its request log off so the token is never logged. tests/test_review_server.py (marked contracts) covers all of this, including a subprocess run of `python -m cma.cli review <id> --no-browser` that reads the printed URL, gets 200 with the token and 403 without it.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_review_server.py",
+      "proof_output": "46 passed in 22.60s"
+    },
+    {
+      "text": "Full suite, lint and compile pass with the change.",
+      "proof_cmd": "ruff check src tests; python -m compileall -q src && echo compiled; python -m pytest -q",
+      "proof_output": "All checks passed!\ncompiled\n1998 passed in 149.10s (0:02:29)"
+    }
+  ],
+  "files_changed": [
+    "src/cma/review/__init__.py",
+    "src/cma/review/server.py",
+    "src/cma/review/static/index.html",
+    "src/cma/review/static/app.js",
+    "src/cma/review/static/app.css",
+    "src/cma/cli.py",
+    "tests/test_review_server.py",
+    "README.md"
+  ],
+  "notes": "T18 builds only the server, so the page shows the case id and label from GET /api/case, set with textContent. The case summary, drill-down and writes come in T19 to T22. The token reaches the page's assets as ?token= in their URLs (with Referrer-Policy: no-referrer) and reaches fetch calls as the X-CMA-Token header read from a meta tag. No cookie is used, because cookies are shared across loopback ports. The Host check accepts only 127.0.0.1:<port>, not localhost, to keep to R33's 'the loopback address and port'. allow_reuse_address is False, so a port another listener holds is never shared. EADDRINUSE and EACCES (Windows exclusive use) both move on to the next port. Only GET is served; every other method passes the same Host, Origin and token checks and then gets 405 with no CORS headers. The guard tests were also checked by mutation: replacing _host_ok or _token_ok with True makes the host and token tests fail."
+}

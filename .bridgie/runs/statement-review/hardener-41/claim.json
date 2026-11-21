@@ -1,0 +1,60 @@
+{
+  "task": "T18",
+  "claims": [
+    {
+      "text": "Security/authz: every route (/, /api/case, /static/*, unknown paths) and every method is behind the same per-launch token + exact loopback Host + same-Origin check before anything is served; a missing, wrong, empty or doubled token, or a bad/missing/repeated Host, gets 403 with no case data (R33).",
+      "proof_cmd": "python -m pytest tests/test_review_server.py -q -k 'token or host or cross_origin'",
+      "proof_output": "test_requests_without_the_token_are_refused, test_requests_with_a_wrong_token_are_refused, test_a_bad_host_is_refused_even_with_the_token[11 hosts], test_a_missing_or_repeated_host_is_refused, test_an_http_1_0_request_with_no_host_is_refused, test_a_cross_origin_request_is_refused all pass (file: 48 passed in 23.39s)"
+    },
+    {
+      "text": "Security/input at the boundary: only bundled assets are served, matched exactly against an allow-list built from the package at start-up; traversal, encoded traversal, NUL, absolute-URL and case-variant paths get 404; assets reference nothing outside the package; strict CSP with no inline script/style, no CORS headers ever.",
+      "proof_cmd": "python -m pytest tests/test_review_server.py -q -k 'bundled or csp or inline or cors'",
+      "proof_output": "test_nothing_but_the_bundled_assets_is_served[15 paths], test_serves_the_bundled_assets_byte_for_byte, test_the_bundled_assets_reference_nothing_outside_the_package, test_every_response_carries_a_strict_csp, test_the_page_has_no_inline_script_or_style, test_no_cors_headers_are_ever_sent pass"
+    },
+    {
+      "text": "Security/secrets: the token is never written to the request log or to stderr/stdout by the server; no new dependency (stdlib http.server, secrets, hmac only).",
+      "proof_cmd": "python -m pytest tests/test_review_server.py -q -k request_log; git diff e0b9875 -- pyproject.toml",
+      "proof_output": "test_the_request_log_never_holds_the_token passed; pyproject.toml unchanged (empty diff)"
+    },
+    {
+      "text": "Failure modes (gap found and fixed): a request carrying a body that the server never reads had its body parsed as a second request on the same keep-alive connection. Now any non-GET request, or one with Content-Length/Transfer-Encoding, closes its connection after one answer. Before the fix a probe got 2 responses for one POST; the new test asserts exactly 1.",
+      "proof_cmd": "python -m pytest tests/test_review_server.py -q -k unread_body",
+      "proof_output": "pre-fix probe: '2 responses on smuggle'; post-fix: test_an_unread_body_is_never_parsed_as_a_second_request passed"
+    },
+    {
+      "text": "Failure modes (gap found and fixed): the handler had no socket timeout (probe printed 'handler timeout None'), so an idle or half-sent request held a thread forever. _Handler.timeout = 30; a test with the timeout lowered shows a half-sent request's connection closed.",
+      "proof_cmd": "python -m pytest tests/test_review_server.py -q -k idle_connection",
+      "proof_output": "test_an_idle_connection_is_closed passed"
+    },
+    {
+      "text": "Failure modes: port in use -> next free loopback port; none free in range -> NoFreePort, which `cma review` reports as a case-store refusal (exit 2); unknown case -> exit 2 'no case'; binding anything but 127.0.0.1 is refused.",
+      "proof_cmd": "python -m pytest tests/test_review_server.py -q -k 'port or loopback or unknown_case'",
+      "proof_output": "test_takes_the_next_free_port, test_says_so_when_no_port_is_free, test_listens_on_the_loopback_interface_only, test_refuses_to_bind_anything_but_loopback, test_cma_review_refuses_an_unknown_case pass"
+    },
+    {
+      "text": "Idempotency / data: the server is read-only (GET only, 405 for every other method), writes nothing to the case folder, and adds no stored data, so there is no migration and nothing to reverse; a new token per launch (each start is independent).",
+      "proof_cmd": "python -m pytest tests/test_review_server.py -q -k 'methods_other or new_random_token'",
+      "proof_output": "test_methods_other_than_get_are_not_served, test_each_launch_issues_a_new_random_token pass"
+    },
+    {
+      "text": "Observability: `cma review` prints the URL with its token on start and 'Review workspace stopped.' on exit, proven end to end in a subprocess that reads the URL, gets 200 with the token and 403 without.",
+      "proof_cmd": "python -m pytest tests/test_review_server.py -q -k cma_review_prints",
+      "proof_output": "test_cma_review_prints_the_url_with_its_token_and_serves_it passed"
+    },
+    {
+      "text": "Regression: full suite, ruff and compileall pass with the hardening; contracts tier passes.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q && python -m pytest -q -m contracts",
+      "proof_output": "All checks passed!; compiled; full suite 1998 passed (before the two new tests) and tests/test_review_server.py 48 passed after; contracts: 557 passed, 1443 deselected"
+    },
+    {
+      "text": "Operability/docs: the workspace is a new opt-in command (nothing runs unless `cma review` is invoked), so rollback is not running it or reinstalling the previous wheel; README documents the command, its loopback-only URL, token, Host refusal and Ctrl-C stop.",
+      "proof_cmd": "git diff e0b9875 -- README.md",
+      "proof_output": "README.md gains the `cma review <id>` block (loopback only, next free port from 8765, new random token, Host check, bundled files only, Ctrl-C stops it)"
+    }
+  ],
+  "files_changed": [
+    "src/cma/review/server.py",
+    "tests/test_review_server.py"
+  ],
+  "notes": "Not applicable, with why: performance (no queries; payloads are bundled files and a two-field JSON); alerts/dashboards (local tool with no remote alerting, by design - Observability section); feature flag (new opt-in command); migrations (no stored data). Gaps for the owner: (1) the wheel's inclusion of src/cma/review/static/* is not proven by a configured tier - hatchling is not installed here, so `pip wheel --no-build-isolation` failed; hatch's packages=[\"src/cma\"] should include non-Python files, and the design's wheel check (Observability, CI) should load the bundled assets from an installed wheel. (2) No changelog file exists in the repo, so no release-note line was written. (3) Refusals are not counted or logged anywhere (the request log is off to keep the token out of it); if the owner wants a signal for repeated refused requests, that needs a design decision. (4) Neither new test is a P-property; both are marked contracts via the module's pytestmark."
+}
