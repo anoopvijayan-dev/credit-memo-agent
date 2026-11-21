@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 287,
+  "next_id": 288,
   "decisions": [
     {
       "id": "D1",
@@ -5754,6 +5754,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T00:14:11.834Z"
+    },
+    {
+      "id": "D287",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (src/cma/firm.py:67-83 supplies both defaults and resolves configured paths. src/cma/cli.py:79-86 passes one reading into the normal CLI draft. src/cma/llm.py:133 and :155 disable SDK retries. src/cma/graph.py:261-281 records the draft lock and destination. The lock still fails on reused configuration readings, on ASGI startup without lifespan, and when resuming an unlocked draft with tracing enabled after the firm has locked.); P18 fail (invariants-5.log confirms the two SDK 503 cases, direct forged-object refusals, sequential graph reuse, native MCP bind-spy tests and saved-app lifespan refusals. src/cma/llm.py:84-85 and :108-109 accept a genuine reading from an earlier run or a different root. src/cma/mcp_server.py:94-105 checks saved apps only when invoked by the ASGI host.); major: A configuration reading is accepted as authorization for any later hosted constructor or request. The identity registry proves provenance from the loader but does not bind the reading to the current run or firm root. at src/cma/llm.py:84; major: A saved ASGI app cannot prevent binding when the host disables lifespan. The runner's saved-app tests call lifespan directly, and its bind-spy tests cover the SDK's native run methods. at src/cma/mcp_server.py:94; major: A resumed review uses its historical draft lock to decide whether to disable tracing. Resuming an unlocked draft after enabling the lock can trace the review and finalization state under the current lock. at src/cma/graph.py:424; major: Concurrent invocations can overwrite each other's configuration reading because readings are stored by checkpoint thread ID while tracing is selected at invocation entry. at src/cma/graph.py:426; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T00:20:04.359Z"
     }
   ]
 }
