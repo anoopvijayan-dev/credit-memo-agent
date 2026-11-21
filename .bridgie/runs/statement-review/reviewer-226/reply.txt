@@ -1,0 +1,51 @@
+**Verdict: fail.** R31 passes on its own (owner-only permissions and the git-ignore refusal both hold), but two major defects remain in the task's profile and import commands. The runner's logs show all 42 tests in `tests/test_case_store.py` passed in both the full suite and the contracts tier, and none were skipped.
+
+**R31 (pass).**
+- **Permissions:** the case root, `cases/`, each case folder, `inputs/` and `statements/` are created 0700. Every file the store writes is 0600, and imported originals are 0400. The case-log files are opened 0600, and an existing root open to others is narrowed to 0700.
+- **Git-ignore:** `ensure_root` checks git before it makes anything. A root git does not ignore, the repository root itself, and a tree git can't answer about are all refused, and every command re-checks.
+
+**Findings:**
+1. **Major: concurrent profile changes lose an update.** `set_profile` reads the old profile and its bytes before taking the case lock (`src/cma/store.py:358`, `:362`), and the CLI builds the new profile before calling it (`src/cma/cli.py:524`). If two `cma case profile` runs overlap, the second writes over the first's logged change. Worse, if the second run's log write is refused, its undo puts back the profile as it stood before *both* runs, so `case.yaml` no longer matches the last logged hash.
+2. **Major: an import can end up in the case without a log entry, permanently.** The files are put in place before the log entry is written. A crash between the two leaves the input and statement with no log entry. Re-importing the same file then says "already imported" because the original is found by its hash (`src/cma/store.py:406`), so the import is never logged. The same happens when a save is "not confirmed" and a later repair drops its entry. The producer flagged this as an open gap; it breaks the task's promise that each command is appended to the case log.
+3. **Minor: an account key ending in a newline is accepted.** The account-key pattern uses `$`, which in Python also matches before a trailing newline (`src/cma/store.py:49`). So `--account $'main\n'` passes and creates `statements/main\n.csv`, a second statement for what reads as the "main" account.
+
+```json
+{
+  "criteria": [
+    {
+      "id": "R31",
+      "tier": "adversarial",
+      "check": "Owner-only: src/cma/store.py:121 _private_dir makes root, cases/, the case folder, inputs/ and statements/ 0700, refuses a folder another user owns or a symlink, and chmods an existing open root; _write_private (mkstemp 0600, chmod, rename) writes the profile and statements 0600 and inputs 0400; the case-log gate, lock and log are opened 0600 (src/cma/case.py:848,874,1210), and its temporary files use mkstemp (case.py:1420). Git: ensure_root (store.py:136) calls check_not_in_git (store.py:92) before making anything, finds the nearest .git, refuses a root that is the work tree itself, runs `git check-ignore -q -- rel/` with the GIT_* environment removed and a 30s timeout (store.py:107), and refuses on exit 1, on any other answer, or when git cannot run; case_folder re-runs the check for every command. Proof: test_case_root_folders_and_files_are_owner_only, test_an_existing_root_open_to_others_is_made_owner_only, test_root_inside_a_git_tree_that_does_not_ignore_it_is_refused, 4 x test_root_inside_a_git_tree_that_ignores_it_is_allowed, test_root_that_is_the_git_tree_itself_is_refused, test_root_in_a_tree_git_cannot_be_asked_about_is_refused and test_existing_root_later_unignored_is_refused_by_every_command, all PASSED in contracts-4.log and specified-3.log (42/42 test_case_store tests passed, none skipped).",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-226/contracts-4.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/store.py",
+      "line": 358,
+      "criterion": "R31",
+      "claim": "Concurrent update: set_profile reads the old profile (line 358) and the bytes it would restore (line 362) before _recorded takes the case lock, and the CLI builds the new profile from a load_profile call outside the lock (cli.py:524). Two overlapping `cma case profile` runs lose one change: the second writes a profile based on the stale read over the first's logged change, and its profile_changed entry lists `fields` against the stale profile. If the second run's append is refused, its undo puts back `previous`, the profile from before both runs, so case.yaml no longer matches the profile_sha256 of the last logged entry.",
+      "repro": "Process A runs `cma case profile <id> --director 'Jane Doe'` and process B runs `cma case profile <id> --vat-stagger 2`, both loading case.yaml before either takes the lock (for example, pause B after cli.py:524). A takes the lock, writes and logs. B then takes the lock, require_intact passes, and B writes {vat_stagger: 2, directors: []}. Jane Doe is gone from case.yaml, though A's log entry recorded the change. Make B's CaseLog.append raise SaveNotRecorded and case.yaml goes back to the profile from before A, while the log's last profile_sha256 is A's."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/store.py",
+      "line": 406,
+      "criterion": "R31",
+      "claim": "Partial failure: import_file puts inputs/<sha> and statements/<account>.csv in place (lines 445-447) before _recorded appends the log entry (line 190). A crash between the two, or a SaveNotConfirmed save whose entry a later repair removes, leaves the import in the case with no log entry. Because duplicates are detected by the file in inputs/ (line 406), importing the same file again returns already=True and never appends the entry, so the import is permanently missing from the case log. This breaks the task's promise that each import is appended to the case log. The producer listed it as an open gap rather than fixing it.",
+      "repro": "Run store.import_file(folder, src, 'csv') with CaseLog.append patched to os._exit(1) (a hard kill after the files are written). Then run `cma case import <id> src --format csv`: it prints 'already imported' and exits 0. case.for_case(folder).entries() holds only case_created, but statements/main.csv and inputs/<sha>.csv exist."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/store.py",
+      "line": 49,
+      "criterion": "R31",
+      "claim": "Boundary values: ACCOUNT_KEY uses `$`, which in Python's re also matches before a trailing newline, so an account key 'main\\n' passes the check. The import then creates statements/'main\\n.csv' beside main.csv, a second statement for what reads as the same account, and logs account 'main\\n'. CASE_ID (line 48) has the same pattern but is harmless, because the folder lookup fails.",
+      "repro": "store.import_file(folder, other_csv, 'csv', account='main\\n') after a 'main' import: it is accepted and statements/ lists 'main.csv' and 'main\\n.csv'. Use re.fullmatch or \\Z to refuse it."
+    }
+  ],
+  "verdict": "fail"
+}
+```

@@ -162,12 +162,12 @@
       "depends_on": [
         "T12"
       ],
-      "status": "verify",
+      "status": "failed",
       "attempts": 1,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T13",
-      "evidence": null,
-      "escalation": null
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-229/evidence.json",
+      "escalation": "attempt 1 of 3 fail: major: Concurrent update: set_profile reads the old profile (line 358) and the bytes it would restore (line 362) before _recorded takes the case lock, and the CLI builds the new profile from a load_profile call outside the lock (cli.py:524). Two overlapping `cma case profile` runs lose one change: the second writes a profile based on the stale read over the first's logged change, and its profile_changed entry lists `fields` against the stale profile. If the second run's append is refused, its undo puts back `previous`, the profile from before both runs, so case.yaml no longer matches the profile_sha256 of the last logged entry. at src/cma/store.py:358; major: Partial failure: import_file puts inputs/<sha> and statements/<account>.csv in place (lines 445-447) before _recorded appends the log entry (line 190). A crash between the two, or a SaveNotConfirmed save whose entry a later repair removes, leaves the import in the case with no log entry. Because duplicates are detected by the file in inputs/ (line 406), importing the same file again returns already=True and never appends the entry, so the import is permanently missing from the case log. This breaks the task's promise that each import is appended to the case log. The producer listed it as an open gap rather than fixing it. at src/cma/store.py:406; reviewer verdict fail"
     },
     {
       "id": "T16",
