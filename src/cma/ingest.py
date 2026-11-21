@@ -243,12 +243,7 @@ def _head(text: str, bad: int | None) -> tuple[list[str], list[str], int]:
     """The stripped header, the file's physical lines, and how many lines the header used. A
     header cell too long for the reader, or with a bad byte, is raised, in cell order (T04
     review 45). Lines are counted as the file has them, blank lines included (T04 review 20)."""
-    limit = csv.field_size_limit()
-    for cell in _split_record(text):
-        if len(cell) > limit:
-            raise CsvRecordError(f"line 1: {TOO_LONG} (header): longer than {limit:,} characters", too_long=True)
-        if _NOT_UTF8_BYTE.search(cell):
-            raise not_utf8(1, bad)
+    _check_header(text, bad)
     physical = list(io.StringIO(text, newline=""))
     reader = csv.DictReader(io.StringIO(text, newline=""), restval="")
     try:
@@ -258,20 +253,30 @@ def _head(text: str, bad: int | None) -> tuple[list[str], list[str], int]:
     return header, physical, reader.reader.line_num
 
 
+def _check_header(text: str, bad: int | None) -> list[str]:
+    """The header's cells, refused cell by cell in order (a cell too long for the reader, or
+    with a bad byte, T04 review 45), and refused if a quoted field in it is never closed: it
+    would swallow the whole file, which is then no export with no transactions but a
+    header that cannot be read, named on line 1 (T04 review 53)."""
+    limit = csv.field_size_limit()
+    cells, ended = _split_record_ended(text)
+    for cell in cells:
+        if len(cell) > limit:
+            raise CsvRecordError(f"line 1: {TOO_LONG} (header): longer than {limit:,} characters", too_long=True)
+        if _NOT_UTF8_BYTE.search(cell):
+            raise not_utf8(1, bad)
+    if not ended and _ends_in_quotes(text):
+        raise CsvRecordError("line 1: a quoted field in the header is not closed before the end of the file")
+    return cells
+
+
 def read_header(data: bytes) -> list[str]:
     """Only a file's header, read from its first record alone, so an importer can check its
     columns before any record is read (T04 review 51)."""
     text, bad = _decoded(data)
     if not text or text[0] in "\r\n":
         return []
-    limit = csv.field_size_limit()
-    cells = _split_record(text)
-    for cell in cells:
-        if len(cell) > limit:
-            raise CsvRecordError(f"line 1: {TOO_LONG} (header): longer than {limit:,} characters", too_long=True)
-        if _NOT_UTF8_BYTE.search(cell):
-            raise not_utf8(1, bad)
-    return [c.strip() for c in cells]
+    return [c.strip() for c in _check_header(text, bad)]
 
 
 def iter_data(data: bytes):
@@ -437,7 +442,8 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
             raise StatementError(path, ["no such file"])
         data = path.read_bytes()
     try:
-        header, rows, unreadable = read_data(data)
+        # Records are read one at a time, and each is checked as it is read (T04 review 53).
+        header, records = iter_data(data)
     except CsvRecordError as e:
         raise StatementError(path, [str(e)], ["too_long" if e.too_long else "file"]) from None
     # A column named twice would let the second silently replace the first's value on every
@@ -455,9 +461,6 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         raise StatementError(path, [
             f"missing column(s): {', '.join(missing)} (found: {', '.join(header) or 'none'}).{hint}"
         ])
-    if not rows and unreadable is None:
-        raise StatementError(path, ["no transactions"])
-
     problems: list[str] = []
     kinds: list[str] = []
 
@@ -466,27 +469,12 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         kinds.append(kind)
 
     extra_amounts: list[int] = []  # a readable amount in a record that cannot be read whole
-    if unreadable is not None:  # the records before it are still checked (T04 review 22)
-        add("too_long" if unreadable.too_long else "line", str(unreadable))
-        # Its own cells that can be read are checked too (T04 reviews 36-37): every one, if all
-        # the columns are readable; otherwise its amount, toward money in or out.
-        if unreadable.row is not None and set(REQUIRED) <= unreadable.readable:
-            rows = [*rows, (unreadable.line, unreadable.row)]
-        elif unreadable.row is not None:
-            # Each readable money cell is still checked against the line limit, the balance as
-            # well as the amount (T04 review 43); a readable amount counts toward the flows.
-            for field in ("amount", "balance"):
-                raw = unreadable.row.get(field)
-                if field not in unreadable.readable:
-                    continue
-                if _over_limit(raw):
-                    add("limit", f"line {unreadable.line}: {field} {shown(raw)} is {AT_LIMIT}; no figure could "
-                        "be reported to the penny")
-                elif field == "amount" and (value := _number(raw)) is not None:
-                    extra_amounts.append(float_pence(value))
     parsed: list[tuple[int, str, date | None, str, float | None, float | None]] = []
     seen: dict[str, int] = {}
-    for i, r in rows:  # i: the record's line in the file, blank lines counted
+
+    def check(i: int, r: dict) -> None:
+        """One record's own values, checked as it is read; i is its line in the file, blank
+        lines counted."""
         if None in r:
             add("line", f"line {i}: more fields than the header has columns")
         tid = (r["id"] or "").strip()
@@ -517,6 +505,34 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
             add("line", f"line {i}: balance {shown(r['balance'])} is not a plain number like 2304.17 "
                             "(under £10,000,000,000,000)")
         parsed.append((i, tid, d, (r["description"] or "").strip(), amount, balance))
+
+    any_record = False
+    for line, row, problem in records:
+        any_record = True
+        if problem is None:
+            check(line, row)
+            continue
+        # A record that cannot be read whole: reading stops at it, and the records before it
+        # are already checked (T04 review 22).
+        add("too_long" if problem.too_long else "line", str(problem))
+        # Its own cells that can be read are checked too (T04 reviews 36-37): every one, if all
+        # the columns are readable; otherwise its money cells, against the line limit, the
+        # balance as well as the amount (T04 review 43), and a readable amount toward the flows.
+        if row is not None and set(REQUIRED) <= problem.readable:
+            check(line, row)
+        elif row is not None:
+            for field in ("amount", "balance"):
+                raw = row.get(field)
+                if field not in problem.readable:
+                    continue
+                if _over_limit(raw):
+                    add("limit", f"line {line}: {field} {shown(raw)} is {AT_LIMIT}; no figure could "
+                        "be reported to the penny")
+                elif field == "amount" and (value := _number(raw)) is not None:
+                    extra_amounts.append(float_pence(value))
+        break
+    if not any_record:
+        raise StatementError(path, ["no transactions"])
 
     # Banks export newest first or oldest first. Decide from the dates, then insist
     # the whole file runs one way.

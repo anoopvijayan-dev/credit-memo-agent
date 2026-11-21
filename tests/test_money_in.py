@@ -1512,3 +1512,46 @@ def test_monzo_refuses_an_unreadable_description_on_its_own_row(tmp_path, small_
                    "bad id!,02/01/2026,09:00,Faster,ACME,-1.00,GBP,89.00,\n")
     with pytest.raises(monzo.MonzoImportError, match="line 2: the description would be"):
         monzo.convert(src, tmp_path / "o.csv")
+
+
+@pytest.mark.contracts
+def test_the_loader_checks_each_record_as_it_is_read(tmp_path, monkeypatch):
+    """T04 review 53: the statement loader parsed every record before checking any record's
+    values; each is now checked as it is read, one record ahead at most (revision 30)."""
+    reads = [0]
+    at_first_check = []
+    real_next, real_number = ingest._Feed.__next__, ingest._number
+
+    def counted(self):
+        reads[0] += 1
+        return real_next(self)
+
+    def watched(raw):
+        if not at_first_check:
+            at_first_check.append(reads[0])
+        return real_number(raw)
+
+    monkeypatch.setattr(ingest._Feed, "__next__", counted)
+    monkeypatch.setattr(ingest, "_number", watched)
+    rows = [f"T{k},2026-01-01,A,1.00,{k + 1}.00" for k in range(5000)]
+    csv = tmp_path / "s.csv"
+    csv.write_text("id,date,description,amount,balance\n" + "\n".join(rows) + "\n")
+    ingest.load_csv(csv, today=date(2026, 6, 1))
+    assert at_first_check and at_first_check[0] <= 3
+
+
+@pytest.mark.contracts
+def test_a_header_with_a_quote_never_closed_is_refused_on_line_one(tmp_path):
+    """T04 review 53: a quoted field never closed in the header swallowed the file, which was
+    then reported as an export with no transactions."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_text('Transaction ID,"Date,Time,Type,Name,Amount,Currency,Balance\n'
+                   "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n")
+    with pytest.raises(monzo.MonzoImportError, match="line 1: a quoted field in the header is not closed"):
+        monzo.convert(src, tmp_path / "o.csv")
+    csv = tmp_path / "s.csv"
+    csv.write_text('id,"date,description,amount,balance\nT1,2026-01-01,A,1.00,1.00\n')
+    with pytest.raises(ingest.StatementError, match="line 1: a quoted field in the header is not closed"):
+        ingest.load_csv(csv, today=date(2026, 6, 1))
