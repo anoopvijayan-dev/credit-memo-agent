@@ -48,6 +48,7 @@ app.add_typer(import_app, name="import")
 case_app = typer.Typer(no_args_is_help=True, help="Work with a case folder.")
 app.add_typer(case_app, name="case")
 console = Console()
+err_console = Console(stderr=True)  # warnings, so stdout keeps a command's own output
 
 
 @app.command()
@@ -501,11 +502,16 @@ def case_new(
     demo: bool = typer.Option(False, "--demo", help="Synthetic data or your own statements, not an applicant's (R48)."),
     label: str | None = typer.Option(None, "--label", help="Your own label for the case. Kept in the case folder."),
 ):
-    """Make a case under the case root (CMA_HOME, or private/cma) and print its random id."""
+    """Make a case under the case root (CMA_HOME, or private/cma) and print its random id.
+    Warns first, on stderr, when the root lies in a OneDrive, Dropbox, Google Drive or
+    iCloud Drive folder, and records the warning in the case log."""
     from . import store
 
+    def warn(message: str) -> None:  # before the case is made (R32)
+        err_console.print(f"[yellow]Warning:[/yellow] {escape(message)}")
+
     with _case_errors():
-        case_id = store.new_case(label=label, demo=demo)
+        case_id = store.new_case(label=label, demo=demo, warn=warn)
     console.print(case_id)
 
 

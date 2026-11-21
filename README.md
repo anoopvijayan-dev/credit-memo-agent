@@ -53,6 +53,8 @@ cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out 
 
 # A case: a folder under the case root (CMA_HOME, default private/cma; owner-only, and
 # refused inside a git tree that does not ignore it). Each command is logged in the case.
+# A root inside a OneDrive, Dropbox, Google Drive or iCloud Drive folder gets a warning
+# on stderr before the case is made, recorded in the case log: keep cases on a local disk.
 cma case new --demo --label "Cafe trial"          # prints a random case id
 cma case profile <id> --director "Jane Doe" --own-account "ACME HOLDINGS" --proposed-repayment 1500
 cma case import <id> private/statement.csv --format csv
@@ -153,6 +155,9 @@ tests named after each finding.
 - The categoriser knows the synthetic acquirer names. Card revenue from a real
   acquirer it doesn't recognise lands in M16 and refers the case until a rule is added.
 - Policy thresholds are illustrative. They are not any lender's real policy.
+- The cloud-sync warning knows each client's own folder names, the OneDrive
+  variables Windows sets and Dropbox's info file. A folder synced under any other
+  name, or a network share, is not detected.
 
 ## Data
 
