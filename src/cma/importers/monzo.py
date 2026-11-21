@@ -29,7 +29,7 @@ from __future__ import annotations
 import csv
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from ..categorise import INVOICE_REF
@@ -66,21 +66,26 @@ class ImportResult:
     skipped_non_gbp: int
 
 
-def _parse_when(raw: str | None) -> tuple[date, str | None]:
-    """The row's date, and the time of day its Date cell carries, if it is a timestamp
-    ("2026-01-01T10:00:00Z"), as the wall-clock time written, so rows are walked in the order
-    they happened (T04 review 62)."""
+def _parse_when(raw: str | None) -> tuple[date, str | None, bool]:
+    """The row's date, the moment its Date cell names if it is a timestamp
+    ("2026-01-01T10:00:00Z"), as a sortable text, and whether that timestamp carries a UTC
+    offset. A timestamp with an offset is the moment in UTC, so rows written with different
+    offsets are walked in the order they happened (T04 reviews 62 and 63); one without is the
+    wall-clock time written."""
     raw = (raw or "").strip()
     for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
         try:
-            return datetime.strptime(raw, fmt).date(), None
+            return datetime.strptime(raw, fmt).date(), None, False
         except ValueError:
             pass
     try:
         when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError as e:
         raise MonzoImportError(f"unrecognised date {shown(raw)}") from e
-    return when.date(), when.time().isoformat()
+    if when.tzinfo is not None:
+        moment = when.astimezone(timezone.utc).replace(tzinfo=None)
+        return when.date(), moment.isoformat(timespec="microseconds"), True
+    return when.date(), when.isoformat(timespec="microseconds"), False
 
 
 
@@ -256,11 +261,14 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             seen.add(tid)
             line_of[tid] = i
             try:
-                d, written_time = _parse_when(r["Date"])
+                d, moment, offset = _parse_when(r["Date"])
             except MonzoImportError as e:
                 raise MonzoImportError(f"line {i}: {e}") from None
-            # The Time column, or else the time the Date cell carries (T04 review 62).
-            t = (r.get("Time") or "").strip() or written_time or "00:00:00"
+            # When it happened, to walk the rows in order: the moment a timestamp with a UTC
+            # offset names; else the date with the Time column; else the time a timestamp in
+            # Date carries (T04 reviews 62 and 63).
+            clock = (r.get("Time") or "").strip()
+            t = moment if offset or (moment and not clock) else f"{d.isoformat()}T{clock or '00:00:00'}"
             bal = _money(r["Balance"], "Balance", i) if has_balance and (r.get("Balance") or "").strip() else None
             refs = references(r.get("Notes and #tags"), r.get("Description"))
             desc = describe(r.get("Type", ""), r.get("Name", ""), amount, refs)
@@ -294,7 +302,7 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             "this export has no Balance column; pass --opening-balance (the balance just "
             "before the first transaction, from your Monzo statement)"
         )
-    parsed.sort(key=lambda x: (x[0], x[1], x[2]))
+    parsed.sort(key=lambda x: (x[1], x[2]))  # when it happened, then Transaction ID
     first = parsed[0]
     # Everything below is whole pence (T04 review 4).
     implied = opening_before(first[5], first[4]) if first[5] is not None else None

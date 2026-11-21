@@ -808,6 +808,22 @@ def test_monzo_walks_rows_by_the_time_their_date_cell_carries(tmp_path):
 
 
 @pytest.mark.contracts
+def test_monzo_walks_timestamps_with_different_offsets_in_the_order_they_happened(tmp_path):
+    """T04 review 63 / R2: timestamps in Date lost their UTC offset, so rows written with
+    different offsets were walked by their wall-clock times and a consistent export was refused."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    # 10:30+02:00 is 08:30 UTC, before 09:00+00:00, though its wall-clock time is later.
+    src.write_text("Transaction ID,Date,Type,Name,Amount,Currency,Balance\n"
+                   "tx_a,2026-01-01T09:00:00+00:00,Faster payment,ACME,-5.00,GBP,85.00\n"
+                   "tx_b,2026-01-01T10:30:00+02:00,Faster payment,ACME,-10.00,GBP,90.00\n")
+    r = monzo.convert(src, tmp_path / "o.csv")
+    assert r.opening_balance == 100.0 and r.closing_balance == 85.0
+    assert [line.split(",")[0] for line in (tmp_path / "o.csv").read_text().splitlines()[1:]] == ["tx_b", "tx_a"]
+
+
+@pytest.mark.contracts
 def test_a_record_too_long_to_read_with_a_bad_byte_names_both(tmp_path):
     """T04 review 58 / R2: a record with a field too long to read and a separate cell that is not
     UTF-8 was refused as too long only; the bad byte was found and then dropped."""
