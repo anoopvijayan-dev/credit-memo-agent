@@ -1,0 +1,386 @@
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index d046180..f8a49cb 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -48,6 +48,7 @@ app.add_typer(import_app, name="import")
+ case_app = typer.Typer(no_args_is_help=True, help="Work with a case folder.")
+ app.add_typer(case_app, name="case")
+ console = Console()
++err_console = Console(stderr=True)  # warnings, so stdout keeps a command's own output
+ 
+ 
+ @app.command()
+@@ -501,11 +502,16 @@ def case_new(
+     demo: bool = typer.Option(False, "--demo", help="Synthetic data or your own statements, not an applicant's (R48)."),
+     label: str | None = typer.Option(None, "--label", help="Your own label for the case. Kept in the case folder."),
+ ):
+-    """Make a case under the case root (CMA_HOME, or private/cma) and print its random id."""
++    """Make a case under the case root (CMA_HOME, or private/cma) and print its random id.
++    Warns first, on stderr, when the root lies in a OneDrive, Dropbox, Google Drive or
++    iCloud Drive folder, and records the warning in the case log."""
+     from . import store
+ 
++    def warn(message: str) -> None:  # before the case is made (R32)
++        err_console.print(f"[yellow]Warning:[/yellow] {escape(message)}")
++
+     with _case_errors():
+-        case_id = store.new_case(label=label, demo=demo)
++        case_id = store.new_case(label=label, demo=demo, warn=warn)
+     console.print(case_id)
+ 
+ 
+diff --git a/src/cma/store.py b/src/cma/store.py
+index 867f6b2..816ddfa 100644
+--- a/src/cma/store.py
++++ b/src/cma/store.py
+@@ -12,6 +12,9 @@ made them (0700), and every file this module writes is 0600 (inputs 0400), so a
+ statements, profile, logs and outputs never sit where another user can read them (R31).
+ A root inside a git working tree that does not ignore it is refused before anything is
+ made, because a case committed by mistake would publish an applicant's bank data (R31).
++A root inside a folder a known cloud-sync client uploads (OneDrive, Dropbox, Google
++Drive, iCloud Drive) is not refused, but `cma case new` warns before making the case and
++records the warning as the case log's second entry (R32).
+ 
+ Every change to a case (its creation, a profile change, an import) is appended to the case
+ log while this process holds the case (R42), after the files are in place; if the log
+@@ -22,17 +25,19 @@ Messages name files by hash or account key, never by their content.
+ from __future__ import annotations
+ 
+ import hashlib
++import json
+ import os
+ import re
+ import secrets
+ import shutil
+ import subprocess
+ import tempfile
++import warnings
+ from collections.abc import Callable, Iterator
+ from contextlib import contextmanager, suppress
+ from dataclasses import dataclass, field
+ from decimal import Decimal, InvalidOperation
+-from pathlib import Path
++from pathlib import Path, PurePath
+ from typing import Any
+ 
+ import yaml
+@@ -119,6 +124,97 @@ def check_not_in_git(root: Path) -> None:
+                         "whether it is ignored; refused")
+ 
+ 
++# --- cloud-sync folders (R32) ----------------------------------------------------------
++
++# Windows sets these to the folder each signed-in OneDrive account syncs, whatever its name.
++ONEDRIVE_VARS = ("OneDrive", "OneDriveCommercial", "OneDriveConsumer")
++
++
++class SyncFolderWarning(UserWarning):
++    """The case root lies inside a folder a known cloud-sync client uploads (R32)."""
++
++
++@dataclass(frozen=True)
++class SyncFolder:
++    client: str         # OneDrive, Dropbox, Google Drive or iCloud Drive
++    folder: PurePath    # the synced folder that holds the path
++
++
++def _client_named(name: str, before: str | None) -> str | None:
++    """The client whose synced folder is named `name` (one path component), as each client
++    lays it out on Windows, macOS (~/Library/CloudStorage, ~/Library/Mobile Documents) and
++    Linux; `before` is the component above it. None for any other name."""
++    n = name.casefold()
++    if n == "onedrive" or n.startswith(("onedrive - ", "onedrive-")):
++        return "OneDrive"
++    if n == "dropbox" or n.startswith("dropbox-") or re.fullmatch(r"dropbox \(.+\)", n):
++        return "Dropbox"
++    if n in ("google drive", "googledrive", "my drive") or n.startswith("googledrive-"):
++        return "Google Drive"
++    if n in ("iclouddrive", "icloud drive", "com~apple~clouddocs") or (
++            n == "mobile documents" and (before or "").casefold() == "library"):
++        return "iCloud Drive"
++    return None
++
++
++def _dropbox_roots(home: Path, env: dict[str, str]) -> list[Path]:
++    """The folders Dropbox's own info file says it syncs, which may have any name."""
++    places = [home / ".dropbox" / "info.json"]
++    places += [Path(env[v]) / "Dropbox" / "info.json" for v in ("APPDATA", "LOCALAPPDATA") if env.get(v)]
++    roots = []
++    for place in places:
++        try:
++            info = json.loads(place.read_text(encoding="utf-8"))
++        except (OSError, ValueError):
++            continue  # no file, or one we cannot read: it names nothing
++        if isinstance(info, dict):
++            roots += [Path(a["path"]) for a in info.values()
++                      if isinstance(a, dict) and isinstance(a.get("path"), str) and a["path"]]
++    return roots
++
++
++def _within(path: PurePath, root: PurePath) -> bool:
++    a = [p.casefold() for p in path.parts]
++    b = [p.casefold() for p in root.parts]
++    return len(b) > 0 and a[:len(b)] == b
++
++
++def sync_folder(path: PurePath, *, home: Path | None = None,
++                env: dict[str, str] | None = None) -> SyncFolder | None:
++    """The known cloud-sync folder that holds `path`, or None (R32). A folder is known by
++    its client's own name for it, by the OneDrive variables Windows sets, or by Dropbox's
++    info file; a symlink is followed, since the files land where it points. This is a
++    warning, not a lock: a folder synced under a name no client uses is not seen."""
++    env = dict(os.environ) if env is None else env
++    home = Path.home() if home is None else home
++    paths = [path]
++    if isinstance(path, Path):
++        with suppress(OSError, RuntimeError):
++            resolved = path.resolve()
++            if resolved != path:
++                paths.append(resolved)
++    roots = [("OneDrive", PurePath(env[v])) for v in ONEDRIVE_VARS
++             if env.get(v) and PurePath(env[v]).is_absolute()]
++    roots += [("Dropbox", r) for r in _dropbox_roots(home, env) if r.is_absolute()]
++    for p in paths:
++        for client, root in roots:
++            if _within(p, root):
++                return SyncFolder(client, type(p)(root))
++        parts = p.parts
++        for i, part in enumerate(parts):
++            client = _client_named(part, parts[i - 1] if i else None)
++            if client:
++                return SyncFolder(client, type(p)(*parts[: i + 1]))
++    return None
++
++
++def sync_warning(root: Path, found: SyncFolder) -> str:
++    return (f"the case root {root} lies inside {found.client}'s folder ({found.folder}). "
++            f"{found.client} uploads what that folder holds, so an applicant's statements and "
++            f"profile would leave this machine. Keep cases in a local folder no sync client "
++            f"manages (set CMA_HOME). This warning is recorded in the case log.")
++
++
+ def _private_dir(path: Path) -> None:
+     """Make `path` (one level) owner-only, or make an existing one so. A folder another user
+     owns is refused: this user cannot keep it private."""
+@@ -344,10 +440,22 @@ def profile_names(profile: dict[str, Any]):
+ # --- commands --------------------------------------------------------------------------
+ 
+ 
+-def new_case(*, label: str | None = None, demo: bool = False, root: Path | None = None) -> str:
+-    """Make a case folder with a random id, its profile and its first log entry."""
++def new_case(*, label: str | None = None, demo: bool = False, root: Path | None = None,
++             warn: Callable[[str], None] | None = None) -> str:
++    """Make a case folder with a random id, its profile and its first log entry.
++
++    If the case root lies inside a folder a known cloud-sync client uploads, the warning is
++    given before anything of the case is made, through `warn` (a Python SyncFolderWarning
++    when none is given), and is recorded as the case log's second entry (R32)."""
+     profile = validate_profile({"label": label, "demo": demo})
+     root = ensure_root(root)
++    found = sync_folder(root)
++    message = sync_warning(root, found) if found else None
++    if message:
++        if warn is None:
++            warnings.warn(message, SyncFolderWarning, stacklevel=2)
++        else:
++            warn(message)
+     for _ in range(8):
+         case_id = secrets.token_hex(8)
+         folder = root / CASES / case_id
+@@ -367,6 +475,11 @@ def new_case(*, label: str | None = None, demo: bool = False, root: Path | None
+         with log.writer():
+             log.append("case_created", {"case": case_id, "demo": profile["demo"],
+                                         "profile_sha256": profile_sha256(profile)}, expected=0)
++            if found:
++                log.append("sync_folder_warning", {"client": found.client,
++                                                   "sync_folder": str(found.folder),
++                                                   "case_root": str(root),
++                                                   "warning": message}, expected=1)
+     except BaseException:
+         shutil.rmtree(folder, ignore_errors=True)  # no half-made case is left behind
+         raise
+diff --git a/tests/test_sync_folder.py b/tests/test_sync_folder.py
+new file mode 100644
+index 0000000..7763ef1
+--- /dev/null
++++ b/tests/test_sync_folder.py
+@@ -0,0 +1,179 @@
++"""R32: warn before creating a case inside a folder a known cloud-sync client uploads
++(OneDrive, Dropbox, Google Drive, iCloud Drive), and record the warning in the case log.
++
++Path fixtures per client, as each client lays its folder out on Windows, macOS and Linux.
++"""
++
++from __future__ import annotations
++
++import json
++from pathlib import Path, PureWindowsPath
++
++import pytest
++from typer.testing import CliRunner
++
++from cma import case, store
++from cma.cli import app
++
++runner = CliRunner()
++
++# (client, path of a case root inside its synced folder, the synced folder itself)
++CLIENT_PATHS = [
++    ("OneDrive", "/Users/ann/OneDrive/cases", "/Users/ann/OneDrive"),
++    ("OneDrive", "/Users/ann/OneDrive - Contoso Ltd/Underwriting/cma", "/Users/ann/OneDrive - Contoso Ltd"),
++    ("OneDrive", "/Users/ann/Library/CloudStorage/OneDrive-Personal/cma",
++     "/Users/ann/Library/CloudStorage/OneDrive-Personal"),
++    ("OneDrive", "/Users/ann/Library/CloudStorage/OneDrive-ContosoLtd/x", "/Users/ann/Library/CloudStorage/OneDrive-ContosoLtd"),
++    ("Dropbox", "/home/ann/Dropbox/work/cma", "/home/ann/Dropbox"),
++    ("Dropbox", "/Users/ann/Dropbox (Contoso)/cma", "/Users/ann/Dropbox (Contoso)"),
++    ("Dropbox", "/Users/ann/Library/CloudStorage/Dropbox/cma", "/Users/ann/Library/CloudStorage/Dropbox"),
++    ("Dropbox", "/Users/ann/Library/CloudStorage/Dropbox-Contoso/cma", "/Users/ann/Library/CloudStorage/Dropbox-Contoso"),
++    ("Google Drive", "/Users/ann/Google Drive/cma", "/Users/ann/Google Drive"),
++    ("Google Drive", "/Users/ann/Library/CloudStorage/GoogleDrive-ann@example.com/My Drive/cma",
++     "/Users/ann/Library/CloudStorage/GoogleDrive-ann@example.com"),
++    ("Google Drive", "/Volumes/GoogleDrive/My Drive/cma", "/Volumes/GoogleDrive"),
++    ("iCloud Drive", "/Users/ann/Library/Mobile Documents/com~apple~CloudDocs/cma",
++     "/Users/ann/Library/Mobile Documents"),
++    ("iCloud Drive", "/Users/ann/Library/Mobile Documents/iCloud~com~apple~Pages/Documents/cma",
++     "/Users/ann/Library/Mobile Documents"),
++    ("iCloud Drive", "/Users/ann/iCloudDrive/cma", "/Users/ann/iCloudDrive"),
++]
++
++WINDOWS_PATHS = [
++    ("OneDrive", r"C:\Users\ann\OneDrive\cma", r"C:\Users\ann\OneDrive"),
++    ("OneDrive", r"C:\Users\ann\OneDrive - Contoso Ltd\cma", r"C:\Users\ann\OneDrive - Contoso Ltd"),
++    ("Dropbox", r"C:\Users\ann\Dropbox\cma", r"C:\Users\ann\Dropbox"),
++    ("Google Drive", r"G:\My Drive\cma", r"G:\My Drive"),
++    ("iCloud Drive", r"C:\Users\ann\iCloudDrive\cma", r"C:\Users\ann\iCloudDrive"),
++]
++
++NOT_SYNCED = [
++    "/home/ann/private/cma",
++    "/Users/ann/Documents/cases",
++    "/Users/ann/Dropboxes/cma",          # a name that only begins like a client's
++    "/Users/ann/my-onedrive-notes/cma",  # a name that only holds a client's
++    "/Users/ann/Library/Mobile Documents Backup/cma",
++]
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("client, path, folder", CLIENT_PATHS)
++def test_each_client_folder_is_recognised(client, path, folder, tmp_path):
++    found = store.sync_folder(Path(path), home=tmp_path, env={})
++    assert found is not None
++    assert (found.client, found.folder) == (client, Path(folder))
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("client, path, folder", WINDOWS_PATHS)
++def test_each_client_folder_is_recognised_on_windows_paths(client, path, folder, tmp_path):
++    found = store.sync_folder(PureWindowsPath(path), home=tmp_path, env={})
++    assert found is not None
++    assert (found.client, str(found.folder)) == (client, folder)
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("path", NOT_SYNCED)
++def test_an_ordinary_folder_is_not_taken_for_a_sync_folder(path, tmp_path):
++    assert store.sync_folder(Path(path), home=tmp_path, env={}) is None
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("var", ["OneDrive", "OneDriveCommercial", "OneDriveConsumer"])
++def test_onedrive_folder_named_by_its_environment_variable(var, tmp_path):
++    synced = tmp_path / "Work Files"  # renamed: only the client's variable says it is OneDrive
++    found = store.sync_folder(synced / "cma", home=tmp_path, env={var: str(synced)})
++    assert found is not None and (found.client, found.folder) == ("OneDrive", synced)
++
++
++@pytest.mark.contracts
++def test_dropbox_folder_named_by_its_info_file(tmp_path):
++    home = tmp_path / "home"
++    synced = tmp_path / "Team Files"  # a Dropbox folder moved and renamed
++    (home / ".dropbox").mkdir(parents=True)
++    (home / ".dropbox" / "info.json").write_text(json.dumps({"business": {"path": str(synced)}}))
++    found = store.sync_folder(synced / "cma", home=home, env={})
++    assert found is not None and (found.client, found.folder) == ("Dropbox", synced)
++
++
++@pytest.mark.contracts
++def test_a_malformed_dropbox_info_file_is_ignored(tmp_path):
++    (tmp_path / ".dropbox").mkdir()
++    (tmp_path / ".dropbox" / "info.json").write_text("{not json")
++    assert store.sync_folder(tmp_path / "cma", home=tmp_path, env={}) is None
++
++
++@pytest.mark.contracts
++def test_a_symlink_into_a_synced_folder_is_followed(tmp_path):
++    synced = tmp_path / "Dropbox" / "cma"
++    synced.mkdir(parents=True)
++    link = tmp_path / "plain"
++    link.symlink_to(synced, target_is_directory=True)
++    found = store.sync_folder(link, home=tmp_path, env={})
++    assert found is not None and found.client == "Dropbox"
++
++
++# --- creating a case -------------------------------------------------------------------
++
++
++def _isolate(monkeypatch, tmp_path):
++    """No real client variable or info file of the machine running the tests counts."""
++    for var in store.ONEDRIVE_VARS:
++        monkeypatch.delenv(var, raising=False)
++    monkeypatch.setenv("HOME", str(tmp_path / "test-home"))
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("client, folder_name", [
++    ("OneDrive", "OneDrive - Contoso"), ("Dropbox", "Dropbox"),
++    ("Google Drive", "Google Drive"), ("iCloud Drive", "iCloudDrive"),
++])
++def test_case_new_in_a_synced_folder_warns_first_and_logs_the_warning(tmp_path, monkeypatch, client, folder_name):
++    _isolate(monkeypatch, tmp_path)
++    root = tmp_path / folder_name / "cma"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    r = runner.invoke(app, ["case", "new", "--label", "Cafe"])
++    assert r.exit_code == 0, r.output
++    cid = r.stdout.strip()  # stdout carries the id alone; the warning goes to stderr
++    assert store.CASE_ID.fullmatch(cid)
++    assert "Warning" in r.stderr and client in r.stderr and str(root) in r.stderr.replace("\n", "")
++    entries = case.for_case(root / "cases" / cid).entries()
++    assert [e.event for e in entries] == ["case_created", "sync_folder_warning"]
++    data = entries[1].data
++    assert data["client"] == client and data["sync_folder"] == str(tmp_path / folder_name)
++    assert data["case_root"] == str(root) and client in data["warning"]
++    assert runner.invoke(app, ["case", "check", str(root / "cases" / cid)]).exit_code == 0
++
++
++@pytest.mark.contracts
++def test_the_warning_is_given_before_the_case_is_made(tmp_path, monkeypatch):
++    _isolate(monkeypatch, tmp_path)
++    root = tmp_path / "OneDrive" / "cma"
++    seen: list[list[Path]] = []
++
++    def warn(message):
++        assert "OneDrive" in message
++        seen.append(list((root / "cases").iterdir()))  # no case folder yet when warned
++
++    cid = store.new_case(root=root, warn=warn)
++    assert seen == [[]]
++    assert [e.event for e in case.for_case(root / "cases" / cid).entries()][-1] == "sync_folder_warning"
++
++
++@pytest.mark.contracts
++def test_case_new_outside_a_synced_folder_neither_warns_nor_logs_one(tmp_path, monkeypatch):
++    _isolate(monkeypatch, tmp_path)
++    root = tmp_path / "local" / "cma"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    r = runner.invoke(app, ["case", "new"])
++    assert r.exit_code == 0, r.output
++    assert r.stderr == ""
++    entries = case.for_case(root / "cases" / r.stdout.strip()).entries()
++    assert [e.event for e in entries] == ["case_created"]
++
++
++@pytest.mark.contracts
++def test_library_caller_without_a_callback_still_gets_a_python_warning(tmp_path, monkeypatch):
++    _isolate(monkeypatch, tmp_path)
++    with pytest.warns(store.SyncFolderWarning, match="Dropbox"):
++        store.new_case(root=tmp_path / "Dropbox" / "cma")

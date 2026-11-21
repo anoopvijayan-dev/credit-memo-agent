@@ -1,0 +1,26 @@
+{
+  "task": "T14",
+  "claims": [
+    {
+      "text": "sync_folder recognises path fixtures for each client (OneDrive, Dropbox, Google Drive, iCloud Drive) on POSIX and Windows paths, the Windows OneDrive environment variables, Dropbox's info.json and symlinks, and does not flag ordinary or look-alike folders; cma case new warns on stderr before the case folder exists and records a sync_folder_warning entry (client, sync_folder, case_root, warning) as the case log's second entry, while a case outside a synced folder gets no warning and no entry",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_sync_folder.py tests/test_case_store.py",
+      "proof_output": "88 passed in 1.77s"
+    },
+    {
+      "text": "Full suite passes with the change",
+      "proof_cmd": "python -m pytest -q -x",
+      "proof_output": "1914 passed in 131.06s (0:02:11)"
+    },
+    {
+      "text": "Lint and compile are clean",
+      "proof_cmd": "ruff check src tests; python -m compileall -q src",
+      "proof_output": "All checks passed!"
+    }
+  ],
+  "files_changed": [
+    "src/cma/store.py",
+    "src/cma/cli.py",
+    "tests/test_sync_folder.py"
+  ],
+  "notes": "R32 is a warning, not a refusal: the case is still made. The warning is given before anything of the case is made, through new_case's warn callback (the CLI prints it on stderr so stdout keeps only the case id), or as a store.SyncFolderWarning when no callback is given. It is recorded as a separate case-log event, sync_folder_warning, appended in the same writer hold as case_created (expected=1); if that append fails, the half-made case folder is removed as before. Detection covers known folder names per client (OneDrive, 'OneDrive - Org', CloudStorage OneDrive-*, Dropbox, 'Dropbox (Org)', Dropbox-*, 'Google Drive', GoogleDrive(-*), 'My Drive', iCloudDrive, 'iCloud Drive', com~apple~CloudDocs, Library/Mobile Documents), the Windows OneDrive/OneDriveCommercial/OneDriveConsumer variables, and Dropbox info.json under ~/.dropbox, %APPDATA% and %LOCALAPPDATA%. A folder synced under a name no client uses, and not named by those sources, is not detected; the docstring says so. ruff format --check reports differences across most of src, which the project does not enforce, so the new code follows the existing hand-wrapped style."
+}

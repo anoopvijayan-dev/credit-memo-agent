@@ -1,0 +1,55 @@
+{
+  "task": "T14",
+  "claims": [
+    {
+      "text": "R32 behaviour: a case root inside a OneDrive, Dropbox, Google Drive or iCloud Drive folder warns on stderr before the case folder exists and records a sync_folder_warning entry as the case log's second entry. Path fixtures per client (POSIX and Windows), the OneDrive env vars, Dropbox's info.json, symlinks, and lookalike names that must not warn are covered.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_sync_folder.py",
+      "proof_output": "39 passed in 0.77s"
+    },
+    {
+      "text": "Failure modes / partial failure: if recording the warning in the case log fails, new_case removes the case folder, so no case exists without its logged warning (new test test_a_failure_recording_the_warning_leaves_no_case_behind). The warning makes no external call (only a local read of Dropbox's info.json; unreadable or malformed files are ignored, tested). Idempotency does not apply: each `cma case new` is a new case with a new random id, and each logs its own warning.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_sync_folder.py -k 'failure_recording or malformed_dropbox'",
+      "proof_output": "covered within: 39 passed in 0.77s (full file run)"
+    },
+    {
+      "text": "Data / PII: no migration and no stored-format change. The case log gains one additive event type. The logged entry holds only client, sync_folder, case_root and the warning text, and no case profile data (new test test_the_logged_warning_holds_no_case_profile). The case_root path can hold the underwriter's OS user name; it stays in the owner-only case folder (R31).",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_sync_folder.py -k logged_warning_holds_no_case_profile",
+      "proof_output": "covered within: 39 passed in 0.77s (full file run)"
+    },
+    {
+      "text": "Security: no new entry point (it adds to the existing `cma case new`, which runs as the case root's owner), no new dependency (pyproject.toml unchanged), no secrets. The warning is printed through rich.markup.escape, so the path is never read as markup.",
+      "proof_cmd": "git diff e7c6b17 --stat -- pyproject.toml; ruff check src tests",
+      "proof_output": "(no pyproject.toml change)\nAll checks passed!"
+    },
+    {
+      "text": "Performance: detection runs once per case creation and costs about 0.17 ms per call. It reads at most three small info files and makes no network call.",
+      "proof_cmd": "python -I -c \"import time,sys; sys.path.insert(0,'src'); from cma import store; from pathlib import Path; t=time.perf_counter(); [store.sync_folder(Path('/home/u/private/cma')) for _ in range(1000)]; print('per call ms', (time.perf_counter()-t))\"",
+      "proof_output": "per call ms 0.16967004600155633  (total seconds for 1000 calls, i.e. ~0.17 ms each)"
+    },
+    {
+      "text": "Observability: the sync_folder_warning case-log entry is the signal that the behaviour ran, keyed by case id, and `cma case check` still reads the log intact (exit 0) after it. There is no remote alerting, by design (local-only tool).",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_sync_folder.py -k warns_first_and_logs",
+      "proof_output": "covered within: 39 passed in 0.77s (full file run)"
+    },
+    {
+      "text": "Operability: no flag is needed because it is a warning, not a refusal. Rollback is a reinstall of the previous wheel: older code ignores the extra log event, since the hash chain is unchanged in format.",
+      "proof_cmd": "python -m pytest -q",
+      "proof_output": "1916 passed in 120.36s (0:02:00)"
+    },
+    {
+      "text": "Docs: the README quick-start comment describes the warning, and Known limits states what detection does not see (renamed sync folders, network shares).",
+      "proof_cmd": "git diff -- README.md | grep '^+' ",
+      "proof_output": "+# A root inside a OneDrive, Dropbox, Google Drive or iCloud Drive folder gets a warning\n+# on stderr before the case is made, recorded in the case log: keep cases on a local disk.\n+- The cloud-sync warning knows each client's own folder names, the OneDrive\n+  variables Windows sets and Dropbox's info file. A folder synced under any other\n+  name, or a network share, is not detected."
+    },
+    {
+      "text": "Whole repo still passes: ruff, compileall and the full pytest suite.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q",
+      "proof_output": "All checks passed!\n1916 passed in 120.36s (0:02:00)"
+    }
+  ],
+  "files_changed": [
+    "README.md",
+    "tests/test_sync_folder.py"
+  ],
+  "notes": "Gaps for the owner, not fixed here because each needs a design call: (1) Detection is name- and config-based. A sync folder under a custom name, other than OneDrive via its env vars or Dropbox via info.json, is missed, and so are Google Drive for desktop's mirrored-folder mode and other clients (Box, Nextcloud). The design states this as 'warning, not a lock'. (2) A folder named 'My Drive' or 'Dropbox' that is not synced triggers a false warning, which is harmless. (3) The warning is given only at `cma case new`. Cases made before a root moved into a sync folder are not re-warned, and R32 does not ask for that. (4) The logged case_root path can contain the OS user name; it stays in the owner-only case folder. (5) ensure_root makes the root and cases/ folders before the warning, but the case folder itself is made after it, which matches R32's 'before creating a case'. Changes are left uncommitted in the worktree."
+}
