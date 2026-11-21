@@ -1,0 +1,105 @@
+{
+  "task": "T17",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "src/cma/firm.py:68 defaults the lock on. src/cma/llm.py:79 and :103 gate client creation and requests. src/cma/mcp_server.py:45, :69, :103, :112 and :167 gate native starts, app factories, lifespan, requests and tools. Revision 32 excludes the post-startup bind window. Resume reuses the draft's reading at src/cma/graph.py:464, and legacy evidence drops the effective resume lock at :301. A distinct invocation of the same graph can skip lock and tracer setup at :540.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:196 checks the whole shipped rule, :217 puts the outcome in the rule table, :225 masks custom rule text and limits, :235 filters redraft IDs, and :247 renders the two tables, period and placeholder. src/cma/metrics.py:295 renders figures and methods without their evidence lines. The hosted custom-policy and redraft-feedback tests ran and passed. The period is expressly allowed by R30.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "The hosted redraft and custom-limit masking regressions ran and passed. src/cma/graph.py:249 still emits a case-dependent date verbatim. Revision 32's exception covers fixed prompt text, and a date copied into a description can coincide with the emitted period.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "The runner log shows both real SDK retryable-503 cases, both native HTTP transport bind checks, delayed saved-app startup refusal, explicit tracer filtering and nested invocation using a different graph object. The same-object invocation path at src/cma/graph.py:540 skips the new run's tracer filtering.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 540,
+      "criterion": "P18",
+      "claim": "The wrapper treats any nested call on the same graph object as internal delegation. A separate invocation under the lock retains a LangSmith tracer supplied to that invocation, violating R29 and P18.",
+      "repro": "Adapt tests/test_firm.py:1151 to keep the outer graph in a variable. After turning the firm lock on inside the outer model, invoke that same graph with a different review ID and the recording LangChainTracer. Set the recursion guard before invoking the inner run. The identity condition skips callback filtering for the inner invocation."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 301,
+      "criterion": "R29",
+      "claim": "The legacy evidence fallback drops the effective resume lock even when finalisation recorded it.",
+      "repro": "Resume a pending checkpoint made before the lock fields existed with offline_lock true. Finalise and export it. The evidence reports offline_lock false for the legacy draft and omits resume_offline_lock. The current resume-evidence test creates its draft with this version, so it exercises only the branch at line 292."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 464,
+      "criterion": "R29",
+      "claim": "An unchanged file lets a resume reuse a configuration object already used by the draft. Revision 32 requires a separate configuration reading for the resume.",
+      "repro": "Run an unchanged firm configuration through cma run --yes with firm.load instrumented. The passing test_p18_an_unchanged_firm_yaml_is_read_once_in_a_whole_cli_run asserts one load for both graph invocations, exposing the reuse."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 249,
+      "criterion": "P5",
+      "claim": "A case date can appear as a sentinel in every draft through the period line. P5's fixed-text exception does not cover the case-dependent period.",
+      "repro": "Use a valid statement whose first date is 2026-09-30 and put 2026-09-30 in a transaction description. Capture its initial model prompt and force a redraft. The sentinel appears in each Period line even with the shipped policy."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 509,
+      "criterion": "R29",
+      "claim": "The claim that malformed firm.yaml is always refused is broader than the proof. A current-format pending review can still finalise after a malformed configuration is treated as locked.",
+      "repro": "Draft a review with valid firm.yaml, replace it with offline_lock: [ and approve via cma resume. The parser error becomes None in _read_or_locked, and the resume proceeds under the lock. The malformed-config tests cover loading and hosted startup."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/firm.py",
+      "line": 198,
+      "criterion": "R29",
+      "claim": "The performance claim understates file reads. The reported suite duration also provides no matched baseline for the no-regression claim.",
+      "repro": "Trace firm.yaml opens during one unlocked MCP tool call. firm.load reads the bytes for the stamp at line 144 and reads them again for YAML parsing at line 215. To verify timing, compare the same workload on the base and candidate under the same conditions."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 104,
+      "criterion": "R29",
+      "claim": "The runner proves the SDK's single retryable-503 attempt, but the cited proof leaves CLI exit 4 for that failure unverified.",
+      "repro": "The SDK test invokes model.complete directly. Add a CLI test that injects a retryable 503, asserts one attempt, exit 4 and no export, then have the runner execute python -m pytest -v tests/test_firm.py -k 'one_attempt_per_lock or cli_hosted_503'."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_firm.py",
+      "line": 986,
+      "criterion": "P5",
+      "claim": "Producer note 2 is stale. It says that a changed rule reusing the shipped ID R2 still sends R2, although the whole-rule comparison masks that ID.",
+      "repro": "Change only the description of shipped R2 in a custom policy and render the prompt. The rule row uses (custom id). The runner's shipped-ID collision test exercises this masking."
+    }
+  ],
+  "verdict": "fail"
+}

@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 313,
+  "next_id": 314,
   "decisions": [
     {
       "id": "D1",
@@ -6269,6 +6269,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T01:58:44.096Z"
+    },
+    {
+      "id": "D313",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (src/cma/firm.py:68 defaults the lock on. src/cma/llm.py:79 and :103 gate client creation and requests. src/cma/mcp_server.py:45, :69, :103, :112 and :167 gate native starts, app factories, lifespan, requests and tools. Revision 32 excludes the post-startup bind window. Resume reuses the draft's reading at src/cma/graph.py:464, and legacy evidence drops the effective resume lock at :301. A distinct invocation of the same graph can skip lock and tracer setup at :540.); P5 fail (The hosted redraft and custom-limit masking regressions ran and passed. src/cma/graph.py:249 still emits a case-dependent date verbatim. Revision 32's exception covers fixed prompt text, and a date copied into a description can coincide with the emitted period.); P18 fail (The runner log shows both real SDK retryable-503 cases, both native HTTP transport bind checks, delayed saved-app startup refusal, explicit tracer filtering and nested invocation using a different graph object. The same-object invocation path at src/cma/graph.py:540 skips the new run's tracer filtering.); major: The wrapper treats any nested call on the same graph object as internal delegation. A separate invocation under the lock retains a LangSmith tracer supplied to that invocation, violating R29 and P18. at src/cma/graph.py:540; major: The legacy evidence fallback drops the effective resume lock even when finalisation recorded it. at src/cma/graph.py:301; major: An unchanged file lets a resume reuse a configuration object already used by the draft. Revision 32 requires a separate configuration reading for the resume. at src/cma/graph.py:464; major: A case date can appear as a sentinel in every draft through the period line. P5's fixed-text exception does not cover the case-dependent period. at src/cma/graph.py:249; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T02:00:54.199Z"
     }
   ]
 }
