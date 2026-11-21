@@ -1,0 +1,91 @@
+{
+  "task": "T11",
+  "criteria": [
+    {
+      "id": "R10",
+      "tier": "adversarial",
+      "check": "The lines v2 newly recognises are listed in docs/v2-newly-recognised.md:19-28 and equal NEWLY_RECOGNISED (tests/test_rules_v2.py:732-741). test_p7_v2_changes_only_the_listed_lines_and_m1_m16_only_where_listed (tests/test_rules_v2.py:779-794) recomputes the v1/v2 differences over the P7 golden corpus and the single lines, checks they are exactly that set, and checks M1-M16 rows under v2 equal the baseline; it PASSED in dual_run-7.log. test_the_newly_recognised_lines_are_listed_in_the_docs PASSED (specified-3.log:2193). The one listed line leaving loan_drawdown (FPS CREDIT A DIRECTOR LOAN ACCOUNT) appears only in single-line tests (test_panel_run02_metrics.py:62-70, test_rules_v2.py:237), so no M16 figure moves. M16 was already renamed; the policy R9 description (uk_sme_default.yaml:86) and the FakeLLM sentence (llm.py:65) now say 'not trading receipts'.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-245/dual_run-7.log"
+    },
+    {
+      "id": "R53",
+      "tier": "adversarial",
+      "check": "cma run options are unchanged; the evidence record gains fields only (egress, judgement_queue), with no field removed in the regenerated examples/cafe_stretched.memo.evidence.json. test_written_evidence_records_the_ruleset[None-v2|v1-v1|v2-v2] PASSED (specified-3.log:367-369). Resume keeps stored categories and figures and replays rule ids from the recorded table or v1 (graph.py:381-433), so the default change does not recategorise a pending review. The new MCP tool money_in_buckets (mcp_server.py:208-230) goes through _statement(), which runs firm.require_unlocked and safe_path (mcp_server.py:169-172), and returns ids only. Its path, lock and reconciliation tests PASSED (specified-3.log:854-857, 2194-2196). The other MCP tools are unchanged.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-245/specified-3.log"
+    },
+    {
+      "id": "P7",
+      "tier": "adversarial",
+      "check": "Under v1, test_p7_v1_synthetic_cases/committed_examples/test_fixtures/single_lines_match_the_baseline all PASSED, and under v2 test_p7_v2_changes_only_the_listed_lines... PASSED (dual_run-7.log, 84 passed). Evals passed with ruleset = v2: 9/9 grounded and 9/9 featured cases match truth (behavioural-6.log). test_committed_example_is_regenerated_under_v2 and test_committed_truth_names_the_director_capital_line_director_funding PASSED (specified-3.log:2182-2183).",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-245/dual_run-7.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-248/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-248/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-248/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-248/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-248/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-248/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-248/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "tests/test_p7_history.py",
+      "line": 158,
+      "criterion": "R53",
+      "claim": "With v2 the default, rollback by reinstalling the previous release no longer works without data repair, which the design's Platform section says it does ('Rollback: an environment flag ..., a config flip ... or a reinstall, with no data repair'). A review drafted under the default can hold director_funding, which the previous release cannot read back. The diff hides this in the test by drafting under CMA_RULESET=v1 instead of the default. The README documents the workaround, but the design line was not updated.",
+      "repro": "Draft a pending review with `cma run examples/cafe_stretched.csv --checkpoint-db db --thread t` with CMA_RULESET unset (T00210 becomes director_funding), install the previous wheel, then run `cma resume t --checkpoint-db db`. The previous release cannot read the director_funding category back, which tests/test_p7_history.py:158-160 itself records. Before this diff the same test passed under the default."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
