@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 294,
+  "next_id": 295,
   "decisions": [
     {
       "id": "D1",
@@ -5892,6 +5892,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T00:46:07.486Z"
+    },
+    {
+      "id": "D294",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:77 checks exact pence, src/cma/metrics.py:512 handles unrepresentable M3, and src/cma/graph.py:175 and src/cma/cli.py:415 render penny values. Statement validation waits until after all records have been parsed at src/cma/ingest.py:440. Header validation also loses the starting line for an unclosed quoted field at src/cma/ingest.py:268.); major: The statement loader parses the entire record sequence before checking ordinary record values. Revision 30 permits whole-file decoding and splitting, then limits record validation to one record of lookahead. at src/cma/ingest.py:440; major: An unclosed quoted field in the Monzo header can be reported as an export with no transactions, omitting both the malformed field and its starting line. at src/cma/ingest.py:268; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T00:50:18.248Z"
     }
   ]
 }
