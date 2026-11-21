@@ -1,0 +1,54 @@
+```json
+{
+  "task": "T03",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped the maintained trading lists to src/cma/rules/v2.yaml:229,263,279,295, lender and MCA directions to :98,145, own pots and savings to :46,175, HMRC to :82, refunds to :90 and cash deposits to :202. The selected table runs at src/cma/graph.py:250, line provenance is assigned at src/cma/categorise.py:431 and exported at src/cma/graph.py:221. The runner logs confirm 596 passing tests, including the table-driven cases, both precedence matrices and CLI provenance for the prior CAPITAL repros. The eval tests ran both tables. Static review found that explicit cash deposits, refunds and external savings credits can still land in the wrong bucket. Reviewed repeat submission, concurrent updates, sign and text boundaries, currency and timezone, partial failure, authorisation, tenant isolation, rollback and the CLI, checkpoint and MCP consumers. The change adds no persistent writer, access boundary or currency or timezone conversion.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/rules/v2.yaml",
+      "line": 157,
+      "criterion": "R4",
+      "claim": "A bank counter cash deposit is classified as director funding when the branch name contains CAPITAL. The protected funding rule runs before the cash rule at line 202, so the deposit is omitted from trading receipts.",
+      "repro": "Run CMA_RULESET=v2 cma run on a valid statement with a +600.00 bank counter deposit described as CASH PAID IN AT CAPITAL STREET BRANCH. The first matching rule records director_funding and v2:director_funding. The expected category is cash_deposit."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/rules/v2.yaml",
+      "line": 46,
+      "criterion": "R4",
+      "claim": "The bare TAX POT and VAT POT aliases count as own-account moves even when they occur in the merchant name on an explicit card refund. The pot rule runs before the refund rule at line 90, and the overlap matrix does not cross these two rules.",
+      "repro": "Categorise a +75.00 credit described as CARD REFUND THE TAX POT LTD under v2. The line records own_account_transfer and v2:own_pots_savings. The expected category is refund_in."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/rules/v2.yaml",
+      "line": 175,
+      "criterion": "R4",
+      "claim": "The bare SAVINGS alias classifies an incoming third-party compensation payment as a move between the applicant's own accounts. It wins before the explicit compensation rule at line 192.",
+      "repro": "Categorise a +1200.00 credit described as BACS CREDIT FSCS SAVINGS COMPENSATION under v2. The line records own_account_transfer and v2:savings_wording. The expected category is other_explained_in."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 246,
+      "criterion": "R4",
+      "claim": "The producer's claim notes say that shifting a lender drawdown to a refund or own-account transfer leaves M16 unchanged. M16 excludes drawdowns and includes refunds and own-account transfers.",
+      "repro": "Compare M16 on two otherwise identical valid v2 statements with a +100.00 STRIPE PAYOUT credit. Describe the second +100.00 credit as IWOCA LTD in one statement and IWOCA LTD REFUND in the other. M16 is 0% in the first and 50% in the second."
+    }
+  ],
+  "verdict": "fail"
+}
+```

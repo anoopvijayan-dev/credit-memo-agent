@@ -49,9 +49,52 @@ def test_written_memo_carries_its_evidence(tmp_path):
     assert record["vat_stagger"] == 3 and record["guard"]["grounded"] is True
 
 
+@pytest.mark.contracts
+def test_unknown_cma_ruleset_is_refused_not_blamed_on_the_model(tmp_path, monkeypatch):
+    # T01: exit 4 means the model failed; a bad CMA_RULESET is a refusal (exit 2).
+    monkeypatch.setenv("CMA_RULESET", "v9")
+    r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A"])
+    assert r.exit_code == 2, r.output
+    assert "Refused." in r.output and "CMA_RULESET" in r.output and "model call failed" not in r.output
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("env", [None, "v1"])
+def test_written_evidence_records_the_ruleset(tmp_path, monkeypatch, env):
+    """R54: `cma run` writes the ruleset id and the pinned hash of v1 into the evidence
+    file, with CMA_RULESET unset (the default) and set to v1."""
+    from cma.categorise import FROZEN_SHA256
+
+    if env is None:
+        monkeypatch.delenv("CMA_RULESET", raising=False)
+    else:
+        monkeypatch.setenv("CMA_RULESET", env)
+    out = tmp_path / "memo.md"
+    r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A", "--out", str(out)])
+    assert r.exit_code == 0, r.output
+    record = json.loads((tmp_path / "memo.evidence.json").read_text())
+    assert record["ruleset"] == {"id": "v1", "sha256": FROZEN_SHA256["v1"]}
+
+
 def test_whitespace_reviewer_is_refused(tmp_path):
     r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "   "])
     assert r.exit_code == 2
+
+
+@pytest.mark.contracts
+def test_a_refused_ruleset_leaves_a_durable_review_id_reusable(tmp_path, monkeypatch):
+    # T01 review: the refusal came after the first checkpoint, so the id stayed taken.
+    pytest.importorskip("langgraph.checkpoint.sqlite")
+    db = tmp_path / "reviews.sqlite"
+    csv = _statement(tmp_path)
+    monkeypatch.setenv("CMA_RULESET", "v9")
+    r = runner.invoke(app, ["run", str(csv), "--checkpoint-db", str(db), "--thread", "case-9"], input="\x04")
+    assert r.exit_code == 2, r.output
+    assert "Refused." in r.output and "CMA_RULESET" in r.output
+    monkeypatch.delenv("CMA_RULESET")
+    r = runner.invoke(app, ["run", str(csv), "--checkpoint-db", str(db), "--thread", "case-9"], input="\x04")
+    assert "already used" not in r.output, r.output
+    assert "review id: case-9" in r.output, r.output
 
 
 def test_pending_review_survives_a_restart(tmp_path):
@@ -167,3 +210,361 @@ def test_bad_policy_yaml_is_refused_cleanly(tmp_path):
     bad.write_text("rules: [")
     r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--policy", str(bad), "--yes", "--reviewer", "A"])
     assert r.exit_code == 2 and "not valid YAML" in r.output
+
+
+def test_resume_refuses_a_statement_the_loader_would_now_refuse(tmp_path, monkeypatch):
+    # T04 review 15: a review drafted before the import limit (or any check) existed reused
+    # its stored figures for a statement today's loader refuses.
+    from cma import metrics
+
+    db, _ = _pending(tmp_path)
+    monkeypatch.setattr(metrics, "MAX_STATEMENT_PENCE", 1)  # today's loader refuses every amount
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C"], input="y\n\n")
+    assert r.exit_code == 2 and "would now be refused" in r.output and "£10,000,000,000,000 or more" in r.output
+    assert "Approved" not in r.output
+
+
+NEW_MONEY_IN = {"M17", "M18", "M19", "M20", "M21", "M22", "M23", "M24", "M25"}
+
+
+def _as_earlier_release(db, thread="case-1", nudge="M2", lines=None):
+    """Rewrite a pending review's stored figures as the previous release left them: no total
+    money in or money-in buckets, and one figure (M2 by default) a float sum a hair off the
+    exact pence. `lines`, if given, replaces the stored statement's lines."""
+    from cma.graph import build, sqlite_checkpointer
+    from cma.llm import FakeLLM
+
+    cfg = {"configurable": {"thread_id": thread}}
+    with sqlite_checkpointer(db) as saver:
+        graph = build(FakeLLM(), checkpointer=saver)
+        values = graph.get_state(cfg).values
+        old = [m if m.id != nudge else m.model_copy(update={"value": m.value + 1e-7})
+               for m in values["metrics"] if m.id not in NEW_MONEY_IN]
+        update = {"metrics": old}
+        if lines is not None:
+            update["statement"] = values["statement"].model_copy(update={"transactions": lines(values["statement"])})
+        graph.update_state(cfg, update)
+        with pytest.MonkeyPatch.context() as mp:  # the earlier release had no refresh
+            mp.setattr("cma.graph.refreshed", lambda s: {})
+            graph.invoke(None, cfg)  # back to the review, as the earlier release left it
+        assert graph.get_state(cfg).interrupts
+        assert not NEW_MONEY_IN & {m.id for m in graph.get_state(cfg).values["metrics"]}
+    return cfg
+
+
+def test_resume_decides_a_review_from_an_earlier_release_on_todays_figures(tmp_path):
+    # T04 review 16: a review drafted by the previous release resumed with its stored
+    # figures: no total money in or buckets (R1), float-derived sums (R2, P2). It still
+    # resumes (R53), on today's figures.
+    import json
+
+    from cma import ingest, metrics
+
+    db, csv = _pending(tmp_path)
+    _as_earlier_release(db)
+    out = tmp_path / "memo.md"
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C. Later",
+                            "--out", str(out)], input="y\n\n")
+    assert r.exit_code == 0, r.output
+    ev = json.loads((tmp_path / "memo.evidence.json").read_text())
+    got = {m["id"]: m for m in ev["metrics"]}
+    assert set(got) >= NEW_MONEY_IN
+    lines = {t.id: t for t in ingest.load_csv(csv).transactions}
+    assert metrics.float_pence(got["M2"]["value"]) == sum(metrics.float_pence(lines[i].amount)
+                                                          for i in got["M2"]["evidence"])
+    assert "M17" in out.read_text()  # the appendix lists today's figures
+
+
+def test_a_run_hashes_the_bytes_it_parsed(tmp_path, monkeypatch):
+    # T04 review 17: the file was parsed by one read and hashed by another, so a statement
+    # replaced in between was recorded under the other version's hash.
+    import hashlib
+
+    from cma import ingest
+    from cma.graph import build
+    from cma.llm import FakeLLM
+
+    csv = _statement(tmp_path)
+    original = csv.read_bytes()
+    real = ingest.load_csv
+
+    def load_then_replace(path, *a, **k):
+        st = real(path, *a, **k)
+        csv.write_text(csv.read_text().replace("CARD ACQUIRER SETTLEMENT", "CARD ACQUIRER SETTLEMENT X", 1))
+        return st
+
+    monkeypatch.setattr(ingest, "load_csv", load_then_replace)
+    from langgraph.checkpoint.memory import InMemorySaver
+    state = build(FakeLLM(), checkpointer=InMemorySaver()).invoke(
+        {"statement_path": str(csv)}, {"configurable": {"thread_id": "race"}})
+    assert state["statement_sha256"] == hashlib.sha256(original).hexdigest()
+
+
+def test_an_earlier_release_review_resumes_without_reopening_its_policy_file(tmp_path):
+    # T04 review 17: refreshing figures reopened the policy file, so an old review depended
+    # on a file it did not need before, and a concurrent edit could change what was recorded.
+    import json
+    import shutil
+
+    from cma import policy
+
+    pol = tmp_path / "firm.yaml"
+    pol.write_text(policy.default_policy_text())
+    pytest.importorskip("langgraph.checkpoint.sqlite")
+    db, csv = tmp_path / "reviews.sqlite", _statement(tmp_path)
+    runner.invoke(app, ["run", str(csv), "--policy", str(pol), "--checkpoint-db", str(db), "--thread", "case-1"],
+                  input="\x04")
+    _as_earlier_release(db)
+    shutil.move(pol, tmp_path / "gone.yaml")
+    out = tmp_path / "memo.md"
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C", "--out", str(out)],
+                      input="y\n\n")
+    assert r.exit_code == 0, r.output
+    ev = json.loads((tmp_path / "memo.evidence.json").read_text())
+    assert ev["policy"]["policy_sha256"] == policy.load_policy(tmp_path / "gone.yaml")["_sha256"]
+
+
+def test_an_earlier_release_review_whose_policy_figure_moved_keeps_its_outcome(tmp_path):
+    # T04 review 18: a figure a rule reads differing by a hair refused the review, though
+    # the rule's outcome is the same; it resumes, the rule re-evaluated from what it stores.
+    import json
+
+    from cma.graph import build, sqlite_checkpointer
+    from cma.llm import FakeLLM
+
+    db, _ = _pending(tmp_path)
+    _as_earlier_release(db, nudge="M9")
+    with sqlite_checkpointer(db) as saver:
+        stored = build(FakeLLM(), checkpointer=saver).get_state({"configurable": {"thread_id": "case-1"}}).values
+    out = tmp_path / "memo.md"
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C", "--out", str(out)],
+                      input="y\n\n")
+    assert r.exit_code == 0, r.output
+    ev = json.loads((tmp_path / "memo.evidence.json").read_text())
+    assert ev["policy"]["overall"] == stored["policy"].overall.value
+    assert [x["outcome"] for x in ev["policy"]["rules"]] == [x.outcome.value for x in stored["policy"].rules]
+
+
+def test_resume_refuses_stored_lines_that_are_not_the_statements(tmp_path):
+    # T04 review 17: figures recomputed from stored lines must describe the statement the
+    # stored hash names.
+    db, _ = _pending(tmp_path)
+    def shifted(st):
+        first, *rest = st.transactions
+        return [first.model_copy(update={"amount": first.amount + 1}), *rest]
+
+    _as_earlier_release(db, lines=shifted)
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C"], input="y\n\n")
+    assert r.exit_code == 2 and "not the lines" in r.output
+
+
+def test_a_decision_that_can_no_longer_be_applied_is_not_recorded(tmp_path, monkeypatch):
+    # T04 review 23: applying the decision works the figures out again; if that now fails
+    # (the policy file changed while the review was open), the CLI raised a raw error. It
+    # refuses, records nothing, and the review stays pending.
+    from cma import graph as g
+    from cma.graph import StaleReviewError, build, sqlite_checkpointer
+    from cma.llm import FakeLLM
+
+    db, _ = _pending(tmp_path)
+
+    def changed(s):
+        raise StaleReviewError("M9, which rule R8 reads, now fails it, and the policy file is not the one "
+                               "the review was drafted with")
+
+    monkeypatch.setattr(g, "refreshed", changed)  # the second read, inside the graph
+    out = tmp_path / "memo.md"
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C", "--out", str(out)],
+                      input="y\n\n")
+    assert r.exit_code == 2 and "Not recorded" in r.output and "M9" in r.output, r.output
+    assert not out.exists()
+    monkeypatch.undo()
+    with sqlite_checkpointer(db) as saver:
+        assert build(FakeLLM(), checkpointer=saver).get_state({"configurable": {"thread_id": "case-1"}}).interrupts
+
+
+def test_the_decision_is_applied_to_the_figures_the_reviewer_saw(tmp_path, monkeypatch):
+    # T04 review 24: resume worked out an earlier release's figures to show the reviewer,
+    # then the graph worked them out again (reopening the policy) after the answer, so a
+    # change in between lost the decision. They are written into the review before it is
+    # shown; afterwards there is nothing left to refresh.
+    import json
+
+    from cma import graph as g
+
+    db, _ = _pending(tmp_path)
+    _as_earlier_release(db)
+    seen = []
+    real = g.refreshed
+
+    def watched(s):
+        got = real(s)
+        seen.append(got)
+        return got
+
+    monkeypatch.setattr(g, "refreshed", watched)  # the graph's own refresh, after the CLI's
+    out = tmp_path / "memo.md"
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C", "--out", str(out)],
+                      input="y\n\n")
+    assert r.exit_code == 0, r.output
+    assert seen and all(x == {} for x in seen)  # nothing worked out again inside the graph
+    assert {m["id"] for m in json.loads((tmp_path / "memo.evidence.json").read_text())["metrics"]} >= NEW_MONEY_IN
+
+
+def test_a_review_decided_while_resume_opens_it_is_never_reopened(tmp_path, monkeypatch):
+    # T04 review 25: resume wrote today's figures into the review it had read without
+    # checking it was still pending, so a decision made meanwhile was reopened.
+    from cma import cli
+    from cma.cli import _decide
+    from cma.graph import build, sqlite_checkpointer
+    from cma.llm import FakeLLM
+
+    db, _ = _pending(tmp_path)
+    _as_earlier_release(db)
+    cfg = {"configurable": {"thread_id": "case-1"}}
+    real = cli.refreshed
+
+    def decided_meanwhile(values):
+        with sqlite_checkpointer(db) as other:
+            _decide(build(FakeLLM(), checkpointer=other), cfg, {"approved": False, "reviewer": "B. Other"})
+        return real(values)
+
+    monkeypatch.setattr(cli, "refreshed", decided_meanwhile)
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C"], input="y\n\n")
+    assert r.exit_code == 5 and "already decided by B. Other" in r.output, r.output
+    with sqlite_checkpointer(db) as saver:
+        state = build(FakeLLM(), checkpointer=saver).get_state(cfg)
+    assert not state.interrupts and state.values["review"].reviewer == "B. Other"
+
+
+def test_a_decision_racing_the_refresh_is_recorded_once(tmp_path, monkeypatch):
+    # T04 review 26: the pending check and the refresh write were separate steps, so a
+    # decision committed between them was reopened and decided again. Every process holds
+    # the review lock for check-and-write and for a decision: exactly one is recorded.
+    import threading
+    import time
+
+    import typer as _typer
+
+    from cma import cli
+    from cma.graph import build, sqlite_checkpointer
+    from cma.llm import FakeLLM
+
+    db, _ = _pending(tmp_path)
+    _as_earlier_release(db)
+    cfg = {"configurable": {"thread_id": "case-1"}}
+    other: dict = {}
+
+    def b_decides():
+        with sqlite_checkpointer(db) as saver:
+            try:
+                cli._decide(build(FakeLLM(), checkpointer=saver), cfg, {"approved": False, "reviewer": "B. Other"},
+                            db)
+                other["recorded"] = True
+            except _typer.Exit as e:
+                other["recorded"], other["code"] = False, e.exit_code
+
+    real = cli._still_pending
+
+    def racing(graph, c, snap):
+        ok = real(graph, c, snap)
+        t = threading.Thread(target=b_decides)
+        t.start()
+        other["thread"] = t
+        time.sleep(1.0)  # B tries to decide between C's check and C's write
+        return ok
+
+    monkeypatch.setattr(cli, "_still_pending", racing)
+    r = runner.invoke(app, ["resume", "case-1", "--checkpoint-db", str(db), "--reviewer", "C"], input="y\n\n")
+    other["thread"].join(30)
+    c_recorded = r.exit_code == 0
+    assert c_recorded != other["recorded"], (r.exit_code, other, r.output)  # exactly one decision
+    with sqlite_checkpointer(db) as saver:
+        state = build(FakeLLM(), checkpointer=saver).get_state(cfg)
+    assert not state.interrupts and state.values["review"].reviewer == ("C" if c_recorded else "B. Other")
+
+
+def test_starting_a_review_waits_for_the_review_lock(tmp_path):
+    # T04 review 27: `cma run` checked that a review id was unused and wrote it outside the
+    # lock, so two runs could both start the same id. It takes the lock first.
+    import threading
+    import time
+
+    from cma import cli
+
+    pytest.importorskip("langgraph.checkpoint.sqlite")
+    db, csv = tmp_path / "reviews.sqlite", _statement(tmp_path)
+    held, released = threading.Event(), {}
+
+    def hold():
+        with cli._review_lock(db):
+            held.set()
+            time.sleep(4)
+            released["at"] = time.monotonic()
+
+    t = threading.Thread(target=hold)
+    t.start()
+    held.wait(5)
+    runner.invoke(app, ["run", str(csv), "--checkpoint-db", str(db), "--thread", "case-9"], input="\x04")
+    ended = time.monotonic()
+    t.join()
+    assert ended >= released["at"]  # it waited for the other process's step
+
+
+def test_a_failed_evidence_record_writes_no_memo(tmp_path, monkeypatch):
+    # T04 review 27: the memo was written before its evidence was made; a failure making the
+    # evidence left a memo with no evidence. Both are made before either is written.
+    from cma import cli
+
+    def broken(state):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cli, "evidence_record", broken)
+    out = tmp_path / "memo.md"
+    r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A", "--out", str(out)])
+    assert r.exit_code != 0
+    assert not out.exists() and not (tmp_path / "memo.evidence.json").exists()
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_exporting_never_touches_a_sibling_file(tmp_path):
+    # T04 review 28: the staging files had predictable names (memo.md.part), so an export
+    # could overwrite and remove a file of that name beside the memo.
+    out = tmp_path / "memo.md"
+    siblings = [tmp_path / "memo.md.part", tmp_path / "memo.evidence.json.part"]
+    for s in siblings:
+        s.write_text("keep me")
+    r = runner.invoke(app, ["run", str(_statement(tmp_path)), "--yes", "--reviewer", "A", "--out", str(out)])
+    assert r.exit_code == 0, r.output
+    assert all(s.read_text() == "keep me" for s in siblings) and out.exists()
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith(".") and p.name.endswith(".part")]
+
+
+def test_the_review_lock_is_one_lock_through_a_symlink(tmp_path):
+    # T04 review 30: the lock was named from the path as given, so two processes reaching
+    # one checkpoint file through a symlink took separate locks.
+    import os
+    import threading
+    import time
+
+    from cma import cli
+
+    real = tmp_path / "reviews.sqlite"
+    real.write_bytes(b"")
+    link = tmp_path / "alias.sqlite"
+    os.symlink(real, link)
+    held, order = threading.Event(), []
+
+    def hold():
+        with cli._review_lock(real):
+            held.set()
+            time.sleep(1.0)
+            order.append("first released")
+
+    t = threading.Thread(target=hold)
+    t.start()
+    held.wait(5)
+    with cli._review_lock(link):
+        order.append("second acquired")
+    t.join()
+    assert order == ["first released", "second acquired"]

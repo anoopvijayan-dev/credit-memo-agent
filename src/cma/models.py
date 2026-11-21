@@ -8,6 +8,7 @@ to the statement lines behind it.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Literal
 
@@ -125,10 +126,102 @@ class Metric(BaseModel):
     evidence: list[str] = Field(
         default_factory=list, description="Transaction ids this figure was computed from."
     )
+    evidence_note: list[str] | None = Field(
+        default=None,
+        description=("Ids of evidence lines the figure counts only in part (M9: a credit from someone the "
+                     "business paid by transfer, offsetting no more than was sent to them). Ids only; never "
+                     "shown in the method sentence or a prompt (R30)."),
+    )
 
     def display(self) -> str:
         """The figure as the memo should quote it. Negative figures keep their minus sign."""
         return format_value(self.value, self.unit)
+
+    def display_exact(self) -> str:
+        """The figure to the penny when it is money, for tables that show the money-in
+        buckets beside total money in, so the shown parts add up to the shown whole."""
+        if self.unit == "GBP" and self.value is not None:
+            # From the decimal the float reads back as, never by rounding the binary value,
+            # so the shown pence are the counted ones (T04 review 3).
+            exact = Decimal(repr(self.value)).quantize(Decimal("0.01"))
+            return f"{'-' if exact < 0 else ''}£{abs(exact):,.2f}"
+        return self.display()
+
+
+class MonthlyCell(BaseModel):
+    """One cell of the monthly summary (R11) with the lines behind it, by kind (P2): a sum
+    figure's lines' signed amounts total it; an outflow figure is a positive amount whose
+    lines total it negated; a derived figure (a balance or overdrawn-day cell) carries no
+    total and cites the line that set the close of every day of the month in the period."""
+
+    value: float | None = Field(description="None when the cell cannot be reported to the penny (see `note`).")
+    unit: Literal["GBP", "days"]
+    kind: Literal["sum", "outflow", "derived"]
+    evidence: list[str] = Field(default_factory=list)
+    total: float | None = Field(
+        default=None, description="Signed total of the evidence lines' amounts; None for a derived cell."
+    )
+    note: str | None = Field(default=None, description="Why the value is n/a, when it is.")
+
+
+class MonthRow(BaseModel):
+    """One calendar month of the period. `start` and `end` are the month's days inside the
+    period; a month the period does not cover whole is a part month."""
+
+    month: str = Field(description="YYYY-MM.")
+    part_month: bool
+    start: date
+    end: date
+    money_in: MonthlyCell
+    money_out: MonthlyCell
+    trading_receipts: MonthlyCell
+    average_balance: MonthlyCell
+    lowest_balance: MonthlyCell
+    days_overdrawn: MonthlyCell
+
+
+class IndicatorThreshold(BaseModel):
+    """A threshold an indicator fired at, as the thresholds file gives it (R14)."""
+
+    key: str = Field(description="section.key in the thresholds file, e.g. single_cash_deposit.amount_at_least.")
+    value: str = Field(description="As compared: money to the penny in pounds, a share or multiple as written.")
+    unit: Literal["GBP", "pct", "times", "days", "count"]
+    illustrative: bool = Field(description="True while the threshold is still at its shipped value.")
+
+
+class Indicator(BaseModel):
+    """A risk indicator raised from the thresholds file (R14), with the lines behind it."""
+
+    id: str = Field(description="I1, I2, ... in the order the indicators are raised.")
+    kind: Literal["large_credit", "single_cash_deposit", "cash_heavy_month", "cash_round_trip", "gambling",
+                  "returned_dd", "overdrawn_run", "irregular_acquirer"]
+    thresholds: list[IndicatorThreshold]
+    evidence: list[str] = Field(description="Ids of the lines that made it fire, in statement order.")
+    reason: str = Field(description="One line saying why it fired; never a line's description.")
+    illustrative: bool = Field(description="True when a threshold that fired is still at its shipped value.")
+
+
+class QueueCandidate(BaseModel):
+    """One reading of an ambiguous credit (R4, R15): a rule it matched or a kind of case-profile
+    name, the category that sets and the money-in bucket that category maps to."""
+
+    rule_id: str = Field(description="A table rule id, or profile:director / profile:own_account.")
+    category: Category | None = Field(description="None for a payment-method cue, which gives no category.")
+    bucket: Bucket | None = Field(description="None for a payment-method cue, which gives no bucket.")
+
+
+class QueueEntry(BaseModel):
+    """A line the judgement queue lists first because a person has to decide what it is (R15)."""
+
+    line_id: str
+    amount: float = Field(description="The line's signed amount, as the statement gives it; the queue's order.")
+    reasons: list[Literal["unexplained", "ambiguous", "possible_own_account_transfer", "indicator"]]
+    indicators: list[str] = Field(default_factory=list, description="Ids of the indicators that flagged the line.")
+    indicator_kinds: list[str] = Field(default_factory=list, description="Their kinds, in the same order.")
+    candidates: list[QueueCandidate] = Field(
+        default_factory=list, description="For an ambiguous credit, each candidate and the bucket it would give.")
+    pairs_with: list[str] = Field(
+        default_factory=list, description="For a possible own-account transfer, the other lines it could pair with.")
 
 
 # How many decimals each unit is shown with. The memo copies figures as shown, and the
@@ -167,6 +260,12 @@ class RuleResult(BaseModel):
     refer_below: float | None = None
     refer_above: float | None = None
     unit: str = Field(default="", description="Unit of the metric the threshold applies to.")
+    # What a breach, and a figure that cannot be computed, mean under the rule: kept so a rule
+    # can be told from the shipped one whole (T17 review 8), in a checkpoint too, so a resumed
+    # draft still knows a shipped rule (T17 review 14); never written to evidence or MCP output
+    # (PolicyResult.evidence_dump).
+    on_fail: str = ""
+    when_missing: str = ""
 
     def citable_values(self) -> list[float]:
         """Values a memo may quote with this rule's [Rn] tag."""
@@ -178,6 +277,11 @@ class PolicyResult(BaseModel):
     overall: RuleOutcome
     rules: list[RuleResult]
     policy_sha256: str = Field(default="", description="Hash of the policy file the rules came from.")
+
+    def evidence_dump(self, **kwargs) -> dict:
+        """The result as evidence and MCP output show it, as the previous release did: each
+        rule's fail and missing-figure actions left out."""
+        return self.model_dump(exclude={"rules": {"__all__": {"on_fail", "when_missing"}}}, **kwargs)
 
 
 class GuardFinding(BaseModel):

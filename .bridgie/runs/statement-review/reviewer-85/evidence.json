@@ -1,0 +1,52 @@
+{
+  "task": "T03",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped recognition to src/cma/rules/v2.yaml:63,74,117,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest matches, containment, bank-code precedence, ambiguity, profile candidates, firm rules and overrides through src/cma/categorise.py:859,881,968,988,1035 and per-line provenance through src/cma/categorise.py:1146, src/cma/graph.py:188,221,251 and src/cma/cli.py:77,229. Traced frozen-table refusal and exception checks at src/cma/categorise.py:384,448,717. Checked repeat categorisation, concurrent runs and case-local inputs, signed amounts, empty and Unicode wording, date-only ingestion, rejection before checkpoint creation, the ruleset allow-list, rollback and evidence consumers. The runner logs confirm per-list provenance, CLI v2, checkpoint replay and both offline evals. R4 fails because validation can omit a rule's unusable matcher when another field on that rule is faulty.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-85/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 554,
+      "criterion": "R4",
+      "claim": "Validation can suppress the diagnostic for a pattern that compiles on its own but fails in the required span matcher. The gate treats any compile diagnostic on the rule as a reason to skip its primary matcher. It also skips the primary matcher when an independent names field is malformed.",
+      "repro": "In the v2 cash_paid_in rule, replace names with pattern: '(?i)CASH DEPOSIT' and add unless: '('. The refusal names the forbidden unless and its syntax error. It omits the pattern fault because the unless diagnostic contains 'compile', which skips the span build at line 554. Remove unless and the refusal now names the global flag inside the span wrapper at line 581. The regression test uses unless: 3, which produces no compile diagnostic and therefore takes a different path. A second reproduction is to give the same pattern with names: [42] and no unless. Validation reports names and skips the independently buildable pattern span."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README says a profile name can settle an ambiguous credit and places profile matching ahead of ambiguity. This misstates the implemented precedence.",
+      "repro": "Classify a positive FPS CASH DEPOSIT JANE DOE line with JANE DOE as a profile director. The result at src/cma/categorise.py:1049 is OTHER with v2:conflict:payment_rail+cash_paid_in+profile:director."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 1004,
+      "criterion": "R4",
+      "claim": "The producer's whole-statement shuffle claim is broader than its proof. Debits use the first protected match, so reordering two protected rules within one stage can change a debit category.",
+      "repro": "Categorise a debit described as TFR TO SAVINGS HMRC VAT. In the shipped order own_pots_savings wins. Move hmrc_vat before own_pots_savings, keeping returned_dd first and preserving the stage and protection order. The same debit becomes hmrc_vat. The runner's shuffle test passed on its selected statements."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "The claim that compileall covered every module is not proven by the runner's compile result. Its command covered src only.",
+      "repro": "Compare mechanical:2, which ran python -m compileall -q src, with the claimed scope of src, evals and tests. A passing runner result for python -m compileall -q src evals tests would prove the claimed scope."
+    }
+  ],
+  "verdict": "fail"
+}

@@ -1,0 +1,81 @@
+{
+  "task": "T17",
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "src/cma/firm.py:68 defaults the lock on. src/cma/llm.py:83 gates client creation, src/cma/mcp_server.py:40-119 gates startup and ASGI requests, and src/cma/mcp_server.py:169 gates tools. The runner passed the native startup, saved-app, inherited-tracer and async-resume cases. The config stamp and parsed bytes can come from different file versions at src/cma/firm.py:199-202. A resume that drafts can also leave evidence naming the wrong destination at src/cma/graph.py:413.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:230-284 limits the prompt to the allowed fields and redraft IDs. The runner passed the new serializer round-trip and exact-copy tests. Older checkpoints can still restore a shipped rule without its actions, causing src/cma/graph.py:225-227 to mask the required citation.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:248-284 masks custom rule text, limits and IDs, canonicalizes shipped detail, and intersects redraft feedback with known IDs. src/cma/metrics.py:295-299 renders metric values and methods without transaction IDs or descriptions. The runner passed the sentinel, hosted custom-policy, custom-limit and redraft cases. Period dates and formatted figure values are within the supplied revision 33 scope.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "The runner confirmed locked constructors, async resume, retryable 503s, redirects, native MCP bind refusal and saved ASGI refusal. src/cma/firm.py:137-152 and :197-202 can validate an unlocked reading against a restored locked file, allowing hosted client creation under the lock.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/firm.py",
+      "line": 199,
+      "criterion": "R29/P18",
+      "claim": "The configuration stamp and parsed settings come from separate reads. A concurrent update can bind an unlocked reading to the fingerprint of the locked file and allow client construction after the locked file has been restored.",
+      "repro": "Use a local stub SDK. Start with locked firm.yaml A and pause firm.load immediately after _stamp returns. Temporarily move A aside, install unlocked firm.yaml B, and let _load parse B. Put the original A back with its original mtime before passing the returned reading to get_llm. The size, mtime and digest match A, so the constructor accepts B's offline_lock: false while A is locked."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 413,
+      "criterion": "R29",
+      "claim": "Drafting from a resumed checkpoint leaves the original model and destination in the evidence, even when that resume sends the prompt to a hosted provider.",
+      "repro": "With the lock off, use the same saver to create a FakeLLM checkpoint and requeue its draft via update_state with as_node='policy', as the runner's resume test does. Resume with a recording HostedLLM and then approve. The recording model receives the prompt, while evidence_record still reports destination='offline' and the original fake model because draft only updates memo and redrafts."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 225,
+      "criterion": "R30",
+      "claim": "The new serializer preserves rule actions for new checkpoints. A pre-change checkpoint lacks both actions, so it can mask an exact shipped rule when drafting resumes.",
+      "repro": "Restore a pre-change checkpoint paused after policy evaluation with the packaged policy and the lock off. Resume drafting with a recording hosted model. RuleResult defaults the absent actions to empty strings at src/cma/models.py:174-175. The whole-rule match fails and the prompt masks shipped IDs such as R2. The passing round-trip test at tests/test_firm.py:1477 serializes a new result whose actions are already populated."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/firm.py",
+      "line": 144,
+      "criterion": "R29",
+      "claim": "The producer's single-file-read and performance claims exceed their proof. An unchanged hosted CLI draft reads the file for its initial fingerprint and parse, then hashes it again for client construction and graph entry. The cited test counts firm.load calls.",
+      "repro": "Instrument Path.read_bytes and Path.read_text for firm.yaml during an unchanged hosted CLI draft with a stub provider. Count the reads at src/cma/firm.py:144 and :215, including the validations at :159 and :191. Compare with tests/test_firm.py:940, which only wraps firm.load. Whole-suite duration supplies no before-and-after benchmark."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 102,
+      "criterion": "R29",
+      "claim": "The claimed CLI exit-4 behavior for provider failures is not_proven by the cited retry tests. They exercise model.complete directly.",
+      "repro": "Add a CLI integration test that invokes cma run with the lock off and a mock provider returning HTTP 503. Assert one HTTP attempt and exit code 4, then run python -m pytest -v tests/test_firm.py -k hosted_cli_provider_failure_exits_4. The current runner's retry cases cover the SDK attempt count."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

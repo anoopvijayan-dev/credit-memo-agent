@@ -1,0 +1,55 @@
+{
+  "task": "T08",
+  "claims": [
+    {
+      "text": "Failure modes / partial failure: a malformed thresholds file (including an integer of more than 4,300 digits, which previously escaped as a bare ValueError) is refused as ThresholdsError naming the line, and cma run exits 2 before any review id is taken or any file written.",
+      "proof_cmd": "python -m pytest -q tests/test_indicators.py -k 'refused or malformed'",
+      "proof_output": "all selected passed (part of 25 passed in tests/test_indicators.py); new test test_an_integer_threshold_with_too_many_digits_is_refused_naming_its_line; existing test_cma_run_refuses_a_malformed_thresholds_file_naming_the_line asserts exit 2 and no memo or evidence written"
+    },
+    {
+      "text": "Idempotency / determinism: raise_indicators is a pure function of the categorised statement and thresholds; it gives the same answer twice and leaves the statement unchanged; a resumed review records the thresholds text its run read, not the file as it is now (edited, malformed or removed), and a pre-indicator checkpoint reads the packaged file.",
+      "proof_cmd": "python -m pytest -q tests/test_indicators.py -k 'unchanged or kept'",
+      "proof_output": "passed: test_indicators_leave_the_statement_unchanged_and_give_the_same_answer_twice, test_the_evidence_reads_the_thresholds_the_run_kept_not_the_file_as_it_is_now (new)"
+    },
+    {
+      "text": "Performance: the cash round-trip window is found by bisection over withdrawals sorted by (day, position) and each line's pence is converted once; 10,000 lines (5,000 withdrawals, 5,000 deposits) raise indicators in 0.81 s, down from over 7 s; the result matches the previous rule (only earlier withdrawals within the window).",
+      "proof_cmd": "python -m pytest -q tests/test_indicators.py -k round_trip_window_is_found",
+      "proof_output": "passed; measured directly: '10k lines 0.81 s 5009' (before the change: '10k lines 7.07 s 5009')"
+    },
+    {
+      "text": "Data/money: every comparison is in integer pence or an exact Fraction/Decimal; amounts with a fraction of a penny in the thresholds file are refused naming the line; shipped values are labelled illustrative and a moved value is not.",
+      "proof_cmd": "python -m pytest -q -m contracts",
+      "proof_output": "379 passed, 992 deselected"
+    },
+    {
+      "text": "Migration / rollback: the change is additive. The evidence JSON gains thresholds and indicators keys, the graph state gains two optional str fields (no new checkpoint type), the committed example is regenerated and matches what the code raises, and --thresholds is optional. Rolling back is a reinstall of the previous wheel, which ignores the new keys.",
+      "proof_cmd": "python -m pytest -q",
+      "proof_output": "1371 passed in 95.16s (includes test_the_committed_example_indicators_are_what_the_code_raises_from_its_lines and the checkpoint/resume tests)"
+    },
+    {
+      "text": "Security: the one new entry point is cma run --thresholds, a local file the OS user names. It is parsed with yaml.compose under SafeLoader, so nothing is constructed; indicator reasons carry only amounts, dates and counts, never a line's description (R34); no new dependency (pyproject.toml unchanged).",
+      "proof_cmd": "git diff 6b964e6 --stat -- pyproject.toml; grep -n 'description' src/cma/indicators.py",
+      "proof_output": "no pyproject change; description is read only for matching (operators.search(_fold(t.description)), acquirer match), never written into a reason"
+    },
+    {
+      "text": "Lint, compile and offline evals pass.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src && python evals/run_evals.py",
+      "proof_output": "All checks passed!; compile-ok; 9/9 memos fully grounded; model = fake; ruleset = v1"
+    },
+    {
+      "text": "Observability: each evidence record names the thresholds file's source and sha256, which thresholds are still at their shipped value, and each indicator's lines and thresholds. Remote alerting is not applicable: by design the tool is local-only and signals by refusing with a non-zero exit.",
+      "proof_cmd": "python -m pytest -q tests/test_indicators.py -k evidence_record",
+      "proof_output": "passed: test_cma_run_writes_indicators_and_their_thresholds_into_its_evidence_record"
+    },
+    {
+      "text": "Docs: README has a row for indicators.py and indicators.yaml; the packaged YAML documents every key. The repo has no CHANGELOG, so no changelog line applies.",
+      "proof_cmd": "grep -n 'Indicators' README.md; ls",
+      "proof_output": "README.md:80 Indicators row; ls shows no CHANGELOG"
+    }
+  ],
+  "files_changed": [
+    "src/cma/indicators.py",
+    "tests/test_indicators.py"
+  ],
+  "notes": "Gaps for the owner, not fixed (design or scope): (1) the thresholds file accepts a YAML tag such as !!python/object or an alias on a scalar value; nothing is constructed, since yaml.compose only reads the scalar text, but refusing unknown tags would be a stricter design choice. (2) The MCP server does not expose indicators; T08 does not ask for it. (3) The judgement queue listing flagged lines (R15) and R52's full timed recompute (T22) are other tasks. (4) The new scale test's time bound is 5 s, not R52's 2 s, so slower CI does not make it flaky; the measured time is 0.81 s. Hardening commit: 6936524."
+}

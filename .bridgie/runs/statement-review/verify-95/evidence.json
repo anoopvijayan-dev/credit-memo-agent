@@ -1,0 +1,109 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Reviewed the supplied revision 21, which expands the older R4 text in the checkout. Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest matches, containment, bank-code precedence, rail and cash conflicts, both-stage candidates, profile and firm rules, and overrides through src/cma/categorise.py:950,972,1059,1086,1126,1237 and the unexplained bucket through src/cma/models.py:65. Checked repeated categorisation, concurrent state and case-local inputs, signed amounts, date-only input, Unicode boundaries, load failure before checkpoint creation, allowlisting, rollback and changed-contract consumers through src/cma/categorise.py:808,1237, src/cma/ingest.py:57,100, src/cma/cli.py:77,84,229, src/cma/graph.py:188,210,250 and src/cma/mcp_server.py:37,77,84. Runner logs confirm the table-driven cases, CLI provenance, checkpoint replay, idempotency, both offline evals and the 10,000-line categoriser fixture. The tested tagged-scalar cases pass, but a collection tagged !!str still aborts YAML construction and suppresses the rule and field diagnostics and independent faults required by R4.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-95/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-95/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-95/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-95/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-95/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-95/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-95/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 779,
+      "criterion": "R4",
+      "claim": "The malformed-value recovery omits YAML's built-in string constructor. A collection tagged !!str raises ConstructorError before rule validation, so other faults in the table also disappear from the refusal.",
+      "repro": "Extend tests/test_rules_v2.py:2152 with `!!str [ODD]` in its value parametrization. The stock string constructor rejects the sequence, and src/cma/categorise.py:796 returns a generic YAML error without `(odd): category` or `(other): direction`. In a changed v1 that keeps `frozen: true`, put `pattern: !!str [CASH]` on one rule and `unless: FPS` on another. The changed-table prefix survives, but the refusal omits the malformed pattern and the forbidden exception."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The claimed precedence documentation says a profile name can settle a wording conflict. The implementation keeps the conflict and adds the profile match as a candidate.",
+      "repro": "Classify a positive `FPS CASH DEPOSIT JANE DOE` under v2 with Jane Doe listed as a director. src/cma/categorise.py:1144 returns OTHER with `v2:conflict:payment_rail+cash_paid_in+profile:director`."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1385,
+      "criterion": "R4",
+      "claim": "The shuffle test proves stability on its corpus. The producer's broader claim that shuffling rules within a stage changes no category on whole statements fails for debits.",
+      "repro": "Categorise a £10 debit described as `PAYROLL RENT` under the shipped v2, then swap the `payroll` and `rent` rules in the same names stage. The debit takes the first unprotected match at src/cma/categorise.py:1104, changing from payroll to rent."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 204,
+      "criterion": "R4",
+      "claim": "The producer's claim that every evidence record identifies the rule responsible for every line overstates the legacy replay guarantee. A checkpoint with missing rule ids and a mismatched ruleset hash yields null rule ids.",
+      "repro": "Use the stale-hash checkpoint in tests/test_rules.py:370. Its final assertion explicitly expects every line's `rule_id` to be null."
+    },
+    {
+      "severity": "minor",
+      "file": "pyproject.toml",
+      "line": 41,
+      "criterion": "R4",
+      "claim": "The claim that every module compiles is not_proven for tests and evals. The runner's compile tier covered src.",
+      "repro": "Compare mechanical tier 2 with the producer's proof command. A passing runner row for `python -m compileall -q src evals tests` would prove the advertised scope."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

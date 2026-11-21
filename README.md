@@ -55,7 +55,22 @@ cma import monzo "private/Monzo Data Export.csv" --opening-balance 123.45 --out 
 # first entry that was changed, removed, reordered or left half written.
 cma case check private/cma/cases/<id>
 
-# Use a real model instead of the offline one.
+# Choose the categorisation table (src/cma/rules/<id>.yaml; default v1). v1 is the
+# original table, frozen; v2 adds real UK acquirers, gateways, marketplaces, delivery
+# platforms, lenders and merchant cash advance providers, own pots and savings, cash
+# paid in (counted as trading receipts), cash-withdrawal wording, HMRC repayments,
+# refunds and explained non-trading credits. An unknown id is refused. The evidence
+# file records the table's id and hash, and under "lines" each line's id, category and
+# the rule that set it (no descriptions). CMA_RULESET=v1 is the rollback.
+CMA_RULESET=v2 cma run examples/cafe_stretched.csv
+
+# Use a real model instead of the offline one. The offline lock in firm.yaml (under
+# CMA_HOME, default private/cma) is on by default and refuses hosted models and the MCP
+# server; turn it off on purpose first. The prompt still carries only the tables.
+# Edit the file the tool reads, keeping its other settings: open it in an editor and set
+#   offline_lock: false
+# (create it with just that line if it does not exist yet).
+mkdir -p "${CMA_HOME:-private/cma}" && ${EDITOR:-nano} "${CMA_HOME:-private/cma}/firm.yaml"
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
 cma run examples/cafe_stretched.csv --llm anthropic
 ```
@@ -70,13 +85,14 @@ example.
 | Synthetic data | `synth.py` | Three business archetypes (café, trades, e-commerce) × three risk profiles (good, stretched, poor). Seeded. Writes the ground truth next to each statement. |
 | Ingest | `ingest.py` | CSV in: `id, date, description, amount, balance`. Refuses duplicate ids, non-ISO or future dates, out-of-order dates, loose amounts and a broken balance chain; reads newest-first files. |
 | Import | `importers/monzo.py` | Monzo export → statement CSV, locally. Monzo Flex is read as a loan. |
-| Categoriser | `categorise.py` | Ordered regex rules, direction-aware. A transfer in is revenue only with an invoice reference. Returned DDs are linked to the debit they undo. Unmatched lines are `OTHER`, never guessed. |
-| Metrics | `metrics.py` | Sixteen figures (revenue, trend, lowest balance, days overdrawn, returned DDs, debt service cover after drawings, VAT timeliness by stagger group, unclassified inflows…). Each carries the transaction ids it came from; a figure that can't be computed is n/a with the reason, never a placeholder. |
+| Categoriser | `categorise.py` + `cma/rules/v1.yaml`, `v2.yaml` | Ordered regex rules and name lists, direction-aware, kept as validated data and chosen by `CMA_RULESET`. Precedence: per-line override, protected rules (the line-type cues: returned DD, own-pot moves, HMRC, refunds; then lenders, director, capital introduced, shareholder, generic loan wording), profile names, an ambiguous verdict, firm rules, the rest of the table, the default; each line records its rule id. Under v2 a credit whose matching rules point to two or more money-in buckets (cues first; names only when no cue matches), or that has a payment rail with cash paid-in wording, is ambiguous: it stays `OTHER` (unexplained, never trading receipts) and records `v2:conflict:` with every rule it matched in either stage, the rail included, until a person overrides it or the profile names the payer. Inside one bucket the table's `category_order` picks the category (cash deposit, customer transfer, card settlement; returned payment, refund), never rule order. Names match as whole words in any script. A transfer in is revenue only with an invoice reference. Returned DDs are linked to the debit they undo. Unmatched lines are `OTHER`, never guessed. |
+| Metrics | `metrics.py` | Twenty-eight figures (revenue, trend, lowest balance, days overdrawn, returned DDs, debt service cover after drawings, VAT timeliness by stagger group, non-trading money in (M16), total money in (M17), cash inside trading receipts (M18), the seven other money-in buckets (M19-M25), the unexplained share (M26), average end-of-day balance (M27) and debt service cover including a proposed facility (M28, n/a with the reason in `cma run`, which has no case profile)…), added up in integer pence. Each carries the transaction ids it came from; a figure that can't be computed is n/a with the reason, never a placeholder. If the money-in buckets do not add up to total money in to the penny, no figures are shown: `cma run` exits 6 naming the difference in pence and the lines. |
+| Indicators | `indicators.py` + `cma/thresholds/indicators.yaml` | Eight risk indicators (a large single credit, a cash deposit at or above the single-deposit limit, a cash-heavy month, cash paid back in after a similar withdrawal, gambling payments, returned direct debits, runs of overdrawn days, irregular credits from a named acquirer), compared in pence and written into the evidence record, each with its lines and the thresholds that fired. The thresholds are illustrative; `cma run --thresholds FILE` takes a firm's own, and a malformed file is refused naming the line. |
 | Policy | `cma/policies/uk_sme_default.yaml` | Nine illustrative rules with pass / refer / fail, and what a missing figure means. Validated on load. Edit the YAML, not the code. |
 | Draft | `graph.py` + `llm.py` | The model gets the metrics table and the policy table, nothing else, and must tag every figure ([Mn]) and threshold ([Rn]). |
 | Guard | `guard.py` | Reads every number in the memo, in digits or words, back against the table: value at the precision written, unit, sign, and the tag right after it. |
 | Review | `graph.py` | LangGraph `interrupt()`; resumes only with a named reviewer's decision. The final memo carries an appendix of every figure, rule, the model and file hashes. |
-| MCP server | `mcp_server.py` | Exposes metrics, policy and evidence lookup as tools for any MCP client; reads only .csv/.yaml under `CMA_DATA_DIR`. |
+| MCP server | `mcp_server.py` | Exposes metrics, policy and evidence lookup as tools for any MCP client; reads only .csv/.yaml under `CMA_DATA_DIR`; refuses to start while the offline lock is on. |
 | Evals | `evals/run_evals.py` | Runs all nine cases, reports grounding rate, redrafts and agreement with ground truth on nine metrics. Fails CI if any metric disagrees with truth or the offline memo is ungrounded. |
 
 ## Evaluation
@@ -120,13 +136,13 @@ tests named after each finding.
 - The guard checks figures, not judgements: "no late VAT payments" when M13 is 2 has
   no number in it. The reviewer reads the metrics table in the appendix for that.
 - Revenue by bank transfer needs an invoice reference to count. Statements without
-  references show it as unclassified inflows (M16), which refers the case.
+  references show it as non-trading money in (M16), which refers the case.
 - Pending reviews live in memory unless you pass `--checkpoint-db`.
 - The reviewer's name is asserted, not authenticated: anyone at the terminal can type
   any name. A pilot inside a lender would put the CLI behind their own sign-in.
 - Debt service cover (M10) is historical and covers existing debt only; it does not
   include the facility being applied for. Money in that isn't explained as trading
-  is left out of it, and shows as unclassified inflows (M16).
+  is left out of it, and shows as non-trading money in (M16).
 - The categoriser knows the synthetic acquirer names. Card revenue from a real
   acquirer it doesn't recognise lands in M16 and refers the case until a rule is added.
 - Policy thresholds are illustrative. They are not any lender's real policy.

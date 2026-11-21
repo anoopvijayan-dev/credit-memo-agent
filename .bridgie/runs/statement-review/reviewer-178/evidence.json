@@ -1,0 +1,110 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to buckets. src/cma/metrics.py:481 assigns credits and reconciles integer pence. src/cma/metrics.py:523 and :562 emit the GBP figures and line IDs. src/cma/graph.py:308 and src/cma/mcp_server.py:98 call compute. The runner passed the bucket-mapping and MCP output tests.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:83 checks exact input pence, src/cma/metrics.py:512 computes M3 in integer pence and checks reporting precision, and src/cma/graph.py:175 and src/cma/cli.py:415 show GBP to the penny. The runner passed the oversized unterminated foreign-record regression. Eager recursive recovery can still bypass the first-problem diagnostic, and Monzo can export a field its statement loader refuses.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks bucket membership by line ID and calculates the pence difference before any figures are returned. src/cma/cli.py:118 escapes the refusal and exits 6. The runner passed the CLI and MCP refusal tests, including the CLI markup and uncategorised-credit cases.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/models.py:66 maps OTHER to unexplained money in and :69 excludes it from trading receipts. The runner passed the unmatched-credit invariants for both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483 totals positive amounts and :581 checks that each credit ID occurs once in the eight bucket results. The cash subtotal is emitted separately at :565. The runner passed the partition and large-amount invariants in tests/test_money_in.py:92 and :248.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the figures shipped by T04, src/cma/metrics.py:523 and :562 pair sums with their source IDs, :538–555 pair outflows with their signed source lines, :374–379 and :530–534 preserve the balance evidence rules, and :418–430 identify partially counted M9 credits. M16 and M26 cite the shared denominator at :558–574. The runner passed the named sum, outflow and partial-credit invariants and the separate legacy evidence comparisons.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 give unmatched credits the category consumed by M25 through src/cma/models.py:66 and src/cma/metrics.py:485. M2 uses the trading categories at src/cma/metrics.py:351. The runner passed the unmatched-credit and explicit unknown-payer tests in tests/test_money_in.py:137 and :148.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 339,
+      "criterion": "R2",
+      "claim": "Oversized-field recovery recursively parses the entire suffix before Monzo validates the header or handles the first bad row. A run of oversized fields can exhaust the stack or memory before the importer names the first offending line.",
+      "repro": "Put a bad GBP amount on line 2 of a Monzo export and append more records with oversized Name fields than the Python recursion limit. The suffix is recursively parsed before convert reaches the line-2 amount check at src/cma/importers/monzo.py:234. A regression test can lower the CSV field size limit after preparing a valid-width header and use short repeated fields to exercise the same path without a large fixture."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 322,
+      "criterion": "R2",
+      "claim": "Monzo reports a successful import after constructing a description that exceeds the statement loader's CSV field limit.",
+      "repro": "Import a one-row GBP Monzo export with Amount 1.00, Balance 1.00, Type Faster payment and a Name made of 70,000 copies of ß. The input field is below the default 131,072-character limit. Uppercasing at src/cma/importers/monzo.py:116 expands it to 140,000 characters before the output CSV is written. Loading that output with cma run refuses line 2 as a field too long to read."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 263,
+      "criterion": "R2",
+      "claim": "The producer's no-ceiling probe does not prove support for importing a credit above the revision-29 limit. The checked-in test exercises the pence helpers directly, and no runner result records the scratchpad probe.",
+      "repro": "Use £10,000,000,000,000.01 as a CSV credit. The helpers can represent it, while src/cma/ingest.py:88 refuses it as required. A runner execution of PYTHONPATH=src python scratchpad/probe.py with the script supplied would prove only the direct-compute claim."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 393,
+      "criterion": "R2",
+      "claim": "The producer's display probe checks formatted metric values. Its proof does not exercise the CLI or the appendix, though both call display_exact in production.",
+      "repro": "The named test calls Metric.display_exact directly. To prove both surfaces, run a CLI integration test on three £0.60 credits in different buckets and assert the £1.80 total and £0.60 parts in both the console table and the written memo appendix."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 316,
+      "criterion": null,
+      "claim": "The standalone idempotency probe and the historical full-suite result are unverified in this review. The runner confirms 983 passed on efa8c15 and 84 dual-run tests passed, while the producer cites 878 passed on ca0092c and 83 dual-run tests passed.",
+      "repro": "Compare specified-3.log and dual_run-7.log with the claimed revision and counts. Proving the historical suite claim requires the runner to execute python -m pytest -v -rs on ca0092c. Proving the standalone probe requires the runner to execute PYTHONPATH=src python scratchpad/probe.py with the script supplied, or run a checked-in invariant that compares two full compute results on the same statement."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer's note about the committed example is stale. The example already includes evidence_note keys.",
+      "repro": "Read the first metric entry at line 2363. It contains evidence_note set to null."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

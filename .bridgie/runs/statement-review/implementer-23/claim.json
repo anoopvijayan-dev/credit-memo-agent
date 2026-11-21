@@ -1,0 +1,67 @@
+{
+  "task": "T12",
+  "claims": [
+    {
+      "text": "P15 invariant tests pass, including the rebuilt-chain tests that now check first_bad equals the first diverging entry and that the intact prefix holds only the unchanged entries, for changed, removed and reordered entries at every position in logs of 2-6 entries.",
+      "proof_cmd": "python -m pytest -q -m invariants",
+      "proof_output": "77 passed, 308 deselected in 2.20s"
+    },
+    {
+      "text": "Full suite passes with no skips, including the new tests: a reader never reports a live append as torn when the writer pauses past the retry window; a torn entry is still reported when the lock is free and to the lock holder; a crash after the rename during drop_torn_entry is repairable; an unreadable head or log file raises CaseLogBroken naming entry 1.",
+      "proof_cmd": "python -m pytest -q -rs",
+      "proof_output": "385 passed in 9.47s"
+    },
+    {
+      "text": "Contracts tier passes.",
+      "proof_cmd": "python -m pytest -q -m contracts",
+      "proof_output": "11 passed, 374 deselected in 3.40s"
+    },
+    {
+      "text": "Dual-run tier passes.",
+      "proof_cmd": "python -m pytest -q -m dual_run",
+      "proof_output": "10 passed, 375 deselected in 2.03s"
+    },
+    {
+      "text": "Lint and compile pass.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src",
+      "proof_output": "All checks passed!"
+    },
+    {
+      "text": "Offline evals pass.",
+      "proof_cmd": "python evals/run_evals.py",
+      "proof_output": "9/9 memos fully grounded; model = fake"
+    }
+  ],
+  "files_changed": [
+    "src/cma/case.py",
+    "tests/test_case_log.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major src/cma/case.py:299: The case-log integrity check has no production caller. The passing tests exercise the library directly, so they do not establish detection on a production case load.",
+      "disposition": "reproduced",
+      "evidence": "Confirmed: nothing in src/ outside case.py references CaseLog. Not fixed in T12. The design's callers are later tasks that depend on T12: T13 (cma case new and cma case import, each appended to the case log) and T27 (sign-off refusing on a broken chain). A caller here would mean either implementing part of T13 early, including its R31 case-root, permission and git-ignore checks, or adding a CLI command the design does not list. Under the stop condition this is left to the runner; see notes."
+    },
+    {
+      "finding": "major src/cma/case.py:252: A rebuilt chain with an earlier entry removed is reported as a missing final entry, and the altered entries are returned as the intact prefix; the test at tests/test_case_log.py:540 only checks that a bound method is truthy and never checks first_bad.",
+      "disposition": "reproduced",
+      "evidence": "The head file now records the hash of every entry ({count, hash, hashes}), and _check compares each walked entry with it, naming the earlier of the first hash divergence and the first chain break. test_p15_a_rebuilt_chain_that_does_not_match_the_head_file_is_detected now asserts first_bad == k+1, head.position == k and that the returned entries are exactly the original first k. The truthy assertion is replaced by a check that the rebuilt lines load intact with a head file of their own. The new test_p15_a_rebuilt_chain_with_any_entry_removed_names_that_entry covers the reviewer's repro. Both fail on the previous case.py and pass now (invariants: 77 passed)."
+    },
+    {
+      "finding": "major src/cma/case.py:281: A reader can report a live append as torn and tell the user to confirm dropping it; the reader test pauses the writer only ~30 ms.",
+      "disposition": "reproduced",
+      "evidence": "After its retries, a non-holder verify() that still sees a torn entry tries to take the writer lock. If the lock is free, it reads again under the lock and reports that result. If another writer holds the lock, it returns the intact prefix with ok=True and in_progress=True, never torn. The lock holder (sign-off) still sees a torn entry as torn. Tests: test_a_reader_never_reports_a_live_append_as_torn_however_long_the_writer_pauses (the writer is held paused while three full retry windows elapse), test_p15_a_torn_entry_with_the_lock_free_is_still_reported_by_a_reader and test_a_lock_holder_still_sees_a_torn_entry_while_a_reader_sees_it_recorded. All fail on the previous case.py, pass now, and passed in 10 repeated runs."
+    },
+    {
+      "finding": "minor src/cma/case.py:403: The test cited for a crash during a drop only injects failure before the log rename; a failure after the rename leaves different log bytes and the old head.",
+      "disposition": "reproduced",
+      "evidence": "The behaviour was already safe; the test name and claim were too broad. The existing test is renamed test_a_crash_before_the_rename_while_dropping_leaves_the_torn_log_unchanged, and the drop_torn_entry comment documents the post-rename case. New test_a_crash_after_the_rename_while_dropping_leaves_a_torn_log_that_drops_again makes _write_head raise during the drop. It asserts the log loads as torn at entry 3 with head position 2, appends are refused, and a second drop repairs it."
+    },
+    {
+      "finding": "minor src/cma/case.py:192: A filesystem read error on the head file bypasses the integrity result and produces no numbered CaseLogBroken error.",
+      "disposition": "reproduced",
+      "evidence": "_read_head now maps OSError other than FileNotFoundError to unreadable, and _read_log maps it to an unreadable log, so both give CaseLogBroken naming entry 1. Tests: test_p15_a_head_file_that_cannot_be_read_is_named_not_raised (head path replaced by a directory) and test_a_log_file_that_cannot_be_read_is_named_not_raised. Both fail on the previous case.py and pass now."
+    }
+  ],
+  "notes": "Finding 1 (no production caller) is not fixed in T12. T12 has depends_on [] and its callers are planned in T13 (cma case new and import, each appended to the case log) and T27 (sign-off refuses a broken chain and names the first bad entry), both of which depend on T12. A caller inside T12 would mean doing part of T13 early, including R31's case-root checks, or adding a CLI command the design does not list (stop condition). If the reviewer requires a caller inside T12, the task needs splitting, or T13's `cma case new` should be moved into it. Behaviour change: an entry changed with its own hash recomputed is now named itself (first_bad k), not the following entry (k+1), because its hash no longer matches the head file's record; test_p15_changing_an_entry_and_recomputing_its_hash_is_detected_at_that_entry is updated to match. Head file format is now {count, hash, hashes}; there are no existing head files, since the module has no caller yet. A non-holding reader that finds a torn tail takes the writer lock briefly to confirm it; a writer starting in that instant gets CaseLocked and retries. Committed as bdc5fb5."
+}

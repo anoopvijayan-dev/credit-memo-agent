@@ -1,0 +1,52 @@
+{
+  "task": "T03",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Reviewed the supplied revision 9. The shipped data covers own pots and savings, HMRC, refunds, rails and cheques at src/cma/rules/v2.yaml:63–159, lenders and MCA providers at :162–241, cash and explained credits at :253–280, and trading providers and cash withdrawals at :298–405. src/cma/categorise.py:497–561 filters contained matches, gives the leading bank code priority, and decides ambiguity from payment-method cues and the two stages. At :573–574 the per-line override wins. At :595–638 ambiguous credits retain both matching profile kinds and all surviving table candidates, and bypass firm rules. src/cma/models.py:55–67 maps OTHER to unexplained and cash deposits to trading receipts. src/cma/graph.py:250–253 invokes the selected table and :188–224 exports provenance and handles historical checkpoints. The runner logged 728 passing tests, including the table-driven list cases, the v2 CLI evidence checks, both-profile candidate coverage, idempotency, rollback, historical resume and offline evals under both tables. The review traced duplicate submission, concurrent state and output paths, amount and Unicode boundaries, date and GBP assumptions, partial output failure, authorization and data-root isolation, and CLI, checkpoint and MCP consumers. Review was read-only.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-48/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 490,
+      "criterion": "R4",
+      "claim": "The producer's fail-at-load claim misses the regex used to collect credit match spans. A pattern can pass validation and compile at load, then abort categorisation with a raw regex error on the first matching credit.",
+      "repro": "In a copy of the v2 table, replace only the invoice_transfer pattern with '(?i)INV[ ]+[0-9]+', preserving its other fields. Load the table and categorise a positive 'FPS CREDIT ACME INV 17' line. The standalone pattern compiles and matches. _at_every_position then wraps it in a lookahead, moving the global flag away from the start and raising re.error."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The documented precedence incorrectly tells readers that a matching profile name can settle an ambiguous credit and omits cheque wording from the payment-method conflict.",
+      "repro": "Compare the README with src/cma/categorise.py:554–558 and :620–633. With Jane Doe in the profile, a positive 'FPS CREDIT CASH DEPOSIT REF JANE DOE' stays OTHER and gains the director candidate. A positive 'CHEQUE CASH DEPOSIT' also stays OTHER and records the cheque and cash candidates."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 588,
+      "criterion": "R4",
+      "claim": "The producer's whole-statement shuffle claim extends beyond its fixture. Debit categories and figures can change when rules in the same stage are reordered.",
+      "repro": "Categorise a negative 'PAYROLL RENT' line with the shipped v2 table, then swap payroll and rent within the unprotected names stage and categorise a fresh copy. Both patterns match. The first order gives payroll, while the swapped order gives rent."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 27,
+      "criterion": "R4",
+      "claim": "The compile-all claim is only partially proven by the runner. The mechanical result covers src only.",
+      "repro": "Compare mechanical:2 with the claimed scope of src, evals and tests. A passing runner result for 'python -m compileall -q src evals tests' would prove the broader claim."
+    }
+  ],
+  "verdict": "fail"
+}

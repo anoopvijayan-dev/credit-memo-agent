@@ -1,0 +1,1289 @@
+diff --git a/README.md b/README.md
+index 83d71fb..58291fd 100644
+--- a/README.md
++++ b/README.md
+@@ -77,6 +77,7 @@ example.
+ | Import | `importers/monzo.py` | Monzo export → statement CSV, locally. Monzo Flex is read as a loan. |
+ | Categoriser | `categorise.py` + `cma/rules/v1.yaml`, `v2.yaml` | Ordered regex rules and name lists, direction-aware, kept as validated data and chosen by `CMA_RULESET`. Precedence: per-line override, protected rules (the line-type cues: returned DD, own-pot moves, HMRC, refunds; then lenders, director, capital introduced, shareholder, generic loan wording), profile names, an ambiguous verdict, firm rules, the rest of the table, the default; each line records its rule id. Under v2 a credit whose matching rules point to two or more money-in buckets (cues first; names only when no cue matches), or that has a payment rail with cash paid-in wording, is ambiguous: it stays `OTHER` (unexplained, never trading receipts) and records `v2:conflict:` with every rule it matched in either stage, the rail included, until a person overrides it or the profile names the payer. Inside one bucket the table's `category_order` picks the category (cash deposit, customer transfer, card settlement; returned payment, refund), never rule order. Names match as whole words in any script. A transfer in is revenue only with an invoice reference. Returned DDs are linked to the debit they undo. Unmatched lines are `OTHER`, never guessed. |
+ | Metrics | `metrics.py` | Twenty-eight figures (revenue, trend, lowest balance, days overdrawn, returned DDs, debt service cover after drawings, VAT timeliness by stagger group, non-trading money in (M16), total money in (M17), cash inside trading receipts (M18), the seven other money-in buckets (M19-M25), the unexplained share (M26), average end-of-day balance (M27) and debt service cover including a proposed facility (M28, n/a with the reason in `cma run`, which has no case profile)…), added up in integer pence. Each carries the transaction ids it came from; a figure that can't be computed is n/a with the reason, never a placeholder. If the money-in buckets do not add up to total money in to the penny, no figures are shown: `cma run` exits 6 naming the difference in pence and the lines. |
++| Indicators | `indicators.py` + `cma/thresholds/indicators.yaml` | Eight risk indicators (a large single credit, a cash deposit at or above the single-deposit limit, a cash-heavy month, cash paid back in after a similar withdrawal, gambling payments, returned direct debits, runs of overdrawn days, irregular credits from a named acquirer), compared in pence and written into the evidence record, each with its lines and the thresholds that fired. The thresholds are illustrative; `cma run --thresholds FILE` takes a firm's own, and a malformed file is refused naming the line. |
+ | Policy | `cma/policies/uk_sme_default.yaml` | Nine illustrative rules with pass / refer / fail, and what a missing figure means. Validated on load. Edit the YAML, not the code. |
+ | Draft | `graph.py` + `llm.py` | The model gets the metrics table and the policy table, nothing else, and must tag every figure ([Mn]) and threshold ([Rn]). |
+ | Guard | `guard.py` | Reads every number in the memo, in digits or words, back against the table: value at the precision written, unit, sign, and the tag right after it. |
+diff --git a/examples/cafe_stretched.memo.evidence.json b/examples/cafe_stretched.memo.evidence.json
+index 1a608ca..fd84157 100644
+--- a/examples/cafe_stretched.memo.evidence.json
++++ b/examples/cafe_stretched.memo.evidence.json
+@@ -7516,6 +7516,267 @@
+       }
+     }
+   ],
++  "thresholds": {
++    "source": "cma/thresholds/indicators.yaml",
++    "sha256": "5e660341d572c1c9d446e231c9ace1bfdbae023fd5abaf36ca8fe9c71337073e",
++    "illustrative": [
++      "large_credit.multiple_of_typical",
++      "single_cash_deposit.amount_at_least",
++      "cash_heavy_month.share_above_pct",
++      "cash_round_trip.within_days",
++      "cash_round_trip.tolerance_pct",
++      "gambling.amount_at_least",
++      "gambling.operators",
++      "returned_dd.count_at_least",
++      "overdrawn_run.days_at_least",
++      "irregular_acquirer.multiple_of_median",
++      "irregular_acquirer.min_credits"
++    ]
++  },
++  "indicators": [
++    {
++      "id": "I1",
++      "kind": "large_credit",
++      "thresholds": [
++        {
++          "key": "large_credit.multiple_of_typical",
++          "value": "5",
++          "unit": "times",
++          "illustrative": true
++        }
++      ],
++      "evidence": [
++        "T00210"
++      ],
++      "reason": "A credit of \u00a38,000.00 is at least 5 times the median of the period's 261 trading receipts.",
++      "illustrative": true
++    },
++    {
++      "id": "I2",
++      "kind": "returned_dd",
++      "thresholds": [
++        {
++          "key": "returned_dd.count_at_least",
++          "value": "1",
++          "unit": "count",
++          "illustrative": true
++        }
++      ],
++      "evidence": [
++        "T00329"
++      ],
++      "reason": "A direct debit returned unpaid; the period has 1.",
++      "illustrative": true
++    },
++    {
++      "id": "I3",
++      "kind": "overdrawn_run",
++      "thresholds": [
++        {
++          "key": "overdrawn_run.days_at_least",
++          "value": "7",
++          "unit": "count",
++          "illustrative": true
++        }
++      ],
++      "evidence": [
++        "T00008",
++        "T00009",
++        "T00010",
++        "T00012",
++        "T00013",
++        "T00014",
++        "T00015",
++        "T00017",
++        "T00018",
++        "T00020",
++        "T00021",
++        "T00022",
++        "T00023",
++        "T00025",
++        "T00026",
++        "T00027",
++        "T00028"
++      ],
++      "reason": "21 consecutive days closed overdrawn, from 2025-10-07 to 2025-10-27.",
++      "illustrative": true
++    },
++    {
++      "id": "I4",
++      "kind": "overdrawn_run",
++      "thresholds": [
++        {
++          "key": "overdrawn_run.days_at_least",
++          "value": "7",
++          "unit": "count",
++          "illustrative": true
++        }
++      ],
++      "evidence": [
++        "T00034",
++        "T00035",
++        "T00036",
++        "T00037",
++        "T00039",
++        "T00040",
++        "T00041",
++        "T00042",
++        "T00044",
++        "T00046",
++        "T00047",
++        "T00048",
++        "T00049",
++        "T00050",
++        "T00051"
++      ],
++      "reason": "18 consecutive days closed overdrawn, from 2025-10-31 to 2025-11-17.",
++      "illustrative": true
++    },
++    {
++      "id": "I5",
++      "kind": "overdrawn_run",
++      "thresholds": [
++        {
++          "key": "overdrawn_run.days_at_least",
++          "value": "7",
++          "unit": "count",
++          "illustrative": true
++        }
++      ],
++      "evidence": [
++        "T00110",
++        "T00112",
++        "T00113",
++        "T00114",
++        "T00115",
++        "T00116",
++        "T00117",
++        "T00118",
++        "T00120",
++        "T00122",
++        "T00123",
++        "T00124"
++      ],
++      "reason": "17 consecutive days closed overdrawn, from 2026-01-10 to 2026-01-26.",
++      "illustrative": true
++    },
++    {
++      "id": "I6",
++      "kind": "overdrawn_run",
++      "thresholds": [
++        {
++          "key": "overdrawn_run.days_at_least",
++          "value": "7",
++          "unit": "count",
++          "illustrative": true
++        }
++      ],
++      "evidence": [
++        "T00130",
++        "T00131",
++        "T00132",
++        "T00133",
++        "T00134",
++        "T00136",
++        "T00137",
++        "T00139",
++        "T00141",
++        "T00143",
++        "T00144",
++        "T00145",
++        "T00146",
++        "T00148",
++        "T00149",
++        "T00150",
++        "T00151",
++        "T00153",
++        "T00154",
++        "T00155",
++        "T00156",
++        "T00157",
++        "T00160",
++        "T00161",
++        "T00162",
++        "T00163",
++        "T00165",
++        "T00167",
++        "T00169",
++        "T00170",
++        "T00172",
++        "T00173",
++        "T00174",
++        "T00175",
++        "T00176",
++        "T00178",
++        "T00179",
++        "T00180",
++        "T00181",
++        "T00182",
++        "T00183",
++        "T00184",
++        "T00185",
++        "T00186",
++        "T00187",
++        "T00188",
++        "T00189",
++        "T00192",
++        "T00194",
++        "T00195",
++        "T00196",
++        "T00197",
++        "T00198",
++        "T00199",
++        "T00201",
++        "T00202",
++        "T00203",
++        "T00205",
++        "T00206",
++        "T00207",
++        "T00208",
++        "T00210",
++        "T00211",
++        "T00212",
++        "T00213",
++        "T00214",
++        "T00216",
++        "T00219",
++        "T00220",
++        "T00221",
++        "T00222"
++      ],
++      "reason": "89 consecutive days closed overdrawn, from 2026-01-30 to 2026-04-28.",
++      "illustrative": true
++    },
++    {
++      "id": "I7",
++      "kind": "overdrawn_run",
++      "thresholds": [
++        {
++          "key": "overdrawn_run.days_at_least",
++          "value": "7",
++          "unit": "count",
++          "illustrative": true
++        }
++      ],
++      "evidence": [
++        "T00226",
++        "T00228",
++        "T00229",
++        "T00231",
++        "T00232",
++        "T00233",
++        "T00235",
++        "T00236",
++        "T00237",
++        "T00239",
++        "T00240",
++        "T00241",
++        "T00242"
++      ],
++      "reason": "18 consecutive days closed overdrawn, from 2026-04-30 to 2026-05-17.",
++      "illustrative": true
++    }
++  ],
+   "policy": {
+     "policy_name": "uk_sme_default",
+     "overall": "refer",
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index 7ff815f..4feef73 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -35,6 +35,7 @@ from .graph import (
+     ruleset_used,
+     sqlite_checkpointer,
+ )
++from .indicators import ThresholdsError, load_thresholds
+ from .ingest import StatementError, load_csv
+ from .llm import get_llm
+ from .metrics import AmountError, ReconciliationError
+@@ -64,6 +65,9 @@ def generate(
+ def run(
+     statement: Path,
+     policy: Path | None = typer.Option(None, help="Policy YAML; defaults to the packaged uk_sme_default policy."),
++    thresholds: Path | None = typer.Option(
++        None, help="Indicator thresholds YAML (R14); defaults to the packaged, illustrative indicators.yaml."
++    ),
+     llm: str = typer.Option("fake", help="fake | anthropic | openai"),
+     vat_stagger: int | None = typer.Option(
+         None, min=1, max=3,
+@@ -93,7 +97,8 @@ def run(
+         # Refuse a bad CMA_RULESET before the graph checkpoints anything: a refusal after the first
+         # checkpoint would leave the review id taken, so a corrected retry could not reuse it.
+         active_ruleset()
+-    except RulesetError as e:
++        load_thresholds(thresholds)  # a malformed file is refused naming its line (R14)
++    except (RulesetError, ThresholdsError) as e:
+         console.print(f"[red]Refused.[/red] {escape(str(e))}")
+         raise typer.Exit(code=2) from e
+     thread_id = thread or str(uuid.uuid4())
+@@ -109,10 +114,10 @@ def run(
+             try:
+                 state = graph.invoke(
+                     {"statement_path": str(statement), "policy_path": str(policy) if policy else None,
+-                     "vat_stagger": vat_stagger},
++                     "thresholds_path": str(thresholds) if thresholds else None, "vat_stagger": vat_stagger},
+                     cfg,
+                 )
+-            except (StatementError, PolicyError, RulesetError, AmountError) as e:
++            except (StatementError, PolicyError, RulesetError, ThresholdsError, AmountError) as e:
+                 console.print(f"[red]Refused.[/red] {escape(str(e))}")
+                 raise typer.Exit(code=2) from e
+             except ReconciliationError as e:  # R3: no figures for a case whose buckets do not add up
+diff --git a/src/cma/graph.py b/src/cma/graph.py
+index 4ec4f83..f8061ff 100644
+--- a/src/cma/graph.py
++++ b/src/cma/graph.py
+@@ -31,6 +31,7 @@ from pydantic import ValidationError
+ 
+ from . import categorise as cat
+ from . import guard as grd
++from . import indicators as ind
+ from . import ingest
+ from . import metrics as met
+ from . import policy as pol
+@@ -101,6 +102,10 @@ Rules you must follow. An automatic check enforces 1-7 and rejects the draft if
+ class MemoState(TypedDict, total=False):
+     statement_path: str
+     policy_path: str | None
++    # The thresholds file's path (None: the packaged one) and its text as read at the start of
++    # the run, so the indicators in the evidence come from the file the run checked (R14).
++    thresholds_path: str | None
++    thresholds_text: str | None
+     vat_stagger: int | None
+     model: str
+     statement_sha256: str
+@@ -254,6 +259,21 @@ def guard_fields(g) -> dict:
+             "guard_missing_citations": g.missing_citations}
+ 
+ 
++def run_thresholds(s: MemoState) -> ind.Thresholds:
++    """The thresholds the run read: the text kept in its state, or the packaged file for a run
++    that kept none (a review drafted before indicators existed)."""
++    if s.get("thresholds_text") is not None:
++        return ind.parse_thresholds(s["thresholds_text"], s.get("thresholds_path") or ind.DEFAULT_SOURCE)
++    return ind.load_thresholds()
++
++
++def _indicator_fields(s: MemoState) -> dict:
++    t = run_thresholds(s)
++    return {"thresholds": {"source": t.source, "sha256": t.sha256,
++                           "illustrative": [f"{a}.{b}" for a, b in t.fields() if t.illustrative(a, b)]},
++            "indicators": [i.model_dump(mode="json") for i in ind.raise_indicators(s["statement"], t)]}
++
++
+ def evidence_record(s: MemoState) -> dict:
+     """Everything needed to audit the memo later, as plain JSON."""
+     return {
+@@ -272,6 +292,9 @@ def evidence_record(s: MemoState) -> dict:
+         # R11: computed here from the stored lines, as the metrics were, so no new type
+         # travels through the checkpoint (CHECKPOINT_TYPES is unchanged).
+         "monthly_summary": [r.model_dump(mode="json") for r in met.monthly_summary(s["statement"])],
++        # R14: raised here from the stored lines, as the monthly summary is, with the thresholds
++        # file the run read; each indicator names the thresholds it fired at.
++        **_indicator_fields(s),
+         "policy": s["policy"].model_dump(mode="json"),
+         "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
+         "redrafts": s.get("redrafts", 0),
+@@ -291,8 +314,13 @@ def build(llm: LLM | None = None, checkpointer=None):
+             ingest.load_csv(path)  # refuses, saying why (no such file)
+             raise
+         statement = ingest.load_csv(path, data=data)
++        # The thresholds file is read and checked once, here: a malformed one is refused naming
++        # its line before anything is computed, and its text is what the indicators come from.
++        tpath = s.get("thresholds_path")
++        thresholds_text, _ = ind.read_thresholds(Path(tpath) if tpath else None)
+         return {
+             "statement": statement,
++            "thresholds_text": thresholds_text,
+             "statement_sha256": hashlib.sha256(data).hexdigest(),
+             "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
+             # A run starts clean, even on a thread that has run before.
+diff --git a/src/cma/indicators.py b/src/cma/indicators.py
+new file mode 100644
+index 0000000..0bf2462
+--- /dev/null
++++ b/src/cma/indicators.py
+@@ -0,0 +1,375 @@
++"""Risk indicators (R14), raised from thresholds in an editable file.
++
++This is part of the figures layer (ADR 001): every comparison of money here is of integer
++pence (R2), and a share or a multiple is compared exactly, as a fraction, never through a
++binary float. The thresholds ship in cma/thresholds/indicators.yaml, a firm can give its own
++file in the same form, and a threshold still at its shipped value is labelled illustrative
++wherever it fires.
++
++A thresholds file is validated before any indicator is raised from it. A malformed file is
++refused with ThresholdsError naming the line of the file the problem is on: YAML that does
++not parse, a section or key that is missing, unknown or given twice, and a value that is not
++of its kind (an amount with a fraction of a penny, a share above 100, a count below one).
++
++Each indicator lists the lines that made it fire and the thresholds it fired at, and says
++why in one line that never quotes a line's description (R34).
++"""
++
++from __future__ import annotations
++
++import hashlib
++import re
++from bisect import bisect_left
++from collections import defaultdict
++from dataclasses import dataclass
++from datetime import date
++from decimal import Decimal
++from fractions import Fraction
++from functools import lru_cache
++from importlib import resources
++from pathlib import Path
++
++import yaml
++
++from .categorise import _SEPARATOR_RUN, _fold, names_pattern
++from .metrics import at_limit, balance_pence, end_of_day_balances, pence, pounds_text, text_pence
++from .models import (
++    REVENUE_CATEGORIES,
++    Category,
++    Indicator,
++    IndicatorThreshold,
++    Statement,
++    Transaction,
++)
++
++DEFAULT_THRESHOLDS_NAME = "indicators.yaml"
++DEFAULT_SOURCE = f"cma/thresholds/{DEFAULT_THRESHOLDS_NAME}"
++
++# Every section of the file, its keys and each key's kind, in the order indicators are raised.
++SPEC: dict[str, dict[str, str]] = {
++    "large_credit": {"multiple_of_typical": "times"},
++    "single_cash_deposit": {"amount_at_least": "GBP"},
++    "cash_heavy_month": {"share_above_pct": "pct"},
++    "cash_round_trip": {"within_days": "days", "tolerance_pct": "pct"},
++    "gambling": {"amount_at_least": "GBP", "operators": "names"},
++    "returned_dd": {"count_at_least": "count"},
++    "overdrawn_run": {"days_at_least": "count"},
++    "irregular_acquirer": {"multiple_of_median": "times", "min_credits": "count"},
++}
++# The rule-table lists a named acquirer is read from, whatever category its line took.
++ACQUIRER_RULES = ("card_acquirers", "payment_gateways")
++WITHDRAWAL_RULE = "cash_withdrawal"  # v2's rule for cash taken out, read by the round trip
++
++_DECIMAL = re.compile(r"\d+(?:\.\d+)?")
++_INTEGER = re.compile(r"\d+")
++
++
++class ThresholdsError(ValueError):
++    """The thresholds file is malformed; no indicator is raised from it."""
++
++
++@dataclass(frozen=True)
++class Thresholds:
++    source: str
++    sha256: str
++    values: dict[tuple[str, str], object]  # pence (int), Decimal, int or a tuple of names
++
++    def value(self, section: str, key: str):
++        return self.values[(section, key)]
++
++    def fields(self) -> list[tuple[str, str]]:
++        return list(self.values)
++
++    def illustrative(self, section: str, key: str) -> bool:
++        """Whether the threshold is still at its shipped value (compared as a value, so 2500
++        and 2500.00 are the same pence)."""
++        return self.values[(section, key)] == shipped().values[(section, key)]
++
++
++def default_thresholds_text() -> str:
++    return resources.files("cma.thresholds").joinpath(DEFAULT_THRESHOLDS_NAME).read_text()
++
++
++@lru_cache(maxsize=1)
++def shipped() -> Thresholds:
++    """The packaged thresholds, the values R14 calls illustrative."""
++    return parse_thresholds(default_thresholds_text(), DEFAULT_SOURCE)
++
++
++def read_thresholds(path: Path | None = None) -> tuple[str, Thresholds]:
++    """The text of the file at `path`, or of the packaged one, and its thresholds, validated."""
++    if path is None:
++        return default_thresholds_text(), shipped()
++    source = str(path)
++    try:
++        text = Path(path).read_text(encoding="utf-8")
++    except FileNotFoundError as e:
++        raise ThresholdsError(f"{source}: no such file") from e
++    except (OSError, UnicodeDecodeError) as e:  # a directory, no permission, not UTF-8
++        raise ThresholdsError(f"{source}: cannot be read ({e.__class__.__name__})") from e
++    return text, parse_thresholds(text, source)
++
++
++def load_thresholds(path: Path | None = None) -> Thresholds:
++    """The file at `path`, or the packaged one, validated."""
++    return read_thresholds(path)[1]
++
++
++def _line(node) -> int:
++    return node.start_mark.line + 1
++
++
++def parse_thresholds(text: str, source: str) -> Thresholds:
++    """Validate a thresholds file's text, refusing it naming the line of the first problem."""
++    def refuse(line: int, problem: str):
++        raise ThresholdsError(f"{source}: line {line}: {problem}")
++
++    try:
++        root = yaml.compose(text, Loader=yaml.SafeLoader)
++    except yaml.MarkedYAMLError as e:
++        mark = e.problem_mark or e.context_mark
++        # A problem met at the end of the stream is on the file's last line, not past it.
++        line = min(mark.line + 1, max(1, len(text.splitlines()))) if mark else 1
++        refuse(line, f"not valid YAML ({e.problem or e.__class__.__name__})")
++    except yaml.YAMLError as e:
++        refuse(1, f"not valid YAML ({e.__class__.__name__})")
++    if root is None:
++        refuse(1, "empty: every section of the thresholds file is required")
++    if not isinstance(root, yaml.MappingNode):
++        refuse(_line(root), "not a mapping of sections")
++
++    sections = _mapping(root, set(SPEC), "section", refuse)
++    for name in SPEC:
++        if name not in sections:
++            refuse(_line(root), f"missing section {name}")
++    values: dict[tuple[str, str], object] = {}
++    for name, keys in SPEC.items():
++        key_node, node = sections[name]
++        if not isinstance(node, yaml.MappingNode):
++            refuse(_line(node), f"{name} must be a mapping of {', '.join(keys)}")
++        given = _mapping(node, set(keys), f"key of {name}", refuse)
++        for key, kind in keys.items():
++            if key not in given:
++                refuse(_line(key_node), f"{name}: missing {key}")
++            values[(name, key)] = _value(name, key, kind, given[key][1], refuse)
++    return Thresholds(source=source, sha256=hashlib.sha256(text.encode()).hexdigest(), values=values)
++
++
++def _mapping(node, allowed: set[str], what: str, refuse) -> dict[str, tuple]:
++    out: dict[str, tuple] = {}
++    for k, v in node.value:
++        if not isinstance(k, yaml.ScalarNode):
++            refuse(_line(k), f"a {what} must be a name")
++        if k.value in out:
++            refuse(_line(k), f"{k.value} is given more than once")
++        if k.value not in allowed:
++            refuse(_line(k), f"unknown {what} {k.value!r}; expected one of {', '.join(sorted(allowed))}")
++        out[k.value] = (k, v)
++    return out
++
++
++def _value(section: str, key: str, kind: str, node, refuse) -> object:
++    where = f"{section}.{key}"
++    if kind == "names":
++        if not isinstance(node, yaml.SequenceNode) or not node.value:
++            refuse(_line(node), f"{where} must be a list of one or more names")
++        names = []
++        for item in node.value:
++            if not isinstance(item, yaml.ScalarNode) or not _SEPARATOR_RUN.sub("", _fold(item.value)):
++                refuse(_line(item), f"{where}: each name must be text with a letter or digit in it")
++            names.append(item.value)
++        return tuple(names)
++    if not isinstance(node, yaml.ScalarNode):
++        refuse(_line(node), f"{where} must be a single value")
++    text = node.value.strip()
++    if kind == "GBP":
++        if not _DECIMAL.fullmatch(text):
++            refuse(_line(node), f"{where} {text!r} must be an amount in pounds")
++        p = text_pence(text)
++        if p is None:
++            refuse(_line(node), f"{where} {text!r} must be a whole number of pence")
++        if p <= 0 or at_limit(p):
++            refuse(_line(node), f"{where} {text!r} must be above zero and below £10,000,000,000,000")
++        return p
++    if kind in ("pct", "times"):
++        if not _DECIMAL.fullmatch(text):
++            refuse(_line(node), f"{where} {text!r} must be a plain decimal number")
++        d = Decimal(text)
++        if kind == "pct" and d > 100:
++            refuse(_line(node), f"{where} {text!r} must be a percentage from 0 to 100")
++        if kind == "times" and d < 1:
++            refuse(_line(node), f"{where} {text!r} must be a multiple of at least 1")
++        return d
++    if not _INTEGER.fullmatch(text):
++        refuse(_line(node), f"{where} {text!r} must be a whole number")
++    try:
++        n = int(text)
++    except ValueError:  # more digits than Python converts (sys.get_int_max_str_digits)
++        refuse(_line(node), f"{where} has too many digits to be a whole number")
++    if kind == "count" and n < 1:
++        refuse(_line(node), f"{where} {text!r} must be at least 1")
++    return n
++
++
++# --- Raising the indicators ------------------------------------------------------------
++
++
++def _money(p: int) -> str:
++    return f"£{format(Decimal(abs(p)).scaleb(-2), ',.2f')}"
++
++
++def _median(xs: list[int]) -> Fraction:
++    s, n = sorted(xs), len(xs)
++    return Fraction(s[n // 2]) if n % 2 else Fraction(s[n // 2 - 1] + s[n // 2], 2)
++
++
++@lru_cache(maxsize=1)
++def _acquirer_names() -> tuple[tuple[str, re.Pattern[str]], ...]:
++    """(acquirer, pattern) for each name on v2's acquirer and gateway lists, longest first. An
++    acquirer is its name without separators, so SUMUP and SUM UP are one acquirer."""
++    table = yaml.safe_load(resources.files("cma.rules").joinpath("v2.yaml").read_text())
++    names = [n for r in table["rules"] if r.get("id") in ACQUIRER_RULES for n in r.get("names", [])]
++    names.sort(key=lambda n: (-len(n), n))
++    return tuple((_SEPARATOR_RUN.sub("", _fold(n)), re.compile(names_pattern([n]))) for n in names)
++
++
++@lru_cache(maxsize=16)
++def _names_regex(names: tuple[str, ...]) -> re.Pattern[str]:
++    return re.compile(names_pattern(names))
++
++
++def _is_withdrawal(t: Transaction, amount: int) -> bool:
++    return (t.rule_id or "").split(":", 1)[-1] == WITHDRAWAL_RULE and amount < 0
++
++
++def raise_indicators(statement: Statement, thresholds: Thresholds | None = None) -> list[Indicator]:
++    """Every indicator the categorised statement raises, in the order of SPEC and then of the
++    statement. The statement is read, never changed."""
++    t_ = thresholds or shipped()
++    txns = statement.transactions
++    for t in txns:  # a fraction of a penny is refused, as in metrics.compute()
++        balance_pence(t)
++    amt = {t.id: pence(t) for t in txns}  # each line's pence, converted once
++    pos = {t.id: i for i, t in enumerate(txns)}
++    found: list[tuple[str, list[tuple[str, str]], list[str], str]] = []
++
++    def fire(kind: str, keys: list[tuple[str, str]], lines: list[Transaction] | list[str], reason: str):
++        ids = [x if isinstance(x, str) else x.id for x in lines]
++        found.append((kind, keys, sorted(dict.fromkeys(ids), key=pos.__getitem__), reason))
++
++    credits = [t for t in txns if amt[t.id] > 0]
++    trading = [t for t in credits if t.category in REVENUE_CATEGORIES]
++    cash = [t for t in credits if t.category == Category.CASH_DEPOSIT]
++
++    # A single credit large against the typical (median) trading receipt.
++    k = Fraction(t_.value("large_credit", "multiple_of_typical"))
++    if trading:
++        typical = _median([amt[t.id] for t in trading])
++        for t in credits:
++            if amt[t.id] >= k * typical:
++                fire("large_credit", [("large_credit", "multiple_of_typical")], [t],
++                     f"A credit of {_money(amt[t.id])} is at least {k} times the median of the period's "
++                     f"{len(trading)} trading receipts.")
++
++    # Each cash deposit at or above the single-deposit limit.
++    limit = t_.value("single_cash_deposit", "amount_at_least")
++    for t in cash:
++        if amt[t.id] >= limit:
++            fire("single_cash_deposit", [("single_cash_deposit", "amount_at_least")], [t],
++                 f"A cash deposit of {_money(amt[t.id])} is at or above the single-deposit limit of {_money(limit)}.")
++
++    # A calendar month whose cash is above a share of its trading receipts.
++    share = t_.value("cash_heavy_month", "share_above_pct")
++    by_month: dict[tuple[int, int], list[Transaction]] = defaultdict(list)
++    for t in trading:
++        by_month[(t.date.year, t.date.month)].append(t)
++    for (y, m), ts in sorted(by_month.items()):
++        month_cash = [t for t in ts if t.category == Category.CASH_DEPOSIT]
++        c, tr = sum(amt[t.id] for t in month_cash), sum(amt[t.id] for t in ts)
++        if c > 0 and c * 100 > share * tr:
++            fire("cash_heavy_month", [("cash_heavy_month", "share_above_pct")], month_cash,
++                 f"In {y:04d}-{m:02d} cash deposits of {_money(c)} are above {share}% of the month's "
++                 f"trading receipts of {_money(tr)}.")
++
++    # Cash paid in within a window after a similar cash withdrawal.
++    days = t_.value("cash_round_trip", "within_days")
++    tol = t_.value("cash_round_trip", "tolerance_pct")
++    # Withdrawals in (day, position) order, so each deposit's window is found by bisection
++    # rather than by reading every withdrawal (R52: 10,000 lines recompute in about 2 seconds).
++    withdrawals = sorted((t for t in txns if _is_withdrawal(t, amt[t.id])),
++                         key=lambda w: (w.date.toordinal(), pos[w.id]))
++    keys = [(w.date.toordinal(), pos[w.id]) for w in withdrawals]
++    for d in cash:
++        here = d.date.toordinal()
++        window = withdrawals[bisect_left(keys, (here - days, -1)):bisect_left(keys, (here, pos[d.id]))]
++        matches = sorted((w for w in window if abs(amt[d.id] + amt[w.id]) * 100 <= tol * -amt[w.id]),
++                         key=lambda w: pos[w.id])
++        if matches:
++            fire("cash_round_trip", [("cash_round_trip", "within_days"), ("cash_round_trip", "tolerance_pct")],
++                 [*matches, d],
++                 f"A cash deposit of {_money(amt[d.id])} was paid in within {days} days after a cash withdrawal "
++                 f"within {tol}% of its amount.")
++
++    # Payments to gambling operators.
++    least = t_.value("gambling", "amount_at_least")
++    operators = _names_regex(t_.value("gambling", "operators"))
++    for t in txns:
++        if amt[t.id] < 0 and -amt[t.id] >= least and operators.search(_fold(t.description)):
++            fire("gambling", [("gambling", "amount_at_least")], [t],
++                 f"A payment of {_money(amt[t.id])} to a listed gambling operator.")
++
++    # Returned direct debits.
++    returned = [t for t in txns if t.category == Category.RETURNED_DD]
++    if len(returned) >= t_.value("returned_dd", "count_at_least"):
++        for t in returned:
++            fire("returned_dd", [("returned_dd", "count_at_least")], [t],
++                 f"A direct debit returned unpaid; the period has {len(returned)}.")
++
++    # Runs of consecutive overdrawn days.
++    run_at_least = t_.value("overdrawn_run", "days_at_least")
++    eod = end_of_day_balances(txns)
++    run: list[date] = []
++    for d in [*sorted(eod), None]:
++        if d is not None and eod[d][0] < 0:
++            run.append(d)
++            continue
++        if len(run) >= run_at_least:
++            fire("overdrawn_run", [("overdrawn_run", "days_at_least")], [eod[x][1] for x in run],
++                 f"{len(run)} consecutive days closed overdrawn, from {run[0]} to {run[-1]}.")
++        run = []
++
++    # Irregular credits from a named acquirer, read from the acquirer and gateway lists.
++    mult = Fraction(t_.value("irregular_acquirer", "multiple_of_median"))
++    least_credits = t_.value("irregular_acquirer", "min_credits")
++    by_acquirer: dict[str, list[Transaction]] = defaultdict(list)
++    for t in credits:
++        desc = _fold(t.description)
++        acquirer = next((a for a, p in _acquirer_names() if p.search(desc)), None)
++        if acquirer:
++            by_acquirer[acquirer].append(t)
++    irregular = []
++    for ts in by_acquirer.values():
++        if len(ts) < least_credits:
++            continue
++        med = _median([amt[t.id] for t in ts])
++        irregular += [(t, len(ts)) for t in ts if amt[t.id] >= mult * med or amt[t.id] * mult <= med]
++    for t, n in sorted(irregular, key=lambda x: pos[x[0].id]):
++        fire("irregular_acquirer", [("irregular_acquirer", "multiple_of_median"), ("irregular_acquirer", "min_credits")],
++             [t], f"A credit of {_money(amt[t.id])} from a named acquirer is at least {mult} times above or below "
++                  f"the median of its {n} credits in the period.")
++
++    out = []
++    for n, (kind, keys, evidence, reason) in enumerate(found, start=1):
++        ths = [IndicatorThreshold(key=f"{s}.{k}", value=_shown(t_.value(s, k), SPEC[s][k]), unit=SPEC[s][k],
++                                  illustrative=t_.illustrative(s, k)) for s, k in keys]
++        out.append(Indicator(id=f"I{n}", kind=kind, thresholds=ths, evidence=evidence, reason=reason,
++                             illustrative=any(th.illustrative for th in ths)))
++    return out
++
++
++def _shown(v, unit: str) -> str:
++    if unit == "GBP":
++        return pounds_text(v)
++    if isinstance(v, Decimal):
++        return format(v, "f")
++    return str(v)
+diff --git a/src/cma/models.py b/src/cma/models.py
+index 0ed539e..935ed01 100644
+--- a/src/cma/models.py
++++ b/src/cma/models.py
+@@ -180,6 +180,27 @@ class MonthRow(BaseModel):
+     days_overdrawn: MonthlyCell
+ 
+ 
++class IndicatorThreshold(BaseModel):
++    """A threshold an indicator fired at, as the thresholds file gives it (R14)."""
++
++    key: str = Field(description="section.key in the thresholds file, e.g. single_cash_deposit.amount_at_least.")
++    value: str = Field(description="As compared: money to the penny in pounds, a share or multiple as written.")
++    unit: Literal["GBP", "pct", "times", "days", "count"]
++    illustrative: bool = Field(description="True while the threshold is still at its shipped value.")
++
++
++class Indicator(BaseModel):
++    """A risk indicator raised from the thresholds file (R14), with the lines behind it."""
++
++    id: str = Field(description="I1, I2, ... in the order the indicators are raised.")
++    kind: Literal["large_credit", "single_cash_deposit", "cash_heavy_month", "cash_round_trip", "gambling",
++                  "returned_dd", "overdrawn_run", "irregular_acquirer"]
++    thresholds: list[IndicatorThreshold]
++    evidence: list[str] = Field(description="Ids of the lines that made it fire, in statement order.")
++    reason: str = Field(description="One line saying why it fired; never a line's description.")
++    illustrative: bool = Field(description="True when a threshold that fired is still at its shipped value.")
++
++
+ # How many decimals each unit is shown with. The memo copies figures as shown, and the
+ # guard treats a figure written at this precision as exact (see guard._value_fits).
+ DISPLAY_DECIMALS = {"GBP": 0, "pct": 1, "ratio": 2}
+diff --git a/src/cma/thresholds/__init__.py b/src/cma/thresholds/__init__.py
+new file mode 100644
+index 0000000..e125d99
+--- /dev/null
++++ b/src/cma/thresholds/__init__.py
+@@ -0,0 +1 @@
++"""Packaged indicator thresholds (indicators.yaml): illustrative values a firm can replace."""
+diff --git a/src/cma/thresholds/indicators.yaml b/src/cma/thresholds/indicators.yaml
+new file mode 100644
+index 0000000..20796ae
+--- /dev/null
++++ b/src/cma/thresholds/indicators.yaml
+@@ -0,0 +1,68 @@
++# Risk indicator thresholds (R14). Illustrative values shipped with the tool: they are not
++# your firm's lending policy. A firm can give its own file with `cma run --thresholds`; a
++# threshold still at the value below is labelled illustrative wherever it fires.
++#
++# Money is in pounds with at most two decimals and is compared in whole pence. A share or a
++# multiple is a plain decimal number. Every section and key below is required.
++
++# A single credit at least this many times the typical (median) trading receipt.
++large_credit:
++  multiple_of_typical: 5
++
++# Each cash deposit at or above this amount (D35).
++single_cash_deposit:
++  amount_at_least: 2500.00
++
++# A calendar month whose cash deposits are above this share of its trading receipts (D35).
++cash_heavy_month:
++  share_above_pct: 50
++
++# Cash paid in within this many days after a cash withdrawal, the deposit within this share
++# of the amount withdrawn.
++cash_round_trip:
++  within_days: 7
++  tolerance_pct: 10
++
++# Each payment of at least this amount to a listed gambling operator. Names match as whole
++# words, whatever spaces, hyphens or dots stand between their letters.
++gambling:
++  amount_at_least: 0.01
++  operators:
++    - BET365
++    - WILLIAM HILL
++    - LADBROKES
++    - CORAL
++    - PADDY POWER
++    - BETFAIR
++    - SKY BET
++    - BETFRED
++    - BETWAY
++    - BETVICTOR
++    - BOYLESPORTS
++    - UNIBET
++    - 888SPORT
++    - 888 CASINO
++    - POKERSTARS
++    - SPORTING INDEX
++    - GROSVENOR CASINO
++    - MECCA BINGO
++    - GALA BINGO
++    - GALA CASINO
++    - TOMBOLA
++    - 32RED
++    - LOTTOLAND
++
++# Returned direct debits, each flagged once the period holds at least this many.
++returned_dd:
++  count_at_least: 1
++
++# A run of at least this many consecutive calendar days that closed overdrawn.
++overdrawn_run:
++  days_at_least: 7
++
++# A credit from a named card acquirer or payment gateway at least this many times, or at most
++# one over this many times, that acquirer's median credit, once it has paid at least
++# min_credits credits in the period.
++irregular_acquirer:
++  multiple_of_median: 3
++  min_credits: 3
+diff --git a/tests/test_indicators.py b/tests/test_indicators.py
+new file mode 100644
+index 0000000..cf6d403
+--- /dev/null
++++ b/tests/test_indicators.py
+@@ -0,0 +1,391 @@
++"""T08: risk indicators (R14) from a packaged, validated thresholds file, compared in pence (R2).
++
++R14: indicators are raised from thresholds in an editable file: a single credit that is large
++against typical trading receipts; each cash deposit at or above the single-deposit limit; a
++calendar month in which cash deposits exceed a set share of that month's trading receipts; a
++cash deposit made within a set number of days after a cash withdrawal of an amount within a
++set tolerance; payments to gambling operators; returned direct debits; runs of consecutive
++overdrawn days; irregular credits from a named acquirer. Each lists its lines and the
++threshold that fired, and a threshold still at its shipped value is labelled illustrative.
++R2: every indicator comparison is in integer pence.
++
++One fixture per kind, each built just either side of its threshold; then the file's
++validation, which refuses a malformed file naming the line; then the evidence record `cma
++run` writes.
++"""
++
++import json
++from datetime import date
++
++import pytest
++from typer.testing import CliRunner
++
++from cma import categorise, indicators
++from cma.categorise import load_ruleset
++from cma.cli import app
++from cma.indicators import ThresholdsError, load_thresholds, raise_indicators
++from cma.models import Statement, Transaction
++
++
++def _statement(rows) -> Statement:
++    """rows: (id, date, description, amount); balances are walked from zero."""
++    txns, bal = [], 0
++    for i, d, x, a in rows:
++        bal += round(a * 100)
++        txns.append(Transaction(id=i, date=d, description=x, amount=a, balance=bal / 100))
++    return categorise.categorise(Statement(account_name="x", transactions=txns), load_ruleset("v2"))
++
++
++def _of(kind, found):
++    return [i for i in found if i.kind == kind]
++
++
++def _thresholds(tmp_path, **changes):
++    """The packaged file with some `section.key: text` lines replaced."""
++    text = indicators.default_thresholds_text()
++    for key, value in changes.items():
++        section, field = key.split("__")
++        lines = text.splitlines()
++        inside = False
++        for n, line in enumerate(lines):
++            if not line.startswith(" ") and line.rstrip().endswith(":"):
++                inside = line.rstrip()[:-1] == section
++            elif inside and line.strip().startswith(f"{field}:"):
++                lines[n] = f"  {field}: {value}"
++        text = "\n".join(lines) + "\n"
++    path = tmp_path / "indicators.yaml"
++    path.write_text(text)
++    return load_thresholds(path)
++
++
++@pytest.mark.contracts
++def test_the_packaged_thresholds_load_with_the_shipped_cash_limits():
++    t = load_thresholds()
++    assert t.source == "cma/thresholds/indicators.yaml" and len(t.sha256) == 64
++    assert t.value("single_cash_deposit", "amount_at_least") == 250000  # £2,500 in pence (D35)
++    assert str(t.value("cash_heavy_month", "share_above_pct")) == "50"  # D35
++    assert t.value("cash_round_trip", "within_days") == 7
++    assert str(t.value("cash_round_trip", "tolerance_pct")) == "10"
++    assert all(t.illustrative(s, k) for s, k in t.fields())
++
++
++@pytest.mark.contracts
++def test_large_credit_against_typical_trading_receipts_fires_at_the_multiple_in_pence():
++    # Trading receipts 100.00, 100.00, 120.00: the typical (median) one is 100.00, and the
++    # shipped multiple is 5, so 500.00 fires and 499.99 does not, whatever the credit's bucket.
++    s = _statement([("L1", date(2026, 1, 2), "STRIPE PAYOUT", 100.00),
++                    ("L2", date(2026, 1, 3), "STRIPE PAYOUT", 100.00),
++                    ("L3", date(2026, 1, 4), "STRIPE PAYOUT", 120.00),
++                    ("L4", date(2026, 1, 5), "SOMETHING ELSE", 499.99),
++                    ("L5", date(2026, 1, 6), "IWOCA LOAN", 500.00)])
++    found = _of("large_credit", raise_indicators(s))
++    assert [i.evidence for i in found] == [["L5"]]
++    (th,) = found[0].thresholds
++    assert (th.key, th.value, th.unit, th.illustrative) == ("large_credit.multiple_of_typical", "5", "times", True)
++    assert found[0].illustrative
++
++
++@pytest.mark.contracts
++def test_each_cash_deposit_at_or_above_the_single_deposit_limit_is_flagged():
++    s = _statement([("L1", date(2026, 1, 2), "CASH PAID IN", 2499.99),
++                    ("L2", date(2026, 1, 3), "COUNTER DEPOSIT", 2500.00),
++                    ("L3", date(2026, 1, 4), "CASH DEPOSIT", 4000.00),
++                    ("L4", date(2026, 1, 5), "STRIPE PAYOUT", 9000.00)])
++    found = _of("single_cash_deposit", raise_indicators(s))
++    assert [i.evidence for i in found] == [["L2"], ["L3"]]
++    assert found[0].thresholds[0].key == "single_cash_deposit.amount_at_least"
++    assert found[0].thresholds[0].value == "2500.00" and found[0].thresholds[0].unit == "GBP"
++    assert "£2,500.00" in found[0].reason
++
++
++@pytest.mark.contracts
++def test_a_month_whose_cash_exceeds_the_share_of_its_trading_receipts_is_flagged():
++    # January: cash 50.01 of trading 100.01 is above 50%; February: cash 50.00 of 100.00 is not.
++    s = _statement([("L1", date(2026, 1, 2), "CASH PAID IN", 50.01),
++                    ("L2", date(2026, 1, 3), "STRIPE PAYOUT", 50.00),
++                    ("L3", date(2026, 2, 2), "CASH PAID IN", 50.00),
++                    ("L4", date(2026, 2, 3), "STRIPE PAYOUT", 50.00)])
++    found = _of("cash_heavy_month", raise_indicators(s))
++    assert [i.evidence for i in found] == [["L1"]]
++    assert "2026-01" in found[0].reason
++    assert found[0].thresholds[0].key == "cash_heavy_month.share_above_pct"
++
++
++@pytest.mark.contracts
++def test_a_cash_deposit_after_a_similar_cash_withdrawal_within_the_window_is_flagged():
++    # Withdrawn 1,000.00; paid back in 1,100.00 seven days later (10% tolerance, 7 days): fires.
++    # 1,100.01 is past the tolerance; eight days is past the window.
++    s = _statement([("L0", date(2026, 1, 1), "STRIPE PAYOUT", 5000.00),
++                    ("W1", date(2026, 1, 2), "CASH WITHDRAWAL", -1000.00),
++                    ("D1", date(2026, 1, 9), "CASH PAID IN", 1100.00),
++                    ("W2", date(2026, 2, 2), "ATM", -1000.00),
++                    ("D2", date(2026, 2, 3), "CASH PAID IN", 1100.01),
++                    ("W3", date(2026, 3, 2), "CASH WITHDRAWAL", -500.00),
++                    ("D3", date(2026, 3, 10), "CASH PAID IN", 500.00)])
++    found = _of("cash_round_trip", raise_indicators(s))
++    assert [i.evidence for i in found] == [["W1", "D1"]]
++    assert [t.key for t in found[0].thresholds] == ["cash_round_trip.within_days", "cash_round_trip.tolerance_pct"]
++
++
++@pytest.mark.contracts
++def test_payments_to_gambling_operators_are_flagged():
++    s = _statement([("L1", date(2026, 1, 2), "STRIPE PAYOUT", 500.00),
++                    ("L2", date(2026, 1, 3), "CARD BET365", -20.00),
++                    ("L3", date(2026, 1, 4), "PADDY-POWER", -5.00),
++                    ("L4", date(2026, 1, 5), "CARD TESCO", -5.00),
++                    ("L5", date(2026, 1, 6), "BET365 WINNINGS", 30.00)])  # money in: not a payment
++    found = _of("gambling", raise_indicators(s))
++    assert [i.evidence for i in found] == [["L2"], ["L3"]]
++    assert found[0].thresholds[0].key == "gambling.amount_at_least"
++
++
++@pytest.mark.contracts
++def test_returned_direct_debits_are_flagged():
++    s = _statement([("L1", date(2026, 1, 2), "STRIPE PAYOUT", 500.00),
++                    ("L2", date(2026, 1, 3), "DD IWOCA LTD", -100.00),
++                    ("L3", date(2026, 1, 4), "UNPAID DD IWOCA LTD", 100.00)])
++    found = _of("returned_dd", raise_indicators(s))
++    assert [i.evidence for i in found] == [["L3"]]
++    assert found[0].thresholds[0].key == "returned_dd.count_at_least"
++
++
++@pytest.mark.contracts
++def test_a_run_of_consecutive_overdrawn_days_at_the_limit_is_flagged():
++    # Shipped run length is 7. Overdrawn 2026-01-03 to 2026-01-09 (seven closes, the carried
++    # days citing the line that set them), then 2026-02-01 to 2026-02-06 (six): only the first.
++    s = _statement([("L1", date(2026, 1, 2), "STRIPE PAYOUT", 10.00),
++                    ("L2", date(2026, 1, 3), "RENT", -50.00),
++                    ("L3", date(2026, 1, 5), "CARD TESCO", -1.00),
++                    ("L4", date(2026, 1, 10), "STRIPE PAYOUT", 100.00),
++                    ("L5", date(2026, 2, 1), "RENT", -100.00),
++                    ("L6", date(2026, 2, 7), "STRIPE PAYOUT", 100.00)])
++    found = _of("overdrawn_run", raise_indicators(s))
++    assert [i.evidence for i in found] == [["L2", "L3"]]
++    assert "2026-01-03" in found[0].reason and "2026-01-09" in found[0].reason
++    assert found[0].thresholds[0].key == "overdrawn_run.days_at_least"
++
++
++@pytest.mark.contracts
++def test_an_irregular_credit_from_a_named_acquirer_is_flagged_whatever_its_category():
++    # SumUp pays 100.00 three times and then 300.00: three times its median, shipped multiple 3.
++    # 299.99 from Zettle beside 100.00s is not. FPS CREDIT SUMUP CASH DEPOSIT is ambiguous, not
++    # trading, and is still read from the acquirer list.
++    s = _statement([("A1", date(2026, 1, 2), "SUMUP PAYOUT", 100.00),
++                    ("A2", date(2026, 1, 3), "SUM UP PAYOUT", 100.00),
++                    ("A3", date(2026, 1, 4), "SUMUP PAYOUT", 100.00),
++                    ("A4", date(2026, 1, 5), "FPS CREDIT SUMUP CASH DEPOSIT", 300.00),
++                    ("Z1", date(2026, 1, 2), "ZETTLE", 100.00),
++                    ("Z2", date(2026, 1, 3), "ZETTLE", 100.00),
++                    ("Z3", date(2026, 1, 4), "ZETTLE", 299.99)])
++    assert next(t for t in s.transactions if t.id == "A4").category.value == "other"
++    found = _of("irregular_acquirer", raise_indicators(s))
++    assert [i.evidence for i in found] == [["A4"]]
++    assert [t.key for t in found[0].thresholds] == ["irregular_acquirer.multiple_of_median",
++                                                     "irregular_acquirer.min_credits"]
++
++
++@pytest.mark.contracts
++def test_a_threshold_moved_from_its_shipped_value_is_not_illustrative(tmp_path):
++    t = _thresholds(tmp_path, single_cash_deposit__amount_at_least="1000")
++    assert not t.illustrative("single_cash_deposit", "amount_at_least")
++    assert t.illustrative("cash_heavy_month", "share_above_pct")
++    s = _statement([("L1", date(2026, 1, 2), "CASH PAID IN", 1000.00)])
++    (found,) = _of("single_cash_deposit", raise_indicators(s, t))
++    assert found.thresholds[0].value == "1000.00" and not found.illustrative
++    # Written another way but the same pence is still the shipped value.
++    same = _thresholds(tmp_path, single_cash_deposit__amount_at_least="2500")
++    assert same.illustrative("single_cash_deposit", "amount_at_least")
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize(("change", "words"), [
++    ({"single_cash_deposit__amount_at_least": "2500.001"}, "whole number of pence"),
++    ({"cash_heavy_month__share_above_pct": "fifty"}, "share_above_pct"),
++    ({"cash_heavy_month__share_above_pct": "150"}, "share_above_pct"),
++    ({"cash_round_trip__within_days": "-1"}, "within_days"),
++    ({"overdrawn_run__days_at_least": "0"}, "days_at_least"),
++    ({"large_credit__multiple_of_typical": ".nan"}, "multiple_of_typical"),
++    ({"single_cash_deposit__amount_at_least": "true"}, "amount_at_least"),
++])
++def test_a_malformed_value_is_refused_naming_its_line(tmp_path, change, words):
++    (key, value), = change.items()
++    field = key.split("__")[1]
++    with pytest.raises(ThresholdsError) as e:
++        _thresholds(tmp_path, **change)
++    text = (tmp_path / "indicators.yaml").read_text().splitlines()
++    want = 1 + next(n for n, x in enumerate(text) if x == f"  {field}: {value}")
++    assert f"line {want}" in str(e.value) and words in str(e.value)
++
++
++@pytest.mark.contracts
++def test_a_malformed_file_is_refused_naming_the_line(tmp_path):
++    p = tmp_path / "t.yaml"
++    good = indicators.default_thresholds_text()
++    cases = {
++        "a: [1\n": "line 1",  # not YAML
++        good + "single_cash_deposit:\n  amount_at_least: 1\n": "line",  # a section given twice
++        good.replace("cash_round_trip:\n", "cash_round_trip:\n  surprise: 1\n", 1): "surprise",
++        "- 1\n": "line 1",  # not a mapping
++    }
++    for text, words in cases.items():
++        p.write_text(text)
++        with pytest.raises(ThresholdsError) as e:
++            load_thresholds(p)
++        assert words in str(e.value) and "line " in str(e.value), (text[:40], str(e.value))
++    # A section given twice names the line of the second one.
++    p.write_text(good + "single_cash_deposit:\n  amount_at_least: 1\n")
++    with pytest.raises(ThresholdsError, match=f"line {len(good.splitlines()) + 1}"):
++        load_thresholds(p)
++    # A missing section is named, with the line of the mapping it belongs in.
++    p.write_text(good.replace("gambling:", "gamblin:", 1))
++    with pytest.raises(ThresholdsError, match="gamblin") as e:
++        load_thresholds(p)
++    assert "line" in str(e.value)
++    # An empty operator list, and an operator of separators only, are refused by line.
++    for bad in ("  operators: []", "  operators: ['---']"):
++        lines = good.splitlines()
++        start = next(n for n, x in enumerate(lines) if x.startswith("  operators:"))
++        end = start + 1
++        while end < len(lines) and lines[end].startswith("    "):
++            end += 1
++        p.write_text("\n".join([*lines[:start], bad, *lines[end:]]) + "\n")
++        with pytest.raises(ThresholdsError, match=f"line {start + 1}"):
++            load_thresholds(p)
++    p.write_text("")
++    with pytest.raises(ThresholdsError, match="line 1"):
++        load_thresholds(p)
++    with pytest.raises(ThresholdsError, match="no such file"):
++        load_thresholds(tmp_path / "missing.yaml")
++
++
++@pytest.mark.contracts
++def test_indicators_leave_the_statement_unchanged_and_give_the_same_answer_twice():
++    s = _statement([("L1", date(2026, 1, 2), "CASH PAID IN", 3000.00),
++                    ("L2", date(2026, 1, 3), "CARD BET365", -20.00)])
++    before = s.model_dump()
++    assert raise_indicators(s) == raise_indicators(s)
++    assert s.model_dump() == before
++    found = raise_indicators(s)
++    assert [i.id for i in found] == [f"I{n}" for n in range(1, len(found) + 1)]
++    assert {"single_cash_deposit", "gambling", "cash_heavy_month"} <= {i.kind for i in found}
++
++
++@pytest.mark.contracts
++def test_cma_run_writes_indicators_and_their_thresholds_into_its_evidence_record(tmp_path, monkeypatch):
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    csv = tmp_path / "s.csv"
++    csv.write_text("date,description,amount,balance,id\n"
++                   "2026-01-02,STRIPE PAYOUT,100.00,100.00,L1\n"
++                   "2026-01-03,CASH PAID IN,3000.00,3100.00,L2\n"
++                   "2026-01-04,CARD BET365,-20.00,3080.00,L3\n")
++    out = tmp_path / "memo.md"
++    r = CliRunner().invoke(app, ["run", str(csv), "--yes", "--reviewer", "A", "--out", str(out)])
++    assert r.exit_code == 0, r.output
++    record = json.loads((tmp_path / "memo.evidence.json").read_text())
++    assert record["thresholds"]["source"] == "cma/thresholds/indicators.yaml"
++    assert record["thresholds"]["sha256"] == load_thresholds().sha256
++    by_kind = {i["kind"]: i for i in record["indicators"]}
++    assert by_kind["single_cash_deposit"]["evidence"] == ["L2"]
++    assert by_kind["single_cash_deposit"]["thresholds"] == [
++        {"key": "single_cash_deposit.amount_at_least", "value": "2500.00", "unit": "GBP", "illustrative": True}]
++    assert by_kind["single_cash_deposit"]["illustrative"] is True
++    assert by_kind["gambling"]["evidence"] == ["L3"]
++    # A firm's own file: its hash is recorded, and a moved value is not illustrative.
++    firm = tmp_path / "firm.yaml"
++    firm.write_text(indicators.default_thresholds_text().replace("amount_at_least: 2500.00", "amount_at_least: 2000"))
++    out2 = tmp_path / "memo2.md"
++    r = CliRunner().invoke(app, ["run", str(csv), "--yes", "--reviewer", "A", "--out", str(out2),
++                                 "--thresholds", str(firm)])
++    assert r.exit_code == 0, r.output
++    record = json.loads((tmp_path / "memo2.evidence.json").read_text())
++    assert record["thresholds"]["source"] == str(firm)
++    (cash,) = [i for i in record["indicators"] if i["kind"] == "single_cash_deposit"]
++    assert cash["thresholds"][0]["value"] == "2000.00" and cash["illustrative"] is False
++
++
++@pytest.mark.contracts
++def test_cma_run_refuses_a_malformed_thresholds_file_naming_the_line(tmp_path):
++    csv = tmp_path / "s.csv"
++    csv.write_text("date,description,amount,balance,id\n2026-01-02,STRIPE PAYOUT,100.00,100.00,L1\n")
++    bad = tmp_path / "bad.yaml"
++    text = indicators.default_thresholds_text().replace("amount_at_least: 2500.00", "amount_at_least: 2500.001")
++    bad.write_text(text)
++    want = 1 + text.splitlines().index("  amount_at_least: 2500.001")
++    out = tmp_path / "memo.md"
++    r = CliRunner().invoke(app, ["run", str(csv), "--yes", "--reviewer", "A", "--out", str(out),
++                                 "--thresholds", str(bad)])
++    assert r.exit_code == 2, r.output
++    assert f"line {want}:" in " ".join(r.output.split())  # Rich wraps long lines
++    assert not out.exists() and not (tmp_path / "memo.evidence.json").exists()
++
++
++@pytest.mark.contracts
++def test_the_committed_example_indicators_are_what_the_code_raises_from_its_lines():
++    from pathlib import Path
++
++    from cma import ingest
++
++    examples = Path(__file__).parent.parent / "examples"
++    record = json.loads((examples / "cafe_stretched.memo.evidence.json").read_text())
++    s = categorise.categorise(ingest.load_csv(examples / "cafe_stretched.csv"), load_ruleset(record["ruleset"]["id"]))
++    assert [i.model_dump(mode="json") for i in raise_indicators(s)] == record["indicators"]
++    assert record["thresholds"]["sha256"] == load_thresholds().sha256
++
++
++@pytest.mark.contracts
++def test_an_integer_threshold_with_too_many_digits_is_refused_naming_its_line(tmp_path):
++    # Python refuses to convert an integer string of more than 4,300 digits; that must reach
++    # the caller as the file's own refusal, naming the line, not as a bare ValueError.
++    huge = "9" * 5000
++    with pytest.raises(ThresholdsError) as e:
++        _thresholds(tmp_path, overdrawn_run__days_at_least=huge)
++    text = (tmp_path / "indicators.yaml").read_text().splitlines()
++    want = 1 + next(n for n, x in enumerate(text) if x == f"  days_at_least: {huge}")
++    assert f"line {want}" in str(e.value) and "days_at_least" in str(e.value)
++
++
++@pytest.mark.contracts
++def test_the_cash_round_trip_window_is_found_by_date_and_position_at_scale():
++    # 10,000 lines: 5,000 withdrawals of £100.00 and 5,000 deposits of £100.00, twenty a day.
++    # Every deposit follows a same-day withdrawal, so every deposit fires; a deposit's lines are
++    # the withdrawals within the window before it, never one after it.
++    import time
++    from datetime import timedelta
++
++    rows, d0 = [], date(2026, 1, 1)
++    for i in range(5000):
++        d = d0 + timedelta(days=i // 20)
++        rows += [(f"W{i}", d, "CASH WITHDRAWAL", -100.00), (f"D{i}", d, "CASH PAID IN", 100.00)]
++    s = _statement(rows)
++    start = time.perf_counter()
++    found = raise_indicators(s)
++    elapsed = time.perf_counter() - start
++    trips = _of("cash_round_trip", found)
++    assert len(trips) == 5000
++    pos = {t.id: n for n, t in enumerate(s.transactions)}
++    for trip in trips:
++        dep = trip.evidence[-1]
++        assert dep.startswith("D") and all(pos[w] < pos[dep] for w in trip.evidence[:-1])
++    # The first deposit's window is the one withdrawal before it; the last day's last deposit
++    # sees every withdrawal of the 7 days before it and of its own day.
++    assert trips[0].evidence == ["W0", "D0"]
++    assert len(trips[-1].evidence) == 1 + 20 * 8
++    assert elapsed < 5, elapsed  # was over 7 s before the window was bisected (R52 target 2 s)
++
++
++@pytest.mark.contracts
++def test_the_evidence_reads_the_thresholds_the_run_kept_not_the_file_as_it_is_now(tmp_path):
++    # A resumed review writes its evidence from the text its run read at the start, so a file
++    # edited or removed while the review waits changes nothing it records; a checkpoint from
++    # before indicators existed holds no text and reads the packaged file.
++    from cma.graph import run_thresholds
++
++    firm = tmp_path / "firm.yaml"
++    kept = indicators.default_thresholds_text().replace("amount_at_least: 2500.00", "amount_at_least: 2000")
++    firm.write_text("not: [valid")  # the file as it is now: malformed
++    t = run_thresholds({"thresholds_path": str(firm), "thresholds_text": kept})
++    assert t.value("single_cash_deposit", "amount_at_least") == 200000 and t.source == str(firm)
++    firm.unlink()
++    assert run_thresholds({"thresholds_path": str(firm), "thresholds_text": kept}).sha256 == t.sha256
++    old = run_thresholds({"statement_path": "x.csv"})
++    assert old.sha256 == load_thresholds().sha256 and old.source == "cma/thresholds/indicators.yaml"

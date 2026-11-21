@@ -1,0 +1,44 @@
+Both majors from review 3 are fixed at e188f63. I didn't change any code. I re-ran the checks against that commit:
+
+- **Graph input can no longer turn the lock off.** A run now reads firm.yaml itself, or uses the one reading the CLI passes in for the first run, and ignores any lock value in the graph's input. The tests send no request in either case.
+- **A custom rule ID like `R4242` no longer reaches the prompt.** Only rule IDs from the shipped policy are sent, in both the first draft and the redraft line; any other ID is shown as "(custom id)". This also holds through `cma run --policy` with a hosted model.
+
+Everything else passes:
+- full suite: 557 passed
+- p5/p18 invariant tests: 93 passed
+- dual-run: 79 passed
+- contracts: 38 passed
+- lint, compile and offline evals: clean, and all 9 eval memos are fully grounded
+
+Four things need a decision from the owner. I listed them in `notes` and left them alone:
+1. **A custom rule can't be named in the memo.** The model sees it only as "(custom id)", so if that rule is referred or failed, the memo's Recommendation can't name it. I ran `cma run` with an offline model and a custom `R4242` rule: it exited 0 and grounded, but the Recommendation named only R3–R5. One option is to give custom rules citable placeholder IDs that map back to the real ones.
+2. **A custom rule that reuses a shipped ID (say `R2`) is sent as `R2`.** Its description is still hidden, so no free text leaks.
+3. **No remote alert.** That's by design, since the tool runs locally; refusals exit 2.
+4. **Hosted calls no longer retry.** With the SDK's own retries off, a brief 5xx/429 from the provider now fails the draft at once (exit 4) instead of retrying twice. If retries are wanted, they belong in the tool's own request path, where each attempt re-checks the lock.
+
+claim.json is at `/home/user/credit-memo-agent/.bridgie/runs/statement-review/hardener-31/claim.json`:
+
+```json
+{
+  "task": "T17",
+  "claims": [
+    {"text": "R29/P18: a graph input cannot set the run's lock. The load node takes the reading handed to build() (once, first run) or reads firm.yaml itself; run_offline_lock/offline_lock in the input are ignored, and a later run on the same graph re-reads firm.yaml (review-3 major at src/cma/graph.py:303 closed, src/cma/graph.py:296-310).", "proof_cmd": "python -m pytest -q tests/test_firm.py -k \"graph_input_cannot_override or used_once_and_never or shipped_form or cli_custom_policy or binds_no_socket or one_attempt_per_lock\"", "proof_output": "16 passed, 115 deselected in 2.55s"},
+    {"text": "P5/R30: only the shipped policy's own rule ids reach a prompt or a redraft line; a custom id in the accepted spelling (R4242, R10, R0, R12345) is masked as '(custom id)' and filtered from redraft_ids, including through `cma run --policy` with a hosted model (review-3 major at src/cma/graph.py:196 closed).", "proof_cmd": "python -m pytest -q -m invariants -k \"p5 or p18\"", "proof_output": "93 passed, 464 deselected in 4.02s"},
+    {"text": "Failure modes: each hosted call has a 120 s timeout and SDK retries off (max_retries=0), so every request passes a lock check; a failed call behaves as before (exit 4); a lock refusal is exit 2 before any client or request.", "proof_cmd": "grep -n \"max_retries\\|timeout=\" src/cma/llm.py; python -m pytest -q tests/test_firm.py -k one_attempt_per_lock", "proof_output": "113: anthropic.Anthropic(timeout=120.0, max_retries=0); 135: OpenAI(timeout=120.0, max_retries=0); included in the 16 passed above"},
+    {"text": "Failure modes / idempotency: a malformed firm.yaml (not UTF-8, bad YAML, repeated key, unknown key, wrong type) is refused, never read as unlocked; the run reads firm.yaml once at its start; review-id reuse is still refused by the existing check.", "proof_cmd": "python -m pytest -q tests/test_firm.py tests/test_mcp_paths.py tests/test_import_monzo.py", "proof_output": "180 passed in 4.00s"},
+    {"text": "Data/migration: additive only. MemoState keeps run_offline_lock so older checkpoints load; evidence gains an egress key, with a fallback for states without lock fields; dual-run and contract tiers unchanged.", "proof_cmd": "python -m pytest -q -m dual_run; python -m pytest -q -m contracts", "proof_output": "79 passed, 478 deselected; 38 passed, 519 deselected"},
+    {"text": "Security/authz on new entry points: every MCP start path (run, run_*_async) checks the lock, no ASGI app is handed out, and every MCP tool checks the lock before reading a file; under the lock the real HTTP start binds no socket. No new dependency, no secrets in code or fixtures.", "proof_cmd": "python -m pytest -q -m invariants -k p18", "proof_output": "included in 93 passed (invariants p5 or p18)"},
+    {"text": "Whole suite, lint, compile and offline evals pass.", "proof_cmd": "python -m pytest -q; ruff check src tests; python -m compileall -q src; python evals/run_evals.py", "proof_output": "557 passed in 23.86s; All checks passed!; compiled; 9/9 memos fully grounded; model = fake"},
+    {"text": "Performance: not applicable to hot paths. The added work is one small YAML read per hosted request outside a run or per MCP call, and a shipped-policy load per prompt build; no queries or list endpoints.", "proof_cmd": "python -m pytest -q", "proof_output": "557 passed in 23.86s (no timing regression visible in the suite)"},
+    {"text": "Observability: the evidence record names the lock value the dispatch used and the destination ('offline' or provider:model), and refusals print 'Refused.' with exit 2. There is no remote alert by design (local-first; design Observability).", "proof_cmd": "python -m pytest -q tests/test_firm.py -k \"evidence_records or dispatch_used\"", "proof_output": "passes within tests/test_firm.py (180 passed above)"},
+    {"text": "Operability/rollback: offline_lock in firm.yaml is the flag; setting it false re-enables hosted models and the MCP server without a release, and reinstalling the previous wheel removes the lock. The CI evals workflow turns it off explicitly for synthetic data.", "proof_cmd": "git show HEAD --stat; grep -n offline_lock .github/workflows/evals.yml", "proof_output": "evals.yml writes 'offline_lock: false' to private/cma/firm.yaml before the anthropic eval step"},
+    {"text": "Docs: README documents the offline lock and the MCP refusal. No API contract outside the package changes shape apart from the additive evidence key and transactions_for withholding descriptions (description_withheld).", "proof_cmd": "git diff HEAD~3 -- README.md | grep -n offline", "proof_output": "README lines on firm.yaml offline_lock and the MCP server refusing to start under it"}
+  ],
+  "files_changed": [],
+  "dispositions": [
+    {"finding": "major: caller-supplied graph input overrides the firm's offline lock (src/cma/graph.py:303); also P18", "disposition": "not_reproduced", "evidence": "At e188f63, load() ignores input lock fields and uses build()'s one-shot reading or firm.load(); test_p18_graph_input_cannot_override_the_firms_lock (3 params) and test_p18_a_runs_reading_is_used_once_and_never_by_a_later_run pass with no request sent."},
+    {"finding": "major: custom rule id filter checks spelling only, so R4242 reaches the hosted prompt (src/cma/graph.py:196); also P5", "disposition": "not_reproduced", "evidence": "rules_table(for_prompt=True) and redraft_ids now admit only ids present in the shipped policy; test_p5_a_custom_rule_id_in_the_shipped_form_never_reaches_the_prompt (R4242, R10, R0, R12345, 'SNTL R4242') and test_p5_cli_custom_policy_prompts_carry_no_sentinel pass."}
+  ],
+  "notes": "No code changed by this seat; every line was proven against e188f63. Gaps for the owner, needing design rather than code: (1) Under a custom policy, a rule whose id is not a shipped id is shown to the model as '(custom id)', so the memo cannot cite it and system rule 8 ('names each rule referred or failed') cannot be met for it. A probe with a custom R4242 rule and the offline model exited 0 and grounded, but its Recommendation named only R3-R5. The appendix still shows the full table to the reviewer. Choose whether the prompt should carry a placeholder id that can be cited (e.g. C1..Cn mapped back). (2) A custom rule whose id equals a shipped id (R2) but has a different meaning is sent as R2; its description is masked, so no free text leaks. (3) No remote alert exists by design (local-first); refusals exit 2. (4) Removing SDK retries means a transient 5xx/429 now fails the draft at once (exit 4) where it used to retry twice; any retry with backoff belongs in HostedLLM.complete, where each attempt re-checks the lock. That is a design choice for the owner, not added here."
+}
+```

@@ -1,0 +1,104 @@
+```json
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "gpt-6"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to buckets. src/cma/metrics.py:483 and :561 sum whole pence and attach transaction IDs. src/cma/cli.py:298 and src/cma/mcp_server.py:98 carry the figures through the requested entry points.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:86 checks exact penny round-tripping, src/cma/metrics.py:512 handles unreportable M3, and src/cma/graph.py:175 and src/cma/cli.py:415 display pennies. Monzo still misreports an oversized Amount as a limit violation and drops a readable amount when a later cell in the same record contains invalid UTF-8.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks both the penny difference and evidence membership, including duplicate IDs when the difference is zero. src/cma/cli.py:119 reports the error before the review displays or exports figures. The contract log confirms the CLI and MCP refusal tests ran and passed.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 assign unmatched credits to OTHER. src/cma/models.py:66 maps OTHER to unexplained money in and excludes it from the revenue categories at :69.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks exact bucket totals and one placement per credit ID. M18 is emitted separately at :565. The named P1 partition and large-amount tests ran and passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the T04 figures, src/cma/metrics.py:523 and :561 use the cited lines for sums, :538 and :548 negate the cited totals for outflows, :374 follows closing balances, :420 records partially counted M9 credits, and :499 supplies M26's share evidence. The named P2 invariant and previous-release evidence comparisons ran and passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 assign unmatched credits to OTHER. src/cma/metrics.py:483 and :568 put their IDs in M25 and keep them out of M2. The named P6 tests ran and passed under v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 206,
+      "criterion": "R2",
+      "claim": "The fallback lifts the CSV field-size limit and then treats an oversized Amount itself as an amount at the limit. R2 requires the refusal to name an unreadable field as too long to read. The current contract test asserts the contrary behavior.",
+      "repro": "Import a GBP Monzo row with an Amount consisting of 1 followed by 200,000 zeroes and .00. tests/test_money_in.py:761 exercises this input, and contracts-4.log records the passing assertion that the refusal names an amount at the monetary limit."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 191,
+      "criterion": "R2",
+      "claim": "UTF-8 recovery drops the entire failing record, so a readable GBP amount before a bad byte in a later field never contributes to the running money-in or money-out total.",
+      "repro": "Use the Monzo header Transaction ID,Date,Type,Amount,Currency,Balance,Name. Put a valid GBP credit of 9999999999999.99 on line 2 and a GBP credit of 0.01 on line 3, with the raw byte 0xE9 in line 3's Name. The refusal names line 3 as invalid UTF-8 and omits that money in has reached £10,000,000,000,000."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 86,
+      "criterion": "R2",
+      "claim": "The producer's no-ceiling probe supports a direct figures-layer call only. The normal statement loader enforces the ceiling required by R2.",
+      "repro": "Compare tests/test_money_in.py:263, which calls pence and _gbp directly, with a one-row statement passed to cma run with amount 10000000000000.01. The loader refuses that amount before computing figures."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 319,
+      "criterion": "P2",
+      "claim": "The exact historical suite result at ca0092c and the scratchpad idempotency result are not proven by the runner. The current full run records 964 passed at the reviewed revision, and the named invariant and contract results establish the checks they exercised.",
+      "repro": "Compare the claim with specified-3.log and the configured runner commands. To prove the historical result, run python -m pytest -q at ca0092c. To prove the scratchpad result, run PYTHONPATH=src python scratchpad/probe.py with that script available."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer's note that the committed example lacks evidence_note is stale. The reviewed example already includes the field with a null value.",
+      "repro": "Search the committed examples/cafe_stretched.memo.evidence.json for evidence_note."
+    }
+  ],
+  "verdict": "fail"
+}
+```

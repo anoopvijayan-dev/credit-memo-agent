@@ -1,0 +1,101 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed HEAD 97b0566 against requirements.md:309. Canonical UTF-8 hashing, UTC timestamps, head comparison and first-bad-entry reporting are in src/cma/case.py:177–348. Holder recognition across path aliases, shared and steady reads, retry behavior and the sign-off guard are at src/cma/case.py:457–681. Writer exclusion, fork refusal, nested-save refusal, expected-position conflicts and repair checks are at src/cma/case.py:683–1102. Publication and take-back are at src/cma/case.py:1104–1185. Traced the production consumer at src/cma/cli.py:309–338. Checked duplicate submission, competing writers, empty and malformed inputs, Unicode, UTC, partial failure, filesystem permissions, separate case folders and CLI exit codes. This diff adds no currency calculations or database migration. The passed runner logs name the tamper, rebuilt-chain, torn-tail, duplicate-submit, CLI and default-handler interruption tests. The lock re-check and interrupted take-back still fail in the schedules below. No tests were run during this review.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-94/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-94/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-94/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-94/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-94/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-94/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-94/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 802,
+      "criterion": "P15",
+      "claim": "The final writer check can approve a head rename after the case lock has been replaced. It samples the case lock before reading the gate and never checks the case lock again after that filesystem read.",
+      "repro": "Start with two recorded entries. During the third append's pre-rename call to _require_lock_in_place, pause at the gate stat after the case lock stat has returned. Replace log.jsonl.lock with a new inode and leave the gate alone. Resume the writer. Both comparisons succeed using the old case-lock stat and the unchanged gate stat. The rename publishes entry 3 and read-back can return success. P15 requires refusing that step and leaving the line past the recorded head. The runner's regression replaces the lock during the earlier head read, before either stat."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1208,
+      "criterion": "P15",
+      "claim": "A custom signal handler can still interrupt the call into take-back after a failed read-back. The save leaves its own head published even though the take-back was still possible.",
+      "repro": "Use the setup in tests/test_case_log.py:2866, but first install a SIGINT handler that raises KeyboardInterrupt. Force a one-shot read-back error after entry 3's head is published, then deliver SIGINT at the call into _take_back, before its body starts. The custom handler bypasses deferral. The outer handler reports SaveNotConfirmed and leaves the head at 3 even though both lock files and the save's own head are still in place. With the one-shot error gone, a fresh check reads the entry as recorded. The passed regression uses the default SIGINT handler."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's claimed CLI contract for a held case is stale. It says exit 0 with 'appending'. The implementation and the passed contract require exit 4 with 'being saved'.",
+      "repro": "Read the assertion in tests/test_case_log.py:1340 and its PASSED row in contracts-4.log. With another writer holding a case over a torn tail, the CLI reports the recorded prefix and exits 4. After release it exits 3 and names the incomplete entry."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1214,
+      "criterion": "P15",
+      "claim": "The producer's proof overstates the concurrency schedule exercised by the rapid-append test. The passed test does not establish two commits per retry or contention at a specific fallback.",
+      "repro": "Read test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing and its PASSED row in specified-3.log. The writer loops independently while the reader performs 40 checks. No barrier, counter or assertion establishes the claimed interleaving. A synchronized test that forces the claimed schedule, followed by python -m pytest -v tests/test_case_log.py -k 'healthy_log_broken', would provide that proof."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

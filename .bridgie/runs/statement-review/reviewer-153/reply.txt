@@ -1,0 +1,120 @@
+```json
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483 assigns positive lines to the bucket lists and reconciles them against M2. src/cma/metrics.py:562 returns GBP totals and line IDs, with M18 drawn from M2. src/cma/graph.py:307 and src/cma/mcp_server.py:92 carry the figures through both entry points.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:82 checks penny round-trips, src/cma/ingest.py:256 checks flow limits, and src/cma/metrics.py:512 handles unrepresentable M3 results. src/cma/graph.py:175 and src/cma/cli.py:397 show pennies, while src/cma/metrics.py:591 preserves whole-pound drafting. The Monzo importer can still omit the flow-limit reason when a bad date is on the row that crosses the limit.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks arithmetic and evidence membership independently, including membership errors with zero difference. src/cma/cli.py:113 exits 6 before review or export. The runner confirmed the CLI refusal, literal markup-like IDs, uncategorised credit, and MCP refusal tests.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and src/cma/categorise.py:1360 default unmatched credits to OTHER. src/cma/models.py:64 maps OTHER to unexplained, and src/cma/metrics.py:351 limits M2 to trading categories.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483 and src/cma/metrics.py:578 check exact totals and credit ID multiplicity. M18 is emitted separately at src/cma/metrics.py:565. The runner passed the named P1 tests for synthetic, random and large-amount inputs.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For figures produced by T04, src/cma/metrics.py:538 builds signed outflow evidence, src/cma/metrics.py:562 uses the same lines for sum values and evidence, and src/cma/metrics.py:571 cites the shared denominator for M26. src/cma/metrics.py:418 identifies partially counted M9 credits. The named P2 tests passed, and dual_run-7.log confirms the legacy evidence comparisons for the fixtures exercised.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "The unmatched-credit fallback at src/cma/categorise.py:1360 reaches M25 via src/cma/models.py:64 and cannot enter M2 at src/cma/metrics.py:351. The runner passed the default-rule invariant and explicit unknown-payer tests under v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 198,
+      "criterion": "R2",
+      "claim": "The importer reports only the malformed date when the same record contains the GBP amount that brings money in or out to the limit. The date is parsed before the amount is included in the flow diagnostic.",
+      "repro": "Import two Monzo GBP credits of 9999999999999.99 each. Give the first a valid date and balance, and the second the date 'not a date' and a valid numeric Balance cell. The refusal names the bad date but omits that money in totals at least £10,000,000,000,000."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 101,
+      "criterion": null,
+      "claim": "Starting a review does not use the lock that serializes review refreshes and decisions. Two submissions can both observe an unused review ID and then write separate checkpoint histories for that same ID.",
+      "repro": "Start two cma run processes with different statements, the same SQLite database and the same explicit --thread. Pause both after the unused-thread check, then let both proceed to graph.invoke. Both can begin drafting and checkpointing. The runner's refresh-versus-decision test starts with an existing review and does not cover this race."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 328,
+      "criterion": null,
+      "claim": "A failed evidence write can leave the memo on disk and the review already decided, so resuming cannot finish the export.",
+      "repro": "Start a pending review, then resume it with an output destination whose evidence path is missing at the overwrite check. During the approval prompt, create a directory at that evidence path. Approve the memo. The decision commits and the memo is written before the evidence write fails. Remove the directory and retry resume with a fresh output path. The checkpoint is already decided."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 256,
+      "criterion": "R2",
+      "claim": "The producer's no-fixed-ceiling claim is true for the demonstrated figures-layer conversion but false for statement input, which the current requirement explicitly caps.",
+      "repro": "Compare tests/test_money_in.py's direct metrics.pence and metrics._gbp calls for £10,000,000,000,000.01 with its load_csv boundary tests. The first bypasses the loader. A CSV containing that credit is refused on import."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 538,
+      "criterion": "P2",
+      "claim": "The blanket legacy parity claim exceeds the dual-run evidence. The runner passed the exercised cases, but exact pence can change a legacy result and its evidence as R54 permits.",
+      "repro": "Compare the releases on Python 3.11 using the R54 case of fully returned loan repayments, including a £9 trillion repayment and smaller intervening payments that leave float-sum drift. Exact debt service is zero and M10 has no evidence. A legacy result that rounds the residual to £0.01 cites the operating, drawings and loan lines. The runner's dual-run log reports 84 passing tests for the current revision."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 314,
+      "criterion": null,
+      "claim": "The scratchpad idempotency result and the historical 878-test result at ca0092c are not proven by the supplied runner rows. The runner verified 942 tests at 6b2f80c. Current named tests independently cover the other scratchpad examples for M3, reconciliation, M9, outflow evidence and penny formatting.",
+      "repro": "Check specified-3.log and the checked-out commit. To prove the cited results, the runner would need to execute PYTHONPATH=src python scratchpad/probe.py with the producer's script available, and python -m pytest -v -rs at ca0092c."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": null,
+      "claim": "The claim notes say the committed example lacks evidence_note and was left untouched. The reviewed example already contains evidence_note fields and was regenerated.",
+      "repro": "Search the committed example for evidence_note and compare its decision timestamp against the supplied diff. The runner also passed the committed example schema test in specified-3.log."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```

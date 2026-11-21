@@ -1,0 +1,54 @@
+```json
+{
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:164, :196 and :252 validate canonical entry bytes, chain links and recorded hashes. src/cma/case.py:517 rejects inherited writers, :529 takes the exclusive lock, :609 checks the expected position, and :686 writes the entry before updating the head. src/cma/cli.py:319 is the only production verification caller. The runner logs confirm the named tamper, rebuild, torn-tail, duplicate-submit, writer contention, inherited-handle, strict JSON, UTC and repair-failure tests passed. Each case folder has its own files and currency stays opaque to the log. The contended read can still hide committed damage or misclassify a live repair.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-40/invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 439,
+      "criterion": "P15",
+      "claim": "A reader can report the log intact with an append in progress after the entry it read has already committed and been damaged. The APPENDING branch skips the head recheck and cannot distinguish successive appends by the same holder.",
+      "repro": "Record entries 1 and 2. Have another thread hold the case and pause after writing entry 3 but before updating the head. Let a reader reach the contended path. After its last head read and before it reads the lock mark, let the writer commit entry 3, validate the log for entry 4, and pause with entry 4 in progress. Change committed entry 3 before releasing the reader. The reader sees APPENDING for entry 4 and returns the old two-entry prefix as intact. The passing test for an append that finishes while the mark is read covers a transition to IDLE only."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 450,
+      "criterion": "P15",
+      "claim": "The exhausted-retry path can hide removal of an entry that had already committed before the reader read the log.",
+      "repro": "Keep the head moving through the reader's retry budget and keep another writer holding the case. On the final attempt, let the reader first sample a head at entry N, then let the writer commit N+1. Remove the entire line for N+1 before the reader reads the log. The second head sample records N+1, but the comparison at line 450 slices that head back to N because the raw log has only N newlines. Verification returns intact instead of naming N+1. The passing removal regression removes an entry already present in the earlier head."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 438,
+      "criterion": "P15",
+      "claim": "A reader reports a live repair entry as incomplete. The DROPPING exception requires a non-torn result, but the verifier classifies a valid complete line exactly one entry ahead of the head as torn.",
+      "repro": "Create a torn entry 3, then start drop_torn_entry in another thread. Pause it at _write_head after _replace_torn has renamed the log containing the complete repair entry 3. Run cma case check while the writer remains paused. It exits 3 and asks for the entry to be dropped. The repair entry is in progress and the CLI should report the two recorded entries and the live append."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1378,
+      "criterion": "P15",
+      "claim": "The passing CLI contract test creates a stale torn tail before starting the second thread. Its exit-0 assertion does not prove that the CLI recognizes an entry written by a live writer.",
+      "repro": "Read the setup for test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break. The crash helper writes the tail and releases the lock. The second thread sets the APPENDING mark directly and never writes an entry. To prove the claimed contract, pause a real append after its log write and before the head update, then run python -m pytest -v -m contracts against that scenario."
+    }
+  ],
+  "verdict": "fail"
+}
+```

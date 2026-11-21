@@ -1,0 +1,93 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest matches, containment, the bank-code exception, cash and payment-method conflicts, both-stage candidates, and override, profile and firm-rule precedence through src/cma/categorise.py:947,969,1057,1077,1122. Verified that OTHER maps to unexplained money in at src/cma/models.py:65. Traced validation before checkpoint creation, CLI evidence, legacy replay and MCP consumers through src/cma/cli.py:77,229, src/cma/graph.py:188,210,250 and src/cma/mcp_server.py:77,84. Reviewed repeat submission, concurrent invocation, case-local inputs, ruleset allowlisting, signed amounts, date-only ingestion, Unicode boundaries and rollback. Runner logs show the per-list, CLI, idempotency, replay, dual-ruleset evaluation and 10,000-line categoriser tests passed. The malformed-field requirement fails because a collection explicitly tagged as a scalar still aborts YAML construction before the validator can name the rule, its field and independent faults.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-93/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-93/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-93/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-93/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-93/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-93/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-93/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 763,
+      "criterion": "R4",
+      "claim": "The malformed-scalar recovery path calls the scalar constructor again even when the YAML node is a collection. The second ConstructorError aborts table construction and suppresses rule-level diagnostics.",
+      "repro": "In a copy of v1 that retains frozen: true, replace returned_dd's pattern value with `!!int [1]` and add `unless: FPS` to a different existing rule. Load the changed copy as v1 through the packaged-table fixture. The refusal names the changed frozen table first, then reports `not valid YAML (expected a scalar node, but found sequence)`. R4 requires it to name returned_dd's pattern and the other rule's unless as well. The runner's unknown-tag and recursive-alias cases at tests/test_rules_v2.py:2132 do not cover an explicitly tagged collection using a known scalar tag."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README precedence claim is incorrect. It says a matching profile name can settle an ambiguous credit, while the implementation adds the name to the candidates and leaves the credit unexplained.",
+      "repro": "Classify a positive `FPS CREDIT CASH DEPOSIT REF JANE DOE` line under v2 with Jane Doe in the director profile. src/cma/categorise.py:1139 returns OTHER with `v2:conflict:payment_rail+cash_paid_in+profile:director`. The runner's invariants log shows this case passed. Searching the README for `conflict` confirms the wording exists but does not prove it is accurate."
+    },
+    {
+      "severity": "minor",
+      "file": "pyproject.toml",
+      "line": 42,
+      "criterion": "R4",
+      "claim": "The claim that the compilation gate covered src, evals and tests is not proven. The runner compiled src only. The full pytest suite and all three marker tiers did pass, with runner totals of 802, 180, 138 and 83.",
+      "repro": "Compare mechanical-2's `python -m compileall -q src` with the claimed scope. A runner result for `python -m compileall -q src evals tests` would prove the broader compilation claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

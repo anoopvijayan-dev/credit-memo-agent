@@ -1,0 +1,78 @@
+```json
+{
+  "task": "T03",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "The shipped tables cover own-account moves, HMRC, refunds, rails and cheque wording at src/cma/rules/v2.yaml:63–160, lenders and MCA providers at :162–241, cash deposits and explained credits at :253–280, and trading providers and cash withdrawals at :298–405. src/cma/categorise.py:477–489 filters contained matches, :526–541 applies the bank-code exception and checks both ambiguity stages, and :544–602 applies override, profile and firm-rule precedence. src/cma/models.py:54–68 maps OTHER to unexplained and cash deposits to trading receipts. src/cma/graph.py:250–253 selects and applies the active table, and :210–224 exports line provenance. The runner logged 710 passing tests, including the per-list tests, both prior wording regressions, CLI evidence and both offline eval runs. Source inspection found that a typographic dash can hide an electronic rail and that a separator-only profile value can settle an ambiguous credit without matching a name. The review checked repeat categorisation and duplicate input, concurrent updates, sign and text boundaries, currency and timezone dependencies, partial failure, authorisation, case isolation, rollback, and CLI, checkpoint and MCP consumers. No tests were run or files changed during review.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 178,
+      "criterion": "R4",
+      "claim": "An en dash inside Faster Payment wording hides the electronic rail. The line is recorded as a cash deposit and enters M2.",
+      "repro": "With CMA_RULESET=v2 and no override, supply a balanced CSV containing a £500 credit described as FASTER–PAYMENT CASH DEPOSIT (U+2013). The rail matcher accepts an ASCII hyphen but cannot cross the en dash, so the credit takes v2:cash_paid_in. R4 requires unexplained money in with both payment_rail and cash_paid_in recorded as candidates."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 461,
+      "criterion": "R4",
+      "claim": "A separator-only profile value can resolve an ambiguous credit without matching a case-profile name.",
+      "repro": "Call classify under v2 on a £500 credit described as FPS | CASH DEPOSIT and pass ProfileNames(own_accounts=(\"---\",)). _names_in accepts the nonblank value, names_pattern removes its separators and produces an empty alternative, and that alternative matches beside the pipe. The result is profile:own_account instead of v2:conflict:payment_rail+cash_paid_in."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 471,
+      "criterion": "R4",
+      "claim": "The producer's table-validation claim misses the regex that the credit span matcher compiles on first use.",
+      "repro": "Load v2 rule data containing an incoming name-stage rule with pattern (?i)ACME and category revenue_card_settlement. The standalone regex validates and loads. Classify an ACME credit and the span matcher wraps the regex inside a capture group, where the global flag raises re.error. The malformed-table tests exercise a global flag combined with names, so they miss the pattern-only case."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1383,
+      "criterion": "R4",
+      "claim": "The producer claims that shuffling rules within each stage preserves every category on whole statements. The passing shuffle test uses a sample that misses competing debit rules.",
+      "repro": "Categorise a £100 debit described as PAYROLL RENT under the shipped table, then swap the payroll and rent rules within the unprotected name stage and categorise a fresh copy. The first debit match changes from payroll to rent at src/cma/categorise.py:570. R4 does not require debit rule-order independence."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 205,
+      "criterion": "R4",
+      "claim": "The producer's claim that every evidence record identifies the rule for each line is broader than the checkpoint replay guarantee.",
+      "repro": "Export evidence from a pre-provenance checkpoint with a recorded ruleset hash that differs from the installed table. line_rule_ids returns the saved null rule IDs, as the passing T02 stale-hash case explicitly expects. Fresh v2 runs record each rule."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 847,
+      "criterion": "R4",
+      "claim": "The runner proves the categoriser stayed below the test's two-second bound for the supplied workload. The producer's exact 0.69-second result is not proven by the runner log.",
+      "repro": "The full-suite log records the 10,000-line test as PASSED, and the test does not print its measured elapsed time. A runner invocation of python -m pytest -vv --durations=0 tests/test_rules_v2.py -k 10000_lines would show the test duration. Logging the measured categoriser interval would prove the component timing directly."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 27,
+      "criterion": "R4",
+      "claim": "The producer's compileall claim for src, evals and tests is not proven by the configured compile tier.",
+      "repro": "Mechanical result 2 ran python -m compileall -q src only. To prove the claimed scope, the runner must record a passing result for python -m compileall -q src evals tests."
+    }
+  ],
+  "verdict": "fail"
+}
+```

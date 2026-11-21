@@ -1,0 +1,95 @@
+{
+  "task": "T04",
+  "claims": [
+    {
+      "text": "Reported GBP figures print as exactly the pence they were computed from, so M2 and M19-M25 add up to M17 as printed. _gbp is now p / 100 (an int quotient, correctly rounded) and refuses any figure of MAX_PENCE = 10**15 pence or more. Amounts and balances at or above that limit are refused with AmountError before any figure is computed. Below the limit a figure has at most 15 significant digits, so a binary float holds it and prints it back exactly. The reviewer's case (a £100000000000000.00 credit and a £0.01 credit) is refused, naming L1.",
+      "proof_cmd": "python -m pytest -v tests/test_money_in.py -k \"too_large or reported_gbp\"",
+      "proof_output": "test_p1_reported_gbp_figures_reconcile_as_printed_for_large_amounts PASSED; test_an_amount_too_large_to_report_to_the_penny_is_refused PASSED; test_figures_whose_sum_is_too_large_to_report_to_the_penny_are_refused PASSED"
+    },
+    {
+      "text": "The lowest balance (M5) and overdrawn days (M6) are now computed in integer pence. balance_pence converts each line's balance once. end_of_day_balances returns pence. M5 reports the pence of the lowest balance through _gbp.",
+      "proof_cmd": "python -m pytest -v tests/test_money_in.py -k lowest_balance",
+      "proof_output": "tests/test_money_in.py::test_lowest_balance_and_overdrawn_days_are_compared_in_pence PASSED"
+    },
+    {
+      "text": "cma run's refusals escape Rich markup. A line id such as [red] now shows in the exit-6 reconciliation refusal. The exit-2 refusals (StatementError, PolicyError, RulesetError, AmountError) are escaped the same way.",
+      "proof_cmd": "python -m pytest -v -m contracts tests/test_money_in.py",
+      "proof_output": "test_cma_run_exits_non_zero_naming_the_difference_and_the_lines PASSED; test_mcp_compute_metrics_carries_m17_to_m26 PASSED; test_cma_run_refusal_shows_a_line_id_that_looks_like_markup PASSED; test_mcp_compute_metrics_refuses_buckets_that_do_not_reconcile PASSED"
+    },
+    {
+      "text": "MCP compute_metrics refuses unreconciled buckets with a ReconciliationError, which is a ValueError subclass. The error names the difference in pence and the line id. A contracts test now proves this.",
+      "proof_cmd": "python -m pytest -v -m contracts tests/test_money_in.py -k mcp",
+      "proof_output": "test_mcp_compute_metrics_carries_m17_to_m26 PASSED; test_mcp_compute_metrics_refuses_buckets_that_do_not_reconcile PASSED"
+    },
+    {
+      "text": "The P1, P2 (money-in sums M2, M17-M25) and P6 invariants pass on every synthetic case and on 40 random statements under each of v1 and v2. They also pass on 300 random large-amount cases read back as printed decimals.",
+      "proof_cmd": "python -m pytest -v -m invariants tests/test_money_in.py",
+      "proof_output": "test_p1_buckets_sum_to_total_money_in_and_every_credit_is_in_exactly_one PASSED; test_p2_evidence_lines_total_each_sum_figure_to_the_penny PASSED; test_p6_a_credit_no_rule_matches_is_unexplained_and_never_trading PASSED; test_p6_an_unknown_payer_lands_in_m25[v1] PASSED; test_p6_an_unknown_payer_lands_in_m25[v2] PASSED; test_p1_reported_gbp_figures_reconcile_as_printed_for_large_amounts PASSED"
+    },
+    {
+      "text": "The committed example memo and evidence were regenerated with the current code. The appendix now carries M17-M26 and M16's new method, and the CSV is unchanged.",
+      "proof_cmd": "grep -c '^| M1[7-9]\\|^| M2[0-6]' examples/cafe_stretched.memo.md",
+      "proof_output": "10"
+    },
+    {
+      "text": "Lint, compile, the full suite, the dual-run tier and the offline evals all pass.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q && python -m pytest -q -m dual_run && python evals/run_evals.py",
+      "proof_output": "All checks passed!; 872 passed; 83 passed, 789 deselected; 9/9 memos fully grounded; model = fake; ruleset = v1"
+    }
+  ],
+  "files_changed": [
+    "src/cma/metrics.py",
+    "src/cma/cli.py",
+    "tests/test_money_in.py",
+    "examples/cafe_stretched.memo.md",
+    "examples/cafe_stretched.memo.evidence.json"
+  ],
+  "dispositions": [
+    {
+      "finding": "major src/cma/metrics.py:105 (P1): reconciliation can succeed internally while the reported GBP buckets and total disagree by a penny (a £100000000000000.00 trading credit plus a £0.01 credit).",
+      "disposition": "reproduced",
+      "evidence": "Fixed. _gbp returns p / 100 and refuses any figure of 10**15 pence or more. pence() and balance_pence() refuse a line at or above that limit with AmountError, and cma run reports AmountError as 'Refused.' with exit 2. The reviewer's case is refused naming L1 (test_an_amount_too_large_to_report_to_the_penny_is_refused). Sums that cross the limit are refused (test_figures_whose_sum_is_too_large_to_report_to_the_penny_are_refused). Below the limit, test_p1_reported_gbp_figures_reconcile_as_printed_for_large_amounts reads the printed decimals back on 300 random cases with amounts up to 10**13 pence, and the buckets equal M17 and the credits."
+    },
+    {
+      "finding": "major src/cma/metrics.py:228 (R2): the lowest balance and the overdrawn-day comparison use floating-point GBP balances, and M5 rounds the float balance.",
+      "disposition": "reproduced",
+      "evidence": "Fixed. Balances are converted to pence by balance_pence. min() for M5 and the < 0 test for M6 compare ints, and M5 = _gbp(balance_pence(lowest)). Proven by test_lowest_balance_and_overdrawn_days_are_compared_in_pence: a -0.01 close is M5 = -0.01 and one overdrawn day. P7 v1 baselines are unchanged (full suite 872 passed)."
+    },
+    {
+      "finding": "major src/cma/cli.py:99 (R3): reconciliation diagnostics interpret statement line ids as Rich markup and can omit the offending id.",
+      "disposition": "reproduced",
+      "evidence": "Fixed. rich.markup.escape is applied to the ReconciliationError text, and to the exit-2 refusals. test_cma_run_refusal_shows_a_line_id_that_looks_like_markup injects id [red] into an unbucketed credit and asserts exit 6 with '[red]' in the output."
+    },
+    {
+      "finding": "major src/cma/metrics.py:272 (P2): M9 cites full credit amounts even when only a capped part of the round-trip offset contributes.",
+      "disposition": "reproduced",
+      "evidence": "Reproduced, not fixed: escalated (see notes). I built the fix: drop from M9's evidence the transfers out and credits back of a round trip that returned more than was sent, which nets to zero. M9's value did not change, but the full suite then failed test_rules.py::test_p7_v1_test_fixtures_match_the_baseline[fixture-72-lines-CARD ACQUIRER SETTLEMENT1] and test_rules_v2.py::test_p7_v2_changes_only_the_listed_lines_and_m1_m16_only_where_listed (M9 evidence_n 48 -> 24). The frozen P7 baseline (tests/golden/p7_v1_baseline.json.gz, rebuilt from the pre-change commit by test_p7_history.py) pins M1-M16 evidence as well as values, so the change was reverted. The P2 test does not include M9, and its comment says why."
+    },
+    {
+      "finding": "major src/cma/metrics.py:240 (P2): the positive outflow sums M8, M11, M12 and M14 do not match the signed amounts of their evidence; the P2 test negates the sum.",
+      "disposition": "reproduced",
+      "evidence": "Reproduced, not fixed: escalated (see notes). Their evidence's signed total is exactly the figure negated: the test asserts that, and the test comment now states the convention. Making the figure equal the signed total means reporting M8, M11, M12 and M14 as negative numbers. That changes M1-M16 values, which R10 and the P7 baseline forbid. It would also change the policy, guard and memo text that read these figures as positive money out."
+    },
+    {
+      "finding": "minor tests/test_money_in.py:199 (R3): the claim that contracts tests exercise the MCP refusal was unproven.",
+      "disposition": "reproduced",
+      "evidence": "Added test_mcp_compute_metrics_refuses_buckets_that_do_not_reconcile (contracts). It asserts a ReconciliationError (a ValueError), the pence difference and the line id."
+    },
+    {
+      "finding": "minor src/cma/metrics.py:337 (R10): the dual-run fixtures do not establish an unrestricted claim that legacy M1-M16 values and evidence are unchanged; M16 changes for own-account credits.",
+      "disposition": "reproduced",
+      "evidence": "No code change. That claim is withdrawn and is not made here. M16 deliberately leaves own-account transfers out of its denominator, which it shares with M26, as the design says. That moves M16 only on cases with an own-account line, and no committed case has one (tests/test_previous_release.py:132)."
+    },
+    {
+      "finding": "minor src/cma/metrics.py:181 (R52): the 10,000-line benchmark has no runner result.",
+      "disposition": "reproduced",
+      "evidence": "No code change. No benchmark claim is made. R52 (override-to-display under 2 s) belongs to the workspace task, which times the whole recompute."
+    },
+    {
+      "finding": "minor examples/cafe_stretched.memo.md:44 (R1): the committed example still shows the old M16 method and omits the new money-in figures.",
+      "disposition": "reproduced",
+      "evidence": "Regenerated examples/cafe_stretched.memo.md and .memo.evidence.json with `python -m cma.cli run examples/cafe_stretched.csv --vat-stagger 3 --yes --reviewer \"A. Analyst\"`. The appendix now has M17-M26 and M16's current method. The CSV is byte-identical (the P7 example test checks its sha256 and passes). The evidence also gains T02's additive 'lines' key."
+    }
+  ],
+  "notes": "Stop condition: two of verify-127's majors cannot be fixed without changing a shared contract the design did not list. The owner must decide how far P2 reaches. (1) P2 reads 'for any sum figure, the signed amounts of its evidence lines SHALL total the figure'. M8, M11, M12 and M14 have been positive figures for money out since before this change, so their evidence's signed total is the figure negated. Meeting P2 literally changes their values, which R10 ('ids, units and values of M1 to M16 unchanged') and P7's frozen baseline forbid, and it would ripple into policy thresholds, the guard and the memo template. (2) M9 caps a round-trip offset. Citing only the lines whose amounts it counts leaves M9's value unchanged but changes its evidence. The frozen P7 baseline pins M1-M16 evidence hashes, so I built this change, saw two P7 tests fail on the CARD ACQUIRER SETTLEMENT fixture, and reverted it. Suggested resolutions: (a) P2 covers the money-in buckets, M17, M18 and the monthly cells. Its 'Validates' line names R1, R11, R16 and R55, not the legacy obligations figures. M8/M11/M12/M14 are read as magnitudes of money out, and M9 as a net. Or (b) the owner approves changing those M1-M16 values or evidence, and the P7 baseline is rebuilt with that listed as the change R10 allows. This change's P2 test checks M2 and M17-M25 exactly, checks the four outflow figures as negated sums, and leaves out M9, with comments saying so. AmountError is a new ValueError subclass in metrics. cma run reports it as 'Refused.' with exit 2, and MCP raises it as a ValueError. The limit of 10**15 pence (£10 trillion per line, balance or figure) sits far above any real statement. I did not commit: the runner records the commit."
+}

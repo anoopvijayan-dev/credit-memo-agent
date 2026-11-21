@@ -1,0 +1,78 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "metrics.py compute: every credit (pence>0) goes to its CREDIT_BUCKET (models.py:55-67); M2 is trading receipts, M19-M25 the other seven, M17 all credits; each is a GBP sum figure with ids. P1/P2 tests ran and passed (invariants-5.log).",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "Money is added in integer pence in metrics.py (pence, total, _gbp, _div_half_even for M3 n/a); the categoriser's reversal key comes from metrics.size_pence (categorise.py:1393); policy comparisons go through metrics.compare in whole pence (policy.py). The loader and the Monzo importer read text exactly (text_pence) and refuse the line and flow limits. Cross-record checks run once reading has stopped (ingest.py, after the record loop). Monzo reads the currency, then the amount, then the other fields, and names the flows reached among the rows read so far (monzo.py). Tables use display_exact (graph.py:175, cli _print_metrics); the prompt table and the policy sentence use display() to the whole pound (metrics.py:649, policy.py:233). verify-214's major is fixed: offset timestamps are sorted and dated in UTC (monzo.py:84-90), and the sort key starts with the written date, so the dates written cannot run against the row order. Its test passed (contracts-4.log).",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "_reconcile (metrics.py) raises ReconciliationError with the difference in pence and the line ids before any figure is returned. Every caller goes through compute: cma run exits 6 (cli.py), resume exits 6, and the MCP compute_metrics and policy tools both call compute. Contract tests ran and passed.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "OTHER maps to Bucket.UNEXPLAINED (M25); REVENUE_CATEGORIES excludes OTHER. The P6 tests passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "test_p1_buckets_sum_to_total_money_in_and_every_credit_is_in_exactly_one and test_p1_reported_gbp_figures_reconcile_as_printed_for_large_amounts are PASSED in invariants-5.log.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "The test_p2_* tests (sum, outflow and the M9 note) passed in invariants-5.log; the dual_run tier passed for M1-M16 evidence.",
+      "result": "pass",
+      "artifact": "dual_run-7.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "test_p6_a_credit_no_rule_matches_is_unexplained_and_never_trading and test_p6_an_unknown_payer_lands_in_m25[v1/v2] are PASSED in invariants-5.log.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 87,
+      "criterion": "R2",
+      "claim": "A timestamp with an offset is now written with its UTC date. The previous release wrote the local date (.date() of the aware datetime). So a row at 2026-07-01T00:30:00+01:00 is written as 2026-06-30 and moves into another month for the monthly cells, M4's quarters and M13's VAT windows. No requirement fixes which date to use, but it is a silent change to cma import monzo's output (R53) and is not listed.",
+      "repro": "Export row tx_1,2026-07-01T00:30:00+01:00,... -> cma import monzo writes date 2026-06-30; the previous release wrote 2026-07-01."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 87,
+      "criterion": "R2",
+      "claim": "With a negative offset late on the day of export, the UTC date is tomorrow. The import succeeds, but ingest.load_csv then refuses the file it wrote: 'date ... is in the future' (local date.today()). This is the same import-then-refuse class as verify-214, narrowed to the day of export.",
+      "repro": "On local date D, export a row dated D T22:00:00-05:00; cma import monzo writes D+1; cma run on the output refuses the line as in the future until D+1."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

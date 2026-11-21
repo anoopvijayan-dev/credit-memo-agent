@@ -1,0 +1,36 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:192 checks canonical bytes, entry hash, sequence and predecessor. src/cma/case.py:278 compares the surviving chain with the recorded hashes and count, detecting rebuilt histories. src/cma/cli.py:319 reaches verification and exits 3 with the first bad entry. Runner tier invariants:5 passed the named change, removal, reorder, rebuild, torn-entry and ENOLCK regressions. Runner tiers contracts:4 and specified:3 confirmed duplicate-submit, CLI exit-code, concurrency and interrupted-repair coverage.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-29/invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 413,
+      "criterion": "P15",
+      "claim": "If lock release fails, writer() skips closing the descriptor after clearing its reference to it. The process can keep the lock indefinitely, blocking subsequent appends and torn-entry recovery until it exits.",
+      "repro": "On POSIX, inject a one-shot OSError in _unlock before it calls flock. Append at position 0 and observe the error after the log and head have been committed. Restore _unlock and attempt an append at position 1 from a fresh CaseLog on the same path while the first process remains alive. The leaked descriptor still holds the lock, so the append raises CaseLocked."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 316,
+      "criterion": "P15",
+      "claim": "The CLI relies on filesystem access and does not enforce the producer's claimed case-root ownership check. The cited file-mode test only covers files created by the writer.",
+      "repro": "Create a case under one OS account, grant a second account read and traversal access to the case directory and read access to the log and head, then run cma case check as the second account. It exits 0 and prints the entry count and head hash even though the caller does not own the case root."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

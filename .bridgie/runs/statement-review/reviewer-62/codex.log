@@ -1,0 +1,62 @@
+```json
+{
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Judged against the supplied revision 12. The checkout at .bridgie/specs/statement-review/requirements.md:249 contains the earlier wording. src/cma/case.py:191–324 checks canonical entry bytes, hashes, chain order, recorded count and the first bad or incomplete entry. Lines 428–519 handle holder, free-case and steady reads. Lines 573–585 supply the integrity guard for sign-off, whose production integration is assigned to T27. Lines 599–713 cover ownership, fork refusal and lock identity. Lines 734–776 enforce expected position and guard repair. Lines 779–895 cover staging, publication and lock rechecks. src/cma/cli.py:308–338 exposes the reader. The passed runner logs show named tamper, rebuild, torn-entry, duplicate-submit, contention, strict JSON, file mode and CLI tests ran. The review also traced UTC timestamps, separate case paths, partial failures and CLI consumers. The busy-gate path can report an unheld case as being saved, and an interrupted acquisition can leave the case locked after writer() raises.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 483,
+      "criterion": "P15",
+      "claim": "A busy gate with no case-lock file is reported as an active save. The case lock was never observed held, so this does not meet the revision 12 conditions for the busy-gate and held-case result.",
+      "repro": "Leave an incomplete last line and remove the idle case lock file. Start a writer and pause it at line 662, after it takes the gate and before it opens the case lock. Run cma case check while the writer remains paused. Every attempt finds the case lock absent, and the CLI exits 4 saying another command is saving instead of naming the incomplete entry. The existing paused-at-gate test leaves the case lock file present."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 665,
+      "criterion": "P15",
+      "claim": "An interrupt after the case lock is registered but before writer() finishes entering leaves the case locked without a live writer context.",
+      "repro": "Inject KeyboardInterrupt from _unlock when it releases the gate after _take_case_lock succeeds. Catch the interrupt around with log.writer(). The gate descriptor closes, but writer() never sets entered to true, so its finally block leaves the case descriptor and registered owner live. A fresh CaseLog cannot acquire the case while the original process remains alive."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's CLI contract claim says a held case exits 0 and says 'appending'. The passed contract test verifies exit 4 and 'being saved'.",
+      "repro": "Compare the producer claim with tests/test_case_log.py:1328 and its passed result in contracts-4.log. The test checks exit 4 with the recorded count while held, then exit 3 naming the incomplete entry once free."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1202,
+      "criterion": "P15",
+      "claim": "The producer's exact race reproduction is not proven. The cited test passed, but it does not force two commits on each retry, keep the lock held at fallback, or assert an in-progress result with contiguous sequence numbers.",
+      "repro": "Read tests/test_case_log.py:1202–1222 and its passed row in specified-3.log. The test starts an unsynchronised append loop and checks only for the absence of reported faults and a healthy final log. To prove the exact claim, add a synchronised test named test_p15_two_commits_per_retry_then_held_at_fallback and run python -m pytest -v tests/test_case_log.py -k test_p15_two_commits_per_retry_then_held_at_fallback."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 789,
+      "criterion": "P15",
+      "claim": "A recoverable write or fsync failure leaves a randomly named repair staging file containing case history. The cited crash test only checks the obsolete fixed staging filename.",
+      "repro": "Create a torn tail, then inject an OSError from fsync after the repair staging file is written and before the rename. drop_torn_entry raises and the original log stays torn, but log.jsonl.*.tmp retains the copied history. The assertion at tests/test_case_log.py:710 would miss it."
+    }
+  ],
+  "verdict": "fail"
+}
+```

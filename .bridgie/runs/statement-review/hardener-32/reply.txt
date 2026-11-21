@@ -1,0 +1,81 @@
+I hardened T06 and found one real bug, which is now fixed. A statement dated before the year 1000 lost every line from its monthly cells, so P12 failed. `strftime('%Y')` writes year 1 as `"1"` rather than `"0001"`, so no line matched its month. The loader accepts dates from 0001-01-01, so this could happen on real input. The monthly summary now matches lines to months by year and month number instead of by text, and a new P12/P2 test at the calendar's first and last days covers it. I committed the fix in the worktree as 495e4e5.
+
+After the fix:
+- **Full suite:** 1322 passed, and ruff and compileall are clean.
+- **Marker tiers:** invariants 450, contracts 343 and dual_run 84, all passed.
+- **Offline evals:** 9 of 9 memos fully grounded.
+
+The new tests also check that:
+- the committed example's `monthly_summary` is exactly what the code computes from its own lines;
+- the summary leaves its statement unchanged and gives the same answer twice;
+- a fraction of a penny is refused, not reported.
+
+I timed one run at 10,000 lines over 24 months: 0.08s.
+
+Gaps for the owner (no code changed for these):
+- **Same bug in M4 (T04's code, not T06's):** the revenue trend uses the same text key on one side and a padded key on the other, so before the year 1000 it finds no revenue in its quarters.
+- **No log line or alert:** the tool sends nothing off the machine by design. The evidence record is the signal.
+- **Untested path:** the "too large to report to the penny" result for a month's average balance can't be reached through the loader. It is only a backstop for statements built in code.
+
+```json
+{
+  "task": "T06",
+  "claims": [
+    {
+      "text": "Failure modes / correctness (gap found and closed): before the fix, monthly_summary matched a line to its month by _month's strftime text, which does not pad a year below 1000 ('1-01'), against the padded key '0001-01'. For a statement the loader accepts from 0001-01-01, every line dropped out of its monthly cells and P12 failed. Lines are now matched by (year, month), and a P12/P2 test covers the calendar's first and last days.",
+      "proof_cmd": "python -c \"from datetime import date;print(repr(date(1,1,1).strftime('%Y-%m')))\"; python -m pytest -q tests/test_monthly_hardening.py (before the edit, then after)",
+      "proof_output": "'1-01'. Before the fix: FAILED test_p12_and_p2_monthly_cells_at_the_calendars_first_and_last_days, assert 0 == 1000 (monthly trading receipts 0 against M2 1000p). After: 4 passed"
+    },
+    {
+      "text": "Idempotency / determinism: monthly_summary is a pure function of the stored lines. It leaves the statement unchanged, gives the same answer twice, and the committed example's monthly_summary equals what the code computes from its CSV under its recorded ruleset.",
+      "proof_cmd": "python -m pytest -q tests/test_monthly_hardening.py",
+      "proof_output": "4 passed"
+    },
+    {
+      "text": "Partial failure / money: a fraction of a penny in a Statement built without the loader is refused with AmountError, never reported in a monthly cell (R2).",
+      "proof_cmd": "python -m pytest -q tests/test_monthly_hardening.py -k fraction",
+      "proof_output": "passed (part of the 4 passed above)"
+    },
+    {
+      "text": "P12 and P2 on monthly cells, with cash deposits in the fixtures, still hold after the fix on synthetic archetypes and 60 random statements under v1 and v2.",
+      "proof_cmd": "python -m pytest -q tests/test_monthly.py tests/test_monthly_hardening.py",
+      "proof_output": "8 passed in 6.06s"
+    },
+    {
+      "text": "Data / migration: the evidence record only gains one key, monthly_summary. CHECKPOINT_TYPES is unchanged, because the summary is recomputed from stored lines in evidence_record. Readers of today's keys and the previous-release rollback tests pass. Reversible by reinstalling the previous wheel, since an older reader ignores the key.",
+      "proof_cmd": "grep -n CHECKPOINT_TYPES -A6 src/cma/graph.py; python -m pytest -q -m contracts; python -m pytest -q -m dual_run",
+      "proof_output": "CHECKPOINT_TYPES lists Statement..ReviewDecision with no monthly type; contracts: 343 passed; dual_run: 84 passed"
+    },
+    {
+      "text": "Security: no new entry point. The monthly summary is written only into the evidence record (graph.evidence_record), with line ids and figures and no descriptions. It does not reach the prompt (R30/P5) or the MCP tools.",
+      "proof_cmd": "grep -n monthly src/cma/*.py | grep -v synth",
+      "proof_output": "src/cma/graph.py:274 (evidence_record only), src/cma/metrics.py (definition), src/cma/models.py (MonthlyCell)"
+    },
+    {
+      "text": "Performance: monthly_summary on 10,000 lines over 24 months runs in 0.080 s with no new dependency. This is well inside R52's 2-second recompute target; T22 owns the timed recompute.",
+      "proof_cmd": "PYTHONPATH=src python <10,000-line timing snippet calling metrics.monthly_summary>",
+      "proof_output": "months 24 secs 0.080"
+    },
+    {
+      "text": "Whole-suite regression: ruff, compileall, the full suite, the invariants tier and the offline evals pass after the hardening change.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q && python -m pytest -q -m invariants && python evals/run_evals.py",
+      "proof_output": "All checks passed!; compile-ok; 1322 passed in 100.37s; 450 passed, 872 deselected; 9/9 memos fully grounded; model = fake; ruleset = v1"
+    },
+    {
+      "text": "Observability: not applicable as a log line or alert. The tool keeps everything local by design (design, Observability), and the signal is the evidence record's monthly_summary, which a contracts test pins against the committed example.",
+      "proof_cmd": "python -m pytest -q tests/test_monthly_hardening.py -k committed_example",
+      "proof_output": "passed"
+    },
+    {
+      "text": "Operability / docs: no flag, config or secret change. The output is additive in the evidence record, and rollback is a reinstall. No contract doc beyond design.md (whose Data changes section already specifies the monthly summary) needs updating.",
+      "proof_cmd": "git diff --stat HEAD~2 -- src",
+      "proof_output": "src/cma/graph.py, src/cma/metrics.py, src/cma/models.py only; no config or flag files"
+    }
+  ],
+  "files_changed": [
+    "src/cma/metrics.py",
+    "tests/test_monthly_hardening.py"
+  ],
+  "notes": "Pre-existing, outside T06's scope, for the owner: M4 (revenue trend) builds rev_by_month with _month(t.date) (src/cma/metrics.py:412, and M4's evidence at :586), which is not zero-padded below the year 1000, and compares it with full_months' padded keys (:315). A statement before the year 1000 therefore finds no revenue in its quarters, the same defect T06 fixed for the monthly cells. Not built: the 'too large to report to the penny' n/a path for a month's average balance cannot be reached through the loader (the import limit keeps every close below it), so it is a defence only and has no test. No log line or alert was added, by design (local-only tool)."
+}
+```

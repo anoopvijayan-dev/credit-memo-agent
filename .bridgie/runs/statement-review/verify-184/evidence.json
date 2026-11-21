@@ -1,0 +1,146 @@
+{
+  "task": "T17",
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "src/cma/firm.py:67-83 supplies both defaults and resolves configured paths. src/cma/cli.py:79-86 passes one reading into the normal CLI draft. src/cma/llm.py:133 and :155 disable SDK retries. src/cma/graph.py:261-281 records the draft lock and destination. The lock still fails on reused configuration readings, on ASGI startup without lifespan, and when resuming an unlocked draft with tracing enabled after the firm has locked.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:177-227 and :334-342 build the hosted prompt from metric and rule tables, the period and the placeholder name. The overall outcome is a rule-table row and redraft feedback is restricted to known IDs. src/cma/metrics.py:295-299 serializes no evidence IDs, and src/cma/policy.py:89-112 derives rule detail from metrics and validated rule fields.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "invariants-5.log confirms the line-level sentinel, placeholder, redraft and hosted CLI custom-policy tests ran and passed. src/cma/graph.py:193-227 masks custom rule text and unrecognized IDs and intersects redraft tags with IDs from the tables.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "invariants-5.log confirms the two SDK 503 cases, direct forged-object refusals, sequential graph reuse, native MCP bind-spy tests and saved-app lifespan refusals. src/cma/llm.py:84-85 and :108-109 accept a genuine reading from an earlier run or a different root. src/cma/mcp_server.py:94-105 checks saved apps only when invoked by the ASGI host.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-184/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-184/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-184/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-184/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-184/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-184/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-184/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/llm.py",
+      "line": 84,
+      "criterion": "P18",
+      "claim": "A configuration reading is accepted as authorization for any later hosted constructor or request. The identity registry proves provenance from the loader but does not bind the reading to the current run or firm root.",
+      "repro": "Capture a reading while the lock is off. Turn the lock on before starting a new direct hosted operation. Give the saved reading to the constructor or to complete on an existing client. An SDK spy records construction or dispatch. The same result follows with a reading from a separate unlocked root while CMA_HOME points at the locked root."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/mcp_server.py",
+      "line": 94,
+      "criterion": "R29",
+      "claim": "A saved ASGI app cannot prevent binding when the host disables lifespan. The runner's saved-app tests call lifespan directly, and its bind-spy tests cover the SDK's native run methods.",
+      "repro": "Obtain either ASGI app while unlocked, turn the lock on before startup, then start the saved app in Uvicorn with lifespan disabled and a bind spy. The listener reaches bind before the wrapper has an opportunity to refuse. A later HTTP 503 cannot prevent that bind."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 424,
+      "criterion": "R29",
+      "claim": "A resumed review uses its historical draft lock to decide whether to disable tracing. Resuming an unlocked draft after enabling the lock can trace the review and finalization state under the current lock.",
+      "repro": "Leave a durable review pending while unlocked using the fake model. Turn the lock on, enable LangSmith tracing and resume the review in a fresh process with a recording trace transport. The resume command takes the unlocked tracing path using the checkpoint value. The existing tracing test starts a fresh locked draft."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 426,
+      "criterion": "R29",
+      "claim": "Concurrent invocations can overwrite each other's configuration reading because readings are stored by checkpoint thread ID while tracing is selected at invocation entry.",
+      "repro": "On one compiled graph, pause an unlocked invocation after its entry check and before the load node. Turn the lock on and start another invocation with the same checkpoint thread ID, pausing it after it registers the locked reading. Continue the first invocation. Its load node consumes the second invocation's reading while its tracing context still reflects the unlocked reading."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/mcp_server.py",
+      "line": 73,
+      "criterion": "R29",
+      "claim": "The producer's statement that no ASGI app is handed out is stale. The factory returns a wrapper while unlocked, which changes the public return type.",
+      "repro": "With the lock off, call either factory and inspect the return type. Both return LockCheckedASGI. A consumer checking the prior Starlette return type observes the change, and invariants-5.log confirms tests that expect the wrapper ran."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/llm.py",
+      "line": 133,
+      "criterion": "P18",
+      "claim": "The claimed CLI exit status for hosted request failures is unproven by the cited retry tests. They exercise complete directly and assert an exception plus a request count.",
+      "repro": "Inspect the two one_attempt_per_lock cases in invariants-5.log. To prove the CLI claim, add a CliRunner case that injects a retryable provider failure, asserts one dispatch and exit 4, and run python -m pytest -v tests/test_firm.py with that case selected."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 183,
+      "criterion": "R30",
+      "claim": "The performance claim is unproven. The passed full suite has no baseline comparison, and a redraft reloads the shipped policy both when selecting feedback IDs and when rendering the rule table.",
+      "repro": "Inspect src/cma/graph.py:207 and :224 for the two loads on redraft. Compare the parent and current revisions under identical settings with python evals/run_evals.py for initial drafts and a recording model that forces redrafts for the retry path. The runner's behavioural log covers only the current revision and reports zero redrafts."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

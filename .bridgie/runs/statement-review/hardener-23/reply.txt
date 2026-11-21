@@ -1,0 +1,75 @@
+Neither of the reviewer's two major findings still reproduces at HEAD f4c9c05: the last implementer run already fixed both. I added two tests for the `cma case check` exit codes; the source code is unchanged.
+
+All configured checks pass: ruff, compileall, the full suite (396 passed), contracts (13), invariants (82), dual_run (10) and the offline evals (9/9 memos grounded).
+
+- **Integrity check unreachable in production:** `cma case check FOLDER` in `src/cma/cli.py` now loads the case log and exits 3, naming the first bad entry. The invariants tier runs it through the CLI for a changed, removed, reordered or rebuilt entry and for a torn last entry. Opening a case in the workspace and sign-off still have to call it; those belong to T13 and T27.
+- **A healthy log reported as broken during rapid appends:** `src/cma/case.py:348` now reports the log as recorded when the only failure lies past the entries the head file records. An existing test reproduces the reviewer's exact scenario and passes. I also checked that a deleted head file is still reported as broken while another writer holds the lock.
+- **New tests (contracts):** the exit codes are 0 for intact (an empty case folder creates no files), 2 for a path that is not a case folder, and 3 for an unreadable log. A torn tail reads as "another command is appending" while the lock is held, and as broken at entry 3 once it is free.
+
+I did not confirm that the rapid-append test fails without the fix. My temporary edit to `case.py` was denied, so that check is not done here.
+
+Gaps for the owner: the design's per-event log line is not written yet, there is no changelog file to add a line to, and each append rewrites every entry hash, so it gets slower as the log grows (no timing is claimed).
+
+```json
+{
+  "task": "T12",
+  "claims": [
+    {
+      "text": "P15 is reachable from production code. `cma case check FOLDER` loads cases/<id>/log.jsonl through case.for_case and verifies it against its head file. A changed, removed, reordered or rebuilt (every hash recomputed) entry exits 3 and names entry 2 without quoting entry content. A torn last entry exits 3 and names entry 3 as incomplete. These tests are marked invariants and the runner tier runs them.",
+      "proof_cmd": "python -m pytest -v -m invariants",
+      "proof_output": "test_p15_loading_a_case_detects_a_tampered_log_and_names_the_first_bad_entry[change|remove|reorder|rebuild] PASSED\ntest_p15_loading_a_case_with_a_torn_last_entry_names_it_and_says_to_confirm_dropping_it PASSED\ntest_p15_a_rebuilt_chain_that_does_not_match_the_head_file_is_detected[2..6] PASSED\n82 passed, 314 deselected"
+    },
+    {
+      "text": "Failure modes and idempotency: the expected position is the idempotency key, so a retried append gets LogConflict and writes nothing twice. A partial failure (a torn line, or a line written without its head update) blocks appends until drop_torn_entry, which records who dropped it. That repair is crash-safe on either side of the rename. A reader never reports a healthy log as broken while appends keep landing and another writer holds the lock. There are no external calls, so a timeout or retry cap with backoff does not apply beyond the bounded READ_RETRIES=5 with a 20 ms pause.",
+      "proof_cmd": "python -m pytest -q -rs",
+      "proof_output": "396 passed in 10.84s (includes test_retrying_an_append_that_already_succeeded_writes_nothing_twice, test_torn_last_entry_blocks_appends_until_dropped, test_a_crash_before_the_rename_while_dropping_leaves_the_torn_log_unchanged, test_a_crash_after_the_rename_while_dropping_leaves_a_torn_log_that_drops_again, test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing)"
+    },
+    {
+      "text": "New this round: a contracts test for the `cma case check` exit codes. A new case folder with no log exits 0 at '0 entries' and creates no files. An unreadable log exits 3 at entry 1. A path that is not a case folder exits 2. While another command holds the lock over a torn tail, the check reports the recorded log (exit 0, 'appending'). Once the lock is free, the same tail exits 3 and names entry 3 as incomplete.",
+      "proof_cmd": "python -m pytest -q -m contracts && python -m pytest -v tests/test_case_log.py -k 'exit_codes or another_writer_appends'",
+      "proof_output": "13 passed, 383 deselected\ntest_case_check_exit_codes_are_0_intact_2_not_a_case_3_broken PASSED\ntest_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break PASSED"
+    },
+    {
+      "text": "Security: the new entry point is a local CLI with the same authz as every other cma command, namely the OS user who owns the case root. The log, the lock and the head files are created 0600. Lines are decoded strictly: duplicate members, non-finite numbers, deep nesting and non-canonical bytes are named as bad entries, not raised. Messages name entries by number and never quote their content. No secrets were added and no dependencies were added, so the lockfile is unchanged.",
+      "proof_cmd": "python -m pytest -v tests/test_case_log.py -k 'private_to_their_owner or duplicate_member or non_finite or deeply_nested or holds_no_entry_content or ACME or tampered'",
+      "proof_output": "test_new_log_and_lock_files_are_private_to_their_owner PASSED; test_p15_a_duplicate_member_hiding_a_change_before_the_head_is_detected PASSED; test_a_non_finite_number_in_a_complete_entry_is_named_not_raised[*] PASSED; test_deeply_nested_data_in_a_complete_entry_is_named_not_raised PASSED; test_the_message_names_the_first_bad_entry_and_holds_no_entry_content PASSED (all within the 396-pass full suite)"
+    },
+    {
+      "text": "Mechanical tiers and the unchanged existing paths still pass: ruff, compileall, dual_run and the offline evals.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q -m dual_run && python evals/run_evals.py",
+      "proof_output": "All checks passed!\n10 passed, 386 deselected\n9/9 memos fully grounded; model = fake"
+    },
+    {
+      "text": "Data and migrations: not applicable. There is no database or schema. The case log is a new file in a new case folder, with nothing to backfill. Rollback is not running `cma case check` or reinstalling the previous wheel, because nothing else reads log.jsonl yet.",
+      "proof_cmd": "git diff --stat 576e43d..HEAD -- src",
+      "proof_output": " src/cma/case.py | 559 +++...\n src/cma/cli.py  |  22 +++\n 2 files changed, 581 insertions(+)"
+    },
+    {
+      "text": "Performance: not applicable to a hot path. verify is linear in the number of entries, and each append rewrites a head that holds every hash, which is O(n) per append. No timing is claimed because no configured tier measures it.",
+      "proof_cmd": "none (no runner tier measures timing)",
+      "proof_output": "not claimed"
+    },
+    {
+      "text": "Observability, operability and docs: `cma case check` prints the intact entry count and the head hash, or exits 3 naming the first bad entry. That non-zero exit is the local alert, as the design specifies ('no remote alerting, by design'). The README documents the command. Under 'gap' in notes: the design's structured per-event log line (event=… counts) and a changelog line.",
+      "proof_cmd": "grep -n 'case check' README.md",
+      "proof_output": "56:cma case check private/cma/cases/<id>"
+    }
+  ],
+  "files_changed": [
+    "tests/test_case_log.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major src/cma/case.py:296: the integrity check is unreachable from production case loading.",
+      "disposition": "not_reproduced",
+      "evidence": "At HEAD f4c9c05, src/cma/cli.py registers `cma case check`, which calls case.for_case(folder).verify() and exits 3 on a broken log. The invariants tier runs test_p15_loading_a_case_detects_a_tampered_log_and_names_the_first_bad_entry[change|remove|reorder|rebuild] and the torn-entry variant through the Typer app, and all of them PASS (82 passed). This round adds the exit-code contract tests. Opening a case in the workspace and sign-off remain T13 and T27, which must call require_intact."
+    },
+    {
+      "finding": "major src/cma/case.py:322: a reader can report a healthy log as corrupted during rapid appends when the lock is contended after the retries run out.",
+      "disposition": "not_reproduced",
+      "evidence": "At HEAD, case.py:348 returns check.as_recorded() when the first failure lies after every entry the head file records. test_a_reader_never_reports_a_healthy_log_broken_while_appends_keep_landing reproduces the reviewer's scenario exactly: two commits on each of READ_RETRIES attempts and the lock held at the fallback. It PASSES with ok, in_progress and a contiguous seq. I also probed for a masking regression: with the head file deleted and the lock held, a reader still reports 'head file … missing' at entry 1, because a stable non-torn failure returns before the fallback."
+    }
+  ],
+  "notes": "Gaps that need the owner: (1) The design's structured per-event log line (event=… traced=… with no names) is not emitted; it belongs with the case store and pack events (T13 and T27). (2) There is no changelog file in the repo; a release note line belongs with the case-store release. (3) The head file holding every hash makes each append O(n). This is fine at case scale, but if R52-scale logs appear, a design change (for example, chunked or Merkle heads) is needed; no timing is claimed. (4) T13 and T27 must call require_intact when they open a case and at sign-off; `cma case check` is the only production caller today. (5) Rewriting the log and the head file together is undetectable by design; the sign-off and pack pin the head. I tried to confirm the keep_landing test fails without the fix by temporarily editing case.py, but the permission layer denied the command, so case.py is unchanged and that negative check is not done here."
+}
+```

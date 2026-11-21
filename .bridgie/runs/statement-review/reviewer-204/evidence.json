@@ -1,0 +1,110 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to buckets. src/cma/metrics.py:534 assigns credits and src/cma/metrics.py:576 and :615 emit GBP values with source IDs. Cash is included in M2 and reported separately as M18. src/cma/graph.py:308 and src/cma/mcp_server.py:98 both use compute(). The runner passed the MCP contract.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "Checked exact conversion and limit handling at src/cma/metrics.py:95 and src/cma/ingest.py:533, M3 at src/cma/metrics.py:563, and penny display at src/cma/cli.py:415 and src/cma/graph.py:175. The runner passed the large-amount and balance-limit regressions separately. Combining them breaks the refusal formatter, and the Monzo walk drops time from timestamps carried in Date.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:631 checks ID multiplicity independently of the pence difference, covering two bucket errors that cancel. src/cma/cli.py:118 exits 6 before printing or exporting figures, and src/cma/mcp_server.py:98 propagates the refusal. The runner passed the CLI and MCP refusal contracts.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The frozen and maintained ruleset fallbacks at src/cma/categorise.py:1311 and :1360 return OTHER for an unmatched credit. src/cma/models.py:66 maps OTHER to unexplained, and src/cma/metrics.py:534 routes it to M25.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:534 and :631 count positive credits, enforce exactly one bucket per credit ID, and reconcile in integer pence. M18 is emitted separately at :618. The runner passed both named P1 tests, including large reported values.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the figures delivered by T04, src/cma/metrics.py:427 traces closing balances for M6, :466 allocates M9 offsets and records partial credits, :554 builds the shared M16/M26 evidence, and :576 emits signed sums and negated outflows with their input IDs. The named P2 tests passed. The runner also passed the M1–M16 previous-release evidence comparisons in tests/test_previous_release.py:115 and :138.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/metrics.py:576 and :621 emit separate evidence for M2 and M25. The runner passed the named P6 test and both unknown-payer ruleset cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 191,
+      "criterion": "R2",
+      "claim": "Formatting a balance-chain fault can raise Python's integer-to-string digit-limit error before the loader reports the offending line or the flow limit.",
+      "repro": "With Python's default 4300-digit conversion limit, load a five-column CSV whose first row is A,2026-01-01,First,1.00,1.00 and whose second row is B,2026-01-02,Second,<5000 nines followed by .00>,2.00. The amount fits the CSV field limit and converts to exact pence. src/cma/ingest.py:576 detects the chain fault and interpolates pounds_text(abs(amount)) at :579. Formatting that integer raises ValueError before the flow-limit check and StatementError. The runner's large-number test places the huge amount on the first row, where there is no previous balance to compare."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 257,
+      "criterion": "R2",
+      "claim": "The Monzo balance walk can reject a consistent export because an ISO timestamp in Date loses its time and the sort falls back to transaction ID.",
+      "repro": "Use the header Transaction ID,Date,Type,Name,Amount,Currency,Balance with no Time column. Add Z,2026-01-01T09:00:00Z,Faster payment,ACME,10.00,GBP,110.00 followed by A,2026-01-01T10:00:00Z,Faster payment,ACME,20.00,GBP,130.00. Both dates parse at :77, both times default to midnight at :257, and :291 sorts A before Z. The walk infers £110.00 as the opening balance and then refuses Z with a walked balance of £140.00. Sorting by the timestamps gives an opening balance of £100.00 and a consistent chain."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 363,
+      "criterion": "R2",
+      "claim": "The producer's above-ceiling probe does not prove that the statement import path accepts the amount. The current requirement expressly calls for refusal at that boundary.",
+      "repro": "Compare the direct pence and reporting helpers used in the test at this location with src/cma/ingest.py:524 and src/cma/importers/monzo.py:234. A statement credit of £10,000,000,000,000.01 is refused at import. The probe was not run by the runner. The import behavior is covered by python -m pytest -v tests/test_money_in.py -k 'refused_at_import or counts_an_amount_past_the_line_limit'."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 175,
+      "criterion": "R2",
+      "claim": "The cited display probe is not runner evidence for the appendix and CLI rendering claim. The cited output only shows a dictionary of formatted values.",
+      "repro": "Compare claim.json with tests/test_money_in.py:393, which calls Metric.display_exact() directly. The appendix and CLI call sites were verified by inspection. To prove the separate probe claim, run PYTHONPATH=src python scratchpad/probe.py with the producer's script present. To prove the rendering paths by test, assert the penny values in both CLI output and the generated appendix."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 368,
+      "criterion": "P1",
+      "claim": "The producer cites an unrun scratchpad probe as evidence that repeated calls return identical figures.",
+      "repro": "No runner result invokes PYTHONPATH=src python scratchpad/probe.py, and the script is absent from the review checkout. That command with the producer's script present would verify the reported probe. The P1 row relies on the named invariant results and the bucket implementation."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2360,
+      "criterion": "P2",
+      "claim": "The producer note says the committed example was left unregenerated and contains no evidence_note field. The reviewed example already contains evidence_note fields.",
+      "repro": "Run rg -n 'evidence_note|decided_at' examples/cafe_stretched.memo.evidence.json and compare the result with claim.json note 2."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

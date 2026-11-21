@@ -1,0 +1,110 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to eight buckets. src/cma/metrics.py:481–491 partitions credits and reconciles integer pence, and :555–574 returns GBP values and line IDs. The runner confirmed that MCP returns M1–M26.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:77–88 checks the exact pence on conversion, src/cma/metrics.py:512–517 handles an unrepresentable M3, and src/cma/graph.py:175 and src/cma/cli.py:415 render GBP to the penny. The runner confirmed both regressions from the previous review. Newest-first balance validation still uses two records of lookahead, and a bad byte can disappear before record validation.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578–588 checks credit ID multiplicity and the pence difference before returning figures. src/cma/cli.py:118–121 escapes line IDs and exits 6 before review or export. src/cma/mcp_server.py:92–98 propagates the refusal. The runner confirmed the CLI and MCP refusal tests.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The v1 and v2 defaults assign unmatched credits to OTHER at src/cma/categorise.py:1311 and :1360. src/cma/models.py:65 maps OTHER to unexplained, and src/cma/metrics.py:345–347 selects trading receipts separately.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:481–495 and :555–588 reconcile the eight bucket values and credit IDs, with M18 emitted separately. Both named P1 invariants passed, including the large-amount reconciliation test.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the figures delivered by T04, src/cma/metrics.py:372–388 and :523–574 pair values with sum, outflow and derived evidence. Lines :418–430 identify the credit split by the M9 cap, and :498–503 supplies the shared M16 and M26 denominator evidence. The named P2 invariants passed, and the dual run compared legacy evidence on the committed example and synthetic cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "Traced both default verdicts through src/cma/models.py:55–68 to M25 in src/cma/metrics.py:72–74 and :568–570. The runner passed the named P6 invariant and unknown-payer cases for both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 509,
+      "criterion": "R2",
+      "claim": "The newest-first balance check for a record runs only when the next record is yielded for validation. The iterator has already consumed a second later record at that point. The passing balance-lookahead test observes only the first call to follows, which can be the oldest-first calculation.",
+      "repro": "Load four descending dates with amounts of £1 and file-order balances £10, £8, £7, £6. Observe ingest.follows and _Feed.__next__. The call follows(800, 100, 1000), which detects the broken balance on CSV line 2, occurs after CSV line 4 has been read. R2 permits reading through line 3 before checking line 2."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 421,
+      "criterion": "R2",
+      "claim": "The parser can accept a record containing invalid UTF-8. DictReader collapses repeated blank headers before unreadable_cells inspects the row, so a clean cell under the last blank header overwrites a bad byte under the first.",
+      "repro": "Use header bytes `id,date,description,amount,balance,,\\n` and record bytes `A,2026-01-01,STRIPE,1.00,1.00,\\xe9,ok\\n`, with \\xe9 a literal byte. load_csv accepts A because the dict contains only the last blank-column value, `ok`. R2 requires checking the unreadable record when met and naming line 2."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 304,
+      "criterion": "R2",
+      "claim": "An oversized opening-balance option escapes as a raw integer-formatting error on Python 3.11 or later with the default decimal digit limit. The importer tries to print the entire option before it can name the disagreement on the export line.",
+      "repro": "Import a CSV with one GBP row, Amount 1.00 and Balance 1.00, passing --opening-balance followed by 5,000 digits of 9. The implied opening is 0.00. Formatting the supplied value through src/cma/metrics.py:135–138 raises ValueError instead of MonzoImportError."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 314,
+      "criterion": "R1",
+      "claim": "The claim's scratchpad proof is not_proven. The runner has no result for the probe cited for above-limit DTO input, M3, uncategorised credits, M9, M8, display and repeatability. Named runner tests independently substantiate several of those cases. The above-limit DTO case does not establish acceptance by the production loader, which must refuse it under R2.",
+      "repro": "Compare the claim's proof commands with the runner rows. No row ran `PYTHONPATH=src python scratchpad/probe.py`, and the script is absent from this worktree. A runner result for that command with the script supplied would verify the literal probe outputs."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 119,
+      "criterion": "P2",
+      "claim": "The claimed historical full-suite result at ca0092c is not_proven by this run. The current review is at 2b0667f, and the supplied full-suite and dual-run logs show 1,293 and 84 passes respectively. The current named compatibility tests did run.",
+      "repro": "Compare `git log -1 --oneline` with the claim and the summaries in specified-3.log and dual_run-7.log. A runner result from `python -m pytest -v -rs` at ca0092c would verify the historical full-suite assertion."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 4694,
+      "criterion": "P2",
+      "claim": "The producer note that the committed example lacks evidence_note and was left unregenerated is contradicted by the file. The example contains evidence_note entries and its decision timestamp changed.",
+      "repro": "Search the committed example for evidence_note and compare decided_at with the pre-change example. The current timestamp is on line 5106."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

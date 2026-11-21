@@ -1,0 +1,93 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Applied the supplied revision 23. The repository copy is revision 2 at .bridgie/specs/statement-review/requirements.md:5. Traced the maintained lists and directions at src/cma/rules/v2.yaml:63–406, longest-match and containment handling at src/cma/categorise.py:1154–1215, cue precedence and candidate recording at src/cma/categorise.py:1264–1357, and CLI selection and line evidence at src/cma/graph.py:188–223 and 250–253 and src/cma/cli.py:224–229. Checked exception and malformed-value refusal, matcher construction and the frozen digest path at src/cma/categorise.py:419–706, 803–872 and 989–1019. The runner logs confirm the table-driven provenance cases, CLI evidence, ambiguity cases and the changed-frozen-v1 contradiction regression. The runner reported 855 full-suite, 233 contract, 138 invariant and 83 dual-run passes, including both offline eval variants, checkpoint replay, rollback and the 10,000-line categoriser fixture. Read through repeat submission, concurrent output and partial failure at src/cma/cli.py:73–86, 146–158 and 224–229, signed amounts and local-date boundaries at src/cma/ingest.py:38–59 and 98–110, and path authorization, case isolation and changed consumers at src/cma/mcp_server.py:30–105 and src/cma/graph.py:188–223. The review ran no tests and made no writes.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-126/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-126/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-126/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-126/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-126/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-126/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-126/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The documented precedence says a profile name can settle an ambiguous credit. The implementation keeps the credit unexplained and adds the profile name as a candidate at src/cma/categorise.py:1344–1353.",
+      "repro": "Classify a £900 credit described as FPS CREDIT CASH DEPOSIT REF JANE DOE with Jane Doe as a profile director. The rule ID is v2:conflict:payment_rail+cash_paid_in+profile:director and the category stays other."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1387,
+      "criterion": "R4",
+      "claim": "The passing shuffle fixture does not establish the producer's broader claim that reordering rules within a stage leaves every category unchanged. Debits use first-match order at src/cma/categorise.py:1299–1301.",
+      "repro": "Classify a £100 debit described as IWOCA OWNER DRAWINGS. The shipped table gives loan_repayment. Move owner_drawings ahead of lender_repayment within the protected names stage and the same debit becomes owner_drawings."
+    },
+    {
+      "severity": "minor",
+      "file": "pyproject.toml",
+      "line": 41,
+      "criterion": "R4",
+      "claim": "The producer's claim that every module compiles is not proven for evals and tests. The runner's compile gate covered src, and the passing pytest suite covers the modules it loaded.",
+      "repro": "Compare the claimed compile scope with mechanical:2, which ran python -m compileall -q src. A passing runner result for python -m compileall -q src evals tests would prove the stated scope."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "requirements.md:249 requires detection on the next load. src/cma/case.py:238 validates sequence, hashes and links. Lines 256–280 compare each entry with the recorded head and identify the first divergence. The runner passed 77 invariants, including the rebuilt-chain assertions at tests/test_case_log.py:540 and :567. Production code has no case-load caller for verify or require_intact, so the detection is available only through the library. The contracts and full-suite logs confirm duplicate-submit refusal, thread and process contention, JSON boundaries, owner-only file creation and UTC timestamps. The change adds no currency calculation, endpoint, tenant query, migration or existing contract consumer.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-26/invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-26/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-26/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-26/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-26/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-26/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-26/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-26/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 296,
+      "criterion": "P15",
+      "claim": "The integrity check is unreachable from production case loading. The runner exercises the case-log library directly. The case store and sign-off are assigned to T13 and T27.",
+      "repro": "Search src for CaseLog, log.jsonl and require_intact. All case-log matches are in src/cma/case.py. Inspect the command registrations in src/cma/cli.py and the review path at line 45. There is no case-load command or other production caller that checks a changed log when the underwriter opens the case."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 322,
+      "criterion": "P15",
+      "claim": "A reader can report a healthy log as corrupted during rapid appends. After the retry budget is exhausted, the lock-contention branch can return a failure computed from a stale head and newer log bytes.",
+      "repro": "On each of the five read attempts, pause verify after it reads a head at position N and commit two entries before it reads the log. _check classifies the two extra entries as a non-torn failure and the changed head causes a retry. On the last attempt, keep another writer holding the lock when verify falls back to writer(). It returns the last failed check even though both committed entries match the current head. The passing delayed-writer test at tests/test_case_log.py:665 covers one pending append."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 365,
+      "criterion": "P15",
+      "claim": "A readable torn log can fail with PermissionError during verification, losing the first-bad-entry diagnostic.",
+      "repro": "Leave two committed entries and a partial third line. Remove the sibling lock file and give the reader permission to read the log and head but no permission to create files in their directory. After retrying, verify tries to create the lock file and raises PermissionError before require_intact can report entry 3."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 64,
+      "criterion": "P15",
+      "claim": "The exact scratchpad timing claim is unproven. The full-suite log confirms the sustained-pause test passed. The claimed 75× multiplier uses one 20 ms sleep as the entire retry window, which actually schedules four sleeps plus file reads.",
+      "repro": "Inspect the loop at src/cma/case.py:303 and the event-gated test at tests/test_case_log.py:665. The latter ran in specified-3.log. To prove the exact 1.5-second observation, the runner would need to capture python scratchpad/repro.py or a checked-in timed equivalent."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 477,
+      "criterion": "P15",
+      "claim": "The reported 30 ms append, 32 ms verification and fsync attribution at 2,000 entries are unproven by the runner. The implementation does walk the log and rewrite a head containing every entry hash.",
+      "repro": "The configured runner logs contain no 2,000-entry benchmark or timing breakdown. Reproducing the claim requires the actual benchmark command in a runner result, with separate measurements for append, verify and fsync."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

@@ -1,0 +1,104 @@
+```json
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps the credit categories. src/cma/metrics.py:483–490 and :523–525, :562–570 report the eight GBP buckets and M17 with their line IDs. src/cma/graph.py:277–286 parses and hashes the same bytes, and src/cma/mcp_server.py:90–96 returns the figures through compute_metrics.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:73–84, :148–182 and src/cma/importers/monzo.py:189–230 check exact pence, signed limits and flow totals. src/cma/metrics.py:512–517 supplies the reason for an unreportable M3. src/cma/graph.py:172, :250–264 and src/cma/cli.py:322–327 retain pennies in tables and evidence. src/cma/metrics.py:591–595 and src/cma/policy.py:107 keep whole-pound quotes in drafting and policy text.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578–588 checks per-credit membership and the signed pence difference before returning figures. src/cma/cli.py:107–110 exits 6 with the difference and escaped IDs. contracts-4.log records passing CLI and MCP refusals, including an uncategorised credit and a markup-like ID.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311, :1360 defaults an unmatched credit to OTHER. src/cma/models.py:66, :69 and src/cma/metrics.py:351, :483–488 route that category to unexplained money in and exclude it from M2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483–495, :562–570 and :578–588 enforce the penny identity and unique bucket membership. M18 is taken from the trading lines after reconciliation. Both named P1 tests passed, including the large-amount case.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For T04 figures, src/cma/metrics.py:419–431 and :523–574 attach evidence to sum and outflow figures, preserve the legacy derived-evidence rules, and attach the partially counted credit IDs to M9. The named P2 tests and scoped previous-release comparisons passed. src/cma/cli.py:155–178 also rejects checkpoint lines that disagree with the statement identified by the stored hash.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311, :1360 and src/cma/metrics.py:351, :483–488 place unmatched credits in M25 and leave them out of M2. The named P6 invariant and both unknown-payer ruleset cases passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 236,
+      "criterion": "R53",
+      "claim": "The additive-only migration claim overstates resume compatibility. The optional evidence field lets an old checkpoint load, but the refresh rejects an existing pending review whenever any policy input changes, even if the policy outcome would stay the same.",
+      "repro": "Pause a review in the previous release under v1 using two invoice credits from different payers, £100.01 and £99.99. The previous M15 float calculation rounds to 50.01%, while src/cma/metrics.py:450 rounds the exact midpoint to 50.00%. The packaged policy reads M15. Resume the unchanged statement and checkpoint. The refresh refuses to resume and tells the reviewer to draft again. specified-3.log:43 confirms the refusal path with a simulated legacy value change."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 450,
+      "criterion": "R10",
+      "claim": "The producer's unqualified claim that M1–M16 values are unchanged extends beyond the dual-run fixtures. Exact input sums can still produce a different rounded percentage. The scoped comparisons in dual_run-7.log passed.",
+      "repro": "Compare M15 under v1 using £100.01 and £99.99 invoice credits from different payers. The previous release at cba9dba, src/cma/metrics.py:207, rounds the binary-float percentage to 50.01. The current exact-pence ratio rounds 50.005 to 50.00. M2 is £200.00 in both releases."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 81,
+      "criterion": "R2",
+      "claim": "The producer's no-ceiling probe only addresses in-memory computation. It does not prove that the cited credit is accepted through the statement loader. The loader correctly applies the current R2 limit.",
+      "repro": "Use a CSV containing a £10,000,000,000,000.01 credit with a £10,000,000,000,000.01 balance. The loader refuses it. The passing test in specified-3.log:246 checks metrics.pence and metrics._gbp directly and never loads that CSV."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 91,
+      "criterion": "P1",
+      "claim": "The claimed historical full-suite result and scratchpad runs are unproven by this runner. The runner verified 912 tests on the reviewed tree, and its named tests cover the core invariant and contract behavior. No result row identifies the historical 878-test run or the scratchpad command.",
+      "repro": "Compare specified-3.log, contracts-4.log and invariants-5.log with the producer's proof commands. To prove the historical count, a runner would need to execute python -m pytest -q at ca0092c. To prove the scratchpad output, it would need the original script and a result row for PYTHONPATH=src python scratchpad/probe.py."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "R2",
+      "claim": "The producer note that the committed example lacks evidence_note is stale. The example also includes the new metrics.",
+      "repro": "Read the first metric in the committed example and find evidence_note set to null. Search the same file for M17 through M26."
+    }
+  ],
+  "verdict": "fail"
+}
+```

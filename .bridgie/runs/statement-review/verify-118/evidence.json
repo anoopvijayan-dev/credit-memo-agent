@@ -1,0 +1,109 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed revision 22 at requirements.md:312 against checkout 43332c6. Canonical encoding, head comparison, and first-bad-entry reporting are at src/cma/case.py:177, :285 and :1087. Holder and ordinary-reader lock checks, steady reads, and recorded-prefix reporting are at :461, :503, :701 and :364. Writer exclusion and fork refusal are at :762, nested-save refusal at :926, expected-position conflict at :995, and repair checks at :1043. Read-back and take-back are at :1244 and :1294. The runner logs confirm named passes for tampering, rebuilt chains, torn tails, duplicate submission, concurrent writers, repair failures, and the new read-back retry after an I/O error. A non-I/O interruption can still bypass the required retry after lock replacement. Traced the CLI consumer at src/cma/cli.py:321 and the sign-off guard at src/cma/case.py:736. Reviewed empty and malformed input, Unicode, UTC timestamps, per-folder isolation, and filesystem permissions. This change performs no currency arithmetic or migration.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-118/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-118/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-118/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-118/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-118/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-118/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-118/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1269,
+      "criterion": "P15",
+      "claim": "A non-I/O interruption during the holder's read-back skips the post-read lock check and the fresh read P15 requires after a lock replacement. The save can report an unconfirmed outcome even though a fresh read would find the published entry intact.",
+      "repro": "Use the fault injection in tests/test_case_log.py:3337. After publishing entry 3, replace the case lock inside the first read-back as that test does, but raise KeyboardInterrupt in place of OSError. Leave the log and head intact and start no other writer. The handler proceeds directly to take-back, which refuses on the replaced lock and raises SaveNotConfirmed. The existing test covers the OSError case, and the interruption test at tests/test_case_log.py:2777 leaves the lock in place."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer claim gives exit 0 and 'appending' for the CLI while another writer holds the case. The checked-out contract returns exit 4 and says 'being saved'.",
+      "repro": "See tests/test_case_log.py:1340, which holds the case over a torn tail and invokes the CLI. The passing contracts-4.log row proves exit 4 and the recorded-entry count, followed by exit 3 once the lock is released."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1214,
+      "criterion": "P15",
+      "claim": "The producer's disposition overstates what the rapid-append test proves. The runner passed an opportunistic writer loop. The test does not force two commits into each read attempt or require the fallback to return a contiguous recorded prefix.",
+      "repro": "Read the test's scheduling and assertions. The reader checks only that first_bad is unset, which also accepts an unchecked result. To prove the stated schedule, add a deterministic case that coordinates two commits per attempt and asserts the fallback status and sequence, then run python -m pytest -v tests/test_case_log.py -k appends_keep_landing."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 373,
+      "criterion": "P15",
+      "claim": "The producer's masking probe claims that a missing head under a held case is reported at entry 1. The current held-reader path returns an unchecked result when the recorded count is unavailable.",
+      "repro": "Create a populated case, hold its writer lock in another thread, remove the head file, and call verify from the reader thread. The missing-head result has no recorded count, so the held-reader path makes no entry claim. The runner's unreadable-head test at tests/test_case_log.py:3196 confirms the same handling for a malformed head."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 318,
+      "criterion": "P15",
+      "claim": "The producer's owner-only authorization claim depends on filesystem permissions. The CLI itself accepts any accessible directory and does not verify ownership or membership in a case root.",
+      "repro": "Give a second local user read and traversal access to a case directory and read access to its log, head, and lock files. That user can invoke cma case check on the directory and receive its entry count and head hash. Across owner-private directories, the operating system supplies the isolation."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

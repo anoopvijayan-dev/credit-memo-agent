@@ -1,0 +1,99 @@
+{
+  "task": "T03",
+  "claims": [
+    {
+      "text": "R4 (rev 4) finding 1: when a payment rail and cash paid-in wording both match, the credit is ambiguous whatever other cue matches (step 3 now runs before the cues decide). It stays OTHER with every matched rule as a candidate. A full matrix of every rail x bucketed credit cue x cash phrase holds.",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_rules_v2.py -k \"rail_with_cash or rail_plus_cash\"",
+      "proof_output": "5 passed, 267 deselected in 8.86s"
+    },
+    {
+      "text": "R4 (rev 4) finding 2: an ambiguous credit's candidates are every rule it matched in either stage, the payment rail included and written in table order. A match inside a longer listed phrase still counts only as the longer phrase. The four verify-27 cases still pass; the HMRC-with-savings case now also records payment_rail, as design Migration says.",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_rules_v2.py -k \"candidates_are_every or exactly_its_matches or verify27\"",
+      "proof_output": "11 passed, 261 deselected in 0.70s"
+    },
+    {
+      "text": "R4 (rev 4) finding 3: listed names and case-profile names match as whole words in any script. A letter, digit or combining mark of any alphabet next to a name blocks the match, so CAFÉSTRIPE, a decomposed CAFE+U+0301STRIPE, and Greek, Cyrillic or Arabic-Indic neighbours do not match. Non-letter neighbours still separate words (a space, guillemets, an en dash). v1 matching is unchanged.",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_rules_v2.py -k \"any_script or unicode\"",
+      "proof_output": "10 passed, 262 deselected in 0.18s"
+    },
+    {
+      "text": "D61: v2.yaml declares category_order (cash_deposit, revenue_transfer, revenue_card_settlement, returned_dd, refund_in). The validator refuses a non-frozen table that leaves any bucket with two credit categories unordered. Inside the decided bucket the category follows that order, never rule order. The fifth review's two-line round-trip statement keeps the same categories and figures with invoice_transfer moved before payment_gateways. Shuffling rules within each stage over whole statements (sample credits with round trips, plus 6 committed corpus statements) changes no line's category or reversal link and no figure.",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_rules_v2.py -k \"declared_order or category_order or round_trip_statement or shuffling\"",
+      "proof_output": "11 passed, 261 deselected in 2.38s"
+    },
+    {
+      "text": "End to end through cma run under CMA_RULESET=v2, the evidence lines record each verify-32 repro with R4's outcome. BACS CREDIT HMRC CASH PAID IN records v2:conflict:hmrc_repayment+payment_rail+cash_paid_in, FPS CREDIT HMRC TO SAVINGS STRIPE records v2:conflict:own_pots_savings+hmrc_repayment+payment_rail+payment_gateways, and FPS CREDIT CAFÉSTRIPE LTD records v2:default. All three are in M16's evidence and not in M2's; only the genuine gateway payout is in M2. The verify-27 end-to-end test also passes.",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_rules_v2.py -k \"verify32 or verify27_repros_as_unexplained\"",
+      "proof_output": "2 passed, 270 deselected in 0.56s"
+    },
+    {
+      "text": "The table-driven cases for each list still record each line's rule id. They now include the new returned_payment cue and a Unicode whole-word case.",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_rules_v2.py -k \"each_list_categorises\"",
+      "proof_output": "142 passed, 130 deselected in 0.29s"
+    },
+    {
+      "text": "Lint passes on src, tests and evals.",
+      "proof_cmd": "ruff check src tests evals",
+      "proof_output": "All checks passed!"
+    },
+    {
+      "text": "src compiles.",
+      "proof_cmd": "python -m compileall -q src && echo compile-ok",
+      "proof_output": "compile-ok"
+    },
+    {
+      "text": "The full test suite passes with no skips reported.",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider -rs",
+      "proof_output": "685 passed in 45.57s"
+    },
+    {
+      "text": "The marker tiers pass: contracts, invariants and dual_run (the dual_run tier includes P7 and the v1 rollback).",
+      "proof_cmd": "for m in contracts invariants dual_run; do python -m pytest -q -p no:cacheprovider -m $m | tail -1; done",
+      "proof_output": "73 passed, 612 deselected in 19.26s\n130 passed, 555 deselected in 19.28s\n83 passed, 602 deselected in 14.64s"
+    },
+    {
+      "text": "The offline evals pass.",
+      "proof_cmd": "python evals/run_evals.py",
+      "proof_output": "9/9 memos fully grounded; model = fake; ruleset = v1"
+    }
+  ],
+  "files_changed": [
+    "src/cma/categorise.py",
+    "src/cma/rules/v2.yaml",
+    "tests/test_rules_v2.py",
+    "README.md"
+  ],
+  "dispositions": [
+    {
+      "finding": "major src/cma/categorise.py:398 — A bucketed cue bypasses the explicit payment-rail-plus-cash ambiguity condition (BACS CREDIT HMRC CASH PAID IN became HMRC_REPAYMENT).",
+      "disposition": "reproduced",
+      "evidence": "credit_verdict now checks rail + cash paid-in (design C1 step 3) after the bank-code check and before any bucketed cue decides, and returns every matched rule as a candidate. Result: OTHER, v2:conflict:hmrc_repayment+payment_rail+cash_paid_in. Tests: test_p_r4_a_rail_with_cash_wording_is_ambiguous_whatever_cue_matches (HMRC, refund, savings move and returned-payment cues), test_p_r4_rail_plus_cash_beats_every_bucketed_cue_in_a_full_matrix (over 1000 combinations), and test_cma_run_under_v2_records_the_verify32_repros_with_every_candidate (evidence line, M16 and not M2). Each of these fails on the previous commit ecec4ca."
+    },
+    {
+      "finding": "major src/cma/categorise.py:399 — Conflict provenance omits rules outside the deciding stage (FPS CREDIT HMRC TO SAVINGS STRIPE recorded only own_pots_savings+hmrc_repayment).",
+      "disposition": "reproduced",
+      "evidence": "An ambiguous verdict now records every rule in credit_matches (both stages, the rail included, after the longer-phrase filter) in table order. The credit now records v2:conflict:own_pots_savings+hmrc_repayment+payment_rail+payment_gateways. Tests: test_p_r4_candidates_are_every_rule_matched_in_either_stage (5 cases, one showing STRIPE CAPITAL still counts only as the lender), test_p_r4_every_ambiguous_credit_records_exactly_its_matches_in_table_order (property over all sample credits), the end-to-end cma run test, and the updated pairwise matrix oracle. The verify-27 HMRC-with-savings expectation gains payment_rail, as design rev 4 Migration states."
+    },
+    {
+      "finding": "major src/cma/graph.py:298 — The production review flow never lists ambiguous credits in a judgement queue.",
+      "disposition": "not_reproduced",
+      "evidence": "The observation is accurate: cma run has no judgement queue. It is not an R4 defect under requirements revision 4 (D58, D60). R4 now requires only that an ambiguous credit is marked, placed in unexplained money in and given its candidates. Listing it in the judgement queue is R15's, owned by T21, and design rev 4 Out of scope excludes a queue in cma run's terminal review. Owner guidance for this attempt: 'do not build the queue'. What R4 asks of cma run is proven by test_cma_run_under_v2_records_the_verify32_repros_with_every_candidate and test_cma_run_under_v2_lists_the_verify27_repros_as_unexplained_with_their_candidates: each ambiguous credit's evidence line carries the conflict form with every candidate, and the credit is in M16 and not M2. No change to graph.py."
+    },
+    {
+      "finding": "major src/cma/categorise.py:126 — ASCII-only boundaries let an acquirer or gateway name embedded in a Unicode merchant name count as trading receipts (FPS CREDIT CAFÉSTRIPE LTD became REVENUE_CARD).",
+      "disposition": "reproduced",
+      "evidence": "names_pattern now uses WORD_START and WORD_END. These refuse a letter or digit of any script ([^\\W_] on Unicode str patterns) or a combining mark on either side. v2 descriptions and listed names are compared in NFC upper case. The profile names (_names_in) share the same definition, and the cash_paid_in cheque exclusion uses the same edges. The frozen v1 table still matches description.upper() exactly. Tests: test_p_r4_a_listed_name_inside_a_longer_word_in_any_script_is_not_that_name (8 cases, decomposed accent included), test_p_r4_unicode_neighbours_that_are_not_letters_still_separate_words, test_p_r4_profile_names_share_the_unicode_whole_word_rule, a new card_acquirers list case, and the end-to-end cma run test."
+    },
+    {
+      "finding": "minor tests/test_rules_v2.py:1045 — The shuffle test misses an order-dependent trading result after round-trip processing (FPS DEBIT STRIPE / FPS CREDIT STRIPE INV 17).",
+      "disposition": "reproduced",
+      "evidence": "Fixed in the categoriser by D61. v2.yaml declares category_order, and the verdict picks the category inside the decided bucket from that order. FPS CREDIT STRIPE INV 17 is now revenue_transfer whatever the rule order, so the round-trip check undoes it in every order. Tests: test_p_r4_round_trip_statement_keeps_its_category_and_m2_when_rules_are_reordered (the exact two-line repro, with invoice_transfer moved first; categories and all figures equal). test_p_r4_shuffling_rules_within_a_stage_changes_no_category_or_figure_on_whole_statements runs 6 seeds over whole statements through categorise() and compares every category, reversal link and figure. The existing per-credit shuffle test now also compares the category, not only the bucket."
+    },
+    {
+      "finding": "minor tests/test_rules_v2.py:1 — The standalone compile claim for tests and evals is not proven by the runner.",
+      "disposition": "reproduced",
+      "evidence": "This claim.json claims compile for src only, which matches the runner's mechanical tier (python -m compileall -q src). Ruff is claimed for src, tests and evals, which its tier does cover. No code change."
+    }
+  ],
+  "notes": "Design C1 rev 4 required one addition the earlier table lacked. Its failure-mode row 'RETURNED DD REFUND with no bank code at the start -> a returned payment' needs a returned-payment cue that is not the bank's anchored code. I added the line_type, protected rule returned_payment (RETURNED DD, RETURNED DIRECT DEBIT, DD RETURNED, DIRECT DEBIT RETURNED, UNPAID DIRECT DEBIT; credits; category returned_dd). Bare UNPAID DD later in the line is deliberately not on it, so 'REFUND REF UNPAID DD' stays a refund. No committed fixture holds this wording (rg finds none), so P7 and the golden baseline are unchanged. v2.yaml's hash changes because of category_order, the new cue and the Unicode cheque exclusion; no signed pack exists under v2. The queue (R15) is not built, per owner guidance. Commit acd3abb on bridgie-task/statement-review/T03."
+}

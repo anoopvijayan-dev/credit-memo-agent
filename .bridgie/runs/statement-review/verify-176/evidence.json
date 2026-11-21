@@ -1,0 +1,143 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to buckets. src/cma/metrics.py:482 assigns credits and reconciles the partition, and lines 563–575 emit the GBP figures with evidence IDs. The CLI graph and MCP both call compute at src/cma/graph.py:308 and src/cma/mcp_server.py:98.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:83 checks the float boundary against the parsed pence. src/cma/metrics.py:512 computes M3 in integer pence and handles an unrepresentable result. src/cma/graph.py:175 and src/cma/cli.py:415 table GBP to the penny. The runner confirmed that Monzo skips a foreign row with an oversized field under LF, CR and CRLF. Combining that recovery with invalid UTF-8 still lets an unreadable amount be interpreted as money at src/cma/importers/monzo.py:230–232.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks both the signed pence difference and credit ID multiplicity before returning figures. src/cma/cli.py:118 reports the difference and line IDs and exits 6. The runner log confirms the CLI refusal and MCP refusal contracts passed.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/models.py:55 maps OTHER to unexplained and src/cma/metrics.py:482 assigns it there, outside M2. The runner confirmed P6 under both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:482–493 and :578–588 check the integer-pence partition and each credit ID's multiplicity. M18 is emitted separately at line 566. The runner confirmed the partition and large-amount invariants.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the T04 figures, src/cma/metrics.py:523–575 emits signed-sum and negated-outflow evidence, retains M5 and M6 closing-line selection at lines 373–378, and uses denominator lines for M26. Lines 419–429 identify partially counted M9 credits and line 545 records them. The runner confirmed the sum, outflow and M9 invariants and the dual run confirmed the sampled legacy evidence comparisons.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 send unmatched credits to OTHER. src/cma/metrics.py:350 and :482–489 route their IDs to M25 and exclude them from M2. The runner log shows the named P6 tests passed for v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-176/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-176/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-176/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-176/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-176/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-176/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-176/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 254,
+      "criterion": "R2",
+      "claim": "A skipped foreign row with invalid UTF-8 bypasses the readability check for a subsequent oversized record. Monzo then parses a GBP amount containing an invalid byte and reports its quoted text instead of identifying the unreadable record. The standalone foreign-row regressions do not cover this combination.",
+      "repro": "Use the standard Monzo header from tests/test_money_in.py:1328. Supply a valid GBP first row, a second row with currency EUR and a raw 0xE9 byte in Name, then a third row with currency GBP, 200,000 ASCII characters in Name and raw bytes 31 E9 in Amount. Run cma import monzo. The EUR row is skipped, but read_data returns before removing the invalid Amount from the following recovery record's readable set. Monzo reports that Amount is not a plain amount instead of naming the unreadable record on line 4."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 505,
+      "criterion": "R2",
+      "claim": "The scratchpad probe claims are not proven by a runner result. The repository and named tests independently support several of the underlying behaviors. The claim about counting a credit above the import ceiling applies to an in-memory figure helper, while src/cma/ingest.py:82 refuses that amount at the statement boundary.",
+      "repro": "Compare the configured runner commands with PYTHONPATH=src python scratchpad/probe.py. No runner row invokes it and the script is absent from the checkout. Supplying the script and running that exact command under the runner would prove the quoted probe output."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 119,
+      "criterion": "P2",
+      "claim": "The runner proves the current suite and dual-run results, with 981 and 84 passes respectively. It does not prove the producer's historical totals of 878 and 83 at ca0092c. The current dual run supports compatibility on its exercised cases.",
+      "repro": "Compare specified-3.log and dual_run-7.log with the claim. To prove the historical totals, run python -m pytest -q and python -m pytest -q -m dual_run at ca0092c under the runner."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The claim packet's note that the committed example was not regenerated and lacks evidence_note is stale.",
+      "repro": "Read the first metric in examples/cafe_stretched.memo.evidence.json. Its evidence_note field is present with a null value."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

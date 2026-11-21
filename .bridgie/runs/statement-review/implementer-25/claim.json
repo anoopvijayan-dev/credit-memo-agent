@@ -1,0 +1,83 @@
+{
+  "task": "T03",
+  "claims": [
+    {
+      "text": "The four verify-27 repros take the amended R4 outcome under v2: HMRC credit with TO SAVINGS -> unexplained, conflict own_pots_savings+hmrc_repayment; COUNTER DEPOSIT at GRANT ST branch -> unexplained, conflict cash_paid_in+explained_non_trading; bare TAX POT in an external payment -> v2:default (not own-account); card refund from SAVINGS AND LOANS LTD -> unexplained, conflict own_pots_savings+refunds. End to end through cma run, each is in M16's evidence and none in M2's.",
+      "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k \"verify27\"",
+      "proof_output": "5 passed, 225 deselected in 0.52s"
+    },
+    {
+      "text": "Design C1 verdict: longer phrase subsumes (STRIPE CAPITAL, HMRC REFUND, DIRECTOR LOAN); agreeing cues outrank names (PAYPAL REFUND); UNPAID DD settles alone; a rail has no bucket (FPS CREDIT STRIPE is trading) but with cash wording is ambiguous; names in two buckets are ambiguous; a firm rule never settles an ambiguous credit, an override or a profile name does; a profile director outranks cash wording.",
+      "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k \"design_c1 or settles or director_outranks\"",
+      "proof_output": "18 passed, 212 deselected in 0.18s"
+    },
+    {
+      "text": "Shuffling the rules within each stage (8 seeds) gives the same verdict (bucket, and candidate set when ambiguous) on every credit case, every listed name alone and every listed name crossed with 14 samples; a pairwise matrix crosses every credit list's names (HMRC and returned DD included) with one name from every other credit list, checks the pair matches exactly the union of what each part matches alone (no exception hides another list) and that the verdict is R4's policy on that union.",
+      "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k \"shuffling or pairwise\"",
+      "proof_output": "2 passed, 228 deselected in 0.98s"
+    },
+    {
+      "text": "Table changes per design Migration: HMRC 'unless move wording' and refunds 'unless HMRC' exceptions removed (the only remaining unless is cash_paid_in's cheque exclusion, asserted by test), HMRC REFUND phrases on the HMRC list, DIRECTOR LOAN phrases on the director list, bare pot_names rule removed, cash paid in unprotected, payment_rail added as a protected line-type cue with no category (validated: only a v2 line_type rule may omit category).",
+      "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k \"packaged_with_an_id or only_a_line_type\"",
+      "proof_output": "2 passed, 228 deselected in 0.18s"
+    },
+    {
+      "text": "Full suite passes, including the per-list tables with each line's rule id, P7 (committed corpus: M1-M16 unchanged, NEWLY_RECOGNISED unchanged), CLI provenance and v1 rollback.",
+      "proof_cmd": "python -m pytest -q",
+      "proof_output": "643 passed in 34.57s"
+    },
+    {
+      "text": "Marker tiers pass.",
+      "proof_cmd": "python -m pytest -q -m contracts; python -m pytest -q -m invariants; python -m pytest -q -m dual_run",
+      "proof_output": "64 passed, 579 deselected; 101 passed, 542 deselected; 83 passed, 560 deselected"
+    },
+    {
+      "text": "Lint, compile and offline evals pass under both rulesets.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python evals/run_evals.py && CMA_RULESET=v2 python evals/run_evals.py",
+      "proof_output": "All checks passed!; 9/9 memos fully grounded; model = fake; ruleset = v1; 9/9 memos fully grounded; model = fake; ruleset = v2"
+    }
+  ],
+  "files_changed": [
+    "src/cma/categorise.py",
+    "src/cma/rules/v2.yaml",
+    "tests/test_rules_v2.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major src/cma/rules/v2.yaml:105 \u2014 HMRC credit with savings wording classified own-account (BACS CREDIT HMRC VAT REPAYMENT REF TO SAVINGS)",
+      "disposition": "reproduced",
+      "evidence": "Removed the hmrc_repayment 'unless move wording' exception; credits now get the C1 verdict, where HMRC and own-pot cues in two buckets are ambiguous: (other, v2:conflict:own_pots_savings+hmrc_repayment). Test test_p_verify27_repros_take_the_r4_outcome and the cma run test test_cma_run_under_v2_lists_the_verify27_repros_as_unexplained_with_their_candidates."
+    },
+    {
+      "finding": "major src/cma/categorise.py:366 \u2014 COUNTER DEPOSIT GRANT ST BRANCH falls out of trading receipts",
+      "disposition": "reproduced",
+      "evidence": "Per amended R4 (D52) the outcome is ambiguous, not cash: names in two buckets -> (other, v2:conflict:cash_paid_in+explained_non_trading), not trading and not explained, listed via unexplained money in. The name-stage check now covers any two buckets, not only a trading first match. Same two tests."
+    },
+    {
+      "finding": "major src/cma/rules/v2.yaml:242 \u2014 bare pot label in an external payment classified own-account (FPS CREDIT ACME LTD REF TAX POT)",
+      "disposition": "reproduced",
+      "evidence": "Removed the pot_names rule (D48); the line is now (other, v2:default). TAX POT / VAT POT alone moved to the payment_rail table cases as default. Same two tests."
+    },
+    {
+      "finding": "major src/cma/categorise.py:356 \u2014 CARD REFUND FROM SAVINGS AND LOANS LTD becomes unexplained",
+      "disposition": "reproduced",
+      "evidence": "Per amended R4 and the owner's guidance the intended outcome is ambiguous (refund and own-account move cues disagree): (other, v2:conflict:own_pots_savings+refunds), both candidates recorded. Same two tests."
+    },
+    {
+      "finding": "minor tests/test_rules_v2.py:364 \u2014 matrix claim exceeds the tests (no HMRC cue; returned-DD test only YAML names)",
+      "disposition": "reproduced",
+      "evidence": "Added test_p_pairwise_matrix_every_two_credit_lists_combine_by_the_policy_alone, which crosses every credit list including hmrc_repayment, refunds, own_pots_savings, payment_rail and returned_dd (and the pattern-only card_settlement, invoice_transfer, loan_drawdown rules as samples) with every other credit list. No broader claim is made beyond what it checks."
+    },
+    {
+      "finding": "minor tests/test_rules_v2.py:802 \u2014 10,000-line benchmark does not prove the R52 recompute target",
+      "disposition": "reproduced",
+      "evidence": "Agreed: the test bounds the categoriser only (its docstring says so). This claim.json makes no R52 claim."
+    },
+    {
+      "finding": "minor src/cma/metrics.py:190 \u2014 note that changing a drawdown to a refund leaves M9/M16 unchanged is incorrect",
+      "disposition": "reproduced",
+      "evidence": "Agreed the earlier note was wrong (refund_in is in NON_TRADING_IN, a drawdown is not). The note is withdrawn; nothing here claims it. P7 still shows no committed M1-M16 value moves under v2."
+    }
+  ],
+  "notes": "Within one money-in bucket design C1 says the first matching rule in table order is recorded, so the category inside the trading bucket (cash_deposit vs revenue_card_settlement vs revenue_transfer, e.g. 'COUNTER DEPOSIT SUMUP') follows table order; bucket and ambiguity do not, and the shuffle test compares those (the verdict as the design defines it). This affects M18 and M15 on such mixed lines; an owner question if they want it ambiguous instead. When a bucketed cue matches (e.g. HMRC), it decides even if a rail and cash wording are also present; the rail+cash ambiguity applies when names decide. Credits with a pot move and HMRC wording (e.g. 'TFR FROM POT HMRC RESERVE') are now ambiguous; debits keep first-match (own-account). Newly ambiguous v2 single-line cases with no committed-corpus impact: CLEARPAY FINANCE LTD, COUNCIL GRANT INV 12, J SMITH SHAREHOLDER INV 1234, cash wording with a rail. The R15 judgement-queue listing and R16 drill-down of candidates belong to the workspace (C5), not this task; here ambiguous credits are in unexplained money in (M16 evidence) with every candidate in the rule id. Commit ee7499d."
+}

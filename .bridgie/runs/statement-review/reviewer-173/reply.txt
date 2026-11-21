@@ -1,0 +1,96 @@
+```json
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to eight buckets. src/cma/metrics.py:483 and src/cma/metrics.py:562 compute and emit the GBP totals with line IDs. The runner confirmed the bucket and cash-subset contract and the MCP consumer at src/cma/mcp_server.py:98.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:83 checks money at the float boundary, src/cma/metrics.py:512 derives M3 in pence, and src/cma/graph.py:175 and src/cma/cli.py:415 table GBP to the penny. The runner confirmed the first-data-record UTF-8 fix with LF, CR and CRLF. The recovery branch at src/cma/ingest.py:221 still masks an oversized header field when a later byte in that header is invalid UTF-8.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks integer-pence differences and counts of credit IDs, including a membership error with zero difference. src/cma/cli.py:118 exits 6 before display or export. The runner confirmed CLI and MCP refusals and literal printing of a markup-like line ID.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "Unmatched credits default to OTHER under v1 at src/cma/categorise.py:1311 and under v2 at src/cma/categorise.py:1360 after firm-rule lookup. src/cma/models.py:66 maps OTHER to unexplained and src/cma/models.py:69 excludes it from trading categories.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:481 and src/cma/metrics.py:578 enforce the credit partition and pence equality. src/cma/metrics.py:565 emits M18 separately. The runner passed the partition invariant and the large-amount display reconciliation invariant.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:374 preserves M5 and M6 evidence rules, src/cma/metrics.py:420 records partially counted M9 lines, and src/cma/metrics.py:535 emits the outflow figures with the signed evidence negated. M16 and M26 share the cited denominator at src/cma/metrics.py:499. The runner passed the figure-kind invariants and the previous-release evidence comparisons for T04's figures.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:66 and src/cma/metrics.py:483 route unmatched credits to M25 and exclude them from M2. The runner passed the named P6 invariants under v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 221,
+      "criterion": "R2",
+      "claim": "An invalid UTF-8 byte in a header masks an earlier field that already exceeds the CSV reader's limit. The decode recovery raises before the CSV reader can report the oversized field on line 1.",
+      "repro": "Use a Monzo export whose first line starts with `Transaction ID,Date,Type,Name,Amount,`, followed by 200,000 ASCII `X` bytes, a comma, byte 0xFF and a newline. Run `cma import monzo` on it. The refusal says line 1 is not UTF-8. The preceding header field already exceeded the 131,072-character CSV reader limit and should be reported as too long to read."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 77,
+      "criterion": "R2",
+      "claim": "The producer's no-ceiling claim only exercises the figures layer directly. The production loader correctly enforces the import ceiling that the current requirement calls for.",
+      "repro": "Compare the direct helper test at tests/test_money_in.py:263 with a five-column statement whose first amount is `10000000000000.01`. `cma run` refuses that statement at import. The probe output does not establish that this amount is accepted through the CLI or MCP."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 312,
+      "criterion": null,
+      "claim": "The historical 878-test result at ca0092c and the scratchpad repeat-compute probe are not proven by the runner. The supplied full-suite result establishes 976 passing tests on the reviewed snapshot.",
+      "repro": "Compare `git log -1 --oneline` with the claimed ca0092c revision and inspect specified-3.log and the runner command list. To prove the historical count, the runner would need to execute `python -m pytest -v -rs` at ca0092c. To prove the exact probe claim, it would need the supplied script and a result row for `PYTHONPATH=src python scratchpad/probe.py`."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": null,
+      "claim": "The producer notes describe the committed example as unregenerated and missing evidence_note. The checked-in example already includes that field and the new metrics.",
+      "repro": "Search the committed example for `evidence_note` and `\"id\": \"M17\"`. Both are present."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "openai",
+    "model": "GPT-6"
+  }
+}
+```

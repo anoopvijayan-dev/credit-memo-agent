@@ -1,0 +1,101 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "The maintained lists and category order are shipped in src/cma/rules/v2.yaml:54. The categoriser applies the returned-payment exception, rail-plus-cash check and stage precedence at src/cma/categorise.py:462, then records ambiguity and candidates at src/cma/categorise.py:534. The production graph invokes categorisation at src/cma/graph.py:250 and exports per-line provenance at src/cma/graph.py:221. The runner logged 688 passing tests, including the per-list cases and both CLI regression groups. Source review found that overlapping phrases can leave a spurious candidate and change the credit's bucket, and that a combining mark outside the listed ranges can let an embedded gateway name count as trading receipts. Reviewed duplicate submission, concurrent updates, sign and text boundaries, currency and timezone, partial failure, authorization, case isolation, and CLI, MCP and checkpoint consumers. The reproductions below are from source inspection. Review performed without tests or writes.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-35/specified-3.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-35/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-35/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-35/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-35/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-35/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-35/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-35/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 410,
+      "criterion": "R4",
+      "claim": "Non-overlapping regex iteration misses a longer listed phrase that starts inside another match of the same rule. A rail word inside that missed phrase can survive filtering and incorrectly send a credit to unexplained money in.",
+      "repro": "Classify a positive v2 line `FROM POT TRANSFER CASH DEPOSIT`. The own-pot rule lists both `FROM POT` and `POT TRANSFER`, but finditer consumes `FROM POT` first and misses `POT TRANSFER`. The remaining `TRANSFER` becomes a rail and triggers `v2:conflict:own_pots_savings+payment_rail+cash_paid_in`. R4 requires the longer `POT TRANSFER` phrase to absorb the rail word, leaving the own-account cue to decide."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 137,
+      "criterion": "R4",
+      "claim": "The Unicode word boundary treats combining marks outside five hard-coded ranges as separators. An embedded gateway name can therefore inflate trading receipts without an override.",
+      "repro": "Classify a positive v2 line `FPS CREDIT किSTRIPE LTD`. The character immediately before `STRIPE` is U+093F DEVANAGARI VOWEL SIGN I. NFC leaves it in place, and both boundary checks allow it. The line receives `v2:payment_gateways` and enters trading receipts even though `STRIPE` is attached to the preceding word."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 496,
+      "criterion": "R4",
+      "claim": "The producer's whole-statement shuffle claim exceeds its proof. Debit categories still depend on rule order within a stage.",
+      "repro": "Classify a v2 debit `FROM POT HMRC VAT`, then swap the protected `own_pots_savings` and `hmrc_vat` rules within the line-type stage. The debit changes from `own_account_transfer` to `hmrc_vat`. The whole-statement shuffle fixture at tests/test_rules_v2.py:1377 omits a debit matching both rules."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "Compilation of evals and tests is not proven by the runner's static gate. The passing compileall row covers src only.",
+      "repro": "Compare the producer's compile claim with mechanical:2, which ran `python -m compileall -q src`. A runner result for `python -m compileall -q src evals tests` would prove the wider claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

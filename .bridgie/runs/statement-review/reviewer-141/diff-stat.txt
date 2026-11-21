@@ -1,0 +1,15 @@
+ README.md                                  |    2 +-
+ examples/cafe_stretched.memo.evidence.json | 4239 +++++++++++++++++++++++-----
+ examples/cafe_stretched.memo.md            |   30 +-
+ src/cma/categorise.py                      |   15 +-
+ src/cma/cli.py                             |   16 +-
+ src/cma/graph.py                           |    4 +-
+ src/cma/importers/monzo.py                 |   79 +-
+ src/cma/ingest.py                          |   71 +-
+ src/cma/mcp_server.py                      |   24 +-
+ src/cma/metrics.py                         |  401 ++-
+ src/cma/models.py                          |   17 +
+ tests/test_mcp_paths.py                    |   29 +
+ tests/test_money_in.py                     |  726 +++++
+ tests/test_previous_release.py             |   13 +-
+ 14 files changed, 4914 insertions(+), 752 deletions(-)

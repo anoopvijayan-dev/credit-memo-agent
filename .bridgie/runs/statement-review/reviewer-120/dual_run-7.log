@@ -1,0 +1,21 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.18, pytest-9.2.0, pluggy-1.7.0 -- /usr/local/bin/python
+cachedir: .pytest_cache
+rootdir: /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T12
+configfile: pyproject.toml
+testpaths: tests
+plugins: langsmith-0.14.17, anyio-4.15.1
+collecting ... collected 517 items / 507 deselected / 10 selected
+
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[cafe-good] PASSED [ 10%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[cafe-stretched] PASSED [ 20%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[cafe-poor] PASSED [ 30%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[trades-good] PASSED [ 40%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[trades-stretched] PASSED [ 50%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[trades-poor] PASSED [ 60%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[ecommerce-good] PASSED [ 70%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[ecommerce-stretched] PASSED [ 80%]
+tests/test_previous_release.py::test_m1_to_m16_are_unchanged_from_the_previous_release[ecommerce-poor] PASSED [ 90%]
+tests/test_previous_release.py::test_the_committed_example_is_unchanged_from_the_previous_release PASSED [100%]
+
+====================== 10 passed, 507 deselected in 2.63s ======================

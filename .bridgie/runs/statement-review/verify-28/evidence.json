@@ -1,0 +1,93 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "requirements.md:249 requires detection on the next load. The production CLI calls verify at src/cma/cli.py:319 and exits 3 on failure at line 323. src/cma/case.py:258 checks the entry sequence, digests and links, and lines 279–284 compare the intact prefix against the recorded hashes. The runner passed the CLI cases for changed, removed, reordered and rebuilt entries at tests/test_case_log.py:846, and the rebuilt-chain cases at line 540. The full-suite and contracts logs also confirm stale resubmit refusal, thread and process contention, strict JSON boundaries, UTC stamps, owner-only file creation, and recovery from interrupted writes. The diff adds no currency arithmetic, tenant query, migration or changes to existing CLI contracts.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-28/invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-28/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-28/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-28/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-28/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-28/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-28/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-28/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 394,
+      "criterion": "P15",
+      "claim": "A lock subsystem error is treated as evidence of a live writer. On a torn log, verification can therefore return the recorded prefix as intact and the CLI can exit 0 even though no writer holds the lock. The passing contention test covers a held lock only.",
+      "repro": "Create two committed entries and leave a partial third line with the head still at entry 2. With no writer active, fault-inject OSError(errno.ENOLCK) from _lock and invoke cma case check on the folder. The lock error is converted to CaseLocked, and verify returns an intact two-entry result with in_progress set. The CLI exits 0 instead of naming incomplete entry 3."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 285,
+      "criterion": "P15",
+      "claim": "The checker can name a later malformed entry as the first bad entry when earlier complete entries already exceed the recorded head.",
+      "repro": "Create four valid entries, replace the head with its saved version from after entry 2, then append a newline-terminated malformed fifth line. Run cma case check. It names entry 5, although entry 3 is the first divergence from the recorded head and the checker already rejects the two extra entries when the malformed line is absent."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 316,
+      "criterion": "P15",
+      "claim": "The claimed exit code of 2 for a path that is not a case folder only applies to missing paths and paths that are not directories. An unrelated directory is reported as an intact case with zero entries. The contracts test at tests/test_case_log.py:884 checks a regular file and an empty case directory.",
+      "repro": "Run cma case check on an existing unrelated directory that contains neither log.jsonl nor log.jsonl.head. The command exits 0 and prints 'case log intact: 0 entries'."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

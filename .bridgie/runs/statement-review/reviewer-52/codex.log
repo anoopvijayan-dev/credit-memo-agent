@@ -1,0 +1,62 @@
+```json
+{
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:156–322 checks canonical bytes, chain links, the recorded head and the first bad entry. Lines 413–456 handle holder aliases, free reads and writer handoff. Lines 494–519 retry when the head changes or the lock cannot be tested. Lines 529–541 provide the integrity gate intended for sign-off, whose production caller is scoped to T27. Lines 565–640 enforce normal writer exclusion and reject inherited handles. Lines 691–808 cover stale double submits, torn writes, recovery and persistence order. Entry timestamps are UTC at line 174 and the log performs no currency arithmetic. src/cma/cli.py:318–338 is the production check path and uses OS path permissions. The runner logs confirm the named Linux tamper, rebuilt-chain, CLI, writer and recovery tests. A writer paused before acquiring the case lock can still hide a torn entry, and replacing the lock file after validation can let two appends write the same sequence.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 474,
+      "criterion": "P15",
+      "claim": "An occupied gate is treated as proof of a case writer even when the case lock is free. The reader exhausts its retries without checking the log and suppresses the incomplete entry number.",
+      "repro": "Leave two recorded entries and a torn entry 3. Pause a second process after it acquires the exclusive gate at line 614 and before it calls _take_case_lock at line 618. Keep it paused through all five reader attempts. The case lock is free throughout, but cma case check exits 4 and says another command is saving. P15 requires the free-case reader to report entry 3 as incomplete."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 792,
+      "criterion": "P15",
+      "claim": "The lock identity check leaves a race between validation and the append. Replacing the lock file during that interval lets a second writer commit at the same expected position.",
+      "repro": "Start with one recorded entry. Pause writer A immediately after its _require_lock_in_place call returns, unlink log.jsonl.lock as in tests/test_case_log.py:1801, and let writer B append with expected=1. Resume A. It appends another entry numbered 2 and replaces the head using its stale prefix. Both appends return successfully. The next verification reports a broken log at entry 2."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer claims exit 0 with 'appending' for a held torn tail. The implemented and runner-confirmed contract is exit 4 with 'being saved'.",
+      "repro": "Read test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break in contracts-4.log and inspect its assertions at tests/test_case_log.py:1348–1353. A caller written to the producer's claimed exit code will treat a save in progress as a command failure."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1202,
+      "criterion": "P15",
+      "claim": "The runner confirms the stress test passed, but the test does not prove the producer's claimed schedule of two commits during every retry with the writer still holding the lock at fallback.",
+      "repro": "Inspect lines 1208–1222. The test starts an unsynchronized append loop and checks that none of 40 reads names a bad entry. It records neither commits per retry nor the lock state at fallback. A deterministic test that synchronizes both commits with each retry and asserts contention at the final probe would establish that schedule."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 318,
+      "criterion": "P15",
+      "claim": "The producer's owner-only authorization claim exceeds what the command enforces. The private-file test verifies modes on newly created files, while the command accepts any readable directory and never checks its owner.",
+      "repro": "Supply an accessible directory owned by a different OS user containing a readable valid log and head. The command reaches verify and reports the log intact. The file mode checks in test_new_log_and_lock_files_are_private_to_their_owner do not exercise this path."
+    }
+  ],
+  "verdict": "fail"
+}
+```

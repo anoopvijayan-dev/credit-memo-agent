@@ -1,0 +1,4 @@
+# The packaged rule tables are pinned by the SHA-256 of their bytes (FROZEN_SHA256 in
+# src/cma/categorise.py). Keep them LF on every checkout, including Windows with
+# core.autocrlf=true, or the pin refuses an unmodified table.
+src/cma/rules/*.yaml text eol=lf

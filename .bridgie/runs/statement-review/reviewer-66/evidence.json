@@ -1,0 +1,52 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Judged against the supplied revision 13. src/cma/case.py:191–324 checks canonical entry bytes, chain order, and recorded hashes and names the first damaged or incomplete entry. Lines 429–570 cover holder, free-case, steady and untestable-lock reads. Lines 581–593 provide the integrity guard for sign-off, whose production integration is assigned to T27. Lines 606–760 cover writer ownership, inherited handles and reentrant saves. Lines 782–886 cover expected position, repair and lock rechecks. src/cma/cli.py:321–338 exposes verification. The runner logs show the named tamper, rebuild, torn-entry, repeat-submit, lock replacement and reentrancy tests passed. Reviewed empty, malformed and Unicode inputs, UTC timestamps, the absence of currency arithmetic, partial failures, filesystem permissions, case-folder isolation, CLI consumers and migration scope. The repair path can overwrite a save whose writer was told it was recorded and can publish after the log grew since its check.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 822,
+      "criterion": "P15",
+      "claim": "Lock replacement can let an append and a repair both report success at the same position and leave an intact log that has lost the acknowledged append.",
+      "repro": "Start with one recorded entry. Pause writer A's append at the head-file os.replace call after its final lock check and before the rename. Replace the case lock file. Start B's confirmed repair at expected=1. B sees A's line as incomplete under the old head. Pause B before its repaired-log rename. Resume A and let it publish its head and return success for entry 2. Resume B. Its replacement lock still matches, so it publishes the repair and its head and also returns success for entry 2. A fresh reader verifies an intact two-entry log containing B's repair in place of A's acknowledged append."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 822,
+      "criterion": "P15",
+      "claim": "Repair publishes from a stale check when the log grows. The size check at line 874 applies only to append.",
+      "repro": "Create one recorded entry and a partial second line. Start drop_torn_entry(expected=1, by='Reviewer'). After the repair has checked the log and staged its replacement, append bytes to the live log before the repair rename. The repair replaces the now-longer log and returns success instead of refusing the save."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 723,
+      "criterion": "P15",
+      "claim": "A refusal during head publication says that nothing was written even though the entry line remains on disk.",
+      "repro": "Use the scenario in tests/test_case_log.py where the lock is removed immediately after the entry line is written. Inspect the CaseLocked message and the log bytes. The message says 'nothing was written' and the new line is present past the unchanged head."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's claimed CLI contract of exit 0 and 'appending' for a held log with a torn tail contradicts the implementation and its passing contract test.",
+      "repro": "Read the runner's contracts:4 result for test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break and its assertions at tests/test_case_log.py:1349. The command reports 'being saved' with exit 4 while the writer holds the case."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

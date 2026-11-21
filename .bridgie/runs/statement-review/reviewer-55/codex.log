@@ -1,0 +1,70 @@
+```json
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:195–322 validates canonical bytes, chain links and the recorded head, naming the first discrepant or incomplete entry. Lines 413–456 handle same-thread aliases, free readers and writer handoff. Lines 569–695 enforce writer exclusion, reject inherited write handles and check lock identity. Lines 735–835 handle stale submissions and interrupted writes. src/cma/cli.py:318–338 exposes verification, and src/cma/case.py:554–566 provides the integrity gate for sign-off integration in T27. The runner logs confirm the named tamper, rebuilt-chain, stale submission, concurrency and recovery tests passed. The lane review covered empty and malformed entries, UTC timestamps, local filesystem permissions and case-folder isolation, and CLI exit-code consumers. The log performs no currency arithmetic and introduces no data migration. Dual contention still discards a stable recorded prefix, and several persistent writes can proceed after a lock replacement.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 488,
+      "criterion": "P15",
+      "claim": "When both locks are contended, verify discards a successful stable read and eventually reports that nothing could be checked. P15 requires the reader to report the recorded entries it verified and the unchecked tail as being saved.",
+      "repro": "Start with two recorded entries and pause writer A after it writes entry 3 but before it updates the head. Pause writer B after it acquires the gate but before it attempts the case lock. Keep both paused through a third thread's verification. Every head comparison succeeds with the same two recorded entries, but verify returns checked=False with an empty prefix. The CLI exits 4 and says nothing could be checked."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 826,
+      "criterion": "P15",
+      "claim": "The first append writes its log entry after initializing the empty head without rechecking the case lock between those two writes.",
+      "repro": "On a new case, pause the first append immediately after _write_head([]) returns. Remove or replace log.jsonl.lock and resume. The stale writer creates log.jsonl and writes entry 1. The later lock check raises CaseLocked after the write has already happened."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 808,
+      "criterion": "P15",
+      "claim": "The head replacement can publish an entry after the writer loses its case lock. The recovery path has the same gap when it replaces the log at line 777.",
+      "repro": "Append to a nonempty case and pause after the temporary head is fsynced, before _replace publishes it. Remove or replace log.jsonl.lock, then resume. The rename succeeds and append returns the entry. For recovery, make the same lock change after the repaired log is staged and before line 777. Recovery replaces the log before the check at line 782 raises."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer claim describes a held torn tail as exit 0 with an 'appending' message. The implemented and runner-verified contract is exit 4 with a 'being saved' message.",
+      "repro": "Compare the claim with tests/test_case_log.py:1349 and the passing test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break in contracts-4.log."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1202,
+      "criterion": "P15",
+      "claim": "The cited stress test passed, but the producer's claim that it reproduces two commits in every retry and a held lock at fallback is unproven.",
+      "repro": "The test starts a background append loop and checks the returned results without synchronizing commits to the reader's attempts or forcing fallback. To prove the claimed schedule, add synchronization and assertions for those events, then run python -m pytest -v tests/test_case_log.py -k reader_never_reports_a_healthy_log_broken_while_appends_keep_landing."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 935,
+      "criterion": "P15",
+      "claim": "The producer's diff-stat proof and changed-file list describe a different revision of the change.",
+      "repro": "Run git diff --stat 576e43d..HEAD -- src to see 935 added lines in case.py and 35 in cli.py. Git diff --name-only for the same range also lists README.md and tests/test_case_log.py."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "gpt-6"
+  }
+}
+```

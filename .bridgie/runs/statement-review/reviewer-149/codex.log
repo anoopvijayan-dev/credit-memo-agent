@@ -1,0 +1,112 @@
+```json
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to buckets. src/cma/metrics.py:481 partitions credits and :564 publishes total money in, cash within trading receipts and the remaining buckets with their line IDs. src/cma/mcp_server.py:97 returns the figures through MCP.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:81 checks penny round-trips, :256 checks statement flow limits, and src/cma/metrics.py:512 handles an unrepresentable M3. src/cma/cli.py:326 and src/cma/graph.py:172 show pennies, while src/cma/metrics.py:594 keeps whole pounds in the drafting prompt. The Monzo importer can discard a known over-limit flow diagnostic at src/cma/importers/monzo.py:198.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks the integer-pence difference and line membership independently, including zero-difference membership errors. src/cma/cli.py:107 exits 6 with the difference and line IDs before figures are shown or exported. The runner also confirmed MCP refusal.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/models.py:66 maps OTHER to unexplained and :69 excludes it from trading receipts.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:481 builds the credit partition, :578 checks both totals and membership, and :567 reports cash as a subset. The runner executed the partition and large-amount invariants.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For T04's figures, src/cma/metrics.py:374 retains overdrawn close evidence, :417 identifies partially counted M9 credits, :537 ties outflows to their signed evidence, :547 omits M10 evidence when debt service is zero, and :564 ties the new sum figures to their lines. The sum, outflow and M9 invariants ran, and dual-run-7.log confirms the legacy fixture comparisons.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:66 and src/cma/metrics.py:347, :481 route default credits to M25 and exclude them from M2. The runner executed both v1 and v2 unknown-payer tests.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 198,
+      "criterion": "R2",
+      "claim": "A later unreadable field suppresses the flow-limit diagnostic for GBP records the Monzo importer already parsed.",
+      "repro": "Import a Monzo export with two GBP credits of 6000000000000.00, dated on successive days, with balances of 0.00 and 6000000000000.00. Add a third row with a 200,000-character Name. The first two rows establish money in of £12 trillion and each line is within the per-line limit. The importer reports only the unreadable third row because it raises before the aggregate check at line 218."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 347,
+      "criterion": "R53",
+      "claim": "The additive migration claim misses a race in the new policy fallback. Resume can show a review using the matching policy file and then raise an uncaught StaleReviewError when it reads that file again after the reviewer answers.",
+      "repro": "Resume a legacy pending review with a changed policy figure and stored rule metadata insufficient to settle it. Leave the original matching policy file available until the approval prompt appears, then move it and submit a decision. CLI preflight at src/cma/cli.py:144 succeeds, but replay through src/cma/cli.py:289 refreshes again outside the named-refusal handler at line 148."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 146,
+      "criterion": "R53",
+      "claim": "The compatibility claim misses a change to existing --opening-balance input syntax.",
+      "repro": "Import a valid Monzo CSV without a Balance column using --opening-balance 1e2. The previous float option accepted this exact £100 value. The current text parser rejects exponent notation."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 81,
+      "criterion": "R2",
+      "claim": "The no-fixed-ceiling probe supports the direct figures helper only. The claim's description of an above-limit credit as valid at ingress is stale under current R2.",
+      "repro": "Compare the direct helper assertion in tests/test_money_in.py with the same £10,000,000,000,000.01 supplied as the amount in a five-column CSV. The helper counts it and the loader correctly refuses the statement. The cited scratchpad probe is absent from the worktree and has no runner result."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 92,
+      "criterion": "P1",
+      "claim": "The runner confirms the current named tests passed, but does not establish the producer's historical suite totals or its scratchpad-only idempotency claim.",
+      "repro": "Compare the claim for ca0092c with git log and reviewer-149/specified-3.log. The runner checked 76f230c and recorded 933 passes, with 84 in dual_run. Reproducing the exact historical count requires python -m pytest -q at ca0092c. The idempotency claim would require the cited PYTHONPATH=src python scratchpad/probe.py or a runner-executed equivalent."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer's note that the committed evidence example lacks evidence_note and was left unregenerated is stale.",
+      "repro": "Inspect the committed M1 record at line 2363. It already contains evidence_note with a null value."
+    }
+  ],
+  "verdict": "fail"
+}
+```

@@ -1,0 +1,43 @@
+I went through every checklist line for T03. Each one is done with proof, not applicable with a reason, or a gap listed in `notes`. Everything passes with all extras installed: ruff on src, tests and evals, compileall, the full suite (558 tests), the three marker tiers, and the offline evals under both v1 and `CMA_RULESET=v2`.
+
+**What I added:**
+- **Four tests** in `tests/test_rules_v2.py`:
+  - Re-categorising a statement gives the same result on every line.
+  - Rolling back from v2 to v1 gives exactly what a fresh v1 run gives, with no repair.
+  - The per-line entries in the evidence file never contain transaction descriptions.
+  - 10,000 lines categorise in about 0.16 s, well inside the 2-second target.
+- **README:** now describes the v2 lists, that cash paid in counts as trading receipts, the precedence order, the rule id recorded for each line, and `CMA_RULESET=v1` as the rollback.
+- **`src/cma/graph.py`:** a one-space formatting fix.
+
+**Gaps for the owner (in `notes`):**
+- There is no CHANGELOG file, so no release-note line was written.
+- No runbook entry, because by design the tool has no alerting.
+- Making v2 the default needs the owner's decision.
+- Overrides, profile names and firm rules are built into the categoriser, but nothing in production passes them in yet; only `cma run` uses it. The case store will need to call them before R5, R6, R17 and R21 count as done.
+- `ruff format` would reformat two files. Formatting isn't one of the checks the runner uses, so I left it.
+- My changes are not committed; I left them in the worktree for the orchestrator.
+
+```json
+{
+  "task": "T03",
+  "claims": [
+    {"text": "Lint: ruff passes on src, tests and evals (the only ruff errors in the worktree are in old .bridgie/runs helper scripts, outside the package).", "proof_cmd": "ruff check src tests evals", "proof_output": "All checks passed!"},
+    {"text": "compileall passes on src and tests.", "proof_cmd": "python -m compileall -q src tests && echo compile-ok", "proof_output": "compile-ok"},
+    {"text": "Full suite passes with all extras installed (pip install -e \".[dev,mcp,durable,llm]\"), including the 4 hardening tests added here.", "proof_cmd": "python -m pytest -q", "proof_output": "558 passed in 28.06s"},
+    {"text": "Marker tiers pass.", "proof_cmd": "python -m pytest -q -m contracts; python -m pytest -q -m invariants; python -m pytest -q -m dual_run", "proof_output": "46 passed, 512 deselected; 66 passed, 492 deselected; 81 passed, 477 deselected"},
+    {"text": "Offline evals pass under the default ruleset (v1) and under CMA_RULESET=v2.", "proof_cmd": "python evals/run_evals.py --out <scratch>/ev1; CMA_RULESET=v2 python evals/run_evals.py --out <scratch>/ev2", "proof_output": "9/9 memos fully grounded; model = fake (rc=0) under both"},
+    {"text": "R4 table-driven cases, one table per list, each asserting category and the recorded rule_id; every v2 rule is exercised.", "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k each_list", "proof_output": "108 passed, 40 deselected"},
+    {"text": "Precedence (override > protected > profile > firm > table > default) tested with each line's rule id.", "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k precedence", "proof_output": "15 passed, 133 deselected"},
+    {"text": "Failure modes / idempotency: re-categorising a statement under v2 with overrides, profile and firm rules gives identical category, rule_id and reversal on every line (test_categorise_is_idempotent_under_v2_with_every_source, contracts). External calls: not applicable, the categoriser makes none. Retries/dead letter: not applicable, no queue.", "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k idempotent", "proof_output": "passed (inside 148 passed for tests/test_rules_v2.py)"},
+    {"text": "Data/migration: additive (new v2.yaml, optional Transaction.rule_id, new evidence key 'lines'); old evidence keys kept (test_cma_run_under_v1_records_v1_rule_ids_and_keeps_old_evidence_keys). Reversible: switching a v2-categorised statement back to v1 equals a fresh v1 run, no repair (test_rollback_to_v1_after_v2_restores_v1_categories_and_rule_ids, dual_run). Backfill: not applicable, no stored data. P7: M1-M16 unchanged on the whole committed corpus under v2 and only the listed lines change category.", "proof_cmd": "python -m pytest -q -m dual_run", "proof_output": "81 passed, 477 deselected"},
+    {"text": "PII: the evidence 'lines' entries carry exactly id, category, rule_id and reverses, never descriptions (test_evidence_lines_carry_ids_only_never_descriptions, contracts).", "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k descriptions", "proof_output": "passed"},
+    {"text": "Security: no new entry point (CMA_RULESET already exists; an unknown id is refused with exit 2, tests/test_cli.py). Input validation at the boundary: malformed v2 rules (names, unless, protected, ordering) refused naming the problem. No secrets; no new dependency (yaml, re, pydantic already used).", "proof_cmd": "python -m pytest -q tests/test_cli.py; python -m pytest -q tests/test_rules_v2.py -k malformed", "proof_output": "19 passed; malformed cases pass inside tests/test_rules_v2.py 148 passed"},
+    {"text": "Performance: categorising 10,000 lines under v2 with a profile is under the 2 s recompute target (measured about 0.16 s; test bound 2 s). No queries or list endpoints: not applicable.", "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k 10000", "proof_output": "passed"},
+    {"text": "Observability: the evidence file proves the behaviour ran, recording ruleset id and hash and each line's rule id (test_cma_run_under_v2_categorises_with_v2_and_records_each_lines_rule). Alerts/dashboards: not applicable by design (local tool, no remote alerting); the failure that matters, a bad table, is a refusal at load.", "proof_cmd": "python -m pytest -q tests/test_rules_v2.py -k cma_run_under", "proof_output": "2 passed"},
+    {"text": "Operability: behind CMA_RULESET (default v1); rollback is CMA_RULESET=v1, exercised by the dual_run rollback test. No config or secrets changes for deploy.", "proof_cmd": "python -m pytest -q -m dual_run", "proof_output": "81 passed, 477 deselected"},
+    {"text": "Docs: README updated for v2 (lists, cash counted as trading, per-line rule ids in evidence, v1 rollback) and the categoriser row now states the precedence. Design decision is already in design.md (rule tables as data sub-decision).", "proof_cmd": "git diff --stat README.md", "proof_output": "README.md | 12 ++++++++----"}
+  ],
+  "files_changed": ["README.md", "src/cma/graph.py", "tests/test_rules_v2.py"],
+  "notes": "Gaps for the owner: (1) No CHANGELOG file exists in the repo, so no release-note line was written; the README is the only user-facing doc updated. (2) Runbook entry: not applicable, as there is no alert (design: no remote alerting). (3) v2 is not the default yet; design step 2 makes it default once evals and P7 pass, which needs an owner decision. (4) The case-store callers (overrides, profile, firm rules) of classify() don't exist yet (T03 wires cma run only); LineOverride, ProfileNames and firm_rules have no production caller until the case store lands, so R5, R6, R17 and R21 are not done by this task. (5) ruff format would reformat categorise.py and graph.py; format is not a configured tier, so I left it. graph.py got only a one-space fix. (6) My changes are left uncommitted in the worktree for the orchestrator."
+}
+```

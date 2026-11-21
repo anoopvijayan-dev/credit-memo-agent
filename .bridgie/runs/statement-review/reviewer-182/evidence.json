@@ -1,0 +1,118 @@
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to buckets. src/cma/metrics.py:483 assigns the credits, and src/cma/metrics.py:562 returns GBP totals and line IDs. src/cma/graph.py:308 and src/cma/mcp_server.py:97 expose the figures through the CLI and MCP.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:83 checks the exact pence round trip, src/cma/metrics.py:512 computes M3 from integer pence and checks reporting precision, and src/cma/graph.py:175 and src/cma/cli.py:415 show GBP to the penny. Monzo still parses and buffers the export body before checking its first data row at src/cma/importers/monzo.py:169 and :211, and defers a per-row description refusal to :330.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks bucket membership and the signed pence difference before returning figures. src/cma/cli.py:118 exits 6 with the difference and escaped line IDs. The runner passed the named CLI and MCP refusal contracts.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The frozen and maintained rule fallbacks at src/cma/categorise.py:1311 and :1360 classify unmatched credits as OTHER. src/cma/models.py:66 maps OTHER to unexplained and :69 excludes it from trading receipts.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:565 makes M18 a subset of M2, and :581 reconciles the eight buckets without adding M18. The runner exercised bucket totals, exact credit ID membership and large values in the named P1 tests.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the T04 figures, src/cma/metrics.py:384 and :535 carry signed net outflow evidence, :374 selects the overdrawn closes, :425 identifies partially counted M9 credits, and :499 supplies M26's denominator evidence. The runner passed the named P2 sum, outflow and M9 tests and the previous-release comparisons.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483 and :568 put unmatched credit IDs in M25, while src/cma/models.py:69 keeps them out of M2. The runner passed the named P6 tests for both v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 169,
+      "criterion": "R2",
+      "claim": "Monzo consumes the CSV body before validating its first data row. The new parser removes the repeated suffix rebuild, but it still processes and retains rows after the first problem, so suffix size can delay or prevent the required refusal.",
+      "repro": "Use a valid Monzo header and a GBP row on line 2 with Amount set to bad. Append any number of records with oversized Name fields. The call at line 169 parses and retains those later records via src/cma/ingest.py:348 before the loop at line 211 can reject line 2. The passing test at tests/test_money_in.py:1434 counts parser reads when the importer legitimately needs to skip every foreign row. It does not test stopping at the first bad GBP row."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 330,
+      "criterion": "R2",
+      "claim": "An early row whose generated description cannot be written as a readable statement is checked only after all later rows are validated. A later invalid ID can hide that earlier row problem and make the refusal report flows that would not have been reached.",
+      "repro": "Use the normal Monzo header with Balance. Give line 2 a valid GBP Faster payment of 9999999999999.99, a matching balance, and a Name of exactly 131072 ASCII letters. Its generated description exceeds the reader limit when the FPS CREDIT prefix is added. Give line 3 a GBP amount of 0.01 and an empty Transaction ID. The importer reports the empty ID and money in at the limit. Importing line 2 alone reports its oversized generated description."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 263,
+      "criterion": "R2",
+      "claim": "The producer's no-ceiling probe does not establish import behavior. The test constructs a transaction directly, while the CSV and Monzo entry points enforce the limit required by revision 29. The scratchpad command itself is not proven by a runner row.",
+      "repro": "Compare the direct pence assertions at line 263 with the guards at src/cma/ingest.py:81 and src/cma/importers/monzo.py:239. A CSV amount of 10000000000000.01 is refused at import. The literal scratchpad claim would require a runner result for PYTHONPATH=src python scratchpad/probe.py, including its output."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 393,
+      "criterion": "R2",
+      "claim": "The cited display proof checks formatted Metric values. It does not demonstrate the appendix and CLI rendering with the three 60p credits.",
+      "repro": "Read the assertions at line 393. They call display_exact directly. A runner-owned CLI contract using three 60p credits and asserting the values in both interactive output and the exported appendix would prove the end-to-end claim."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 115,
+      "criterion": "P2",
+      "claim": "The dual-run tier proves compatibility for its cases. The producer's unconditional claim that M1–M16 values and evidence are unchanged exceeds that proof and omits the exact-pence exception in the current requirement.",
+      "repro": "Compare the fixture-based assertions at line 115 with src/cma/metrics.py:386 and :437. On a statement where fully returned loan repayments leave a prior float residue that rounded to 1p of debt service, exact pence makes M8 zero and M10 n/a with no evidence."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 318,
+      "criterion": null,
+      "claim": "The full-suite claim for ca0092c and its stated 878 passes is not proven by the supplied runner result. The reviewed checkout is 9448a8b and its verbose full suite reports 987 passes. The named invariant, contract and dual-run tests did run on this checkout.",
+      "repro": "Compare git log -1 with the claim and the summary in specified-3.log. To prove the historical count, the runner would need python -m pytest -q in a checkout pinned to ca0092c."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": null,
+      "claim": "The producer's note says the committed example was left unregenerated and has no evidence_note field. The reviewed example already contains that field.",
+      "repro": "Read the M1 entry at line 2363 and compare it with the producer note."
+    }
+  ],
+  "verdict": "fail"
+}

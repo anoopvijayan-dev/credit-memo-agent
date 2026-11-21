@@ -1,0 +1,76 @@
+{
+  "task": "T03",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Applied the supplied revision 22 because .bridgie/specs/statement-review/requirements.md:5 is revision 2. Mapped the shipped lists and directions at src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest alternatives and surviving occurrences at src/cma/categorise.py:1063–1170, bank-code priority and credit ambiguity at :1214–1231, and override, profile, firm-rule and candidate handling at :1234–1311. The unexplained bucket mapping is at src/cma/models.py:65. The CLI uses the chosen table and exports per-line provenance through src/cma/graph.py:188–223,250–253 and src/cma/cli.py:227–229. Checked digest gating, changed-v1 refusal, malformed fields, repeated lists and matcher builds at src/cma/categorise.py:406–673,940–971. The runner logged 842 suite, 220 contract, 138 invariant and 83 dual-run passes, including the three latest repeat regressions, named list and CLI provenance tests, checkpoint replay, the timing sample and both offline evals. Source inspection found additional repeated-field combinations that suppress real faults or introduce false ones. Reviewed double submit and concurrent output at src/cma/cli.py:146–159,219–229, boundary amounts, GBP and calendar dates at src/cma/ingest.py:42–59, partial-load failure at src/cma/categorise.py:940–971, ruleset and MCP path scope at src/cma/categorise.py:940–944 and src/cma/mcp_server.py:37–47, case-local inputs at src/cma/categorise.py:1392–1406, and evidence and MCP consumers at src/cma/graph.py:188–223 and src/cma/mcp_server.py:90–105. No tests, builds or writes were performed during review.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 511,
+      "criterion": "R4",
+      "claim": "Bank-code shape validation skips invalid combinations when multiple shape fields are repeated. It accepts any valid combination for the flag check, while the per-field variants cannot pair two invalid alternatives.",
+      "repro": "In the shipped returned_dd rule, repeat pattern with values '^UNPAID DD\\b' and 'UNPAID DD', and repeat category with values returned_dd and refund_in. Also repeat bank_code with true and false. In the bank_code:true variant, the valid pattern and category make the shape check succeed. In the pattern and category variants, the flag remains a placeholder. The refusal omits the invalid bank_code:true shape even though the ordinary single-key table with pattern 'UNPAID DD', category refund_in and bank_code:true reports it. Reverse the values within each key and the omission persists."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 551,
+      "criterion": "R4",
+      "claim": "The required bank-code flag check treats a repeated flag placeholder as a missing true flag even when every supplied flag value is true.",
+      "repro": "Keep the shipped returned_dd rule intact except for duplicating its pattern with the same '^UNPAID DD\\b' text and its bank_code with true twice. The pattern variant reads the unresolved flag placeholder and reports 'must carry bank_code: true'. Either supplied pattern combined with either supplied flag passes that check in a single-key table."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 480,
+      "criterion": "R4",
+      "claim": "An unresolved repeated stage produces a false missing-category fault on a category-free payment cue.",
+      "repro": "Duplicate 'stage: line_type' on the shipped cheque rule and leave category absent. The original variant treats the stage placeholder as something other than line_type and reports 'missing category'. Each of the two supplied stage values independently permits the shipped cue to omit category."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The documented ambiguity precedence disagrees with the implementation. A matching profile name adds a candidate and does not settle the credit.",
+      "repro": "Classify a positive 'FPS CREDIT CASH DEPOSIT REF JANE DOE' under v2 with Jane Doe named as a director. The result remains other with 'v2:conflict:payment_rail+cash_paid_in+profile:director' under src/cma/categorise.py:1289–1299, while the README says the profile can settle it. The same README row omits own-account pairing as a resolution and cheque wording as a payment-method cue."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1387,
+      "criterion": "R4",
+      "claim": "The producer's unqualified claim that within-stage rule shuffles preserve every category overstates the passing corpus test. Debits use first-match precedence.",
+      "repro": "Classify a debit described as 'IWOCA DIVIDEND', then move owner_drawings ahead of lender_repayment within the protected names stage. Both match. The debit changes from loan_repayment to owner_drawings through src/cma/categorise.py:1249–1252. The logged shuffle test uses a finite corpus that does not include this debit."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 850,
+      "criterion": "R4",
+      "claim": "The runner proves a categoriser-only time bound on one 10,000-line sample. The two-second end-to-end recompute budget and the producer's reported 0.69-second timing remain unproven.",
+      "repro": "Read the timing assertion and specified-3.log. The test times only categorise.categorise and the log records a pass without a measured duration. The sample can be verified with 'python -m pytest -v tests/test_rules_v2.py -k 10000_lines'. Proving the full budget requires a timed override recompute that includes figures, indicators and the policy check."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 27,
+      "criterion": "R4",
+      "claim": "The standalone compile gate for every module is unproven outside src.",
+      "repro": "Runner mechanical:2 executed 'python -m compileall -q src'. A passing runner result for 'python -m compileall -q src evals tests' would cover the claimed compilation scope. The runner's Ruff gate already covers all three directories."
+    }
+  ],
+  "verdict": "fail"
+}

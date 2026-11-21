@@ -1,0 +1,62 @@
+```json
+{
+  "task": "T03",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Reviewed the maintained lists in src/cma/rules/v2.yaml:74,117,137,146,155,163,211,254,277,299,304,339,356,373,394. The loader rejects exceptions at src/cma/categorise.py:445,453,461. Longest-match selection is at :783, bank-code and cue precedence at :887, and override, profile and firm-rule precedence at :917 and :963. CLI selection and line provenance reach evidence through src/cma/graph.py:251 and :221 and src/cma/cli.py:229. Runner logs confirm per-list and CLI tests, direct cash and payment-method containment tests, the single-occurrence three-phrase case, idempotency, checkpoint replay, rollback and both offline evals. Reviewed repeat submissions, concurrent and case-local classification, amount and Unicode boundaries, currency and date inputs, partial output, authority to settle ambiguity and evidence consumers. R4 fails because containment can use a discarded occurrence of a rule when a separate occurrence keeps that rule eligible.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 820,
+      "criterion": "R4",
+      "claim": "Containment tracks surviving rules rather than surviving matches. A discarded gateway occurrence can still suppress a payment-method cue when another occurrence of the same gateway rule survives elsewhere on the line. The resulting cash deposit enters trading receipts.",
+      "repro": "Add `FPS CASH DEPOSIT STRIPE` to `cash_paid_in.names` and `FPS CASH DEPOSIT` to `payment_gateways.names`, keeping the existing `STRIPE` entry. Classify a £200 credit described as `FPS CASH DEPOSIT STRIPE | STRIPE`. The trailing STRIPE keeps the gateway rule alive, so its discarded `FPS CASH DEPOSIT` span suppresses FPS. The classifier returns `cash_deposit` with `v2:cash_paid_in`. R4 requires `other` with the rail, cash rule and surviving gateway rule as candidates."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The documented precedence tells underwriters that naming the payer in the profile can clear an ambiguous credit. The implementation retains the conflict and adds the profile match as a candidate.",
+      "repro": "Compare the README with the runner-confirmed `test_p_a_director_named_in_a_payment_reference_does_not_settle_an_ambiguous_credit` at tests/test_rules_v2.py:1572. Naming Jane Doe as a director leaves `FPS CREDIT CASH DEPOSIT REF JANE DOE` unexplained and appends `profile:director` to its candidates."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 923,
+      "criterion": "R4",
+      "claim": "The producer's whole-statement rule-order claim exceeds its proof. Debit classification takes the first matching protected rule. The shuffle test's debit sample lacks a collision between a lender rule and owner drawings.",
+      "repro": "Classify a £100 debit described as `IWOCA DIVIDEND` under v2. It is debt service. Move `owner_drawings` immediately before `lender_repayment`, within the protected names stage. The same debit becomes owner drawings. The runner passed the sampled shuffle test at tests/test_rules_v2.py:1385."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 441,
+      "criterion": "R4",
+      "claim": "The claim that malformed types are diagnosed at load is false for an unhashable rule ID. The reserved-ID check raises TypeError before the validator can report its collected diagnostics.",
+      "repro": "Change the v2 cash rule ID to the YAML list `[cash_paid_in]` and load the table. Membership in `RESERVED_RULE_IDS` raises `TypeError: unhashable type: 'list'` instead of the expected RulesetError."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 850,
+      "criterion": "R4",
+      "claim": "The runner proves the categoriser-only timing claim on its fixture. The producer's separate compile claim covering tests and evals is not_proven because the configured compile gate covered only src.",
+      "repro": "Compare mechanical:2 (`python -m compileall -q src`) with the claimed `python -m compileall -q src evals tests`. A passing runner row for the latter command would prove the wider compile claim."
+    }
+  ],
+  "verdict": "fail"
+}
+```

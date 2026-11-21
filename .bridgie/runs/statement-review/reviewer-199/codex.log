@@ -1,0 +1,106 @@
+```json
+{
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to the eight buckets. src/cma/metrics.py:505 assigns credits and :585 emits M17, M18 and M19–M26 with evidence. src/cma/graph.py:271 and src/cma/mcp_server.py:98 serialize the figures. The contract log confirms the MCP result includes M1–M26.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:83 checks the statement amount and balance round trip, :397 reports a bad byte in an oversized field's record, and :574 checks flow totals. src/cma/metrics.py:533 computes M3 in integer pence and handles an unrepresentable result. src/cma/graph.py:175 and src/cma/cli.py:415 show money to the penny. GBP policy comparison still accepts a fractional-penny operand, and YAML loading can erase a fractional-penny limit before validation.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:602 checks credit membership and the integer-pence difference, including membership errors with zero net difference. src/cma/cli.py:118 exits 6 and prints the escaped diagnostic before figures are shown or files exported. src/cma/mcp_server.py:98 propagates the refusal before returning a list. Both refusal contracts ran and passed.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The unmatched-credit fallback is Category.OTHER at src/cma/categorise.py:1360. src/cma/models.py:55 maps it to unexplained money in and excludes it from the revenue categories used at src/cma/metrics.py:375.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:505 and :602 check the partition and signed penny totals before returning figures. M18 is drawn from trading receipts at :518 and is absent from the reconciliation inputs. The runner passed both the named partition invariant and the large-pence reporting invariant.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For T04's figures, src/cma/metrics.py:408 and :542 emit signed sum and negated outflow values with their source ids. Lines 397–402 preserve the M5/M6 evidence rules, :443–452 identify the partially counted M9 credit, and :523–527 and :581–598 give both shares their denominator evidence. The invariant log confirms the sum, outflow and M9 tests ran. The dual-run log confirms the M1–M16 comparisons on the committed synthetic cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1360, src/cma/models.py:55 and src/cma/metrics.py:505 route unmatched positive lines into M25. The runner passed the general default-credit property and the explicit unknown-payer case under both v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 153,
+      "criterion": "R2",
+      "claim": "GBP policy comparison falls back to fractional Decimal pence. The runner-passed contract explicitly expects the fallback, which conflicts with the integer-pence requirement and is reachable when replaying an old stored money figure.",
+      "repro": "The existing test in tests/test_policy.py calls compare(0.1 + 0.2, '>', 0.3, 'GBP') and expects true. To exercise replay, pass policy.reevaluate a stored M2 value of 0.30000000000000004, a fresh M2 value of 0.30 and a stored M2 rule comparing > 0.30. The old-value check in policy._from_stored reaches the Decimal fallback."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/policy.py",
+      "line": 38,
+      "criterion": "R2",
+      "claim": "The policy loader can erase a fractional penny before whole-pence validation. The numeric validation at src/cma/policy.py:83 sees the rounded float rather than the authored limit, so equality at the displayed threshold can incorrectly pass.",
+      "repro": "Supply a custom YAML policy with an M2 rule using op '>=' and threshold 1000.00000000000001. Run it on a statement totaling exactly £1,000.00 in trading receipts. YAML converts the limit to 1000.0, validation accepts it and the rule passes. The authored limit is above the figure and contains fractional pence. The same parsing path handles referral limits."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 263,
+      "criterion": "R2",
+      "claim": "The producer's no-ceiling probe establishes behavior for a constructed Transaction, while the statement import contract requires refusal at £10 trillion. The scratchpad command also has no runner result.",
+      "repro": "Compare the direct helper test at this line with the CSV import test for 10000000000000.00 and src/cma/ingest.py:83. A CSV containing £10,000,000,000,000.01 is refused at import. The cited probe is not proven without the runner executing PYTHONPATH=src python scratchpad/probe.py."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 393,
+      "criterion": "R2",
+      "claim": "The supplied display probe prints a dictionary and provides no evidence that either renderer was exercised. The repeated-compute probe also has no runner result. The display call sites are independently verified in the source.",
+      "repro": "Compare the claim's probe output with src/cma/graph.py:175, src/cma/cli.py:415 and the formatter-only assertions at tests/test_money_in.py:393. To prove the extra runtime claims, the runner would need PYTHONPATH=src python scratchpad/probe.py with the probe instrumented to exercise both renderers and compute twice on the same statement."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 119,
+      "criterion": "P2",
+      "claim": "The literal producer test counts and commit-specific execution claim are stale. The current runner proves the named tests on the reviewed checkout. The supplied logs do not verify a full suite of 878 tests at ca0092c or the quoted marker-tier counts.",
+      "repro": "Compare git log -1 and the runner logs specified-3.log and dual_run-7.log. The reviewed HEAD is fbef7b4, the full suite logged 1304 passes, and dual-run logged 84. To verify the historical numbers, the runner would need python -m pytest -v -rs, python -m pytest -q -m dual_run and the two claimed test_money_in.py marker selections at ca0092c."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer note says the example evidence was never regenerated and lacks evidence_note. The committed example already contains the additive field.",
+      "repro": "Run rg -n evidence_note examples/cafe_stretched.memo.evidence.json. The first metric has evidence_note: null and the subsequent metrics carry the field too."
+    }
+  ],
+  "verdict": "fail"
+}
+```

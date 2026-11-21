@@ -1,0 +1,104 @@
+```json
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 and src/cma/metrics.py:483–490,523–525,562–570 map and report the eight GBP buckets. src/cma/graph.py:266–269 can bind those figures to a different statement version, so the exported breakdown can omit credits from the statement it identifies.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:73–84,143–180 and src/cma/importers/monzo.py:189–230 enforce the pence and import limits. src/cma/metrics.py:512–517 handles an unreportable M3. src/cma/cli.py:309–312 and src/cma/graph.py:172,252 expose pence, while src/cma/metrics.py:591–595 and src/cma/policy.py:107 preserve whole-pound prose for figure quotes. The separate parse and hash reads at src/cma/graph.py:266–269 allow exact figures from one version to be recorded against another.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578–588 checks both the signed pence difference and membership counts before returning figures. src/cma/cli.py:106–109 reports the difference and escaped line IDs with exit 6, and src/cma/mcp_server.py:95–96 propagates the refusal. The named CLI and MCP refusal tests ran and passed.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The credit fallback at src/cma/categorise.py:1311,1360 gives OTHER. src/cma/models.py:66–69 maps OTHER to unexplained and excludes it from trading categories. The invariant log confirms the unknown-payer tests ran under both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483–495,562–570,578–588 reconciles the eight buckets by pence and ID before reporting. M18 is a subset of M2 and sits outside the reconciliation. Both named P1 tests ran, including large reported values.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:419–429,523–574 computes the T04 sum, outflow and derived evidence and carries M9 partial-credit IDs. The named invariants and scoped legacy comparisons ran. An export can still cite an M2 line whose signed amount in the statement identified by the evidence hash differs from the reported sum, through src/cma/graph.py:242–252,266–269.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311,1360 defaults unmatched credits to OTHER, and src/cma/metrics.py:347–349,483–488 routes those IDs to M25 and leaves them out of M2. All three named P6 cases ran and passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 269,
+      "criterion": "P2",
+      "claim": "A statement replaced during loading can produce an evidence record that hashes one version and reports figures and line IDs from another. Resume accepts the mismatch because it checks the current file and recomputes from the checkpoint's stored transaction objects.",
+      "repro": "Use two valid CSV versions at the same path. In A, L1 is a £0.60 Stripe credit. In B, L1 is £1.60 and L2 is a £0.01 unmatched credit, with balances adjusted to match. In a regression harness, replace A with B immediately after the real ingest.load_csv returns A inside graph.load. Let the review interrupt, then run cma resume with B still in place and approve. The evidence hash identifies B, but M2 is £0.60 citing L1, and M17 and the bucket evidence omit L2. The current resume test keeps the input file unchanged."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 225,
+      "criterion": "R2",
+      "claim": "The producer's additive migration claim overstates resume compatibility. A legacy review with refreshed figures becomes dependent on a policy file its checkpoint previously did not need to reopen. The same policy is also loaded again after the reviewer answers, so a concurrent edit can change the policy written to evidence after the CLI displayed it.",
+      "repro": "Create an earlier-release pending review with a custom --policy and remove the policy file before cma resume. refreshed raises PolicyError before displaying the pending review, and the resume handler at src/cma/cli.py:141–146 does not catch it. Alternatively, keep the file, then change a valid rule threshold while the refreshed review waits for the response. Approve a draft grounded under both thresholds and compare the displayed policy with the exported policy threshold and hash."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 92,
+      "criterion": "P2",
+      "claim": "The current runner proves the named invariant and contract cases, but the producer's exact test totals and attribution to ca0092c are stale for this review. The runner reports 908 full-suite passes and 84 dual-run passes on the reviewed worktree at 5e7d90c.",
+      "repro": "Compare git log -1 and the summaries of specified-3.log and dual_run-7.log with claim.json. To verify the historical totals, run python -m pytest -q and python -m pytest -q -m dual_run in a runner checkout of ca0092c. The named current cases are recorded in specified-3.log, contracts-4.log and invariants-5.log."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 317,
+      "criterion": "R2",
+      "claim": "The producer's scratchpad replay, including its same-input idempotency assertion, is unproven by the runner. Its above-limit result concerns direct DTO computation and does not establish that the CSV loader accepts that credit under revision 27.",
+      "repro": "Check the runner command list for PYTHONPATH=src python scratchpad/probe.py. No tier ran it and the script is absent from the reviewed repository. Restore that script and run the cited command to verify its exact outputs. The current loader's limit refusal and M3 behavior have separate passing runner tests."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer's note that the committed example lacks evidence_note and was left unregenerated is contradicted by the reviewed example.",
+      "repro": "Read the M1 object at line 2363 and search the same file for evidence_note and M26. The example includes both the additive field and the new figures."
+    }
+  ],
+  "verdict": "fail"
+}
+```

@@ -1,0 +1,86 @@
+{
+  "task": "T17",
+  "claims": [
+    {
+      "text": "Lint passes over src, tests and evals.",
+      "proof_cmd": "ruff check src tests evals",
+      "proof_output": "All checks passed!"
+    },
+    {
+      "text": "The full suite passes (run with this worktree's src first on the path).",
+      "proof_cmd": "PYTHONPATH=src python -m pytest -q",
+      "proof_output": "537 passed in 26.41s"
+    },
+    {
+      "text": "Invariant-marked tests pass. They include the P18 tests (test_p18_*) and the P5 tests (test_p5_*) in tests/test_firm.py. P18 covers: the hosted client refused under the lock, SDK retries off (one HTTP attempt per lock-checked complete, with a real SDK and a mock 503 transport), a saved MCP ASGI app whose lifespan startup fails and whose requests return 503 once the lock is on, uvicorn exiting before it binds a socket for such an app, and the run reading firm.yaml once with evidence recording the value the dispatch used. P5 covers sentinel prompts and redraft feedback limited to metric and rule ids from the tables.",
+      "proof_cmd": "PYTHONPATH=src python -m pytest -q -m invariants",
+      "proof_output": "140 passed, 397 deselected in 10.64s"
+    },
+    {
+      "text": "Contract and dual-run tiers pass.",
+      "proof_cmd": "PYTHONPATH=src python -m pytest -q -m contracts ; PYTHONPATH=src python -m pytest -q -m dual_run",
+      "proof_output": "31 passed, 506 deselected ; 79 passed, 458 deselected"
+    },
+    {
+      "text": "Offline evals stay grounded with the new prompt shape (overall outcome as a rule-table row).",
+      "proof_cmd": "PYTHONPATH=src python evals/run_evals.py",
+      "proof_output": "9/9 memos fully grounded; model = fake"
+    }
+  ],
+  "files_changed": [
+    ".github/workflows/evals.yml",
+    "README.md",
+    "src/cma/cli.py",
+    "src/cma/firm.py",
+    "src/cma/graph.py",
+    "src/cma/importers/monzo.py",
+    "src/cma/llm.py",
+    "src/cma/mcp_server.py",
+    "tests/test_firm.py",
+    "tests/test_import_monzo.py",
+    "tests/test_mcp_paths.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major src/cma/llm.py:90 R29: the lock check covers entry into complete, but SDK retries (max_retries=2) send further requests inside that call without a lock check.",
+      "disposition": "reproduced",
+      "evidence": "Both hosted clients are now built with max_retries=0 (src/cma/llm.py, HostedLLM, AnthropicLLM and OpenAILLM). Every HTTP request is therefore one complete() call, preceded by a lock check. Test: tests/test_firm.py::test_p18_hosted_sdk_sends_one_attempt_per_lock_check[anthropic|openai] uses the real SDKs with a MockTransport that returns a retryable 503. It asserts exactly one request is sent, and that complete() is refused once the lock is on. With max_retries=2 put back temporarily, both cases failed."
+    },
+    {
+      "finding": "major src/cma/mcp_server.py:56 R29: an ASGI app obtained with the lock off can be served later without any lock check.",
+      "disposition": "reproduced",
+      "evidence": "sse_app() and streamable_http_app() now return LockedASGIApp (src/cma/mcp_server.py). It reads firm.yaml at lifespan startup and sends lifespan.startup.failed under the lock. uvicorn runs that startup before it binds a socket, and exits. It also reads firm.yaml on every http or websocket connection and refuses with 503 or a close, without calling the SDK app. Tests: test_p18_asgi_app_made_with_lock_off_refuses_to_start_once_the_lock_is_on (both factories; the inner app is never called), and test_p18_uvicorn_never_opens_a_socket_for_a_saved_app_under_the_lock (real uvicorn; no 127.0.0.1 bind and SystemExit). Without the wrapper, the uvicorn test served instead of exiting. test_asgi_app_starts_and_serves_when_lock_is_off shows startup completes with the lock off."
+    },
+    {
+      "finding": "major src/cma/graph.py:234 R29: evidence records the lock read at statement load and labels it 'at draft', so it can contradict the value the hosted dispatch was checked against.",
+      "disposition": "reproduced",
+      "evidence": "A run now reads firm.yaml once. The CLI calls firm.load() once, passes it to get_llm(firm_config=...) and passes run_offline_lock into the graph. Direct graph callers get one read in the load node. The draft node passes that same value to HostedLLM.complete(offline_lock=...), and the evidence's egress.offline_lock is that value, labelled 'at run start; every hosted request in the run was checked against this value'. Tests: test_p18_cli_run_reads_firm_yaml_once_and_records_what_dispatch_used asserts one firm.load call per run and evidence offline_lock=False for a hosted dispatch even though firm.yaml was flipped mid-run. test_p18_graph_refuses_a_hosted_request_under_the_runs_lock asserts no request is sent when the run's value is on."
+    },
+    {
+      "finding": "minor src/cma/graph.py:167 R30: the user prompt has standalone Policy name and Overall policy outcome lines, and redrafts append prose.",
+      "disposition": "reproduced",
+      "evidence": "draft_prompt now sends Account: Applicant, the period, the metrics table and the policy table. The overall outcome is a row of that table ('| overall | overall outcome | - | - | <outcome> | - |'), and the policy name is gone. A redraft adds only 'Redraft ids: <ids or none>', built by redraft_ids() from guard findings and filtered to metric and rule ids present in the tables. The instruction for that line is in the fixed system prompt. FakeLLM reads the overall row. Tests: test_p5_prompt_uses_placeholder_not_the_account_name (no policy name or Overall line; the overall row is present), test_p5_redraft_feedback_is_only_ids_from_the_tables (a made-up M99, quoted numbers and sentinels never reach the addition) and test_p5_no_prompt_carries_line_level_text (each redraft's addition matches the ids-only pattern)."
+    },
+    {
+      "finding": "major src/cma/importers/monzo.py:201 R34: a provider Transaction ID starting with '-' passes SAFE_ID and is written verbatim into a CSV text cell.",
+      "disposition": "reproduced",
+      "evidence": "SAFE_ID now requires the first character to be a letter, digit or _, so an id is kept verbatim or refused, never altered. The refusal no longer echoes the id. Test: tests/test_import_monzo.py::test_formula_leading_transaction_id_is_refused (-2-3, .tx, :tx, =1+1, +1, @x) raises MonzoImportError and writes no output. The existing tx_ ids still import (all 37 Monzo tests pass)."
+    },
+    {
+      "finding": "minor src/cma/firm.py:88 R29: invalid UTF-8 escapes as UnicodeDecodeError, and duplicate keys are silently resolved by YAML.",
+      "disposition": "reproduced",
+      "evidence": "load() reads with encoding=utf-8 and maps OSError and UnicodeDecodeError to FirmConfigError. It parses with _UniqueKeyLoader, a SafeLoader subclass that refuses a key given twice at any level and refuses an unhashable key as invalid YAML. Tests: test_malformed_file_is_refused gains 'offline_lock: true / offline_lock: false', a repeated paths.thresholds and an unhashable key. test_firm_file_that_is_not_utf8_is_refused checks the loader. test_cli_refuses_a_firm_file_that_is_not_utf8 checks that cma run exits 2 with 'Refused.'."
+    },
+    {
+      "finding": "minor tests/test_firm.py:323 R29: the cited migration test does not deserialize or resume a pre-change checkpoint, so it does not prove resume compatibility.",
+      "disposition": "reproduced",
+      "evidence": "The test is renamed to test_evidence_record_names_egress_when_state_has_no_lock_fields, and its comment says it proves record formatting only. This claim makes no resume-compatibility claim."
+    },
+    {
+      "finding": "minor tests/test_firm.py:227 P18: the runner evidence did not substantiate the claimed full-extras counts, the focused P18 and P5 counts, the real CLI and MCP invocations, or the lockfile and runtime comparisons.",
+      "disposition": "reproduced",
+      "evidence": "The P18 and P5 tests are now marked @pytest.mark.invariants and named test_p18_* and test_p5_*, so the runner's invariants tier runs them by name. This claim makes only claims the configured tiers prove (ruff, the full pytest suite, the invariants, contracts and dual_run tiers, and the offline evals). It makes no wheel, lockfile, runtime or no-skip claims."
+    }
+  ],
+  "notes": "The task branch had been reset to the current base. This run re-applies the archived attempt (83ac630, as reviewed in verify-09) onto it, resolves conflicts with the CMA_RULESET work in cli.py, graph.py and README.md (both kept), and then fixes the verify-09 findings.\n\nInterpretation: 'firm.yaml read once per run' means one read at the start of a run, shared by client construction and every hosted request in that run. That read decides each dispatch and is the value the evidence records. A lock turned on mid-run therefore takes effect from the next run. A hosted complete() called outside a run (no offline_lock passed) still reads firm.yaml for that request. Because SDK retries are off, every request the SDK sends is one checked complete().\n\nThe MCP ASGI wrapper relies on the ASGI server running the lifespan startup before it listens, which uvicorn does (tested with real uvicorn). For a server that skips lifespan, every connection is still refused before the MCP app sees it.\n\nThe tests were run with PYTHONPATH=src because the shared environment's editable install of cma points at the T03 worktree. The runner should install this worktree (pip install -e .[dev,mcp,durable,llm]).\n\nP5 limit: no production path yet loads a case profile into the graph; the case store is T13. The P5 test therefore puts the profile's names into every description and the account name, and passes the profile's vat_stagger. That is everything a profile can currently contribute to a run.\n\nThe changes are staged in the worktree, not committed."
+}

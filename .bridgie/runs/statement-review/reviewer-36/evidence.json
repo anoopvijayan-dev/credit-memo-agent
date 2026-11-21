@@ -1,0 +1,52 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:196 validates canonical entries and their links, :282 compares the recorded hashes, :439 acquires the writer lock, :516 rejects a stale expected position, and :586 writes the entry before updating the head. src/cma/cli.py:319 exposes verification through the CLI. The runner's invariants log confirms the CLI tamper and torn-tail cases, rebuilt-chain cases, and symlink ownership case. The full-suite log confirms double-submit, cross-process and shared-handle contention, UTC stamping, strict JSON boundaries, and repair failures on both sides of the rename. Currency is opaque to the log, storage is per case folder, and the CLI is the only production verification caller. The contended read at src/cma/case.py:391 can hide both a previously torn append and damage to an entry already committed during the read. The writer also accepts a handle inherited across a fork when the handle was unlocked at fork time.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 391,
+      "criterion": "P15",
+      "claim": "A different thread holding the lock for an integrity check can make a stale torn entry appear to be a live append. The passing CLI contracts test explicitly expects this behavior.",
+      "repro": "Commit two entries, interrupt the third write before its newline, and let that writer release the lock. On a second thread, acquire writer() and pause before an integrity check without writing anything. Run cma case check from a third thread. It exits 0 and says another command is appending, although entry 3 is left over from the failed writer. tests/test_case_log.py:1121 sets up this sequence and asserts exit 0."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 391,
+      "criterion": "P15",
+      "claim": "After exhausting its retries, a contended reader can suppress corruption in an entry that the current head already records. It decides which entries are committed using the head snapshot from before its final log read.",
+      "repro": "On each retry, pause the reader after it reads the head and let another thread commit an entry before the reader reads the log. On the final retry, after the new head is published, change the newly committed entry's data without updating its hash and keep the writer lock held. The reader finds the hash failure, sees the head changed, and cannot take the lock. It returns ok with in_progress because the failure is beyond the old head. The current head already records the damaged entry."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 432,
+      "criterion": "P15",
+      "claim": "The inherited-handle write refusal only applies when the handle had an owner at fork time. P15 also requires refusal through an inherited handle after a fork with the lock free.",
+      "repro": "Create a CaseLog, append entry 1, and let append return so the handle's owner is cleared. Fork with no lock held. In the child, call append on the inherited object with expected=1. The owner is None, so the child acquires the lock and commits entry 2. The runner's fork write test forks inside writer() and does not cover this case."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 316,
+      "criterion": "P15",
+      "claim": "The claim that case inspection is restricted to the operating-system user who owns the case root is broader than the implementation. The permission test covers mode bits on new sidecar files.",
+      "repro": "Have one OS user provide a traversable folder and a readable valid log and head. From a different OS account, run cma case check against that folder. The command checks that the folder exists and then verifies the readable files without checking ownership."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

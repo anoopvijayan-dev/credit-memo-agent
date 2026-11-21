@@ -1,0 +1,467 @@
+I have everything needed. Writing the seat output now: six edits to requirements.md (R4, R42 and the revision note) and targeted edits to design.md, plus one question for the owner.
+
+I've written revision 15 of the spec as targeted edits; they're in the JSON block below. P15 is unchanged, as D136 asked (detail below). The owner's two new commits, T03 78556a7 and T12 cd298cc, already build everything revision 15 states, and neither has been reviewed yet.
+
+**Requirements.** Only R4 and R42 change.
+- **R4, cash and payment-method wording:** cash paid-in wording and a payment-method cue never hide each other inside a longer listed phrase, whichever list holds that phrase. So FPS CASH DEPOSIT is ambiguous whether it sits on the rail list or the cash list (D132).
+- **R4, exceptions in a pattern:** a lookahead or lookbehind in a v2 rule's pattern now counts as an exception, and the table is refused at load, naming the rule. It is treated like an `unless` or a `requires`. Example: a cash pattern written `KIOSK CASH DEPOSIT(?! STRIPE)`.
+- **R42:** the re-check before each step covers the gate the writer passed as well as the case lock it holds. The step is refused if either file was removed or replaced.
+- **P15** still names only the case lock. It asks less than R42 but doesn't contradict it. Revision 14 also changed R42 and left P15 alone.
+
+**Design.**
+- It adds the two latest reviews: T12's twenty-second (verify-68, three majors) and T03's twenty-first (verify-69, two majors). The commit line numbers and the consumer-trace searches are updated to the new commits.
+- T12's fix creates the first empty head record with a hard link, so it can never overwrite a head record another writer has already written. The catch: a case folder must be on a file system with hard links. On FAT or exFAT, common on USB sticks, the first save fails and writes nothing. I added this to costs, out of scope, failure modes and rollout, and the README and trial sheet should name the supported file systems.
+
+**Still open, not new.** T03: README.md:78 is still wrong, an unhashable rule id still crashes validation, and RETURNED DD is still not linked to the debit it reverses. T12: a failed staging write still leaves its temporary file, and eight invariants tests still lack `p15` in their names. Both take-overs are still waiting on you (D134, D135).
+
+**Decision for you: anchors in a v2 pattern.** The new check catches lookarounds but not anchors. A table edit that writes the cash rule as `CASH DEPOSIT$` or `^CASH DEPOSIT` still loads, and then FPS CASH DEPOSIT STRIPE counts as card takings. That is the same hole as the last two reviews, so the next review will probably test it. My default is to refuse anchors at load, keeping only the bank's own UNPAID DD code. No shipped rule changes either way.
+
+```json
+{
+  "seat": "shaper",
+  "summary_md": "**Revision 15 (after D136).** R4 now says cash paid-in wording and a payment-method cue never take each other in, whichever list holds the longer phrase (D132), and that a lookahead or lookbehind in a v2 pattern is an exception, refused at load like unless and requires.\nR42 now says the per-step re-check covers the gate as well as the case lock; P15 is unchanged, as D136 asked, and asks less without contradicting R42.\nThe design takes in verify-68 and verify-69 and the owner's fixes (T03 78556a7, T12 cd298cc, not yet reviewed): the first empty head record is linked into place, never renamed over one, and appends and repairs compare the log's bytes.\nNew cost stated: the hard link needs NTFS, APFS or a Linux file system; on FAT or exFAT the first append fails and writes nothing.\nOne question: anchors (^, $) in a v2 pattern hide wording just as lookarounds do; the default refuses them, except the bank's code listed in code.",
+  "questions": [
+    {
+      "context": "Anchors in a v2 pattern (R4; revision 15, after 78556a7). D136 refuses a lookahead or lookbehind in a v2 rule's pattern, because it tests wording beside a match without matching it. An anchor tests the whole line beside a match: ^ matches only where nothing comes before, $ only where nothing comes after. At 78556a7 the validator tests lookarounds only (src/cma/categorise.py:433-439), so a table edit can write the cash rule's pattern as CASH DEPOSIT$ or ^CASH DEPOSIT, with CASH DEPOSIT off its names, and the table loads. FPS CASH DEPOSIT STRIPE then matches no cash wording, and the gateway makes it a card settlement in trading receipts: the edit verify-65 made with an unless and verify-69 with a lookahead. The bank's code listed in code (^UNPAID DD) is the only anchored pattern v2 ships, so no shipped verdict moves either way. T03's reviewer judges R4 by its own text, and verify-53 to verify-69's majors were all table edits.",
+      "options": [
+        "Refuse at load a v2 pattern with an anchor (^, $, \\A or \\Z), naming the rule; the bank's code listed in code keeps its ^; say it in R4 in the next revision (design default; T03 adds one validator check before its review)",
+        "Allow anchors, and say in R4 that an anchored pattern lists wording only at the start or end of the line, so a line with that wording elsewhere does not hold it",
+        "Refuse only the end anchors ($, \\Z); keep ^ for wording a bank prints at the start of a line"
+      ],
+      "allow_free_text": true
+    }
+  ],
+  "proposals": [
+    {
+      "kind": "task",
+      "text": "T03, before its next review (D135): if the owner takes revision 15's default on anchors, refuse a v2 pattern with ^, $, \\A or \\Z other than the bank's code listed in code, naming the rule, with tests for the cash rule written CASH DEPOSIT$ and ^CASH DEPOSIT. Close the recurring minors too: name a non-string or unhashable rule id instead of raising a TypeError (src/cma/categorise.py:419 at 78556a7), correct README.md:78 (a profile name adds a candidate and settles nothing; cheque wording with cash paid-in wording is ambiguous), and set RETURNED DD aside as UNPAID DD is in reversal linking (:948-950)."
+    },
+    {
+      "kind": "task",
+      "text": "T12, before its next review (D134): remove the staging file when a head record's or a repaired log's staging write or fsync fails (src/cma/case.py:912-917 and :853-858 at cd298cc), say 'the save was not recorded' when a short write of the line is refused in its second call (:953), and rename the eight invariants tests added since review 20 (tests/test_case_log.py:2070-2244) to carry p15."
+    },
+    {
+      "kind": "task",
+      "text": "README and the stopwatch trial sheet (Rollout step 3): beside 'local disk', name the file systems a case folder needs for the first head record's hard link (NTFS, APFS or a Linux file system; not FAT or exFAT)."
+    },
+    {
+      "kind": "gotcha",
+      "text": "2026-11-20 An exception is anything that makes a rule's match depend on text it does not match: an unless or requires key, a lookaround, an anchor. Refuse the class in the validator, not each syntax a review finds (verify-65, verify-67, verify-69)."
+    }
+  ],
+  "edits": {
+    "requirements.md": [
+      {
+        "old": "Revision 14, after D131 (changes requested under the owner's standing approval of 2026-11-19, after T12's twenty-first review",
+        "new": "Revision 15, after D136 (changes requested under the owner's standing approval of 2026-11-19, after T12's twenty-second review, verify-68, and T03's twenty-first, verify-69; the owner had answered revision 14's question as D132). R4 and R42 change; their ids, forms and risk tags do not. R4 now says that cash paid-in wording and a payment-method cue never take each other in: neither counts as inside a longer listed phrase that holds the other, whichever list holds that phrase, so a payment-method cue with cash paid-in wording is always ambiguous. With FPS CASH DEPOSIT listed as a cash paid-in phrase, the rail inside it still counts, and FPS CASH DEPOSIT is ambiguous, not a cash deposit (D132); revision 14 stated only the other side. R4 also counts a lookahead or lookbehind in a rule's pattern as an exception, one the pattern carries itself because it tests wording beside its match without matching it, and the system refuses to load a table with one as it refuses an unless or a requires (D136, after verify-69). With the cash rule's pattern written KIOSK CASH DEPOSIT(?! STRIPE), FPS KIOSK CASH DEPOSIT STRIPE would otherwise be a card settlement. R42 now says that a writer's re-check before each step covers both case lock files, the gate it passed as well as the case lock it holds, and that it refuses the step if either was removed or replaced (D136, after verify-68). P15 still names the case lock file only: it asks less than R42 and does not contradict it, and D136 keeps everything but R4 and R42 as revision 14 left it, as D131 kept P15 when revision 14 changed R42. Every other requirement, property, term and id is as revision 14 left it.\n\nRevision 14, after D131 (changes requested under the owner's standing approval of 2026-11-19, after T12's twenty-first review"
+      },
+      {
+        "old": "Cash paid-in wording is likewise never taken in by a payment-method cue's longer listed phrase, so a payment-method cue with cash paid-in wording stays ambiguous whichever list holds that phrase (with FPS CASH DEPOSIT listed as a payment-method phrase, FPS CASH DEPOSIT is ambiguous, not a payment-method cue alone).",
+        "new": "Cash paid-in wording and a payment-method cue likewise never take each other in: neither counts as inside a longer listed phrase that holds the other, whichever list holds that phrase, so a payment-method cue with cash paid-in wording is always ambiguous (with FPS CASH DEPOSIT listed as a payment-method phrase, FPS CASH DEPOSIT is ambiguous, not a payment-method cue alone; with FPS CASH DEPOSIT listed as a cash paid-in phrase, it is ambiguous, not a cash deposit)."
+      },
+      {
+        "old": "No rule of the maintained lists carries an exception, an unless (the rule does not match where other wording also appears) or a requires (it matches only where other wording also appears): THE SYSTEM SHALL refuse to load a rule table other than the frozen v1 table (R54) in which any rule carries one, and SHALL name the rule, because an exception could hide one list's wording from the ambiguity check (with an unless naming FPS on the cash list, FPS CASH DEPOSIT STRIPE would be a card settlement).",
+        "new": "No rule of the maintained lists carries an exception: an unless (the rule does not match where other wording also appears), a requires (it matches only where other wording also appears), or an exception of the rule's own pattern, a lookahead or lookbehind (the pattern tests wording beside its match without matching it). THE SYSTEM SHALL refuse to load a rule table other than the frozen v1 table (R54) in which any rule carries one, and SHALL name the rule, because an exception could hide one list's wording from the ambiguity check (with an unless naming FPS on the cash list, FPS CASH DEPOSIT STRIPE would be a card settlement; with the cash rule's pattern written KIOSK CASH DEPOSIT(?! STRIPE), so would FPS KIOSK CASH DEPOSIT STRIPE)."
+      },
+      {
+        "old": "D126, D127 and D131 (revision 14: cash paid-in wording is never taken in by a payment-method cue's longer phrase; no rule of the maintained lists carries an exception).",
+        "new": "D126, D127 and D131 (revision 14: cash paid-in wording is never taken in by a payment-method cue's longer phrase; no rule of the maintained lists carries an exception); D132 and D136 (revision 15: cash paid-in wording and a payment-method cue never take each other in, whichever list holds the longer phrase; a lookahead or lookbehind in a rule's pattern is an exception)."
+      },
+      {
+        "old": "repair boundary in revision 13): the case lock files are the tool's own. Removing",
+        "new": "repair boundary in revision 13; both lock files in revision 15): the case lock files are the tool's own. Removing"
+      },
+      {
+        "old": "A writer SHALL re-check its lock before each step that changes a file a reader reads, and SHALL refuse the step if the case lock file was removed or replaced. Those steps are",
+        "new": "A writer SHALL re-check both case lock files before each step that changes a file a reader reads, the gate it passed to take the case as well as the case lock it holds, and SHALL refuse the step if either of them was removed or replaced. Those steps are"
+      },
+      {
+        "old": "D125 and D131 (revision 14: a save is told recorded only after reading back an intact log that holds its entry; a repair re-checks the log and the head record before its renames).",
+        "new": "D125 and D131 (revision 14: a save is told recorded only after reading back an intact log that holds its entry; a repair re-checks the log and the head record before its renames); D136 (revision 15: the re-check before each step covers the gate as well as the case lock)."
+      }
+    ],
+    "design.md": [
+      {
+        "old": "Revision 14, 2026-11-20, after D131 (changes requested under the owner's standing approval of 2026-11-19, after T12's twenty-first review, verify-66, and T03's twentieth, verify-67). What changed from revision 13, keeping every id. R4 now states the second exception to its longer-phrase clause: cash paid-in wording is never taken in by a payment-method cue's longer phrase (D127). It also says that no v2 rule carries an exception, so a v2 table that gives a rule an unless or a requires is refused at load (D126). R42 now states when a save is told it was recorded: only after reading back an intact log that holds its entry where its head record lists it. It also states what a repair re-checks before each of its renames (D125). No other requirement changes. The owner built all three before this revision, and none is reviewed yet: T03's 1b592b6 keeps cash wording out of a payment-method phrase, its 4adddf9 refuses exceptions on every v2 rule, and T12's 1d16873 reads back and re-checks. The design takes in verify-66 and verify-67, whose majors those commits address, and D122, D123 and D125 to D128. It asks one question that 4adddf9 raises about R4: a payment-method cue inside a longer cash phrase, the other side of D127. The changes are in this header, Context, Options considered, C1's verdict steps, tie-breaks and table validation, C3, C5, Consequences, the perspective check, Data changes, the case log contract, the workspace API, Failure modes, Migration, Rollout, Observability, Security notes and Consumer trace items 17, 19, 20 and 23.",
+        "new": "Revision 15, 2026-11-20, after D136 (changes requested under the owner's standing approval of 2026-11-19, after T12's twenty-second review, verify-68, and T03's twenty-first, verify-69). What changed from revision 14, keeping every id. R4 now says that cash paid-in wording and a payment-method cue never take each other in, whichever list holds the longer phrase (D132, the owner's answer to revision 14's question). It also says that a lookahead or lookbehind in a v2 rule's pattern is an exception, refused at load as an unless or a requires is (D136). R42 now says that the re-check before each step covers the gate as well as the case lock (D136). No other requirement changes; P15 still names the case lock only, which R42's wider check satisfies. The owner built all three before this revision, and none is reviewed yet. T03's 78556a7 makes the exemption two-way and refuses lookarounds. T12's cd298cc re-checks both lock files, compares the log's bytes, not only its length, before an append's line and a repair's rename, and creates the first empty head record instead of renaming it over one. The design takes in verify-68 and verify-69, whose majors those commits address, and D132 to D136. It asks one question that 78556a7 leaves open about R4: an anchor in a v2 pattern, which tests the whole line beside a match as a lookaround tests the text next to it. The changes are in this header, Context, Options considered, C1's verdict steps, tie-breaks and table validation, C3, C5, Out of scope, Consequences, the perspective check, Data changes, the case log contract, the workspace API, Failure modes, Migration, Rollout, Observability, Security notes and Consumer trace items 17, 19, 20 and 23."
+      },
+      {
+        "old": "Earlier revisions. Revision 13 (2026-11-20, after D124)",
+        "new": "Earlier revisions. Revision 14 (2026-11-20, after D131) wrote D125 to D127 into R4 and R42: cash paid-in wording is never taken in by a payment-method cue's longer phrase, no v2 rule carries an unless or a requires, a save is told recorded only after reading back an intact log that holds its entry, and a repair re-checks the log and the head record before its renames. It took in verify-66 and verify-67 and asked the question that D132 answered. Revision 13 (2026-11-20, after D124)"
+      },
+      {
+        "old": "Revision 14 asks the owner (Options considered).",
+        "new": "Revision 14 asked the owner, and D132 answered (the last section below)."
+      },
+      {
+        "old": "- The lesson is D127's: an exemption between two lists has to hold whichever list holds the longer phrase, or the next table edit finds the other side.",
+        "new": "- The lesson is D127's: an exemption between two lists has to hold whichever list holds the longer phrase, or the next table edit finds the other side.\n\n**What T12's twenty-second review showed, and what the owner decided** (verify-68; D133, D134, D136, 2026-11-20)\n- D133 approved revision 14, and verify-68, T12's twenty-second review, judged the owner's 1d16873 against it. It failed P15 on three majors. First, a first append that had checked an empty case paused just before renaming its empty head record into place. With the case lock file replaced, B took the new lock, appended entry 1 and was told it was recorded. A's rename then put an empty head record over B's, and A refused its own line because the log had grown. The next holder saw B's entry as a torn write past the recorded entries, and a confirmed repair left a log that read intact without a save told recorded (src/cma/case.py:902 there). Second, the re-check before each step compared only the case lock file, so a gate removed or replaced during a save stopped nothing (:726 there). Third, a repair's re-check before its log rename compared the log's length, not its bytes, so a recorded entry changed to the same length was overwritten by the repair's copy, and the log read intact (:837 there). Three minors: the producer again claimed exit 0 with 'appending' for a held torn tail, where the contract test expects exit 4 and 'being saved'; the stress test does not assert the interleaving claimed for it; and the claim named the read retries as the only retry cap, though a writer's wait and the Windows rename retries have their own.\n- R42 already ruled out the first, a save told recorded and then lost (revision 13), and the third, since 'as the repair's check read them' means the bytes. The second turns on R42's 'its lock'. A reader that finds no gate takes the case as one no writer has started, and one that holds a new gate takes the writer it finds holding the case to have passed it. So a writer that goes on after the gate is removed or replaced writes into a case the reader judges by a file the writer never passed.\n- The owner built all three in cd298cc, which is not yet reviewed; D134, the unblock, is pending. The first empty head record is staged and then linked into place, which fails if any head record exists, so a first append from a stale check stops with a conflict and never resets a head that records entries (_create_empty_head, src/cma/case.py:888-906 there). The re-check before each step compares the gate's identity, noted when the writer passed it, as well as the case lock's (_require_lock_in_place, :732-745), and refuses with 'a case lock file was removed or replaced'. An append compares the log's bytes as well as its length before its line (:947-950), and a repair compares them before it reads the log (:836-838) and again before its log rename (:843-851). Three tests mark it: a stale first append that never resets a head (tests/test_case_log.py:2202), a repair refused when the log was rewritten to the same length (:2227), and a gate removed or replaced during a save (:2249, named p15).\n- D136: state in R42 that the per-step re-check covers the gate as well as the case lock, keeping everything else in revision 14; revision 15 does that. P15 still names the case lock only, which asks less than R42 and does not contradict it.\n- Still open at cd298cc. A failed staging write or fsync of a head record or a repaired log still leaves its temporary file (:912-917, :853-858); only the empty head record's staging file is always removed (:904-905). A refusal in the second call of a short write of the line still says nothing was written, though part of the line is on disk (:953, :744-745). And of the tests added since review 20, eight are marked invariants but not named p15 (tests/test_case_log.py:2070-2244), which the project's gotcha asks for.\n- A hard link needs a file system that has them. NTFS, APFS and the usual Linux file systems do; FAT and exFAT, common on USB sticks, do not, and there a first append fails with the file system's error and writes nothing (Failure modes).\n- The lesson is revision 13's, at the first step: a step that publishes must refuse to overwrite what another writer published, and the first step publishes too.\n\n**What T03's twenty-first review showed, and what the owner decided** (verify-69; D132, D135, D136, 2026-11-20)\n- verify-69, T03's twenty-first review, judged the owner's 4adddf9 against revision 14 and failed R4 on two majors. First, the corner revision 14 asked about: with FPS CASH DEPOSIT added to the cash list, the rail inside it counted only as the cash phrase, and FPS CASH DEPOSIT was a cash deposit recorded as v2:cash_paid_in (src/cma/categorise.py:762 there). Second, the loader refused an unless or a requires but accepted the same exception written into the pattern. A cash rule whose pattern was KIOSK CASH DEPOSIT followed by a negative lookahead for STRIPE, with CASH DEPOSIT off the cash names, loaded, and FPS KIOSK CASH DEPOSIT STRIPE skipped it and reached the gateway as a card settlement in trading receipts (:403 there). Four minors, all recurring: an unhashable rule id raises a TypeError (:399 there); README.md:78 still says a profile name settles an ambiguous credit and leaves out the cheque, the eleventh review to find it; the producer claimed the rule-order shuffle for debits, which take the first protected match by design (HMRC VAT HMRC PAYE); and the claim's compileall covers evals and tests, which the runner does not compile.\n- D132 took revision 14's default, and the owner built it in 78556a7, which is not yet reviewed; D135, the unblock, is pending. Cash paid-in wording and a payment-method cue never count as inside each other's longer phrase, whichever list holds it (credit_matches and _rail_and_cash, src/cma/categorise.py:786-806 there). In the same commit a v2 pattern with a lookahead or lookbehind is refused at load, naming the rule (_has_lookaround, :259-276; the check, :433-439). Two tests mark it: a rail inside a longer cash phrase (tests/test_rules_v2.py:1852-1859) and four lookarounds refused (:1862-1870). No shipped cash phrase holds payment-method wording and no shipped v2 pattern has a lookaround, so no shipped verdict moves.\n- D136: write D132 and the lookaround refusal into R4, keeping everything else in revision 14; revision 15 does that.\n- 78556a7 tests lookarounds only. An anchor tests the whole line beside a match: ^ matches only where nothing comes before, $ only where nothing comes after. With the cash rule's pattern written CASH DEPOSIT$, or ^CASH DEPOSIT, and CASH DEPOSIT off its names, the table loads, FPS CASH DEPOSIT STRIPE matches no cash wording, and the gateway makes it a card settlement in trading receipts. That is the edit verify-65 made with an unless and verify-69 with a lookahead. The bank's code listed in code is the one anchored pattern v2 ships (src/cma/rules/v2.yaml:64). Revision 15 asks the owner (Options considered).\n- Still open at 78556a7: README.md:78, the TypeError (:419), and RETURNED DD reversal linking, whose bank prefixes (:948-950) still hold UNPAID DD but not RETURNED DD.\n- The lesson is D126's, one level down: an exception is whatever makes a rule's match depend on text it does not match, whether a key in the table, a lookaround in the pattern or an anchor."
+      },
+      {
+        "old": "At 4adddf9 (after D123 and D126, not yet reviewed) the code has moved again: the table checks are validate_ruleset (:336-474), which refuses an exception on every v2 rule (:403-412); rule_matches still reads an exception (:632-636), which only the frozen v1 table can now carry; the longest match at each start is _spans (:727-746); credit_matches with its longer-phrase filter is :749-769, its cash exemption :759-765; credit_verdict is :807-824, _classify_credit :874-904, reversal linking :911-952 and the round-trip pass :958-982.",
+        "new": "At 78556a7 (the owner's review-21 fix, not yet reviewed) the code has moved again: the table checks are validate_ruleset (:356-501), which refuses an exception on every v2 rule (:423-432) and a lookahead or lookbehind in a v2 pattern (:433-439, with _has_lookaround at :259-276); rule_matches still reads an exception (:659-663), which only the frozen v1 table can now carry; the longest match at each start is _spans (:754-773); credit_matches with its longer-phrase filter is :776-796, its two-way exemption for cash paid-in wording and a payment-method cue :786-792 and :803-806; credit_verdict is :844-861, _classify_credit :911-941, reversal linking :948-989 and the round-trip pass :995-1019."
+      },
+      {
+        "old": "and 1d16873 now, after D122 and D125, not yet reviewed; not merged; the lines below are at 1d16873)",
+        "new": "1d16873 for revision 14, reviewed as verify-68, and cd298cc now, the owner's review-22 fix, not yet reviewed; not merged; the lines below are at cd298cc)"
+      },
+      {
+        "old": "compared on each load (_check, :266) and written empty before the first entry's line (:898-902);",
+        "new": "compared on each load (_check, :271) and created empty before the first entry's line, only where no head record exists: the staged empty record is linked into place, which fails if one is there, so it is never renamed over one (_create_empty_head, :888-906, called at :939-943; revision 15, after verify-68);"
+      },
+      {
+        "old": "(drop_torn_entry and _replace_torn, :798-853)",
+        "new": "(drop_torn_entry and _replace_torn, :813-866)"
+      },
+      {
+        "old": "(_enter, :659)",
+        "new": "(_enter, :666-697, which notes the gate's identity as the writer passes it)"
+      },
+      {
+        "old": "(_take_case_lock, :688)",
+        "new": "(_take_case_lock, :699)"
+      },
+      {
+        "old": "on Windows through LockFileEx (:989-1047)",
+        "new": "on Windows through LockFileEx (:1030-1070)"
+      },
+      {
+        "old": "(writer(), :615)",
+        "new": "(writer(), :622)"
+      },
+      {
+        "old": "(_holder_id and _thread_token, :383-411, D118)",
+        "new": "(_holder_id and _thread_token, :389-406, D118)"
+      },
+      {
+        "old": "It re-checks that the case lock file is still the one it locked (_require_lock_in_place, :721) immediately before every write call of the line (:912) and before every attempt of each rename that publishes a head record, the empty one included, or a repaired log (_replace, :954; D108, D114, D116).",
+        "new": "It re-checks that both lock files are still the ones it passed and locked, the gate as well as the case lock (_require_lock_in_place, :732-745; D136), immediately before every write call of the line (:953), before it links the empty head record into place (:899) and before every attempt of each rename that publishes a head record or a repaired log (_replace, :995; D108, D114, D116)."
+      },
+      {
+        "old": "(_staging_file, :946, D118)",
+        "new": "(_staging_file, :987, D118)"
+      },
+      {
+        "old": "One save runs at a time per holder (_one_save, :753-768), and an append refuses if the log grew since its check (:906-909), as R42 says since revision 13.",
+        "new": "One save runs at a time per holder (_one_save, :769-783), and an append refuses if the log's length or bytes changed since its check (:947-950), as R42 says since revision 13."
+      },
+      {
+        "old": "only if the head record still lists what its check read (_write_head, :867-890), and is told recorded only after reading back an intact log that holds its entry where the head record lists it (_publish, :921-937).",
+        "new": "only if the head record still lists what its check read (_write_head, :908-931), and is told recorded only after reading back an intact log that holds its entry where the head record lists it (_publish, :962-978)."
+      },
+      {
+        "old": "A repair re-checks, before its log rename, that its lock is in place, that the log has not grown and that the head record is unchanged (:828-838), as R42 says since revision 14.",
+        "new": "A repair compares the log's bytes with its check before it reads the log (:836-838), and re-checks, before its log rename, that both lock files are in place, that the log's bytes are still the ones its check read and that the head record is unchanged (:843-851), as R42 says since revision 14 (verify-68 found the length alone compared at 1d16873)."
+      },
+      {
+        "old": "Its reader, CaseLog.verify (:437)",
+        "new": "Its reader, CaseLog.verify (:444)"
+      },
+      {
+        "old": "(_untested, :565)",
+        "new": "(_untested, :572)"
+      },
+      {
+        "old": "The integration branch (c1f1625) has no case log and no profile names yet.",
+        "new": "The integration branch (4b4030b) has no case log and no profile names yet."
+      },
+      {
+        "old": "**Sub-decision: a payment-method cue inside a cash phrase (revision 14, after 4adddf9; design default, asked).** D127 keeps cash paid-in wording from being taken in by a payment-method cue's longer phrase. The other side is open:",
+        "new": "**Sub-decision: a payment-method cue inside a cash phrase (revision 14, after 4adddf9; D132, in R4 since revision 15).** D127 keeps cash paid-in wording from being taken in by a payment-method cue's longer phrase. The other side was open:"
+      },
+      {
+        "old": "*Design default: (i)*, asked in revision 14.",
+        "new": "*Chose (i)*, the owner's answer (D132), which R4 says since revision 15 (D136) and 78556a7 builds; verify-69 found the edit at 4adddf9."
+      },
+      {
+        "old": "**Sub-decision: what settles an ambiguous credit (revision 3; revised in revision 7, D78, D79; extended in revision 9, D86, D88).**",
+        "new": "**Sub-decision: an exception written into a pattern (revision 15, after verify-69; D136, in R4 since revision 15).** D126 refuses an `unless` or a `requires` on a v2 rule. verify-69 wrote the same exception into the cash rule's pattern instead: KIOSK CASH DEPOSIT followed by a negative lookahead for STRIPE, with CASH DEPOSIT off the cash names. FPS KIOSK CASH DEPOSIT STRIPE then matched no cash wording, and the gateway made it a card settlement in trading receipts. (i) Refuse at load a v2 pattern with a lookahead or lookbehind, naming the rule, as D126 refuses the keys. (ii) Allow a lookaround whose body cannot match a letter, such as a test for a digit after INV, and refuse the rest: a body with no letter can still test that nothing or only a space follows, which hides wording as an anchor does (next sub-decision), and no shipped pattern needs one. (iii) Keep lookarounds, as v1 does: the hidden tie-break D52 ended. *Chose (i)*, the owner's answer (D136), which 78556a7 builds. The whole-word test the matcher adds to every rule is the matcher's own, not the table's, and \\b written in a pattern looks only at the character on each side of a match, as whole words do, so neither is an exception. What (i) costs: a table author who wants a phrase only where other wording is absent lists the longer phrase on the list it belongs to, or lets the line be ambiguous. No shipped v2 pattern has a lookaround, so no shipped verdict moves, and the frozen v1 table is untouched (R54).\n\n**Sub-decision: anchors in a v2 pattern (revision 15, after 78556a7; design default, asked).** A lookaround tests the text beside a match; an anchor tests the whole line beside it: ^ matches only where nothing comes before, $ only where nothing comes after. At 78556a7 a v2 pattern may carry one, since the validator tests lookarounds only (src/cma/categorise.py:433-439). With the cash rule's pattern written CASH DEPOSIT$, or ^CASH DEPOSIT, and CASH DEPOSIT off its names, FPS CASH DEPOSIT STRIPE matches no cash wording and is a card settlement in trading receipts: the edit verify-65 made with an `unless` and verify-69 with a lookahead. (i) Refuse at load a v2 pattern with an anchor (^, $, \\A or \\Z), naming the rule, as D136 refuses lookarounds. The bank's code listed in code keeps its ^, because the start of the line is the bank's own place (D97) and the validator already allows that pattern only on the flagged rule. R4 says so in the next revision. (ii) Allow anchors, and say in R4 that an anchored pattern lists wording only at the start or end of the line, so a line with that wording elsewhere does not hold it. (iii) Refuse only the end anchors ($, \\Z), and keep ^ for wording a bank prints at the start of a line. *Design default: (i)*, asked in revision 15. (ii) lost because a table edit could then switch any list's wording off wherever other wording precedes or follows it, the hidden tie-break D52, D126 and D136 ended, and R4's no-exception clause would need an exception of its own. (iii) lost because ^ hides wording as surely as $ does: ^CASH DEPOSIT misses FPS CASH DEPOSIT STRIPE just as CASH DEPOSIT$ does, and the one wording a bank prints at the start of a line that R4 gives standing, its returned-payment code, is listed in code already. What (i) costs: one validator check in T03 before its review, and a table author who wants wording only where a bank prints it at the start of a line lists it as a cue or a name, which match anywhere. The bank's code is the only anchored pattern v2 ships (src/cma/rules/v2.yaml:64), so no shipped verdict moves.\n\n**Sub-decision: what settles an ambiguous credit (revision 3; revised in revision 7, D78, D79; extended in revision 9, D86, D88).**"
+      },
+      {
+        "old": "## Decision\n\nBuild Option A as components inside the existing package.",
+        "new": "**Sub-decision: which lock files a writer re-checks (revision 15, after verify-68; D136, in R42 since revision 15).** R42 said a writer re-checks its lock before each step a reader reads, and 1d16873 re-checked the case lock only; verify-68 replaced the gate during a save, and nothing stopped it. A reader learns from the gate whether a writer has started and whether one held the case through its read. A reader that finds no gate takes the case as one no writer has started, and one that holds a new gate takes the writer it finds holding the case to have passed it. (i) Re-check both lock files before each step: the gate's identity, noted when the writer passed it, and the case lock's (cd298cc). (ii) Re-check the case lock only, and state in R42 that a removed or replaced gate is outside the guarantee with nothing to stop the writer: a reader that then finds no gate would judge a steady read as the whole log while the writer adds to it, naming a live append incomplete or calling the log intact. (iii) Hold the gate through the whole save, so that it cannot change unnoticed: every check would then wait for every save, which revision 10 rejected when it made the gate a brief pass. *Chose (i)*, the owner's answer (D136), which R42 says since revision 15 and cd298cc builds. What (i) costs: one more file status call per check, and a writer that holds the case refuses its next step when only the gate is replaced, though its case lock is still its own; both happen only under interference.\n\n**Sub-decision: how the first empty head record is published (revision 15, after verify-68).** The first append writes an empty head record before its line (revision 9, D87), so that a missing head record beside any entry is damage. 1d16873 published it like every head record, by renaming a staged file into place. verify-68 paused a first append just before that rename. With the case lock file replaced, B took the new lock, appended entry 1 and was told it was recorded. A's rename then put an empty head record over B's, B's entry became a torn write past the recorded entries, and a confirmed repair left a log that read intact without a save told recorded, which R42 rules out since revision 13. (i) Create the empty head record only where none exists: link the staged file into place, which fails if a head record is there, and stop with a conflict (cd298cc). (ii) Rename as before, after re-checking that no head record exists: the check and the rename are two steps, and verify-68's schedule fits between them. (iii) Create the head record exclusively and write it in place: a reader could find the file created but still empty, which reads as a damaged head record, not an empty one. *Chose (i)*, which the owner built in cd298cc (D134 is pending). R42's text already covers it, so no requirement changes. It closes the window rather than narrowing it, because the link itself refuses. What (i) costs: a file system with hard links. NTFS, APFS and the usual Linux file systems have them; FAT and exFAT, common on USB sticks, do not, and there the first append fails with the file system's error and writes nothing. The README and the trial sheet name the file systems to use.\n\n## Decision\n\nBuild Option A as components inside the existing package."
+      },
+      {
+        "old": "except the bank's code at step 2 and cash paid-in wording inside a payment-method cue's phrase at step 3 (D127; R4 since revision 14)",
+        "new": "except the bank's code at step 2, and cash paid-in wording and a payment-method cue inside each other's phrase at step 3 (D127, D132; R4 since revisions 14 and 15)"
+      },
+      {
+        "old": "As the design default since revision 14, a payment-method cue counts here too inside a longer phrase on the cash list (FPS CASH DEPOSIT listed on the cash list), so the two never take each other in; at 4adddf9 the cue is taken in, and revision 14 asks the owner.",
+        "new": "Since revision 15 (D132), a payment-method cue counts here too inside a longer phrase on the cash list (FPS CASH DEPOSIT listed on the cash list), so the two never take each other in, whichever list holds the longer phrase; built in 78556a7."
+      },
+      {
+        "old": "since D126 a v2 table that gives any rule one is refused at load, naming the rule (R4 since revision 14; 4adddf9).",
+        "new": "since D126 a v2 table that gives any rule one is refused at load, naming the rule (R4 since revision 14; 4adddf9). verify-69 wrote the same exception into a pattern as a lookahead; since D136 a v2 pattern with a lookahead or lookbehind is refused too (R4 since revision 15; 78556a7). An anchor does the same for the whole line; revision 15 asks the owner, and the design default refuses it (Options considered)."
+      },
+      {
+        "old": "revision 14, D126): a table is refused at load, naming the rule, in seven cases.",
+        "new": "revision 14, D126; revision 15, D136): a table is refused at load, naming the rule, in eight cases."
+      },
+      {
+        "old": "and so decide a collision before the ambiguity check sees it (verify-65, verify-67).",
+        "new": "and so decide a collision before the ambiguity check sees it (verify-65, verify-67). Eighth, since D136 (R4 since revision 15; 78556a7), a v2 pattern with a lookahead or lookbehind, an exception written into the pattern, which tests wording beside its match without matching it (verify-69). The whole-word test the matcher adds is the matcher's own, and \\b written in a pattern looks only at the character on each side, as whole words do, so neither is an exception. As the revision 15 default, a v2 pattern with an anchor (^, $, \\A or \\Z) is refused too, except the bank's code listed in code; at 78556a7 it loads (Options considered)."
+      },
+      {
+        "old": "no rule can hide them behind an exception, and a line's provenance always names one decision.",
+        "new": "no rule can hide them behind an exception, in its keys or in its pattern, and a line's provenance always names one decision."
+      },
+      {
+        "old": "the first append writes an empty head record before its line, so every entry on disk has a head record beside it",
+        "new": "the first append writes an empty head record before its line, and since revision 15 creates it only where none exists, linking it into place so that it is never renamed over one (after verify-68), so every entry on disk has a head record beside it"
+      },
+      {
+        "old": "(revision 10, D98, D99; revision 11, D108; revision 13, D124; revision 14, D125; R42, P15). The gate and the case lock sit beside the log and hold no data. Before each step that changes a file a reader reads, a writer re-checks that the case lock file is still the one it locked (D108; R42 and P15 since revision 12).",
+        "new": "(revision 10, D98, D99; revision 11, D108; revision 13, D124; revision 14, D125; revision 15, D136; R42, P15). The gate and the case lock sit beside the log and hold no data. Before each step that changes a file a reader reads, a writer re-checks that both are still the files it took: the gate it passed, whose identity it noted then, and the case lock it holds (D108; R42 and P15 since revision 12; the gate in R42 since revision 15, after verify-68). A reader judges by the gate whether a writer has started and whether one held the case through its read, so a writer that went on after the gate was removed or replaced would write into a case the reader judges by a file the writer never passed."
+      },
+      {
+        "old": "If the lock file was removed or replaced, the writer refuses the step.",
+        "new": "If either was removed or replaced, the writer refuses the step."
+      },
+      {
+        "old": "*A repair re-checks*, immediately before it renames the repaired log over the log, that the log and the head record are still as its check read them,",
+        "new": "*A repair re-checks*, immediately before it renames the repaired log over the log, that the log, byte for byte and not only by its length (after verify-68), and the head record are still as its check read them,"
+      },
+      {
+        "old": "A save refused because the case lock file was removed or replaced says so, says that the save was not recorded",
+        "new": "A save refused because a case lock file, the gate or the case lock, was removed or replaced says so, says that the save was not recorded"
+      },
+      {
+        "old": "the re-check before each step a reader reads, the read-back before a save is told recorded",
+        "new": "the re-check of both lock files before each step a reader reads, the first head record created and never renamed over, the read-back before a save is told recorded"
+      },
+      {
+        "old": "- Telling a live append from a torn entry left by a crash while another writer holds the case (revision 6, D74).",
+        "new": "- Case folders on a file system without hard links, such as FAT or exFAT (revision 15). The first append links its empty head record into place, which fails there with the file system's error and writes nothing; the README and the trial sheet name the file systems to use.\n- Telling a live append from a torn entry left by a crash while another writer holds the case (revision 6, D74)."
+      },
+      {
+        "old": "so both tasks are judged on text that says what 1d16873, 1b592b6 and 4adddf9 build.",
+        "new": "so both tasks are judged on text that says what 1d16873, 1b592b6 and 4adddf9 build. Since revision 15 R4 says that cash paid-in wording and a payment-method cue never take each other in and that a lookaround is an exception (D132, D136), and R42 that the re-check covers the gate (D136), so both tasks are judged on text that says what 78556a7 and cd298cc build."
+      },
+      {
+        "old": "Since D126 no rule can carry an exception that hides another list's wording.",
+        "new": "Since D126 no rule can carry an exception that hides another list's wording, and since D136 no pattern can carry one as a lookahead or lookbehind."
+      },
+      {
+        "old": "A writer refuses once it sees its lock file gone or replaced, and two saves told recorded",
+        "new": "A writer refuses once it sees either lock file gone or replaced (the gate since revision 15), and two saves told recorded"
+      },
+      {
+        "old": "T03 has used its attempts; the owner's review-20 fix (4adddf9) waits for its review, and revision 14 asks one question about R4's text that the review may test (D64, D70-D72, D78, D86, D94, D96, D97, D100, D110, D115, D117, D119, D121, D123, D126). T12 has used its attempts too; the owner's review-21 fix (1d16873) waits for its review, with a failed staging write's temporary file and the p15 test names still open (D63, D69, D73, D80, D85, D87, D89, D93, D95, D98, D105, D107, D114, D116, D118, D120, D122, D124, D125).",
+        "new": "T03 has used its attempts; the owner's review-21 fix (78556a7) waits for its review, D135 is pending, and revision 15 asks one question about R4's text that the review may test (D64, D70-D72, D78, D86, D94, D96, D97, D100, D110, D115, D117, D119, D121, D123, D126, D132, D136). T12 has used its attempts too; the owner's review-22 fix (cd298cc) waits for its review, D134 is pending, and the temporary files failed staging writes leave and the p15 test names are still open (D63, D69, D73, D80, D85, D87, D89, D93, D95, D98, D105, D107, D114, D116, D118, D120, D122, D124, D125, D136)."
+      },
+      {
+        "old": "cash wording inside a payment-method phrase is a second, which R4 states since revision 14 (D127).",
+        "new": "cash paid-in wording and a payment-method cue inside each other's phrase are a second, which R4 states since revision 14 (D127) and both ways since revision 15 (D132)."
+      },
+      {
+        "old": "and one who wants an exception lists a longer phrase instead (D126).",
+        "new": "and one who wants an exception lists a longer phrase instead, since an exception is refused in the table's keys (D126) and in the pattern (D136)."
+      },
+      {
+        "old": "the entry of a save told it was not recorded; the person saves again (D124).",
+        "new": "the entry of a save told it was not recorded; the person saves again (D124). Since revision 15 a writer that holds the case also stops when only the gate is removed or replaced, though its case lock is still its own.\n- The first empty head record is linked into place (revision 15, after verify-68), so a case folder needs a file system with hard links. NTFS, APFS and the usual Linux file systems have them; FAT and exFAT, common on USB sticks, do not, and there the first append fails with the file system's error and writes nothing. The README and the trial sheet name the file systems to use."
+      },
+      {
+        "old": "- More re-checks (D108; R42 since revision 12): a writer checks its lock file before every write call",
+        "new": "- More re-checks (D108; R42 since revision 12; the gate since revision 15): a writer checks both lock files before every write call"
+      },
+      {
+        "old": "a few reads of short files per save.",
+        "new": "a few reads of short files per save. Since cd298cc an append and a repair also read the whole log to compare its bytes with their check, a read that grows with the log; a case log holds a few hundred short entries."
+      },
+      {
+        "old": "*Platforms:* the locks take a different call on Windows (LockFileEx) than on Linux and macOS, and CI runs only Linux (Rollout step 3).",
+        "new": "*Platforms:* the locks take a different call on Windows (LockFileEx) than on Linux and macOS, and CI runs only Linux (Rollout step 3). The first empty head record is linked into place, so a case folder needs hard links, which FAT and exFAT lack (revision 15)."
+      },
+      {
+        "old": "its one default makes one condition in T03's longer-phrase filter two-way; it adds no component.",
+        "new": "its one default makes one condition in T03's longer-phrase filter two-way; it adds no component. Revision 15 writes D132 and D136 into R4 and R42, which 78556a7 and cd298cc already build; its one default adds one validator check in T03, for anchors; it adds no component."
+      },
+      {
+        "old": "No v2 rule carries an exception (D126, R4 since revision 14); where two lists meet, a longer phrase or the queue decides, never a rule's own exception. Cash wording and a payment-method cue are the one pair whose longer phrase decides nothing: cash wording is never hidden inside a payment-method phrase (D127), and, as the revision 14 default, a payment-method cue is never hidden inside a cash phrase.",
+        "new": "No v2 rule carries an exception (D126, R4 since revision 14), in its keys or, as a lookahead or lookbehind, in its pattern (D136, R4 since revision 15); where two lists meet, a longer phrase or the queue decides, never a rule's own exception. Cash wording and a payment-method cue are the one pair whose longer phrase decides nothing: neither is hidden inside the other's phrase, whichever list holds it (D127, D132; R4 since revision 15)."
+      },
+      {
+        "old": "The gate and the case lock are the tool's own files, not the user's; deleting them is like editing the log by hand.",
+        "new": "The gate and the case lock are the tool's own files, not the user's; deleting them is like editing the log by hand. A writer re-checks both before each step, so removing or replacing either stops a save (revision 15)."
+      },
+      {
+        "old": "and for verify-57 to verify-67's;",
+        "new": "and for verify-57 to verify-69's;"
+      },
+      {
+        "old": "and, as the revision 14 default, a payment-method phrase on the cash list that still meets cash wording;",
+        "new": "since D132, a payment-method cue inside a longer phrase on the cash list that still meets cash wording, and since D136, a lookahead or lookbehind refused at load (78556a7 has both); and, as the revision 15 default, an anchored pattern refused at load;"
+      },
+      {
+        "old": "1d16873 has four of these, and none of the six tests added since review 20 is yet named p15.",
+        "new": "1d16873 had four of these. Since revision 15 they also include the gate removed or replaced during a save, a first append from a stale check that never resets a head record, and a repair refused when the log was rewritten to the same length (verify-68). cd298cc has all three; the gate's test is named p15, and none of the eight tests added since review 20 yet is."
+      },
+      {
+        "old": "Since D126 it also refuses an exception on any rule (R4 since revision 14; 4adddf9).",
+        "new": "Since D126 it also refuses an exception on any rule (R4 since revision 14; 4adddf9), and since D136 a lookahead or lookbehind in a pattern (R4 since revision 15; 78556a7); as the revision 15 default, an anchor too, except the bank's code listed in code."
+      },
+      {
+        "old": "at 1d16873 only a failed rename removes it (verify-62, verify-64)",
+        "new": "at cd298cc the empty head record's staging file is always removed, and the others only when their rename fails (verify-62, verify-64). The first empty head record is linked into place rather than renamed, so the case folder needs a file system with hard links (revision 15)"
+      },
+      {
+        "old": "**Case log contract** (revisions 5 to 14;",
+        "new": "**Case log contract** (revisions 5 to 15;"
+      },
+      {
+        "old": "gets a conflict if its position is stale. The first append writes the head record before its line.",
+        "new": "gets a conflict if its position is stale. The first append creates the empty head record before its line, only where none exists, and never renames over one (revision 15)."
+      },
+      {
+        "old": "a writer re-checks that the case lock file is the one it locked. It refuses the step if the file was removed or replaced; refused after the line, it leaves the entry unrecorded and says the save was not recorded (revisions 10 to 13; D108, D124).",
+        "new": "a writer re-checks that both lock files, the gate it passed and the case lock it holds, are still the files it took. It refuses the step if either was removed or replaced; refused after the line, it leaves the entry unrecorded and says the save was not recorded (revisions 10 to 13 and 15; D108, D124, D136)."
+      },
+      {
+        "old": "A repair re-checks before its log rename that the log and the head record are as its check read them,",
+        "new": "A repair re-checks before its log rename that the log, byte for byte, and the head record are as its check read them,"
+      },
+      {
+        "old": "or when the case lock file was removed or replaced. A write whose read-back",
+        "new": "or when a case lock file, the gate or the case lock, was removed or replaced. A write whose read-back"
+      },
+      {
+        "old": "| A table edit gives a v2 rule an exception (unless: FPS on the cash rule) | Refused at load, naming the rule (D126; R4 since revision 14; 4adddf9). Before 4adddf9 it loaded, the cash wording was dropped, and FPS CASH DEPOSIT STRIPE counted as a card settlement in trading receipts (verify-65, verify-67) | R4 |",
+        "new": "| A table edit gives a v2 rule an exception (unless: FPS on the cash rule) | Refused at load, naming the rule (D126; R4 since revision 14; 4adddf9). Before 4adddf9 it loaded, the cash wording was dropped, and FPS CASH DEPOSIT STRIPE counted as a card settlement in trading receipts (verify-65, verify-67) | R4 |\n| A table edit writes an exception into a v2 pattern (the cash rule's pattern KIOSK CASH DEPOSIT followed by a negative lookahead for STRIPE, with CASH DEPOSIT off the cash names) | Refused at load, naming the rule (D136; R4 since revision 15; 78556a7). At 4adddf9 it loaded, and FPS KIOSK CASH DEPOSIT STRIPE counted as a card settlement in trading receipts (verify-69) | R4 |\n| A table edit anchors a v2 pattern (the cash rule's pattern CASH DEPOSIT$ or ^CASH DEPOSIT, with CASH DEPOSIT off the cash names) | Design default since revision 15: refused at load, naming the rule; the bank's code listed in code keeps its ^. At 78556a7 it loads, FPS CASH DEPOSIT STRIPE matches no cash wording, and the gateway makes it a card settlement in trading receipts; revision 15 asks the owner | R4 |"
+      },
+      {
+        "old": "| Design default since revision 14: the cue is not taken in by the cash phrase, so the credit is ambiguous, the rail or the cheque and cash. At 4adddf9 the cue counts only as the cash phrase, and FPS CASH DEPOSIT counts as a cash deposit in trading receipts and M18; revision 14 asks the owner |",
+        "new": "| The cue is not taken in by the cash phrase, so the credit is ambiguous, the rail or the cheque and cash (D132; R4 since revision 15; 78556a7). At 4adddf9 the cue counted only as the cash phrase, and FPS CASH DEPOSIT counted as a cash deposit in trading receipts and M18 (verify-69) |"
+      },
+      {
+        "old": "| Someone removes or replaces the case lock file while a writer holds the case (a cleanup script, a sync or backup client, a person) | The writer re-checks its lock file before each step a reader reads, finds it gone or replaced, and refuses the step. Before the line, nothing is written ('the case lock file was removed or replaced while this window held the case; nothing was written').",
+        "new": "| Someone removes or replaces the case lock file, or the gate, while a writer holds the case (a cleanup script, a sync or backup client, a person) | The writer re-checks both lock files before each step a reader reads (the gate since revision 15, D136; cd298cc, after verify-68), finds one gone or replaced, and refuses the step. Before the line, nothing is written ('a case lock file was removed or replaced while this window held the case; nothing was written')."
+      },
+      {
+        "old": "and since revision 13 that the save was not recorded, which 1d16873 says at the head rename;",
+        "new": "and since revision 13 that the save was not recorded, which cd298cc says at the head rename;"
+      },
+      {
+        "old": "At b428d56 both were told their saves at position 2 were recorded, and the log read intact with B's drop entry in place of A's save | R42, P15 |",
+        "new": "At b428d56 both were told their saves at position 2 were recorded, and the log read intact with B's drop entry in place of A's save | R42, P15 |\n| The case lock file is replaced while A's first append, from a check of an empty case, waits to publish its empty head record; B takes the new lock, appends entry 1 and is told it was recorded (verify-68) | A's empty head record is linked into place only where none exists, so A finds B's head record, stops with a conflict and writes nothing; the log reads intact with B's save (revision 15; cd298cc). At 1d16873 A's rename put an empty head record over B's, B's entry became a torn write to drop, and a confirmed repair left an intact log without a save told recorded | R42, P15 |\n| A recorded entry is rewritten to the same length between a repair's check and its log rename (verify-68) | The repair compares the log's bytes with what its check read and refuses; the log is left as it was, and the next check names the changed entry (R42 since revision 14; cd298cc). At 1d16873 only the length was compared, so the repair's copy overwrote the change and the log read intact | R42, R43, P15 |"
+      },
+      {
+        "old": "| Someone removes the gate while a check holds it | A writer can create a new gate and take the case during the check's read; outside R42's guarantee (D99).",
+        "new": "| Someone removes the gate while a check holds it | A writer that holds the case refuses its next step once it sees the gate gone (revision 15; cd298cc). Another writer can create a new gate and take the case during the check's read; outside R42's guarantee (D99)."
+      },
+      {
+        "old": "At 1d16873 only a failed rename removes it, so a failed write or fsync leaves a file holding case history beside the log",
+        "new": "At cd298cc the empty head record's staging file is always removed; for a head record or a repaired log only a failed rename removes it, so a failed write or fsync leaves a file holding case history beside the log"
+      },
+      {
+        "old": "| The case folder is on a network share (not supported) | Not detected (D66). Between processes the lock usually still holds; two CaseLog objects in one process might both write. The README and the trial sheet say to keep cases on a local disk | R42 |",
+        "new": "| The case folder is on a network share (not supported) | Not detected (D66). Between processes the lock usually still holds; two CaseLog objects in one process might both write. The README and the trial sheet say to keep cases on a local disk | R42 |\n| The case folder is on a file system without hard links (FAT or exFAT, as on many USB sticks; not supported) | The first append fails with the file system's error when it links its empty head record into place; the staging file is removed and nothing is written (revision 15; cd298cc). The README and the trial sheet name the file systems to use | R42 |"
+      },
+      {
+        "old": "- Requirements (revision 14, D131): R4 and R42 say what D125 to D127 decided and 1b592b6, 4adddf9 and 1d16873 build, so no log format, stored data or committed figure changes. The revision 14 default for a payment-method cue inside a cash phrase moves no shipped verdict, because no shipped cash phrase holds payment-method wording.",
+        "new": "- Requirements (revision 14, D131): R4 and R42 say what D125 to D127 decided and 1b592b6, 4adddf9 and 1d16873 build, so no log format, stored data or committed figure changes. The revision 14 default for a payment-method cue inside a cash phrase moves no shipped verdict, because no shipped cash phrase holds payment-method wording.\n- Requirements (revision 15, D136): R4 and R42 say what D132 and D136 decided and 78556a7 and cd298cc build, so no log format, stored data or committed figure changes. The two-way exemption and the lookaround refusal move no shipped verdict, because no shipped cash phrase holds payment-method wording and no shipped v2 pattern has a lookaround; the revision 15 default on anchors moves none either, because the bank's code is the only anchored pattern v2 ships. A first head record made by a link is the same file a rename made."
+      },
+      {
+        "old": "- Case log (revisions 6 to 14): nothing to migrate.",
+        "new": "- Case log (revisions 6 to 15): nothing to migrate."
+      },
+      {
+        "old": "and the read-back and the repair's re-checks (revision 14). None changes what the log or the head record holds.",
+        "new": "the read-back and the repair's re-checks (revision 14), and the gate's re-check and the first head record linked into place (revision 15). None changes what the log or the head record holds."
+      },
+      {
+        "old": "the table-edit cases from verify-50 to verify-67;",
+        "new": "the table-edit cases from verify-50 to verify-69;"
+      },
+      {
+        "old": "The README and the trial sheet say case folders stay on a local disk, out of folders a sync, backup or cleanup tool manages,",
+        "new": "The README and the trial sheet say case folders stay on a local disk with hard links (NTFS, APFS or a Linux file system, not FAT or exFAT), out of folders a sync, backup or cleanup tool manages,"
+      },
+      {
+        "old": "- **The signal for the case log (revisions 5 to 14):**",
+        "new": "- **The signal for the case log (revisions 5 to 15):**"
+      },
+      {
+        "old": "A writer refused because its lock file was removed or replaced says so: 'the case lock file was removed or replaced while this window held the case',",
+        "new": "A writer refused because a lock file, the gate or the case lock, was removed or replaced says so: 'a case lock file was removed or replaced while this window held the case',"
+      },
+      {
+        "old": "A writer then refuses once it sees its file gone or replaced, and two saves told recorded at one position show as a broken log.",
+        "new": "A writer then refuses once it sees either file gone or replaced (the gate since revision 15), and two saves told recorded at one position show as a broken log."
+      },
+      {
+        "old": "it is removed when its write fails (revision 13; at 1d16873 still only when its rename fails).",
+        "new": "it is removed when its write fails (revision 13; at cd298cc only the empty head record's is removed whatever fails, and the others only when their rename fails)."
+      },
+      {
+        "old": "Each worktree sits under .bridgie/worktrees but is a checkout of its task branch; within it, .bridgie/ is excluded.",
+        "new": "- For revision 15, item 20 was searched again in the T12 worktree (branch at cd298cc), with _create_empty_head and _gate_id added to its pattern, and item 23 in the T03 worktree (branch at 78556a7), with _has_lookaround and _rail_and_cash searched beside it, both with the owner, using ripgrep through the Grep tool over src, tests, evals and README.md; item 19's lines and the code cited in Context were read at 78556a7 and cd298cc. The patterns in items 17, 20 and 23, with _has_lookaround and _rail_and_cash, were searched from the repository root at 4b4030b on the integration branch with the same tool and the same .bridgie exclusion: items 17 and 23 find nothing, and item 20 finds the same test name.\nEach worktree sits under .bridgie/worktrees but is a checkout of its task branch; within it, .bridgie/ is excluded."
+      },
+      {
+        "old": "and :894-896 at 4adddf9.",
+        "new": "and :894-896 at 4adddf9 and :931-933 at 78556a7."
+      },
+      {
+        "old": "at 93782c5 for revision 13 or at c1f1625 for revision 14.",
+        "new": "at 93782c5 for revision 13, at c1f1625 for revision 14 or at 4b4030b for revision 15."
+      },
+      {
+        "old": "In the T03 worktree at 4adddf9, reversal linking is src/cma/categorise.py:927-952, which since D119 looks debits up by amount and payee, reading the payee through counterparty() and its fixed prefix list (:911-924)",
+        "new": "In the T03 worktree at 78556a7, reversal linking is src/cma/categorise.py:964-989, which since D119 looks debits up by amount and payee, reading the payee through counterparty() and its fixed prefix list (:948-961)"
+      },
+      {
+        "old": "and revision 14's read-back and the repair's re-checks (D125). On the T12 branch at 1d16873 (after D122 and D125, not yet reviewed), a ripgrep search for",
+        "new": "revision 14's read-back and the repair's re-checks (D125), and revision 15's re-check of both lock files and the first head record linked into place (D136, after verify-68). On the T12 branch at cd298cc (the owner's review-22 fix, not yet reviewed), a ripgrep search for"
+      },
+      {
+        "old": "|SaveNotRecorded|_publish` over src, tests, evals and README.md finds 340 matches in three files:",
+        "new": "|SaveNotRecorded|_publish|_create_empty_head|_gate_id` over src, tests, evals and README.md finds 360 matches in three files:"
+      },
+      {
+        "old": "- src/cma/case.py (91), the definition.",
+        "new": "- src/cma/case.py (101), the definition."
+      },
+      {
+        "old": "(_check, :266) names a missing head record",
+        "new": "(_check, :271) names a missing head record"
+      },
+      {
+        "old": "verify (:437) is as Context describes. writer() (:615) waits for checks and a moment for another writer, and releases by depth. _enter passes the gate alone (:659), and _take_case_lock refuses a lock file replaced while it was taken (:688). _require_lock_in_place (:721) runs immediately before every write call of the line (:912) and before every attempt of each rename (_replace, :954). Its own message still says nothing was written (:731), and _publish turns that into 'the save was not recorded' when the refused step is the head rename after the line (:930-932). _one_save (:753-768) wraps append (:770) and drop_torn_entry (:798), and an append refuses if the log grew since its check (:906-909). A repair re-checks its lock, the log's size and the head record before its log rename (:828-838). Every save publishes its head record only if the head record still lists what its check read (_write_head, :867-890), and is told recorded only after reading back an intact log that holds its entry (_publish, :921-937).",
+        "new": "verify (:444) is as Context describes. writer() (:622) waits for checks and a moment for another writer, and releases by depth. _enter passes the gate alone and notes its identity (:666-697), and _take_case_lock refuses a lock file replaced while it was taken (:699). _require_lock_in_place (:732-745) compares both lock files with the ones the writer took, and runs immediately before every write call of the line (:953), before the empty head record is linked into place (:899) and before every attempt of each rename (_replace, :995). Its own message still says nothing was written (:744-745), and _publish turns that into 'the save was not recorded' when the refused step is the head rename after the line (:971-973). _one_save (:769-783) wraps append (:785) and drop_torn_entry (:813), and an append refuses if the log's length or bytes changed since its check (:947-950). _create_empty_head (:888-906) links the first empty head record into place and stops with a conflict if one is there. A repair compares the log's bytes with its check before reading it (:836-838), and re-checks both lock files, the log's bytes and the head record before its log rename (:843-851). Every save publishes its head record only if the head record still lists what its check read (_write_head, :908-931), and is told recorded only after reading back an intact log that holds its entry (_publish, :962-978)."
+      },
+      {
+        "old": "- tests/test_case_log.py (245), among them the gate cases, the interference cases (a lock file replaced after the line, after the empty head record and before a repair's rename, :1859-1916) and the six tests added since review 20 (:2070-2200), marked invariants but not named p15.",
+        "new": "- tests/test_case_log.py (255), among them the gate cases, the interference cases (a lock file replaced after the line, after the empty head record and before a repair's rename, :1859-1916; the gate removed or replaced during a save, :2247-2271, named p15) and the eight tests added since review 20 (:2070-2244), marked invariants but not named p15."
+      },
+      {
+        "old": "On the integration branch at c1f1625, this pattern finds only tests/test_rules.py:318,",
+        "new": "On the integration branch at 4b4030b, this pattern finds only tests/test_rules.py:318,"
+      },
+      {
+        "old": "re-checks its lock file before each step a reader reads, and waits for checks before it does. The first append writes the head record before its line.",
+        "new": "re-checks both lock files before each step a reader reads, and waits for checks before it does. The first append creates the empty head record before its line, never renaming over one."
+      },
+      {
+        "old": "revision 13, D115-D121; revision 14, D126).** On the T03 branch at 4adddf9 (after D123 and D126, not yet reviewed), a ripgrep search for",
+        "new": "revision 13, D115-D121; revision 14, D126; revision 15, D132, D136).** On the T03 branch at 78556a7 (the owner's review-21 fix, not yet reviewed), a ripgrep search for"
+      },
+      {
+        "old": "the bank return codes listed in code (:101-103), the Rule fields (:128, :131, :134), the back-reference test (:240), the flag's validation, which also refuses an exception or a debit-only direction on the bank-code rule (:382-393), the code's pattern refused without the flag (:413-414), the refusal of back-references and conditional groups (:416), a listed code with no flagged rule (:468-470), the span patterns and the parts that may end early, built at load (:543-545), the test for a part that may end early (:678), its use (:709), the part forced to end at a given place (:721, :741), the longest match at each start (:727-746), credit_matches, whose longer-phrase filter never counts the bank-code rule as inside another match (:757, :769), and the bank's code at step 2 (:812);",
+        "new": "the bank return codes listed in code (:101-103), the Rule fields (:128, :131, :134), the back-reference test (:240), the flag's validation, which also refuses an exception or a debit-only direction on the bank-code rule (:402-413), the code's pattern refused without the flag (:440-441), the refusal of back-references and conditional groups (:442-447), a listed code with no flagged rule (:494-498), the span patterns and the parts that may end early, built at load (:570-572), the test for a part that may end early (:705), its use (:736), the part forced to end at a given place (:748, :768), the longest match at each start (:754-773), credit_matches, whose longer-phrase filter never counts the bank-code rule as inside another match (:784, :796), and the bank's code at step 2 (:849);"
+      },
+      {
+        "old": "On the integration branch at c1f1625 the same pattern finds nothing.",
+        "new": "On the integration branch at 4b4030b the same pattern finds nothing, and so do _has_lookaround and _rail_and_cash."
+      },
+      {
+        "old": "(:336-474). The ten shipped patterns pass.",
+        "new": "(:356-501 at 78556a7). The ten shipped patterns pass."
+      },
+      {
+        "old": "Since 4adddf9 it refuses an `unless` or a `requires` on every v2 rule (:403-412; D126, R4 since revision 14); rule_matches still reads them (:632-636), for the frozen v1 table. The cash exemption in the longer-phrase filter (:759-765) runs one way, cash wording inside a payment-method phrase; revision 14's default makes it two-way.",
+        "new": "Since 4adddf9 it refuses an `unless` or a `requires` on every v2 rule (:423-432 at 78556a7; D126, R4 since revision 14), and since 78556a7 a lookahead or lookbehind in a v2 pattern (_has_lookaround, :259-276, checked at :433-439; D136, R4 since revision 15), with four cases in one test (tests/test_rules_v2.py:1862-1870); rule_matches still reads an exception (:659-663), for the frozen v1 table. Since 78556a7 the exemption in the longer-phrase filter runs both ways: cash paid-in wording and a payment-method cue never count as inside each other's phrase (:786-792, with _rail_and_cash at :803-806; D132), with a test for each side (tests/test_rules_v2.py:1815-1823 and :1851-1859). An anchored v2 pattern still loads there (revision 15's question)."
+      }
+    ]
+  }
+}
+```

@@ -1,0 +1,32 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.18, pytest-9.2.0, pluggy-1.7.0 -- /usr/local/bin/python
+cachedir: .pytest_cache
+rootdir: /home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T01
+configfile: pyproject.toml
+testpaths: tests
+plugins: langsmith-0.14.17, anyio-4.15.1
+collecting ... collected 372 items / 351 deselected / 21 selected
+
+tests/test_cli.py::test_unknown_cma_ruleset_is_refused_not_blamed_on_the_model PASSED [  4%]
+tests/test_cli.py::test_written_evidence_records_the_ruleset[None] PASSED [  9%]
+tests/test_cli.py::test_written_evidence_records_the_ruleset[v1] PASSED  [ 14%]
+tests/test_cli.py::test_a_refused_ruleset_leaves_a_durable_review_id_reusable PASSED [ 19%]
+tests/test_p7_history.py::test_a_review_left_pending_by_the_pre_change_version_resumes_here PASSED [ 23%]
+tests/test_p7_history.py::test_rollback_a_review_left_pending_here_resumes_under_the_pre_change_version PASSED [ 28%]
+tests/test_p7_history.py::test_the_built_wheel_carries_v1_byte_for_byte PASSED [ 33%]
+tests/test_p7_history.py::test_cma_run_refuses_when_the_rules_package_is_missing PASSED [ 38%]
+tests/test_rules.py::test_v1_is_packaged_with_an_id_and_the_hash_of_its_file PASSED [ 42%]
+tests/test_rules.py::test_cma_run_refuses_a_missing_table_rather_than_blaming_the_model PASSED [ 47%]
+tests/test_rules.py::test_v1_hash_is_pinned_in_code PASSED               [ 52%]
+tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[category: revenue_card_settlement-category: other] PASSED [ 57%]
+tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[direction: in\n-direction: any\n] PASSED [ 61%]
+tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[frozen: true-frozen: false] PASSED [ 66%]
+tests/test_rules.py::test_cma_run_refuses_a_changed_v1_and_writes_no_evidence PASSED [ 71%]
+tests/test_rules.py::test_an_unknown_ruleset_is_refused_naming_the_known_ones PASSED [ 76%]
+tests/test_rules.py::test_a_ruleset_id_cannot_name_a_path PASSED         [ 80%]
+tests/test_rules.py::test_evidence_records_the_ruleset PASSED            [ 85%]
+tests/test_rules.py::test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1 PASSED [ 90%]
+tests/test_rules.py::test_a_legacy_resume_with_a_damaged_table_is_refused_before_anything_is_recorded PASSED [ 95%]
+tests/test_rules.py::test_rule_tables_keep_lf_line_endings_on_every_checkout PASSED [100%]
+
+===================== 21 passed, 351 deselected in 10.78s ======================

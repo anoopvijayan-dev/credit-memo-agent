@@ -1,0 +1,27 @@
+I walked every checklist line for T03. All four verify-27 findings now have tests that give the amended R4 outcome, and nothing I checked failed.
+
+**Test runs:**
+- `ruff check src tests evals` and `compileall` are clean. The only ruff errors in the worktree are helper scripts earlier seats left under `.bridgie/runs/`.
+- The full suite passes: 644 tests. The marker tiers pass too: 101 invariants, 65 contracts, 83 dual_run.
+- The offline evals ground 9 of 9 memos under both `CMA_RULESET=v1` and `v2`.
+
+**The four findings**, each now a test with the result the owner asked for:
+- **HMRC credit with savings wording:** ambiguous, recording both `own_pots_savings` and `hmrc_repayment`.
+- **Counter cash at a branch named GRANT:** ambiguous, so neither trading receipts nor explained money.
+- **Bare TAX POT label in an outside payment:** unexplained (`v2:default`), not an own-account transfer.
+- **Card refund from a merchant named with savings-transfer wording:** ambiguous, recording both candidates.
+
+Run end to end through `cma run`, all four stay out of trading receipts (M2) and appear in M16's evidence. Tests that shuffle the lists within each stage (8 seeds) and cross every pair of credit lists (over 1,000 pairs) give the same verdicts every time.
+
+**What I changed** (left uncommitted):
+- **`README.md`:** the categoriser row now describes the ambiguous verdict, where it sits in the precedence, and its `v2:conflict:` record.
+- **`tests/test_rules_v2.py`:** one new contract test. The categoriser decides a line is the bank's own returned-payment code only because that rule's regex starts with `^`. The test pins `returned_dd` as the only rule shaped that way. It also checks that `UNPAID DD` typed later in a payment reference does not settle the line.
+
+**Left for the owner** (details in `notes`):
+- Own-account pairing (R8), firm rules loaded by `cma run`, and the ambiguous-credit counts in `cma report` are Tier 2 or later tasks. For now, a line's rule id in the evidence file is the only record of an ambiguous credit.
+- Which reading of D52 the owner meant is still open; the code follows design revision 3.
+- The `^` convention is guarded only by the new test. Making it a field in the rule table would change the table format, so I didn't do it.
+
+```json
+{"task":"T03","claims":[{"text":"Lint/compile clean for project code (src, tests, evals)","proof_cmd":"ruff check src tests evals && python -m compileall -q src tests","proof_output":"All checks passed!"},{"text":"Full suite passes","proof_cmd":"python -m pytest -q","proof_output":"644 passed in 34.41s"},{"text":"Marker tiers pass","proof_cmd":"python -m pytest -q -m invariants|contracts|dual_run","proof_output":"invariants 101 passed; contracts 65 passed; dual_run 83 passed"},{"text":"Four verify-27 findings are tests with the R4 outcome, plus end to end through cma run","proof_cmd":"python -m pytest -q -rA tests/test_rules_v2.py -k verify27","proof_output":"5 PASSED (4 parametrised + cma run end-to-end)"},{"text":"Shuffle within stages and pairwise matrix give policy-only verdicts","proof_cmd":"python -m pytest -q -rA tests/test_rules_v2.py -k 'shuffling or pairwise'","proof_output":"2 PASSED"},{"text":"Only returned_dd is an anchored bank code (new test)","proof_cmd":"python -m pytest -q -rA tests/test_rules_v2.py -k anchored","proof_output":"PASSED"},{"text":"Rollback v1 and evals under both rulesets","proof_cmd":"CMA_RULESET=v1|v2 python evals/run_evals.py --llm fake --out <tmp>","proof_output":"9/9 memos fully grounded; model = fake; ruleset = v2 / ruleset = v1"},{"text":"Performance: 10k lines under 2s","proof_cmd":"python -m pytest -q -rA tests/test_rules_v2.py -k 10000","proof_output":"PASSED"},{"text":"README documents the ambiguous verdict and its provenance","proof_cmd":"grep -n 'ambiguous verdict' README.md","proof_output":"78: ... profile names, an ambiguous verdict, firm rules ..."}],"files_changed":["README.md","tests/test_rules_v2.py"],"dispositions":[{"finding":"HMRC credit with savings wording -> own-account","disposition":"not_reproduced","evidence":"-> (other, v2:conflict:own_pots_savings+hmrc_repayment) PASSED"},{"finding":"Counter cash at GRANT branch falls out of trading","disposition":"not_reproduced","evidence":"Amended R4: ambiguous (other, v2:conflict:cash_paid_in+explained_non_trading) PASSED"},{"finding":"Bare pot label -> own-account","disposition":"not_reproduced","evidence":"(other, v2:default) PASSED"},{"finding":"Refund from savings-named merchant -> unexplained","disposition":"not_reproduced","evidence":"Amended R4: (other, v2:conflict:own_pots_savings+refunds) PASSED"}],"notes":"See full claim.json in run dir: R8 pairing, firm-rule loading in cma run, and cma report ambiguity counts are Tier 2/later; the D52 reading is an open owner question; the '^' bank-code convention is pinned by a test, not a schema field; no changelog file exists; ruff findings only in .bridgie/runs helper scripts; changes uncommitted."}
+```

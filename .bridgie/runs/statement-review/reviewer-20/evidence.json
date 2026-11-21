@@ -1,0 +1,43 @@
+{
+  "task": "T01",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R54",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:165 validates the packaged table and checks its pinned SHA-256. src/cma/categorise.py:197 selects v1 and src/cma/categorise.py:212 applies the original ordered, sign-aware matches. src/cma/graph.py:216 records the table used, src/cma/graph.py:187 includes it in evidence, and src/cma/cli.py:229 writes the record. The runner passed explicit and default v1 evidence, installed-wheel loading, unknown and path-like ID refusal, frozen-table refusal, durable retry, and SQLite checkpoint migration in both directions. Reviewed sequential double submission, concurrent checkpoint and output handling, amount boundaries, GBP and date handling, partial failure, authorization, tenant isolation, and MCP and Monzo consumers by inspection. The existing duplicate-review and MCP path tests also passed.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-20/contracts-4.log"
+    },
+    {
+      "id": "P7",
+      "tier": "adversarial",
+      "check": "tests/test_p7_history.py:35 pins fd7b64c and tests/test_p7_history.py:58 runs its suite with the capture plugin and compares the complete rebuilt golden. tests/golden/p7_tools/capture_plugin.py:66 captures valid statements left in temporary directories, including the Monzo balance-column conversion. The repository has one tracked CSV, covered at tests/test_rules.py:435. The runner passed the historical rebuild, coverage assertions, and explicit-v1 comparisons for 13 synthetic cases, one committed example, 48 statement fixtures, and 13 single-line cases. The comparisons at tests/test_rules.py:421, tests/test_rules.py:435, and tests/test_rules.py:447 check M1–M16 values, units, and evidence with no exceptions.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-20/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 284,
+      "criterion": "R54",
+      "claim": "The producer's claim that categorisation performance is unchanged within measurement noise is unproven. The runner logs contain no before-and-after benchmark, and the producer's two reported minima do not quantify measurement variation.",
+      "repro": "Compare the configured runner logs with the claim's timing output. To verify the claim, run python -m timeit -r 20 -n 5 against categorise.categorise on examples/cafe_stretched.csv in separate processes importing fd7b64c and the reviewed revision, with identical setup, and record the repeat distributions in a runner result."
+    },
+    {
+      "severity": "minor",
+      "file": "pyproject.toml",
+      "line": 44,
+      "criterion": null,
+      "claim": "The producer quotes a stale full-suite result of 370 passed. The current runner verifies 372 passed with no skips reported. The suite result alone does not establish which extras were installed.",
+      "repro": "Read the footer of specified-3.log and compare it with the full-suite claim. To verify the exact environment claim, capture the successful pip install -e '.[dev,mcp,durable,llm]' and python -m pytest -v -rs in the same runner environment."
+    }
+  ],
+  "verdict": "pass"
+}

@@ -1,0 +1,117 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed revision 14 against the checked-out code. Canonical entry bytes, chain order, head comparison and torn-entry diagnostics are implemented in src/cma/case.py:169–332. Holder, free-case, steady and untestable-lock reads are handled at lines 437–580. The sign-off guard is at line 589, with production sign-off assigned to T27. The runner logs confirm the named tamper, rebuilt-chain, torn-entry, repeat-submit, lock replacement and reentrancy tests passed. Reviewed boundary inputs, UTC timestamps, the absence of currency arithmetic, partial failures, local permissions, folder isolation, CLI consumers and migration scope. The empty-head publication race can erase an acknowledged save, and the write guard does not check gate replacement.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-68/invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-68/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-68/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-68/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-68/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-68/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-68/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-68/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 902,
+      "criterion": "P15",
+      "claim": "A stale first append can reset the head and make an acknowledged entry eligible for removal. The repaired log then verifies as intact without that acknowledged entry.",
+      "repro": "On an empty case, pause writer A immediately before os.replace at line 961 during publication of its empty head, after the lock check passes. Remove the case lock and let writer B acquire its replacement, append entry 1 and return success. Resume A. Its empty-head rename overwrites B's head, then A refuses its own append because the log has grown. The next holder sees B's entry as an unrecorded tail. Confirm the repair at expected position 0. Verification now reports an intact log containing only the repair entry."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 726,
+      "criterion": "P15",
+      "claim": "The per-write guard checks only the case lock inode. Removing or replacing the gate during a save does not cause any write step to be refused.",
+      "repro": "Start an append to a nonempty case and pause after it checks the log. Replace only log.jsonl.gate, leave log.jsonl.lock in place, and resume. The entry write and head rename both proceed, and the append reports success."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 837,
+      "criterion": "P15",
+      "claim": "The repair's log recheck compares only file length, so it can overwrite changed log bytes even though revision 14 requires the log to match what the repair checked.",
+      "repro": "Create a log with two recorded entries and a torn third entry. Start a confirmed repair and pause after it stages the replacement, before the pre-rename callback. Change one byte in a recorded entry without changing the log length or head. Resume. The pre-rename check passes, the repair overwrites the changed bytes with its staged copy, and the result verifies as intact."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 337,
+      "criterion": "P15",
+      "claim": "The producer's CLI claim says a held case with a torn tail exits 0 and says 'appending'. The runner's passing contract test asserts exit 4 and 'saved'.",
+      "repro": "See tests/test_case_log.py:1339 and its passing result in contracts-4.log. The test holds the case over a torn tail and invokes cma case check."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1213,
+      "criterion": "P15",
+      "claim": "The producer's claim that the passing stress test reproduced two commits on every reader retry with the lock held at fallback is not proven. The test schedules concurrent work without asserting any particular interleaving.",
+      "repro": "Read the test and its result in specified-3.log. Its assertions are also consistent with zero concurrent commits. A synchronized regression test that asserts the claimed interleaving, run with python -m pytest -v tests/test_case_log.py, would prove that scenario."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 645,
+      "criterion": "P15",
+      "claim": "The producer claims the read retry budget is the only applicable retry cap. Writer acquisition has its own wait limits, and Windows rename has a separate 40-attempt retry loop.",
+      "repro": "Hold the gate while another writer attempts a save to exercise the separate writer-side wait. The rename retry contract is exercised by test_a_rename_blocked_by_a_windows_reader_is_retried_not_failed in specified-3.log."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

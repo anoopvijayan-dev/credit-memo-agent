@@ -1,0 +1,85 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:192 checks canonical bytes, entry hash, sequence and predecessor. src/cma/case.py:278 compares the surviving chain with the recorded hashes and count, detecting rebuilt histories. src/cma/cli.py:319 reaches verification and exits 3 with the first bad entry. Runner tier invariants:5 passed the named change, removal, reorder, rebuild, torn-entry and ENOLCK regressions. Runner tiers contracts:4 and specified:3 confirmed duplicate-submit, CLI exit-code, concurrency and interrupted-repair coverage.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-29/invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-29/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-29/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-29/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-29/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-29/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-29/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-29/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 413,
+      "criterion": "P15",
+      "claim": "If lock release fails, writer() skips closing the descriptor after clearing its reference to it. The process can keep the lock indefinitely, blocking subsequent appends and torn-entry recovery until it exits.",
+      "repro": "On POSIX, inject a one-shot OSError in _unlock before it calls flock. Append at position 0 and observe the error after the log and head have been committed. Restore _unlock and attempt an append at position 1 from a fresh CaseLog on the same path while the first process remains alive. The leaked descriptor still holds the lock, so the append raises CaseLocked."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 316,
+      "criterion": "P15",
+      "claim": "The CLI relies on filesystem access and does not enforce the producer's claimed case-root ownership check. The cited file-mode test only covers files created by the writer.",
+      "repro": "Create a case under one OS account, grant a second account read and traversal access to the case directory and read access to the log and head, then run cma case check as the second account. It exits 0 and prints the entry count and head hash even though the caller does not own the case root."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

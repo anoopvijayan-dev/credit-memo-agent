@@ -1,0 +1,93 @@
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/cli.py:319 loads the case log through verify. src/cma/case.py:196 validates canonical entry bytes, hashes, positions and links. src/cma/case.py:283 compares entries with the recorded head and detects rebuilt chains and missing entries. The passing invariants-5.log names the CLI tests for changed, removed, reordered and rebuilt entries, plus the torn-tail test. The passing specified-3.log confirms the duplicate-submit, repair, privacy and strict-decoding tests ran.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-34/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-34/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-34/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-34/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-34/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-34/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-34/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 334,
+      "criterion": "P15",
+      "claim": "Concurrent forks share the same mutable list of acquired state locks. The first fork's parent callback can clear that list while the second fork is waiting to acquire a state lock. The second parent callback then has no record of the lock it acquired, leaving verification and appends blocked in the parent.",
+      "repro": "Keep one CaseLog alive. Pause thread A in a before-fork callback registered before importing cma.case, so it runs after the case hook has acquired the state lock. Start os.fork in thread B and wait until B has replaced the shared list and is blocked acquiring that lock. Let A finish its fork, delaying B after its lock acquisition until A's parent hook has cleared the list. Let B finish its fork and exit. A third thread calling verify on the live CaseLog blocks on the state lock. The runner's fork-during-acquisition test uses a single fork caller."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 327,
+      "criterion": "P15",
+      "claim": "A second handle opened through a symlink to the case directory can report a torn log as intact even in the thread that owns the writer lock. The ownership lookup compares path spellings while the OS lock contends on the same underlying file.",
+      "repro": "Create a case with two committed entries and an incomplete third entry, then create a directory symlink to the case. In one thread, hold writer() on the real path and call require_intact() through for_case on the symlink path. The real handle raises CaseLogBroken at entry 3. The aliased handle misses the owner lookup, treats its own thread's lock as another writer and returns the two-entry head."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 56,
+      "criterion": "P15",
+      "claim": "The case-check command in the shell example uses an unquoted angle-bracket placeholder that the shell parses as redirection.",
+      "repro": "Paste the README command into Bash as shown. Bash reports a syntax error before invoking cma. The CLI tests pass a concrete path through Typer and do not exercise the documented shell line."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

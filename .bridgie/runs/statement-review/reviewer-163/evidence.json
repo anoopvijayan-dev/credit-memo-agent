@@ -1,0 +1,94 @@
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:66 maps unexplained credits, src/cma/metrics.py:483 assigns credits and totals them in pence, and src/cma/metrics.py:562 returns the GBP figures with line IDs. src/cma/graph.py:308 and src/cma/mcp_server.py:98 carry those figures to the CLI and MCP.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:86 checks that accepted amounts round-trip to the penny. src/cma/metrics.py:512 computes M3 from whole pence and supplies an n/a reason when needed. src/cma/graph.py:175 and src/cma/cli.py:415 display pennies. In Monzo, src/cma/importers/monzo.py:208 tests for surplus fields before enforcing the current row's amount limit, contrary to revision 29.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks bucket membership and the difference in pence before returning figures. src/cma/cli.py:115 reports the IDs and exits 6. The named CLI and MCP refusal tests passed. I also traced duplicate review submission and concurrent refresh through src/cma/cli.py:230 and :357, export staging through :333, and the MCP path boundary through src/cma/mcp_server.py:37 and :51.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The unmatched-credit defaults at src/cma/categorise.py:1311 and :1360 assign OTHER. src/cma/models.py:66 maps it to unexplained, which src/cma/metrics.py:72 reports as M25. The named unknown-payer cases passed for both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:581 checks credit ID counts and :586 checks the signed penny totals. M18 is built from M2's cash subset at :495 and :565. The runner passed the exact-membership and large-amount reconciliation tests.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the figures produced by T04, src/cma/metrics.py:523 and :562 pair sum figures with their input IDs, :538 and :548 report negated signed outflow totals, :530 and :532 preserve the M5 and M6 evidence rules, :546 leaves M10 without evidence when debt service is zero, :420 records partially counted M9 credits, and :499 and :571 trace M26's shared denominator. The named invariants and previous-release evidence comparisons passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/metrics.py:353 excludes that category from trading receipts and :483 assigns it to M25 through src/cma/models.py:66. The runner passed the named default-credit invariant and both ruleset cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 208,
+      "criterion": "R2",
+      "claim": "A GBP amount's line-limit check runs after the surplus-field check. The refusal names the surplus field as the first problem even though the importer has already read an amount that must itself be refused.",
+      "repro": "With header Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance, import the row tx_1,01/01/2026,09:00:00,Faster payment,ACME,10000000000000.00,GBP,1.00,extra. The refusal includes the money-in limit but identifies surplus fields as the line problem and omits the Amount refusal. The passing surplus-field contract uses an individually below-limit amount and checks only the aggregate limit."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 83,
+      "criterion": "R2",
+      "claim": "The claim that credits above the old ceiling are counted applies to a Transaction passed directly to the figures layer. The probe does not establish that such credits are accepted through an import, where revision 29 requires the ceiling.",
+      "repro": "Compare tests/test_money_in.py:263 with the loader's boundary contract. The former constructs a Transaction containing 10000000000000.01, while loading that value in a statement CSV must refuse it."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 263,
+      "criterion": "P2",
+      "claim": "The historical test totals and standalone scratchpad probe results are not_proven for this checkout. The current logs verify the named repository tests, and no runner result records executing the cited scratchpad command.",
+      "repro": "Compare git log and the runner logs with the claim for ca0092c. The reviewed head is e4feb96, the full suite reports 962 passes, and dual_run reports 84. Reproducing the historical totals requires running the cited pytest commands at ca0092c. Proving the probe output requires supplying scratchpad/probe.py and running PYTHONPATH=src python scratchpad/probe.py."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer note that the committed example has no evidence_note keys is stale.",
+      "repro": "Search the committed example evidence JSON for evidence_note. The M1 entry already includes evidence_note set to null."
+    }
+  ],
+  "verdict": "fail"
+}

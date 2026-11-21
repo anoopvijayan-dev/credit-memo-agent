@@ -1,0 +1,96 @@
+```json
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps the credit categories to eight buckets. src/cma/metrics.py:483 and :558 build the GBP sums and evidence. CLI graph and MCP use the same computation at src/cma/graph.py:308 and src/cma/mcp_server.py:98.",
+      "result": "pass",
+      "artifact": "contracts-4.log:20"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:83 checks penny round-tripping, src/cma/metrics.py:512 handles unreportable M3, and src/cma/graph.py:175 and src/cma/cli.py:415 table GBP to the penny. The previous unsupported monetary assertion is gone at src/cma/ingest.py:280. Recovery from a truncated UTF-8 prefix can still hide an oversized field by treating an unread amount as a readable empty cell.",
+      "result": "fail",
+      "artifact": "specified-3.log:261"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks signed pence, missing or repeated credit IDs, and noncredits in the buckets. src/cma/cli.py:115 exits 6 before review or export, and src/cma/mcp_server.py:98 propagates the refusal. The runner exercised the CLI and MCP with a credit deliberately left out of the buckets.",
+      "result": "pass",
+      "artifact": "contracts-4.log:19"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unknown credits to OTHER. src/cma/models.py:66 and :69 route OTHER to unexplained and exclude it from trading receipts.",
+      "result": "pass",
+      "artifact": "invariants-5.log:14"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483 counts credits, :558 emits the evidence, and :578 verifies the partition and penny totals. M18 is a subset of M2 and is outside the bucket partition. The runner exercised both rulesets and large reported values.",
+      "result": "pass",
+      "artifact": "invariants-5.log:10"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:373 and :379 preserve M5 and M6 evidence, :423 records the credit split by the M9 cap, :542 omits M10 evidence when exact debt service is zero, and :558–575 emits sum and share evidence. The runner checked signed sums and outflows, the capped credit note, and the previous-release comparisons for the fixtures. Monthly cells and M27–M28 are outside this task's figures.",
+      "result": "pass",
+      "artifact": "invariants-5.log:11"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360, src/cma/models.py:66, and src/cma/metrics.py:486 place an unmatched positive credit in M25 with its ID. The runner checked absence from M2 under both v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log:14"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 284,
+      "criterion": "R2",
+      "claim": "When a bad UTF-8 byte cuts off an oversized field, long-record recovery marks absent trailing columns as readable. Monzo can then refuse a fabricated empty Amount and omit the oversized-field diagnosis.",
+      "repro": "Use the Monzo header `Transaction ID,Date,Type,Currency,Name,Amount,Balance`. On line 2 write `tx_1,01/01/2026,Faster payment,GBP,` followed by 200,000 ASCII Ns, a raw byte 0xE9, then `,1.00,1.00` and a newline. Invoke `cma import monzo input.csv --out output.csv`. UTF-8 recovery passes the prefix ending in the oversized Name to the CSV reader. Long-record recovery pads Amount with an empty string and marks it readable, so Monzo reports `Amount '' is not a plain amount` instead of reporting that a field on line 2 is too long to read."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 92,
+      "criterion": "R2",
+      "claim": "The producer's no-fixed-ceiling probe only covers a figures-layer helper. Its result does not apply to the production statement entry points, which enforce the ceiling required by revision 29. The runner did not execute the cited scratchpad command.",
+      "repro": "Compare the direct helper test in tests/test_money_in.py for £10,000,000,000,000.01 with the loader limit tests. A five-column CSV with that credit is refused before computation. The exact scratchpad proof is not_proven without a runner result for `PYTHONPATH=src python scratchpad/probe.py` and the script supplied as an input."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 393,
+      "criterion": "R2",
+      "claim": "The cited display proof formats Metric objects directly. It does not exercise the CLI or memo appendix as claimed. The same scratchpad proof is also absent from the runner results for the direct idempotency claim.",
+      "repro": "Inspect the formatter test and compare its calls with src/cma/cli.py:415 and src/cma/graph.py:175. The formatter test never invokes either caller. A runner test that passes fractional-pound bucket figures through both callers and asserts the rendered values would prove the integration claim. The cited idempotency command is `PYTHONPATH=src python scratchpad/probe.py`."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer note says the committed example lacks evidence_note and was left unregenerated. The reviewed example contains evidence_note and the supplied diff changes its decision timestamp.",
+      "repro": "Run `rg -n 'evidence_note|decided_at' examples/cafe_stretched.memo.evidence.json` and compare with the example diff."
+    }
+  ],
+  "verdict": "fail"
+}
+```

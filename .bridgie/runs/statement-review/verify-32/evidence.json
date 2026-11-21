@@ -1,0 +1,117 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Verified the shipped lists in src/cma/rules/v2.yaml:45,55,98,108,117,126,174,214,238,264,299,316,333,354 and traced rule selection and evidence through src/cma/graph.py:250 and :221. The runner logged 644 passing tests, including per-list provenance, all four verify-27 examples, stage shuffling, idempotency, checkpoint compatibility and rollback. The explicit rail-plus-cash condition, complete conflict provenance and judgement queue still fail R4. Reviewed duplicate submission, concurrent updates, sign and text boundaries, currency and dates, partial failure, authorization, case isolation, and CLI, MCP and checkpoint consumers. Reproductions below are from source inspection. No tests or writes were performed during review.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-32/specified-3.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-32/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-32/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-32/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-32/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-32/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-32/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-32/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 398,
+      "criterion": "R4",
+      "claim": "A bucketed cue bypasses the explicit payment-rail-plus-cash ambiguity condition.",
+      "repro": "Classify a £500 v2 credit described as `BACS CREDIT HMRC CASH PAID IN`. It matches `payment_rail`, `hmrc_repayment` and `cash_paid_in`, but the early return assigns `HMRC_REPAYMENT`. R4 requires unexplained money in with all three rule IDs."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 399,
+      "criterion": "R4",
+      "claim": "Conflict provenance omits rules outside the deciding stage even when their matches survive the longer-phrase filter.",
+      "repro": "Classify a £500 v2 credit described as `FPS CREDIT HMRC TO SAVINGS STRIPE`. It correctly lands in unexplained money in, but the conflict records only `own_pots_savings` and `hmrc_repayment`. The disjoint `payment_rail` and `payment_gateways` matches are also required in the evidence."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 298,
+      "criterion": "R4",
+      "claim": "The production review flow never lists ambiguous credits in a judgement queue. The regression test proves M2 exclusion and M16 evidence membership only.",
+      "repro": "Run `CMA_RULESET=v2 cma run` on a balanced statement containing a positive `COUNTER DEPOSIT GRANT ST BRANCH` line. The review shows metrics, policy and the draft. With `--out`, the conflict appears in the exported `lines` array after the review decision, but there is no judgement queue identifying the line for the reviewer."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 126,
+      "criterion": "R4",
+      "claim": "ASCII-only boundaries allow an acquirer or gateway name embedded in a Unicode merchant name to count as trading receipts.",
+      "repro": "Classify a £500 v2 credit described as `FPS CREDIT CAFÉSTRIPE LTD`. The boundary accepts the preceding `É`, so the credit becomes `REVENUE_CARD` and enters M2. `STRIPE` is part of the unlisted payer name `CAFÉSTRIPE`, so this credit should remain unexplained."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1045,
+      "criterion": "R4",
+      "claim": "The shuffle test proves the sampled single-line bucket and candidate-set comparisons. It misses an order-dependent trading result after round-trip processing.",
+      "repro": "Categorise a two-line statement with `FPS DEBIT STRIPE` at −£100 and `FPS CREDIT STRIPE INV 17` at +£100. The shipped gateway-first order keeps the credit in M2. Move `invoice_transfer` before `payment_gateways` within the unprotected names. The same credit now becomes `REVENUE_TRANSFER` and is removed from M2 by src/cma/categorise.py:532. A shuffle test that calls `categorise` on the two-line statement and compares M2 would expose the difference."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "The standalone compile claim for tests and evals is not proven by the runner. Ruff passed for all three directories, while the compile row covered src only.",
+      "repro": "Compare mechanical-2.log and its command with the claimed compile scope. A passing runner row for `python -m compileall -q src tests evals` would prove the broader claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

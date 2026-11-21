@@ -1,0 +1,11 @@
+ README.md                    |  12 +-
+ evals/run_evals.py           |   3 +-
+ src/cma/categorise.py        | 236 ++++++++++--
+ src/cma/graph.py             |  26 ++
+ src/cma/metrics.py           |  13 +-
+ src/cma/rules/v2.yaml        | 369 ++++++++++++++++++
+ tests/test_evals_rulesets.py |  22 ++
+ tests/test_p7_history.py     |   2 +
+ tests/test_rules.py          |  62 ++-
+ tests/test_rules_v2.py       | 899 +++++++++++++++++++++++++++++++++++++++++++
+ 10 files changed, 1606 insertions(+), 38 deletions(-)

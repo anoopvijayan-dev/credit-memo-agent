@@ -1,0 +1,78 @@
+```json
+{
+  "task": "T03",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Applied the supplied revision 22 because the worktree copy is revision 2 (.bridgie/specs/statement-review/requirements.md:5,19). Mapped the maintained lists and directions to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest-match and surviving-occurrence handling at src/cma/categorise.py:1105–1170, bank-code priority and ambiguity at :1213–1230, and override, profile and firm-rule precedence and candidate provenance at :1242–1310. Category.OTHER maps to unexplained money in at src/cma/models.py:65. Production uses the selected table and exports line provenance at src/cma/graph.py:188–223,250–253 and src/cma/cli.py:228–229. Checked digest gating, exceptions, field checks and matcher builds at src/cma/categorise.py:397–660, and the changed-v1 refusal at :939–968. The new stage, protection and single-rule category regressions pass. Checks that depend on multiple repeated values still produce incorrect diagnostics. Reviewed double submit and concurrent output paths at src/cma/cli.py:146–159,228–229, amount and date boundaries at src/cma/ingest.py:42–59, partial table-load failure at src/cma/categorise.py:939–968, the ruleset allow-list and MCP path scope at src/cma/categorise.py:939–942 and src/cma/mcp_server.py:37–47, case-local classification inputs at src/cma/categorise.py:1391–1406, and additive evidence and checkpoint replay at src/cma/graph.py:188–223. The runner logged 839 suite, 217 contract, 138 invariant and 83 dual-run passes. Its logs name the list, CLI provenance, idempotency, checkpoint, timing and both offline eval tests. The remaining R4 failures follow from source inspection. No tests, builds or writes were performed during review.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 710,
+      "criterion": "R4",
+      "claim": "Category-order validation drops all other rules with repeated category or direction fields while checking a rule's alternatives. This suppresses a category-order fault that occurs when supplied values on different rules coexist.",
+      "repro": "In a minimal v2 table with the standard bank-code rule and no category_order, add two credit name rules. Give rule A direction: in and repeat category with cash_deposit and revenue_transfer. Give rule B category: revenue_card_settlement and repeat direction with in and out. With A's cash_deposit and B's in as their sole values, validation reports that the trading-receipts bucket lacks a category order. With the repeats present, the validator checks A without B and B without A, so it reports the repeats but omits that ordering fault."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 606,
+      "criterion": "R4",
+      "claim": "The mandatory bank-code check reads a repeated pattern through its placeholder and reports the bank-code rule missing even when every supplied pattern has the required text.",
+      "repro": "In the shipped v2 table, duplicate the returned_dd rule's exact pattern field, preserving `'^UNPAID DD\\b'` as both values and leaving bank_code: true. Either value alone satisfies the check. Together they trigger the correct duplicate-pattern refusal plus the incorrect claim that no rule carries the required bank code."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 502,
+      "criterion": "R4",
+      "claim": "Bank-code shape checks can report an invalid flag and forbidden anchor solely because the other repeated fields remain placeholders.",
+      "repro": "In the shipped v2 returned_dd rule, repeat direction with any and in, and repeat stage with line_type twice. Every selection preserves an allowed anchored bank-code rule. The flag check at line 502 sees at least one placeholder on every variant and reports an invalid bank-code shape. The anchor check also sees the direction placeholder and reports a forbidden anchor."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README claims a matching profile name can settle an ambiguous credit and omits cheque wording from its description of payment-method conflicts.",
+      "repro": "Classify a positive FPS CASH DEPOSIT JANE DOE with Jane Doe as a profile director. src/cma/categorise.py:1292–1302 keeps it unexplained and adds profile:director to the candidates. Classify a positive CHEQUE CASH DEPOSIT and the cheque is also recorded as a candidate in an ambiguous verdict."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 204,
+      "criterion": "R4",
+      "claim": "The producer's claim that every evidence record proves which rule set each line's category exceeds the replay guarantee for legacy records.",
+      "repro": "See the stale-hash branch exercised by test_a_t02_checkpoint_with_a_recorded_v1_ruleset_but_no_line_rule_ids_replays_v1 at tests/test_rules.py:373. A provenance-free checkpoint whose recorded hash differs from the installed hash yields null line rule IDs. Fresh v2 runs do record provenance."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 850,
+      "criterion": "R4",
+      "claim": "The runner proves the two-second assertion for the fixed 10,000-line categorisation fixture. The broader timing claim is unproven for other input distributions or the complete recompute.",
+      "repro": "Read the passing test in specified-3.log and inspect the timed call. It exercises categorise on _mixed_lines(10000) and does not time figures, indicators or policy. A runner result from an end-to-end 10,000-line recompute benchmark would be needed for the broader claim."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 30,
+      "criterion": "R4",
+      "claim": "The producer's compileall claim for src, evals and tests is not proven by the runner's compile tier, which covered src only.",
+      "repro": "Compare the claimed command with mechanical:2. A passed runner row for `python -m compileall -q src evals tests` would prove the claimed compileall scope."
+    }
+  ],
+  "verdict": "fail"
+}
+```

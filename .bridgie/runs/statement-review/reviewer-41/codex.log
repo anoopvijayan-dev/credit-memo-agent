@@ -1,0 +1,54 @@
+```json
+{
+  "task": "T03",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "openai",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "The shipped tables cover own-account moves, HMRC, refunds and rails at src/cma/rules/v2.yaml:63–160, lenders and MCA providers at :162–241, cash deposits and explained credits at :253–280, and trading providers and cash withdrawals at :298–405. src/cma/categorise.py:495–559 filters contained phrases, applies the bank-code exception and evaluates both ambiguity stages. At :607–617, an unresolved conflict records all candidates and takes precedence over firm rules, but any profile-name occurrence in the description can settle it, including an occurrence in the payment reference of a different counterparty. src/cma/models.py:54–68 maps OTHER to unexplained and cash deposits to trading receipts. src/cma/graph.py:250–253 selects and applies the ruleset, and :210–224 exports line provenance. The runner logged 723 passed, including the table-driven lists, the two prior review regressions, CLI provenance, checkpoint compatibility, and offline evals under both rulesets. Source inspection covered repeated categorisation and duplicate input, concurrent updates, sign and text boundaries, currency and timezone dependencies, partial writes, authorisation, case isolation, rollback, and CLI, checkpoint and MCP consumers. No tests were run or files changed during review.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 595,
+      "criterion": "R4",
+      "claim": "A director name in the payment reference can settle an ambiguous credit even when the payer is a different counterparty. The classifier searches the full description and discards the ambiguity and its candidates.",
+      "repro": "Classify a £500 v2 credit described as `FPS CREDIT ACME LTD REF CASH DEPOSIT FOR JANE DOE` with `ProfileNames(directors=(\"Jane Doe\",))` and no override or pairing. ACME LTD is the payer. The FPS and CASH DEPOSIT cues should leave the line unexplained with `v2:conflict:payment_rail+cash_paid_in`. The profile search finds JANE DOE in the reference and returns `director_funding` with `profile:director`."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 588,
+      "criterion": "R4",
+      "claim": "The producer's claim that shuffling rules within each stage preserves every category on whole statements goes beyond its test corpus. Debit categories can change when two unprotected rules match.",
+      "repro": "Classify a £100 debit with description `PAYROLL RENT` under the shipped v2 table. It is payroll. Swap the `rent` and `payroll` rules within the unprotected names stage and classify it again. The same debit becomes rent."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 488,
+      "criterion": "R4",
+      "claim": "The producer's table-validation proof misses patterns that compile at load but fail when the credit matcher wraps them. The failure occurs during categorisation instead of being reported at table load.",
+      "repro": "In a local copy of the v2 table, change the pattern-only `invoice_transfer` rule to `(?i)INV[0-9]+`. The validator and loader accept the standalone regex. Classifying the first matching credit, such as `ACME INV123`, causes `_at_every_position` to wrap the global flag inside a group and raise `re.error`."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "The claim that every module passed the stated compile gate is unproven beyond `src`. The runner's compile row covers `src`, and its pytest and eval rows exercise the files they load.",
+      "repro": "Compare mechanical-2 in reviewer-41 with the producer's static-gate proof command. A passing runner row for `python -m compileall -q src evals tests` would prove the full compile claim."
+    }
+  ],
+  "verdict": "fail"
+}
+```

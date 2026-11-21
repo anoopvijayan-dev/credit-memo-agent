@@ -1,0 +1,68 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Reviewed the supplied revision 14 of R4. The worktree copy at .bridgie/specs/statement-review/requirements.md:19 contains the earlier wording. Mapped the shipped lists and directions to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest matches and the bank-code priority through src/cma/categorise.py:727,749,807, credit ambiguity and candidate provenance through :818,836,884,896, and CLI evidence through src/cma/graph.py:221,250 and src/cma/cli.py:229. Runner logs confirm the per-list, precedence, CLI evidence, replay, rollback and both offline eval tests ran and passed. The review covered repeat submission, concurrent and case-local inputs, amount and Unicode boundaries, currency and date handling, partial publication, authority to settle ambiguity, and evidence consumers. Two maintained-table edits still let payment-method wording and cash wording produce trading receipts.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 762,
+      "criterion": "R4",
+      "claim": "The containment exception only protects cash wording when the payment-method phrase is longer. A longer cash phrase can still suppress the payment-method cue, defeating R4's rule for the phrase on either list.",
+      "repro": "Append FPS CASH DEPOSIT to cash_paid_in.names in the packaged v2 table, leaving FPS on payment_rail. Classify a £200 credit described as FPS CASH DEPOSIT. The containment filter drops payment_rail, and the verdict is cash_deposit with v2:cash_paid_in. The credit should be unexplained with both candidates. The runner passed tests/test_rules_v2.py:1815, which puts the longer phrase on the rail list and exercises only the opposite direction."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 403,
+      "criterion": "R4",
+      "claim": "The loader rejects the optional exception keys but accepts a wording-dependent exception embedded in a rule pattern.",
+      "repro": "Add a credit rule named conditional_cash with category cash_deposit, stage names, and pattern '\\bKIOSK CASH DEPOSIT\\b(?! STRIPE)', and remove CASH DEPOSIT and CASH DEP from cash_paid_in.names so they cannot independently match the example. The table loads. FPS KIOSK CASH DEPOSIT matches conditional_cash, but FPS KIOSK CASH DEPOSIT STRIPE skips it and reaches v2:payment_gateways as trading receipts. The loader should refuse the table and name conditional_cash. The runner's exception cases at tests/test_rules_v2.py:1840 only cover the explicit keys."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 399,
+      "criterion": "R4",
+      "claim": "The malformed-table claim promises a named validation diagnostic. An unhashable rule ID instead raises TypeError during validation.",
+      "repro": "Set the cash_paid_in rule's id to the YAML list [cash_paid_in] and load v2. The string check records an error, then the reserved-ID membership check raises TypeError before RulesetError can report it."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README gives incorrect decision authority for an ambiguous credit and omits cheque wording from its description of the cash conflict.",
+      "repro": "Compare the README's profile-settlement claim with src/cma/categorise.py:884. Classify FPS CREDIT CASH DEPOSIT REF JANE DOE with Jane Doe named as a director. The line stays unexplained and gains profile:director as a candidate. CHEQUE CASH DEPOSIT also stays unexplained."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 843,
+      "criterion": "R4",
+      "claim": "The shuffle test passes for its corpus. The producer's broader claim that shuffling within a stage changes no category on whole statements does not hold for debits.",
+      "repro": "Swap only hmrc_vat and hmrc_paye in v2.yaml. Both rules remain protected line-type rules and the table validates. A £100 debit described as HMRC VAT HMRC PAYE changes from hmrc_vat to hmrc_paye because classification returns the first protected match."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 1,
+      "criterion": "R4",
+      "claim": "Compilation of every module in src, evals and tests is not proven by the runner's compile tier, which only covered src. The lint tier covered all three trees.",
+      "repro": "Compare mechanical-2.log and its runner command with the claim. A passing runner row for python -m compileall -q src evals tests would prove the broader compile claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

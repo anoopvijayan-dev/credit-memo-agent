@@ -1,0 +1,141 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest matches and containment at src/cma/categorise.py:1023–1084, bank-code precedence and ambiguity at :1132–1149, override, profile and firm-rule precedence at :1152–1229, and the unexplained bucket at src/cma/models.py:65. Traced byte pinning, field diagnostics and matcher construction at src/cma/categorise.py:397–610,689–708,858–886. Checked duplicate submissions and concurrent decisions at src/cma/cli.py:84,240, signed and zero amounts at src/cma/categorise.py:899,1166, pence and date-only ingestion at src/cma/ingest.py:42,100,127, partial output failure at src/cma/cli.py:228–229, path scope at src/cma/mcp_server.py:37–46, case-local classification inputs at src/cma/categorise.py:1310–1324, and CLI, MCP and historical evidence consumers at src/cma/graph.py:188–223,250–253 and src/cma/mcp_server.py:74–104. The runner logs confirm table-driven provenance, CLI evidence, idempotency, historical replay and both offline evals. R4 fails because repeated YAML fields can still suppress required diagnostics and the parsed-data validator grants the v1 exception exemption without a verified digest.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-103/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-103/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-103/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-103/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-103/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-103/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-103/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 422,
+      "criterion": "R4",
+      "claim": "A repeated top-level rules key suppresses all diagnostics for the rules in both lists, including forbidden exceptions and unusable matchers.",
+      "repro": "Keep the packaged v1 table and append a second top-level `rules: [{id: cashx, pattern: '(?i)CASH', direction: in, category: cash_deposit, unless: FPS}]`. Load it as v1 in a fresh process. The loader stores the two lists in `_Repeated`, and validation exits with a repeated-key diagnostic and `no rules`. The changed-table refusal omits both `cashx` faults."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 587,
+      "criterion": "R4",
+      "claim": "An invalid regex inside a repeated pattern field is silently skipped. The raw compilation diagnostic reads only the `_Repeated` placeholder, and the variant pass discards the compilation error when deciding whether to build a matcher.",
+      "repro": "In v2, replace `cash_paid_in`'s names with two `pattern` keys containing `CASH DEPOSIT` and `(`, and add `unless: FPS` to the same rule. Load v2 in a fresh process. The refusal names the duplicate and the prohibited `unless`, but omits the invalid regex. With a single `pattern: '('` the same validator reports `pattern does not compile`."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 405,
+      "criterion": "R4",
+      "claim": "The parsed-data validator treats an omitted digest as verification of frozen v1, exempting arbitrary input from the forbidden-exception check.",
+      "repro": "Parse the packaged v1 YAML into a mapping, add `unless: FPS` to its card-settlement rule, and call `validate_ruleset(data, 'v1')`. The exception check is skipped and the validator accepts the mapping. Only the verified pinned bytes qualify for that exemption. The packaged `load_ruleset` path does supply a digest and refuses the changed bytes."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README says a matching profile name can settle an ambiguous credit. The implementation keeps the conflict and adds the profile candidate.",
+      "repro": "Classify a positive `FPS CREDIT CASH DEPOSIT REF JANE DOE` line under v2 with Jane Doe in the director profile. The result remains `other` with `v2:conflict:payment_rail+cash_paid_in+profile:director`."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 2274,
+      "criterion": "R4",
+      "claim": "The no-compilation test confirms that compiled end forms are stored, but its classification assertion does not exercise their use.",
+      "repro": "Read the test's `ZZ ABC ZZ` input. Only rule `r` matches, so `credit_matches` returns before `_spans`. A regression that recompiles end forms in `_spans` would escape the assertion. Add a second matching rule that forces containment and run `python -m pytest -v tests/test_rules_v2.py -k loaded_rule_keeps_its_end_forced_matchers`."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 1179,
+      "criterion": "R4",
+      "claim": "The named shuffle tests passed on their samples. They do not establish the broader claim that shuffling rules within a stage preserves every category and figure on whole statements.",
+      "repro": "Classify a debit described as `RENT PAYROLL`. Both rules are unprotected and in the names stage. The shipped order gives payroll. Swapping those two entries gives rent because debits use first-match order."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 850,
+      "criterion": "R4",
+      "claim": "The runner proves that categorising the fixed 10,000-line sample passes its timing assertion. The end-to-end two-second recompute budget is not proven by that test.",
+      "repro": "Inspect `test_categorise_10000_lines_under_v2_with_a_profile_is_fast`. Its timer wraps only `categorise.categorise`. An end-to-end benchmark must time saving an override through display of recomputed figures, indicators and policy on the stated hardware."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 80,
+      "criterion": "R4",
+      "claim": "The static claim that every source, test and eval module compiles is only partially proven by the runner. Its compile tier covered src. The suite and eval logs establish execution of the modules they loaded.",
+      "repro": "Compare the claim's command with mechanical-2. The command that would establish the full claimed scope is `python -m compileall -q src evals tests`."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 205,
+      "criterion": "R4",
+      "claim": "The observability claim promises a rule id on every evidence line. Historical evidence can intentionally contain a null rule id when the recorded table hash differs from the installed hash.",
+      "repro": "Render evidence from a pre-provenance checkpoint with a recorded v1 id, a different recorded v1 hash and no saved line rule ids. `line_rule_ids` returns the saved nulls, which `evidence_record` emits. The runner passed the T02 replay test that explicitly asserts this fallback."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

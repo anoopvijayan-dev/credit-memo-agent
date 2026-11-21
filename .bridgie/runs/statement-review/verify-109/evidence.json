@@ -1,0 +1,109 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Applied the supplied revision 22 of R4. The worktree copy at .bridgie/specs/statement-review/requirements.md:19 has an older R4. Mapped the maintained lists and directions to src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest matching and suppression by surviving occurrences at src/cma/categorise.py:1066–1127, bank-code priority and ambiguity at 1175–1192, and override, profile, firm-rule and candidate precedence at 1195–1276. Category.OTHER maps to unexplained money in at src/cma/models.py:65. Traced digest gating, exception checks, matcher construction and changed-v1 refusal at src/cma/categorise.py:397–649,900–930. The three previous duplicate-key regressions have passing runner tests. Repeated top-level IDs and frozen flags, and repeated rule categories used by the category-order check, still skip value-specific checks. Reviewed double submission and concurrent output paths at src/cma/cli.py:146–159,228–229, amount and calendar-date boundaries at src/cma/ingest.py:42–54,100–130 and src/cma/categorise.py:942–945, partial rule-load failure at 900–930, ruleset allow-list and MCP path scope at 903–905 and src/cma/mcp_server.py:37–47, statement-local inputs at src/cma/categorise.py:1353–1368, and evidence consumers and legacy replay at src/cma/graph.py:188–224 and src/cma/cli.py:229. The runner logged 833 suite, 211 contract, 138 invariant and 83 dual-run passes, including the named list, CLI provenance, idempotency, checkpoint and dual-ruleset eval tests. The validation failures are established by source inspection. No tests or builds were run during review.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-109/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-109/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-109/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-109/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-109/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-109/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-109/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 411,
+      "criterion": "R4",
+      "claim": "The table ID check compares the duplicate-key placeholder with the expected ID and never checks the supplied IDs individually. The refusal omits the actual mismatched ID.",
+      "repro": "In a copy of the packaged v2 table, put `id: v2` and `id: wrong_table` at the top level and load it as v2. The refusal reports a repeated key and a mismatch involving the placeholder. It never identifies `wrong_table` as the bad value. Reverse the two entries for the same omission."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 403,
+      "criterion": "R4",
+      "claim": "A repeated frozen flag selects one validation mode from the placeholder. The validator skips the checks applicable to the supplied `true` value on a changed v1.",
+      "repro": "Copy the pinned v1 table, add `category_order: []`, and supply both `frozen: true` and `frozen: false`. Load it as v1. With only `frozen: true`, the refusal includes `a frozen table has no category_order`. With both values, validation always uses strict mode and omits that fault. Swapping the flags leaves the omission."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 697,
+      "criterion": "R4",
+      "claim": "The category-order check ignores every supplied category on a rule with a repeated category key. It can therefore miss a required ordering for a trading-receipts category.",
+      "repro": "In a copy of the packaged v2 table, append `category: revenue_card_settlement` after `cash_paid_in`'s `category: cash_deposit` and remove `cash_deposit` from `category_order`. The refusal reports the repeat but omits the missing cash-deposit order. Keep just `category: cash_deposit` on that rule and the same table reports the missing order. Swapping the repeated values leaves the omission."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The claimed documentation of precedence says a profile name can settle an ambiguous credit. The code keeps it unexplained and appends the profile match to the candidates.",
+      "repro": "Compare the README's `until ... the profile names the payer` clause with `classify` under v2 for a positive `FPS CASH DEPOSIT JANE DOE` credit and a profile naming Jane Doe as a director. At src/cma/categorise.py:1257–1267 the result stays `OTHER` with `payment_rail`, `cash_paid_in` and `profile:director` in its provenance."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_evals_rulesets.py",
+      "line": 14,
+      "criterion": "R4",
+      "claim": "The claim that every module compiles is not_proven for tests and evals. The runner's compileall result covers src only.",
+      "repro": "Compare the producer's claimed command with mechanical-2 in reviewer-109, which ran `python -m compileall -q src`. A passing runner row for `python -m compileall -q src evals tests` would prove the stated scope."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

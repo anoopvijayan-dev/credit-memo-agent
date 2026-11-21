@@ -1,0 +1,68 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Applied the supplied revision 22. The repository copy is revision 2 (.bridgie/specs/statement-review/requirements.md:5). Mapped the shipped lists and directions at src/cma/rules/v2.yaml:63,74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest-match and overlap handling at src/cma/categorise.py:1125–1198, bank-code and bucket precedence at :1234–1251, and overrides, ambiguity candidates, profile names and firm rules at :1254–1330. Traced CMA_RULESET selection and per-line provenance through src/cma/graph.py:188–223,250–253 and src/cma/cli.py:224–229. Checked the pinned digest, changed-v1 refusal, repeated values and matcher builds at src/cma/categorise.py:429–690,829–854,960–989. The validator still misses faults when a repeated field changes whether the bank code applies to credits or when another malformed key prevents inspection of a rule mapping. Reviewed double submission, concurrent output and partial writes at src/cma/cli.py:81–86,146–158,224–229, amount, date and Unicode boundaries at src/cma/ingest.py:42–57,98–110 and src/cma/categorise.py:228,1001–1009, scope and case isolation at src/cma/mcp_server.py:37–55 and src/cma/categorise.py:1412–1425, and changed evidence and MCP consumers at src/cma/graph.py:188–223 and src/cma/mcp_server.py:90–105. Runner logs show 847 full-suite, 225 contract, 138 invariant and 83 dual-run passes, including named list, CLI provenance, idempotency, rollback, checkpoint, timing and both offline evaluation tests. Review was read-only.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 632,
+      "criterion": "R4",
+      "claim": "The mandatory bank-code check counts a returned-payment rule as present in every variant even when a repeated direction makes one variant debit-only. The rule-level flag and anchor errors are reported, but the table-wide absence of a bank code for credits is omitted.",
+      "repro": "In the v2 returned_dd rule, give direction twice as any and out, leaving the pinned pattern and bank_code: true in place. With out as the sole value, no rule can give credits the bank-code verdict. With both values present, the mandatory-code check counts the rule using only its pattern and flag and omits the missing-code diagnostic in either value order."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 829,
+      "criterion": "R4",
+      "claim": "An invalid mapping key can hide both a repeated field and a forbidden exception in the same rule. The base YAML constructor rejects the whole mapping before duplicate collection, leaving validation only an unbuilt rule instead of the rule's individual faults.",
+      "repro": "Replace the cash_paid_in rule with the YAML flow mapping {id: cash_paid_in, pattern: 'CASH(?! FPS)', pattern: CASH, [bad]: x, direction: in, category: cash_deposit, stage: names}. The list key is unhashable. The loader discards the mapping before checking the repeated pattern, so the refusal omits both the repeated key and cash_paid_in's lookahead."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The claimed documentation of ambiguity precedence tells underwriters that a profile name can settle an ambiguous credit. The implementation records the name as an additional candidate and keeps the credit unexplained.",
+      "repro": "Compare the README's 'until a person overrides it or the profile names the payer' with classification of a positive FPS CASH DEPOSIT REF JANE DOE line using Jane Doe as a profile director. The rule ID still records a conflict and adds profile:director."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 1270,
+      "criterion": "R4",
+      "claim": "The producer's whole-statement rule-order claim extends beyond its corpus. Debits can change category when protected rules within the same stage are reordered.",
+      "repro": "Classify an IWOCA DIVIDEND debit under v2, then move owner_drawings ahead of lender_repayment within the protected names stage and classify it again. Both rules match. The first protected rule changes the category from loan_repayment to owner_drawings."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 850,
+      "criterion": "R4",
+      "claim": "The timing test passed for categorisation on one 10,000-line sample. It does not establish the claimed end-to-end recompute budget.",
+      "repro": "Inspect the timed region. It calls categorise.categorise and omits saving an override, recomputing figures and indicators, and evaluating and displaying the policy check. An end-to-end override-save benchmark on a representative office laptop would establish that broader claim."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 79,
+      "criterion": "R4",
+      "claim": "The producer's compileall claim covers src, evals and tests. The runner verified compileall for src only.",
+      "repro": "Compare the claim with mechanical:2. The command that would prove the full claim is python -m compileall -q src evals tests."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

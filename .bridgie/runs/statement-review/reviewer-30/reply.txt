@@ -1,0 +1,38 @@
+```json
+{
+  "task": "T12",
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "src/cma/case.py:201 validates entry hashes, sequence numbers and previous hashes. Lines 280–303 compare the chain with the recorded head and identify the first divergence. src/cma/cli.py:319 calls the verifier and exits 3 on failure. The runner passed the named invariants for changed, removed, reordered and rebuilt histories, including the CLI cases.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-30/invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 386,
+      "criterion": null,
+      "claim": "The single-writer lock can be bypassed by a forked child using an inherited CaseLog. Reentrancy checks only the thread identifier, which is inherited by the calling thread across fork. The child enters without acquiring its own lock, so both processes can pass the same expected-position check and append duplicate sequence numbers.",
+      "repro": "On Linux, append entry 1 and enter log.writer() in the parent. Call os.fork() inside that context. In the child, call append on the inherited log with expected=1 while the parent still holds the context. The child can append instead of receiving CaseLocked. To expose the corruption, synchronize both processes at the start of _write, after both have verified position 1, then let both append. Both write entry 2."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 906,
+      "criterion": null,
+      "claim": "The producer's quoted test totals do not match the current runner evidence. The runner confirms the named tests passed and reports 399 full-suite passes and 85 invariant passes.",
+      "repro": "Compare the claim's 396 full-suite and 82 invariant passes with the final summary lines of specified-3.log and invariants-5.log under reviewer-30."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  }
+}
+```

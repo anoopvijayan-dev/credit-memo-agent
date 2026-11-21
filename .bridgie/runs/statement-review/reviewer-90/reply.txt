@@ -1,0 +1,62 @@
+```json
+{
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed HEAD 50e1e4d against .bridgie/specs/statement-review/requirements.md:249. Canonical UTF-8 hashing, UTC timestamps, head comparison and first-bad-entry detection are in src/cma/case.py:176–348. Holder and path-alias recognition, lock identity checks, steady reads, busy-gate behavior and the intact-only API are at lines 459–667. Writer exclusion, fork refusal, nested-save refusal, expected-position conflicts, per-write lock checks and repair rechecks are at lines 682–1099. Publication, read-back and take-back are at lines 1101–1175. Traced the CLI consumer at src/cma/cli.py:309–338 and checked duplicate submission, concurrent writes, malformed and empty inputs, Unicode, UTC, partial failures, OS permissions and case-folder isolation. Currency arithmetic and database migrations are outside this change. Runner logs show the named tamper, rebuilt-chain, torn-tail, retry, CLI contract and both Ctrl-C tests passed. The read-back and take-back paths still have interruption cases that bypass the required outcome.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1142,
+      "criterion": "P15",
+      "claim": "A Ctrl-C after a failed read-back has been detected can skip take-back while the published head is still the save's own. The caller gets a not-confirmed report and the entry stays recorded even though the take-back was never attempted.",
+      "repro": "Start with two recorded entries and append entry 3. Inject a one-time OSError into the read-back after publication, then inject KeyboardInterrupt at line 1142 before the take-back starts, using a line trace to control delivery. Keep both lock files and the head in place. The outer handler reports SaveNotConfirmed and a fresh check finds entry 3 intact. P15 requires restoring the two-entry head and reporting the save as not recorded. The runner's Ctrl-C tests inject inside _read_head, so they miss this boundary."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1155,
+      "criterion": "P15",
+      "claim": "GeneratorExit during take-back escapes as a raw exception. The caller receives neither a not-confirmed report nor the instruction to check the case log.",
+      "repro": "Start with two recorded entries. For the append of entry 3, have the first read of the three-entry head raise OSError and the take-back's read of the same head raise GeneratorExit. The head stays at three and GeneratorExit escapes through the outer handler. Raising GeneratorExit on the initial read-back instead also skips take-back at line 1139."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 333,
+      "criterion": "P15",
+      "claim": "The producer's busy-case claim gives exit 0 and 'appending'. The implementation and the passing contract test give exit 4 and 'being saved', which satisfies the required distinction from an intact log.",
+      "repro": "Read tests/test_case_log.py:1339 and its PASSED row in contracts-4.log. The test holds the writer lock over a torn tail and asserts exit 4 with the recorded count, then exit 3 after the lock is released."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1213,
+      "criterion": "P15",
+      "claim": "The producer's claim of exact reproduction of two commits on each retry with a held fallback is not proven. The passing stress test starts an unsynchronized writer and checks for no reported bad entry.",
+      "repro": "Compare the disposition with the test body and its PASSED row in specified-3.log. The test has no synchronization or assertions for commit count per retry, lock state at fallback, or the claimed in-progress result. A deterministic regression test that enforces those conditions and passes under python -m pytest -v tests/test_case_log.py would prove the schedule."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 735,
+      "criterion": "P15",
+      "claim": "The producer's quoted suite totals and diff statistics do not describe the reviewed HEAD. Named test passes are independently verified by the current runner logs.",
+      "repro": "Compare the claim's 396 full-suite passes and 82 invariant passes with specified-3.log and invariants-5.log, which show 486 and 169. Run the read-only git diff --stat 576e43d..HEAD -- src to see 1,324 insertions across the two source files, versus 581 in the quoted proof."
+    }
+  ],
+  "verdict": "fail"
+}
+```

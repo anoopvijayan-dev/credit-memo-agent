@@ -1,0 +1,175 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:56 maps credit categories to buckets. src/cma/metrics.py:383 and :455 produce the GBP totals and evidence IDs. The named bucket mapping and penny reconciliation tests passed in specified-3.log and invariants-5.log.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:63 checks original CSV values and :151 checks statement totals. src/cma/metrics.py:409 calculates M3 in integer pence and explains an unreportable result. The existing Monzo import still converts source text directly to float, and the CLI and appendix round legacy money figures to whole pounds.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:475 checks the difference and bucket membership. src/cma/cli.py:99 returns exit 6. The named CLI and MCP contracts passed, but src/cma/metrics.py:236 stops before full reconciliation when an uncategorised credit coexists with another bucket error.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 classify unmatched credits as OTHER, which src/cma/models.py:66 maps to unexplained and src/cma/metrics.py:467 reports in M25. The named unknown-payer invariant passed for both rulesets.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:383 and :475 reconcile eight bucket amounts and check each credit ID once. M18 is built separately from M2 at :391 and :464. Both named P1 invariants passed, including the large-amount test.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "The named sum, outflow and M9 invariants passed. src/cma/metrics.py:427 and :429 retain the M5 and M6 evidence rules, and :470 cites the M26 denominator inputs. The fixture dual run passed, but the shared denominator also changes the legacy M16 evidence for a statement with a credit identified as an own-account transfer under v1.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "The default OTHER at src/cma/categorise.py:1311 and :1360 routes to M25 via src/cma/models.py:66 and stays outside the revenue-category filter at src/cma/metrics.py:261. All three named P6 cases passed in invariants-5.log.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-130/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-130/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-130/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-130/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-130/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-130/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-130/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 236,
+      "criterion": "R3",
+      "claim": "The uncategorised-credit refusal reports only one subset of the unreconciled credits.",
+      "repro": "Call compute with L1 a £5.00 credit with category None and L2 a £12.34 credit categorised SUPPLIER. The buckets are short by 1,734 pence and both lines are involved. The early refusal reports 500 pence and L1 only."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 75,
+      "criterion": "R2",
+      "claim": "The existing Monzo import parses source money as binary float and exports values beyond the statement limit without refusing the import.",
+      "repro": "Use cma import monzo with a one-row GBP export whose Amount and Balance are both 10000000000000000.01. The inferred opening balance is zero, the penny disappears, and the converter writes the rounded CSV. The five-column loader only applies the limit when the converted file is loaded later."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 170,
+      "criterion": "R2",
+      "claim": "The appendix and interactive CLI round accepted money figures outside EXACT_IDS to whole pounds.",
+      "repro": "Use a one-line accepted CSV with a running balance of £0.29. M5 carries 0.29 in evidence JSON, but the appendix and the CLI table at src/cma/cli.py:292 show £0 for M5."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 396,
+      "criterion": "P2",
+      "claim": "The M16 denominator change drops evidence that the previous release included. The passing dual-run fixtures do not exercise an own-account credit in this comparison.",
+      "repro": "Compare a statement containing £100 from CARD SETTLEMENT and £50 from FPS CREDIT ACME HOLDINGS. In the previous release the second credit falls into OTHER and is in M16 evidence. Under v1 with ACME HOLDINGS supplied as an own-account profile name, src/cma/categorise.py:1299 applies the profile category and M16 drops the second credit from its evidence."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 154,
+      "criterion": "R2",
+      "claim": "The aggregate-limit refusal does not identify whether money in or money out reached the limit.",
+      "repro": "Load two £6,000,000,000,000 credits whose respective running balances are £0 and £6,000,000,000,000. The limit applies to money in alone, but the message says 'money in or money out totals'. The contract fixture at tests/test_money_in.py:421 also puts the second balance over the limit and accepts the generic wording."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 139,
+      "criterion": "R2",
+      "claim": "The producer's scratchpad claim that an above-limit credit is counted and reported demonstrates a direct helper call at most. The current CSV import rejects that amount as required by revision 25. The scratchpad results, including the repeated-compute result, are not proven by the runner.",
+      "repro": "Compare the claimed ceiling output with src/cma/ingest.py:64 and the passing import rejection in contracts-4.log. The command to verify the claimed scratchpad outputs is PYTHONPATH=src python scratchpad/probe.py with the producer's script available. No runner row ran it."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 405,
+      "criterion": "R2",
+      "claim": "The exact full-suite and money-in contract counts quoted in the producer claim are stale for the reviewed tree.",
+      "repro": "The producer cites 878 full-suite passes and seven money-in contract passes. specified-3.log records 883 full-suite passes and contracts-4.log records 12 passing tests/test_money_in.py entries. The runner confirms the named contracts on the reviewed tree."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.md",
+      "line": 45,
+      "criterion": "R1",
+      "claim": "The committed example still presents the money-in breakdown rounded to whole pounds, although the live appendix uses penny formatting for these figures.",
+      "repro": "Compare M17 in the committed Markdown, £321,325, with the corresponding evidence JSON value of 321325.13."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

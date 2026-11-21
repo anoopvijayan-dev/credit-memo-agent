@@ -1,0 +1,101 @@
+{
+  "task": "T03",
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Reviewed the supplied revision 21. The checkout's .bridgie/specs/statement-review/requirements.md:19 contains the original recognition clause. Mapped the maintained lists to src/cma/rules/v2.yaml:74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest matches, containment, bank-code precedence, both-stage candidates, overrides, profile names and firm rules through src/cma/categorise.py:850,872,959,988,1026. Traced table selection, replay and per-line evidence through src/cma/cli.py:77,229 and src/cma/graph.py:188,221,251. Checked repeat submission and concurrent review handling, signed amounts, empty and Unicode inputs, date-only ingestion, refusal before checkpoint creation, the ruleset allow-list, statement-local inputs and evidence consumers. The runner logs confirm per-list provenance, CLI v2, checkpoint replay and both offline evals. R4 fails because a malformed exception can suppress the same rule's matcher diagnostic and an invalid bank-code flag can suppress the anchor diagnostic.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-83/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-83/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-83/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-83/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-83/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-83/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-83/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 549,
+      "criterion": "R4",
+      "claim": "A malformed exception suppresses validation of the same rule's otherwise usable input fields. Revision 21 explicitly requires the wrapped-pattern fault and the malformed exception to be reported together.",
+      "repro": "In a copy of v2, replace cash_paid_in's names with pattern: '(?i)CASH DEPOSIT' and add unless: [FPS] to that same rule. Load the table. The refusal reports the invalid and forbidden unless, but omits that the pattern fails inside the span matcher's lookahead. The test at tests/test_rules_v2.py:2016 places the other fault on a separate rule."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 468,
+      "criterion": "R4",
+      "claim": "A rule with an invalid bank_code: true flag skips the anchor check merely by setting the flag. R4 exempts only the pinned bank-code pattern and requires changed v1 to name each forbidden exception.",
+      "repro": "Keep frozen: true in a copy of v1 and add bank_code: true and pattern: 'CASH DEPOSIT$' to a non-bank rule, replacing its existing pattern. Load that copy as v1. The refusal names the changed table first and reports the invalid bank_code flag, but omits the rule's forbidden anchor. Removing the flag makes the anchor diagnostic appear."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README puts profile names ahead of ambiguity and says a profile name can settle an ambiguous credit. The implementation adds the profile name as a candidate and keeps the credit unexplained.",
+      "repro": "Compare the README with classify() for a positive 'FPS CASH DEPOSIT JANE DOE' under v2 with Jane Doe in the director profile. The result is OTHER with v2:conflict:payment_rail+cash_paid_in+profile:director."
+    },
+    {
+      "severity": "minor",
+      "file": "pyproject.toml",
+      "line": 43,
+      "criterion": "R4",
+      "claim": "The compilation claim is not proven for evals or tests. The passing runner row compiles src only, and pytest exercises the modules it collects or imports.",
+      "repro": "Compare mechanical-2.log and its runner command with the claimed scope. A runner result for python -m compileall -q src evals tests would prove the broader claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

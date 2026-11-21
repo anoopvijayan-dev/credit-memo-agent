@@ -1,0 +1,100 @@
+{
+  "task": "T08",
+  "criteria": [
+    {
+      "id": "R14",
+      "tier": "adversarial",
+      "check": "Thresholds come from an editable YAML file: the packaged src/cma/thresholds/indicators.yaml, or one passed with cma run --thresholds (cli.py:68, graph.py:319). All eight kinds are raised in indicators.py:252-366, each with its evidence ids, the thresholds that fired and an illustrative flag set by comparing against shipped() (indicators.py:83-86, 367-372). They are written into the evidence record (graph.py:269-275, 295-297). A malformed file is refused with its line named (parse_thresholds and _value, indicators.py:121-221; cli.py:100 exits 2 before the graph runs). Runner contracts-4.log lines 14-38 show all 25 test_indicators tests passed, one fixture per kind among them.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-216/contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "Indicator comparisons use integer pence from metrics.pence/text_pence (indicators.py:239). Large credit and irregular acquirer compare against an exact Fraction (indicators.py:251-255, 334-347). Money thresholds that hold a fraction of a penny are refused (indicators.py:197-203). The code lives in the figures layer. The share and tolerance comparisons use Decimal under the default 28-digit context; see the minor finding. The requirement is met for every threshold of 28 significant digits or fewer.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-216/contracts-4.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-219/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-219/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-219/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-219/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-219/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-219/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-219/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/indicators.py",
+      "line": 268,
+      "criterion": "R2",
+      "claim": "The cash-heavy-month share comparison `c * 100 > share * tr` (and the round-trip tolerance comparison `tol * -amt[w.id]` at line 285) multiplies a Decimal under the default 28-significant-digit context, so the product is rounded and the comparison is not exact. This contradicts the module docstring ('a share or a multiple is compared exactly, as a fraction'). Large credit and irregular acquirer avoid the problem by converting to Fraction.",
+      "repro": "Set cash_heavy_month.share_above_pct: 49.99999999999999999999999999999 (31 significant digits, which the validator accepts). A month with cash 50p of trading receipts 100p should fire, since exactly 5000 > 4999.999999999999999999999999999. But share*tr rounds to 5000.000000000000000000000000, so 5000 > 5000 is False and no indicator is raised. Fix: Fraction(share) * tr, as large_credit does."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/indicators.py",
+      "line": 305,
+      "criterion": "R14",
+      "claim": "A gambling indicator names only gambling.amount_at_least as the threshold that fired. The operators list, which decides whether the payment fires, is left out, so an indicator raised by the shipped (illustrative) operator list is labelled illustrative: false once a firm moves amount_at_least.",
+      "repro": "Use a thresholds file with gambling.amount_at_least: 10 and the shipped operators. A -20.00 'CARD BET365' line raises a gambling indicator whose thresholds list only amount_at_least (illustrative false), and the indicator's illustrative is False, although the operator list that matched it is still at its shipped value (the top-level thresholds.illustrative does list gambling.operators)."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/indicators.py",
+      "line": 245,
+      "criterion": "R14",
+      "claim": "Under the default ruleset (DEFAULT_RULESET = 'v1', categorise.py:89), no line is ever CASH_DEPOSIT and no line carries rule_id cash_withdrawal. So the single-cash-deposit, cash-heavy-month and cash-round-trip indicators never fire in a default `cma run`, and nothing in the evidence record says so. This follows from the ruleset design (T03/R54), not from this diff, but it limits R14 in the default configuration.",
+      "repro": "Run `cma run` without CMA_RULESET on a CSV with a line 'CASH PAID IN,3000.00'. The evidence record's indicators hold no single_cash_deposit entry, whereas with CMA_RULESET=v2 one is raised (test_cma_run_writes_indicators... sets v2)."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed c466717 against requirements.md:309. Canonical UTF-8, UTC timestamps, hash and head comparison, and first-bad-entry detection are at src/cma/case.py:176–348. Folder aliases, holder checks, and steady reader retries are at src/cma/case.py:399–674. Writer exclusion, fork refusal, expected-position conflict, and nested-save refusal are at src/cma/case.py:682–940. Per-step lock checks, repair, publication, and take-back are at src/cma/case.py:794–818 and :942–1198. The CLI consumer is at src/cma/cli.py:309–338. Checked double submission, concurrent updates, empty and malformed inputs, Unicode, UTC, partial failures, OS authorization, case-folder isolation, and exit-code consumers. The log performs no currency arithmetic and adds no database migration. The runner logs show the named CLI tamper, rebuilt-chain, torn-tail, contention, double-submit, and both new interruption tests passed. Those interruption tests inject after the repair flag is set or inside the read-back. A refusal can still escape immediately after the repair rename, and an interrupted take-back can report the wrong outcome.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 974,
+      "criterion": "P15",
+      "claim": "A nested save refusal between the repaired-log rename and the assignment to _repair_landed escapes as the nested save's refusal. The repair has put its line in the log and has yet to publish its head, so P15 requires the repair to report that it was not recorded.",
+      "repro": "Create two recorded entries and a torn third entry. During drop_torn_entry, wrap os.replace for the log destination so it performs the real rename and then immediately calls append on the same CaseLog with valid arguments, letting the nested refusal propagate. This models a callback or signal at the rename boundary. The head still lists two entries and the repaired log contains the drop entry, but the caller receives the nested CaseLogError. The passing test at tests/test_case_log.py:2697 injects at _publish, after the flag is already set."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 1139,
+      "criterion": "P15",
+      "claim": "A non-OS exception outside the CaseLogError hierarchy during take-back can make an entry that still has a published head appear to have been reported as not recorded. _write_head clears _head_renamed at entry, and the take-back handler misses the exception, so the outer handler uses the cleared flag for its answer.",
+      "repro": "Start with two recorded entries. Inject a one-shot PermissionError during read-back, then raise ValueError while staging the take-back head, before its rename. For a callback-based injection, invoke append with an empty event at that point, which raises ValueError before the nested-save guard. The caller receives SaveNotRecorded, and the next clean check finds three intact entries. P15 requires SaveNotConfirmed and a request to check the log."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 333,
+      "criterion": "P15",
+      "claim": "The producer's busy-case CLI claim says exit 0 with 'appending'. The implementation and the passing contracts test require exit 4 with 'being saved'.",
+      "repro": "Hold the writer lock over a torn third entry and invoke cma case check from another thread or process. The passing contract at tests/test_case_log.py:1339 asserts exit 4 and a message identifying the two recorded entries."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1213,
+      "criterion": "P15",
+      "claim": "The cited passing rapid-append test does not prove the producer's claimed deterministic schedule of two commits during each of the five retries with a contended fallback. It checks an unsynchronized writer loop without asserting any commit count or retry schedule.",
+      "repro": "Read the test's worker loop and assertions. The 40 checks can satisfy all assertions even if the writer completes zero appends during those checks. A synchronized regression test asserting commits on each attempt and contention at the fallback, run with python -m pytest -v tests/test_case_log.py -k keep_landing, would establish the claimed coverage."
+    }
+  ],
+  "verdict": "fail"
+}

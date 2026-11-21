@@ -1,0 +1,60 @@
+{
+  "criteria": [
+    {
+      "id": "R4",
+      "tier": "adversarial",
+      "check": "Mapped the maintained lists to src/cma/rules/v2.yaml:63,74,117,137,146,155,163,211,254,277,304,339,356,373,394. Traced longest-match containment, bank-code precedence, cash and payment-method conflicts, both-stage candidates, profile names and override precedence through src/cma/categorise.py:929,957,1044,1064,1111,1222. Traced CLI, MCP and legacy evidence consumers through src/cma/cli.py:77,228, src/cma/mcp_server.py:77,84 and src/cma/graph.py:188,210,250. Reviewed repeat submission, concurrent invocations, signed GBP inputs and date-only ingestion, Unicode boundaries, validation before checkpoint creation, ruleset allowlisting, case-local inputs and rollback. The runner logs confirm that the per-list, CLI, idempotency, legacy replay and dual-ruleset eval tests passed. R4 fails because a malformed YAML field can prevent the loader from naming that field and reporting independent rule faults.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-91/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 761,
+      "criterion": "R4",
+      "claim": "A scalar with an unsupported YAML tag aborts table construction before validation can name its rule and field or report independent rule faults.",
+      "repro": "In a copy of the packaged v2 table, set cash_paid_in's pattern to `!unknown CASH DEPOSIT` and add `unless: FPS` to payment_gateways. Load v2 in a fresh process. The loader reports that YAML has no constructor for `!unknown`, without the cash_paid_in pattern or payment_gateways exception diagnostics."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 745,
+      "criterion": "R4",
+      "claim": "A recursive YAML alias in a rule field makes the malformed-value scan recurse until it fails, discarding diagnostics for other rules even when the changed-v1 refusal is reported first.",
+      "repro": "In a copy of v1 that retains `frozen: true`, set an existing rule's pattern to `&loop [*loop]` and add `unless: FPS` to another rule. Load v1 in a fresh process. YAML constructs the recursive list, and the validator recurses before it can report either the non-string pattern by rule or the separate forbidden exception."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 78,
+      "criterion": "R4",
+      "claim": "The README claims a matching profile name can settle an ambiguous credit. The implementation records the name as one more candidate.",
+      "repro": "Classify a £500 credit described as `FPS CASH DEPOSIT JANE DOE` with Jane Doe listed as a director. The result stays `other` with `v2:conflict:payment_rail+cash_paid_in+profile:director`, contrary to the documented precedence."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_rules_v2.py",
+      "line": 1385,
+      "criterion": "R4",
+      "claim": "The producer's rule-shuffle claim overgeneralizes the passing sample. Debit category and provenance can change when two protected rules within the same stage trade places.",
+      "repro": "Classify a £100 debit described as `TFR TO POT HMRC VAT` with the shipped table. Move `hmrc_vat` immediately before `own_pots_savings`, keeping both protected and in the line-type stage, and classify again. The debit changes from `own_account_transfer` to `hmrc_vat` because the debit path takes the first protected match."
+    },
+    {
+      "severity": "minor",
+      "file": "evals/run_evals.py",
+      "line": 27,
+      "criterion": null,
+      "claim": "Compilation of tests and evals is unproven by the runner's compile gate, which covered src. Passing pytest and eval runs do not establish that every module in those directories was compiled.",
+      "repro": "Compare the producer's compile claim with mechanical:2, whose command is `python -m compileall -q src`. A passing runner result for `python -m compileall -q src evals tests` would prove the stated scope."
+    }
+  ],
+  "verdict": "fail",
+  "task": "T03",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}
