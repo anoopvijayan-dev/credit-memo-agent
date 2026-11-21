@@ -6,6 +6,7 @@
         inputs/<sha256>.<ext>    each imported file as it arrived, read-only, named by hash
         statements/<account>.csv the five-column statement the loader reads, one per account
         log.jsonl (+ .head, .gate, .lock)   the case log (case.py)
+      purge_ledger.jsonl         one line per purged case: its id, the time, who (R35)
 
 The root and every folder under it are readable only by the operating-system user who
 made them (0700), and every file this module writes is 0600 (inputs 0400), so a case's
@@ -24,6 +25,8 @@ Messages name files by hash or account key, never by their content.
 
 from __future__ import annotations
 
+import errno
+import getpass
 import hashlib
 import json
 import os
@@ -31,11 +34,14 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
 import warnings
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePath
 from typing import Any
@@ -46,6 +52,9 @@ from . import case as caselog
 from . import firm
 
 CASES = "cases"
+PURGE_LEDGER = "purge_ledger.jsonl"
+PURGING = ".purging-"  # a case folder renamed out of use, while its files are deleted
+LEDGER_WAIT = 10.0  # seconds a purge waits for another to finish writing the ledger
 PROFILE = "case.yaml"
 INPUTS = "inputs"
 STATEMENTS = "statements"
@@ -603,3 +612,164 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
 
 def _imported(entry, sha: str) -> bool:
     return entry.event == "import" and entry.data.get("input_sha256") == sha
+
+
+# --- purge (R35) -----------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Purged:
+    case: str
+    purged_at: str  # UTC
+    by: str         # the operating-system user
+
+
+def _os_user() -> str:
+    try:
+        return getpass.getuser()
+    except Exception:  # no user name the platform can give (a container's bare uid)
+        return f"uid {os.getuid()}" if hasattr(os, "getuid") else "unknown"
+
+
+def _remove_tree(path: Path) -> None:
+    """Delete `path` and everything under it. An input file is read-only (0400); on Windows
+    a read-only file cannot be deleted, so it is made writable first."""
+
+    def writable_then_retry(func, p, _exc):
+        os.chmod(p, 0o600 if not os.path.isdir(p) else DIR_MODE)
+        func(p)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=writable_then_retry)
+    else:  # pragma: no cover - Python 3.11
+        shutil.rmtree(path, onerror=writable_then_retry)
+
+
+def _append_ledger(root: Path, line: dict[str, str]) -> None:
+    """Append one line to the firm-level purge ledger, owner-only, and make it durable, unless
+    it already holds a line for the case. The check and the append are one step under an
+    exclusive lock on the ledger, so two purges of one case finishing together record it once."""
+    path = root / PURGE_LEDGER
+    data = (json.dumps(line, sort_keys=False, separators=(",", ":")) + "\n").encode("utf-8")
+    fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0), FILE_MODE)
+    try:
+        if os.fstat(fd).st_mode & 0o777 != FILE_MODE:
+            os.chmod(path, FILE_MODE)
+        deadline = time.monotonic() + LEDGER_WAIT
+        while not caselog._try_exclusive(fd):
+            if time.monotonic() > deadline:
+                raise OSError(errno.EBUSY, "the purge ledger is in use by another purge")
+            time.sleep(0.05)
+        try:
+            if _ledger_records(root, line["case"]):
+                return  # another purge of this case recorded it while this one finished
+            os.write(fd, data)  # one short write in append mode: lines from two purges never mix
+            os.fsync(fd)
+        finally:
+            with suppress(OSError):
+                caselog._unlock(fd)
+    finally:
+        os.close(fd)
+
+
+def purge_target(case_id: str, root: Path | None = None) -> Path:
+    """The folder a purge of `case_id` would delete: the case, or what an interrupted purge
+    left of it. CaseStoreError when there is neither, so nothing is asked or recorded."""
+    if not isinstance(case_id, str) or not CASE_ID.fullmatch(case_id):
+        raise CaseStoreError("a case id is 16 lowercase hex characters, as `cma case new` prints it")
+    root = ensure_root(root)
+    for folder in (root / CASES / case_id, root / CASES / f"{PURGING}{case_id}"):
+        if (folder / PROFILE).is_file() or (folder.name.startswith(PURGING) and folder.is_dir()):
+            return folder
+    raise CaseStoreError(f"no case {case_id} under {root}")
+
+
+def purge_case(case_id: str, *, root: Path | None = None, wait: float | None = None) -> Purged:
+    """Delete every file of a case, and record in the firm-level ledger only the case id,
+    the purge time and who purged it (R35): nothing from the profile, the statements, the
+    log or the label reaches the ledger.
+
+    The case is taken as a writer first, so a save under way in another window finishes
+    or the purge is refused (R42); the log need not be intact, since a broken case can be
+    purged too. Holding the case, the folder is renamed out of use (cases/.purging-<id>),
+    so no command finds the case again, and then deleted. The ledger line is written only
+    once every file is gone. A purge stopped part-way is finished by purging the same id
+    again, which deletes what is left and then records it."""
+    target = purge_target(case_id, root)
+    root = target.parent.parent
+    folder = root / CASES / case_id
+    gone = root / CASES / f"{PURGING}{case_id}"
+    if target == folder:
+        try:
+            _take_out_of_use(folder, gone, wait)
+        except FileNotFoundError:
+            # Another purge moved the case first (it was found before that purge renamed
+            # it). Never recreate the folder: finish what that purge left, if anything.
+            if not gone.is_dir():
+                raise CaseStoreError(f"no case {case_id} under {root}") from None
+    # The emptied folder stays, as the mark of an unfinished purge, until the ledger line is
+    # written; a purge stopped at any step is finished by purging the same id again.
+    try:
+        for child in list(gone.iterdir()):
+            if child.is_dir() and not child.is_symlink():
+                _remove_tree(child)
+            else:
+                _unlink_writable(child)
+    except OSError as e:
+        what = e.strerror or type(e).__name__
+        raise CaseStoreError(f"case {case_id} is out of use but some of its files could not be deleted "
+                             f"({what}); purge again to finish. Nothing was recorded in the ledger") from None
+    record = Purged(case_id, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"), _os_user())
+    try:
+        # One line per case, however often it is retried, and however many purges finish it.
+        _append_ledger(root, {"case": record.case, "purged_at": record.purged_at, "by": record.by})
+        gone.rmdir()
+    except OSError as e:
+        what = e.strerror or type(e).__name__
+        raise CaseStoreError(f"case {case_id}'s files are deleted but the purge could not be finished "
+                             f"({what}); purge again to record it in the ledger") from None
+    return record
+
+
+def _take_out_of_use(folder: Path, gone: Path, wait: float | None) -> None:
+    """Holding the case as a writer, rename it out of use. FileNotFoundError when the case
+    folder is gone (another purge moved it), so nothing is made in its place."""
+    log = caselog.for_case(folder)
+    if not (folder / PROFILE).is_file():
+        raise FileNotFoundError(str(folder))
+    # Lock files are made only for a case that lacks them; a folder that vanished since is
+    # then never recreated (the writer raises FileNotFoundError).
+    create = not (log.gate_path.exists() and log.lock_path.exists())
+    moved = False
+    with log.writer(wait=wait, create=create):
+        if not (folder / PROFILE).is_file():
+            raise FileNotFoundError(str(folder))
+        try:
+            os.replace(folder, gone)  # out of use while still held: no writer slips in
+            moved = True
+        except PermissionError:
+            if os.name != "nt":
+                raise
+    if not moved:  # Windows will not rename a folder whose lock files are open
+        os.replace(folder, gone)
+
+
+def _unlink_writable(path: Path) -> None:
+    try:
+        path.unlink()
+    except PermissionError:  # Windows: a read-only input file (0400)
+        os.chmod(path, FILE_MODE)
+        path.unlink()
+
+
+def _ledger_records(root: Path, case_id: str) -> bool:
+    """Whether the purge ledger already holds a line for `case_id`."""
+    try:
+        text = (root / PURGE_LEDGER).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False
+    for line in text.splitlines():
+        with suppress(ValueError):
+            if json.loads(line).get("case") == case_id:
+                return True
+    return False

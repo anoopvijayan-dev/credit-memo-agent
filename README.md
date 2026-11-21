@@ -64,6 +64,11 @@ cma case import <id> "private/Monzo Data Export.csv" --format monzo --account mo
 # first entry that was changed, removed, reordered or left half written.
 cma case check private/cma/cases/<id>
 
+# Delete every file of a case (asks first; --yes skips the question). The case root's
+# purge_ledger.jsonl gains one line with only the case id, the UTC time and your
+# operating-system user. A purge stopped part-way is finished by running it again.
+cma case purge <id>
+
 # Choose the categorisation table (src/cma/rules/<id>.yaml; default v1). v1 is the
 # original table, frozen; v2 adds real UK acquirers, gateways, marketplaces, delivery
 # platforms, lenders and merchant cash advance providers, own pots and savings, cash
