@@ -1,0 +1,43 @@
+{
+  "task": "T07",
+  "criteria": [
+    {
+      "id": "R12",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:613-622 averages eod.values() from end_of_day_balances (metrics.py:353-368), the close of every calendar day from statement.start to statement.end (models.py:105-110), a day with no lines carrying the previous close; cites the ids of the lines that set those closes in file order (eod_setters); emitted as M27 at metrics.py:679-680. Newest-first files are reversed at ingest (ingest.py:566-573). Hand-computed carried-day fixtures in tests/test_m27_m28.py (CARRIED -> 40.00 citing L2,L3,L4; 29-day carry -> 20.00; Jan/Feb boundary agreeing with monthly_summary closes) PASSED in invariants-5.log (13 rows) and the full suite (specified-3.log, 1346 passed); committed example's M27 equals a fresh recompute (contracts tier).",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-215/invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "M27 computed in integer pence in the figures layer (balance_pence closes, _div_half_even metrics.py:264-269, correct for negatives); recorded to the penny in the evidence record (examples/cafe_stretched.memo.evidence.json M27 2570.75) and memo appendix table (£2,570.75); the drafting prompt shows GBP to the whole pound via models.py DISPLAY_DECIMALS GBP:0, unchanged. The n/a path for a mean no float carries (metrics.py:618-620) is present; with balances bounded below 10^15 pence it cannot fire. The proposed repayment is read exactly via limit_pence/text_pence and refused unless positive whole pence below the limit (metrics.py:371-378; 7-case refusal test PASSED in contracts-4.log). M28 is an exact Decimal quotient of integer pence (_ratio). No money arithmetic added outside metrics.py. R2's ingest-scope clauses (revisions 29-31) are untouched by this diff and passed under T04 (7c3bcf7).",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-215/contracts-4.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 371,
+      "criterion": null,
+      "claim": "Claim 3's probe results (True, nan, inf, '9999999999999.99', '1e3') and claim 12's timing (9.6 ms per compute) come from ad-hoc scripts the runner did not run; only the 7-case parametrised refusal test is runner-proven, so bool/NaN/inf refusal and the performance figure are unproven claims.",
+      "repro": "No runner log contains a test with proposed_repayment=True/float('nan')/float('inf') or a timing tier; add those cases to test_m28_refuses_a_proposed_repayment_that_is_not_a_positive_whole_number_of_pence to prove them."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 393,
+      "criterion": null,
+      "claim": "M28's value path (R13, not on this task) has no production caller: cma run (graph.py:234, 311) and mcp_server.py:98,106 never pass proposed_repayment, so M28 is always n/a in production. Disclosed by the producer; recorded so R13 is not taken as done by T07.",
+      "repro": "grep -rn proposed_repayment src | grep -v metrics.py -> no output."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
