@@ -743,6 +743,41 @@ def test_a_readable_amount_at_the_line_limit_counts_toward_money_in_and_out(tmp_
 
 
 @pytest.mark.contracts
+def test_an_amount_with_thousands_of_digits_is_named_on_its_line(tmp_path):
+    """T04 review 61 / R2: an amount of more than 4,300 digits, within the CSV reader's field
+    limit, raised Python's integer conversion error before its line or the flows were named."""
+    from cma.importers import monzo
+
+    huge = "9" * 5000 + ".00"
+    csv = tmp_path / "s.csv"
+    csv.write_text(f"id,date,description,amount,balance\nT1,2026-01-01,A,{huge},5.00\n")
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    assert "line 2: amount" in str(e.value) and "money in totals £10,000,000,000,000 or more" in str(e.value)
+    assert metrics.text_pence(huge) > 10**5000
+    export = tmp_path / "m.csv"
+    export.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance\n"
+                      f"tx_1,01/01/2026,09:00:00,Faster payment,ACME,{huge},GBP,90.00\n")
+    with pytest.raises(monzo.MonzoImportError, match="line 2"):
+        monzo.convert(export, tmp_path / "o.csv")
+
+
+@pytest.mark.contracts
+def test_a_balance_at_the_line_limit_takes_part_in_the_running_balance(tmp_path):
+    """T04 review 61 / R2: an amount or balance at the line limit was left out of the running
+    balance, so a chain fault its exact value shows went unnamed."""
+    csv = tmp_path / "s.csv"
+    csv.write_text("id,date,description,amount,balance\nT1,2026-01-01,A,5.00,5.00\n"
+                   "T2,2026-01-02,B,1.00,10000000000000.00\nT3,2026-01-03,C,1.00,10000000000001.00\n")
+    with pytest.raises(ingest.StatementError) as e:
+        ingest.load_csv(csv, today=date(2026, 6, 1))
+    shown = str(e.value)
+    assert "line 3: balance '10000000000000.00' is £10,000,000,000,000 or more" in shown
+    assert "line 3: running balance 10000000000000.00 does not follow from previous 5.00 + 1.00" in shown
+    assert "line 4: running balance" not in shown  # 10000000000000.00 + 1.00 is 10000000000001.00
+
+
+@pytest.mark.contracts
 def test_a_record_too_long_to_read_with_a_bad_byte_names_both(tmp_path):
     """T04 review 58 / R2: a record with a field too long to read and a separate cell that is not
     UTF-8 was refused as too long only; the bad byte was found and then dropped."""

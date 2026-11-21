@@ -29,6 +29,7 @@ from .metrics import (
     float_pence,
     flows_at_limit,
     follows,
+    pounds_text,
     text_pence,
 )
 from .models import Statement, Transaction
@@ -479,7 +480,9 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         kinds.append(kind)
 
     parsed: list[tuple[int, str, date | None, str, float | None, float | None]] = []
-    over_limit_amounts: list[int] = []  # readable amounts at the line limit, in pence (T04 review 60)
+    # Each record's readable amount and balance in exact pence, those at the line limit
+    # included, for the checks across records (T04 reviews 60 and 61).
+    exact: dict[int, tuple[int | None, int | None]] = {}
     seen: dict[str, int] = {}
     def check(i: int, r: dict, readable: set | None = None) -> None:
         """One record's own values, checked as it is read; i is its line in the file, blank
@@ -518,10 +521,6 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
             values[field] = _number(raw)
             if values[field] is None and _over_limit(raw):
                 add("limit", f"line {i}: {field} {shown(raw)} is {AT_LIMIT}; no figure could be reported to the penny")
-                if field == "amount":
-                    # Read, though too large to keep: it still counts toward money in or out,
-                    # whose total at the limit is a problem of its own (T04 review 60).
-                    over_limit_amounts.append(text_pence((raw or "").strip()))
             elif values[field] is None:
                 add("line", f"line {i}: {field} {shown(raw)} is not a plain number like {example} "
                                 "(under £10,000,000,000,000)")
@@ -530,6 +529,12 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
         # or out (T04 reviews 37 and 57); the statement is refused, so it is never kept.
         description = (r["description"] or "").strip() if can("description") else ""
         parsed.append((i, tid, d, description, values.get("amount"), values.get("balance")))
+        # A value at the line limit is read, though too large to keep: it still counts toward
+        # money in or out and takes part in the running balance (T04 reviews 60 and 61).
+        exact[i] = tuple(
+            (float_pence(values[f]) if values[f] is not None
+             else text_pence((r[f] or "").strip()) if _over_limit(r[f]) else None) if f in values else None
+            for f in ("amount", "balance"))
 
     any_record = False
     for line, row, problem in records:
@@ -565,19 +570,18 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
             add("line", f"line {line}: date {d} is out of order (after {prev_date})")
         prev_date = d or prev_date
 
-    prev_balance: float | None = None
-    for line, _, _, _, amount, balance in parsed:
-        if None not in (amount, balance, prev_balance) and not follows(
-                float_pence(prev_balance), float_pence(amount), float_pence(balance)):
+    prev_balance: int | None = None
+    for line, *_ in parsed:
+        amount, balance = exact[line]
+        if None not in (amount, balance, prev_balance) and not follows(prev_balance, amount, balance):
             add("line",
-                f"line {line}: running balance {balance:.2f} does not follow from previous {prev_balance:.2f} "
-                f"{'+' if amount >= 0 else '-'} {abs(amount):.2f}"
+                f"line {line}: running balance {pounds_text(balance)} does not follow from previous "
+                f"{pounds_text(prev_balance)} {'+' if amount >= 0 else '-'} {pounds_text(abs(amount))}"
             )
         if balance is not None:
             prev_balance = balance
 
-    for name in flows_at_limit([float_pence(a) for _, _, _, _, a, _ in parsed if a is not None]
-                               + over_limit_amounts):
+    for name in flows_at_limit([a for a, _ in exact.values() if a is not None]):
         add("flow", f"{name} totals {AT_LIMIT}: no figure could be reported to the penny")  # each named
     if problems:
         raise StatementError(path, problems, kinds)

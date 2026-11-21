@@ -108,12 +108,14 @@ def text_pence(text: str) -> int | None:
     if shift >= 0:
         if shift > _MAX_PENCE_EXPONENT:
             return None
-        p = int("".join(map(str, digits)) or "0") * 10**shift
+        p = int(Decimal((0, digits, shift)))
     else:
         whole, fraction = digits[:shift], digits[shift:]
         if any(fraction):
             return None
-        p = int("".join(map(str, whole)) or "0")
+        # From the digits as a Decimal, exactly, never through int() of a string, which
+        # refuses more than 4,300 digits (T04 review 61).
+        p = int(Decimal((0, whole or (0,), 0)))
     return -p if sign else p
 
 
