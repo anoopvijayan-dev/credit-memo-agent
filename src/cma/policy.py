@@ -110,6 +110,7 @@ def evaluate(metrics: list[Metric], policy: dict | None = None) -> PolicyResult:
                 rule_id=rule["id"], description=rule["description"], metric_id=m.id,
                 outcome=outcome, detail=detail, op=rule["op"], threshold=float(rule["threshold"]),
                 refer_below=rule.get("refer_below"), refer_above=rule.get("refer_above"), unit=m.unit,
+                on_fail=str(rule.get("on_fail", "")), when_missing=str(rule.get("when_missing", "refer")),
             )
         )
     if any(r.outcome == RuleOutcome.FAIL for r in results):

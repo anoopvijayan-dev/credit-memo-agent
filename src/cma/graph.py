@@ -180,7 +180,8 @@ def _shipped_rules() -> dict[str, tuple]:
         def band(v):
             return float(v) if v is not None else None
         return {r["id"]: (r.get("description"), r.get("metric"), r.get("op"), float(r.get("threshold")),
-                          band(r.get("refer_below")), band(r.get("refer_above")))
+                          band(r.get("refer_below")), band(r.get("refer_above")),
+                          str(r.get("on_fail", "")), str(r.get("when_missing", "refer")))
                 for r in pol.load_policy().get("rules", []) if isinstance(r, dict) and isinstance(r.get("id"), str)}
     except Exception:  # no shipped rule known means none is sent
         return {}
@@ -188,14 +189,14 @@ def _shipped_rules() -> dict[str, tuple]:
 
 def _is_shipped(r, shipped: dict[str, tuple]) -> bool:
     """Whether a policy result's rule is the shipped policy's own rule, whole: its id, text,
-    metric and requirement, referral bands included. A custom rule that reuses a shipped id is
-    custom (T17 reviews 6 and 7)."""
+    metric and requirement, referral bands and what a breach or a missing figure means
+    included. A custom rule that reuses a shipped id is custom (T17 reviews 6, 7 and 8)."""
     want = shipped.get(r.rule_id)
 
     def num(v):
         return float(v) if v is not None else None
     return want is not None and want == (r.description, r.metric_id, r.op, num(r.threshold),
-                                         num(r.refer_below), num(r.refer_above))
+                                         num(r.refer_below), num(r.refer_above), r.on_fail, r.when_missing)
 
 
 def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = False) -> str:
@@ -500,10 +501,12 @@ def _untraced_under_lock(graph, run_reading) -> None:
     def config_of(a, k):
         return k.get("config", a[1] if len(a) > 1 else None)
 
-    def start(a, k) -> tuple[bool, object, tuple, dict]:
+    def start(a, k, mark: bool = True) -> tuple[bool, object, tuple, dict]:
         """Whether this run is under the lock, the token to end it, and the call's arguments
         with the run's reading in its config; a call nested in a run already going (invoke's
-        own stream) keeps that run's reading."""
+        own stream) keeps that run's reading. Only invoke and ainvoke mark a run as going,
+        since they run to the end before returning: a stream suspended between items marks
+        nothing, so no other run started meanwhile takes its decision (T17 review 8)."""
         outer = _IN_RUN.get()
         if outer is not None:
             return outer, None, a, k
@@ -516,11 +519,12 @@ def _untraced_under_lock(graph, run_reading) -> None:
             else:
                 a = (a[0], config, *a[2:])
             firm.begin_run(reading)
-        return locked, (_IN_RUN.set(locked), reading), a, k
+        return locked, ((_IN_RUN.set(locked) if mark else None), reading), a, k
 
     def end(token) -> None:
         if token is not None:
-            _IN_RUN.reset(token[0])
+            if token[0] is not None:
+                _IN_RUN.reset(token[0])
             if token[1] is not None:
                 firm.end_run(token[1])
 
@@ -536,7 +540,7 @@ def _untraced_under_lock(graph, run_reading) -> None:
 
     def stream(*a, **k):
         def run():
-            locked, token, args, kwargs = start(a, k)
+            locked, token, args, kwargs = start(a, k, mark=False)
             try:
                 if locked:
                     with langsmith.tracing_context(enabled=False):
@@ -559,7 +563,7 @@ def _untraced_under_lock(graph, run_reading) -> None:
 
     def astream(*a, **k):
         async def run():
-            locked, token, args, kwargs = start(a, k)
+            locked, token, args, kwargs = start(a, k, mark=False)
             try:
                 if locked:
                     with langsmith.tracing_context(enabled=False):

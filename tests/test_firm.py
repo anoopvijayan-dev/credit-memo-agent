@@ -1049,3 +1049,77 @@ def test_p5_a_custom_rule_differing_only_in_a_referral_band_is_custom(home, tmp_
     custom["rules"][0] = {**rule, "refer_below": float(rule.get("refer_below") or rule["threshold"]) + 7.5}
     user = draft_prompt(st, ms, policy.evaluate(ms, custom))
     assert f"| {rule['id']} |" not in user and "(custom id)" in user
+
+
+@pytest.mark.invariants
+def test_p18_the_app_a_native_http_run_serves_refuses_once_the_lock_is_on(home, no_network, monkeypatch, tmp_path):
+    """T17 review 8 / R29: the native HTTP run methods handed Uvicorn the raw app, so a lock
+    turned on after their entry check left requests outside the lock gate."""
+    pytest.importorskip("mcp")
+    uvicorn = pytest.importorskip("uvicorn")
+    from cma import mcp_server
+
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    monkeypatch.setenv("CMA_DATA_DIR", str(tmp_path))
+    served = []
+
+    async def serve(self, *a, **k):
+        served.append(self.config.app)
+    monkeypatch.setattr(uvicorn.Server, "serve", serve)
+    asyncio.run(mcp_server.server.run_streamable_http_async())
+    assert served and isinstance(served[0], mcp_server.LockCheckedASGI)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    asyncio.run(served[0]({"type": "http", "method": "POST", "path": "/mcp", "headers": []}, receive, send))
+    assert sent[0]["status"] == 503 and no_network == []
+
+
+@pytest.mark.invariants
+def test_p5_a_custom_rule_that_changes_only_its_failure_action_is_custom(home, tmp_path):
+    """T17 review 8 / P5: the whole-rule comparison left out what a breach means (on_fail) and
+    what a missing figure means (when_missing)."""
+    from cma import categorise, ingest, metrics, policy
+
+    st = categorise.categorise(ingest.load_csv(_statement(tmp_path), account_name="ACME LTD"))
+    ms = metrics.compute(st)
+    for field, value in (("on_fail", {"refer": "fail", "fail": "refer"}), ("when_missing", None)):
+        custom = policy.load_policy()
+        rule = custom["rules"][0]
+        new = value[rule["on_fail"]] if value else ("fail" if rule.get("when_missing", "refer") != "fail" else "pass")
+        custom["rules"][0] = {**rule, field: new}
+        user = draft_prompt(st, ms, policy.evaluate(ms, custom))
+        assert f"| {rule['id']} |" not in user and "(custom id)" in user, field
+    shipped = draft_prompt(st, ms, policy.evaluate(ms))
+    assert "(custom id)" not in shipped
+
+
+@pytest.mark.invariants
+def test_p18_a_suspended_stream_lends_no_run_its_tracing_decision(home, no_network, monkeypatch, tmp_path):
+    """T17 review 8 / R29: a stream suspended between items marked a run as going, so a graph
+    run started meanwhile, after the firm locked, took the stream's unlocked decision."""
+    from langsmith import utils as ls_utils
+
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    outer = build(llm.FakeLLM()).stream({"statement_path": str(_statement(tmp_path))},
+                                        {"configurable": {"thread_id": "s"}})
+    next(outer)  # the stream is now suspended between items
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    monkeypatch.setattr(ls_utils, "get_env_var", lambda name, *a, **k: {"TRACING": "true", "TRACING_V2": "true",
+                                                                         "API_KEY": "dummy"}.get(name, k.get("default")))
+    seen = []
+
+    class Watching(llm.FakeLLM):
+        def complete(self, system, user, **k):
+            seen.append(ls_utils.tracing_is_enabled())
+            return super().complete(system, user)
+
+    build(Watching()).invoke({"statement_path": str(_statement(tmp_path))}, {"configurable": {"thread_id": "t"}})
+    outer.close()
+    assert seen and not any(seen) and no_network == []

@@ -167,6 +167,10 @@ class RuleResult(BaseModel):
     refer_below: float | None = None
     refer_above: float | None = None
     unit: str = Field(default="", description="Unit of the metric the threshold applies to.")
+    # What a breach, and a figure that cannot be computed, mean under the rule: kept so a rule
+    # can be told from the shipped one whole (T17 review 8); never written to evidence.
+    on_fail: str = Field(default="", exclude=True)
+    when_missing: str = Field(default="", exclude=True)
 
     def citable_values(self) -> list[float]:
         """Values a memo may quote with this rule's [Rn] tag."""

@@ -68,13 +68,15 @@ class LockedMCPServer(MCPServer):
     # check, the app it serves is built as the SDK builds it (T17 review 2).
     def sse_app(self, *args, **kwargs):
         if _BUILDING_FOR_RUN.get():
-            return super().sse_app(*args, **kwargs)
+            # The app a run method serves is lock-checked too: a lock turned on after the
+            # run's entry check refuses start-up and every request (T17 review 8).
+            return LockCheckedASGI(super().sse_app(*args, **kwargs))
         firm.require_unlocked("Handing out the MCP server's ASGI app")
         return LockCheckedASGI(super().sse_app(*args, **kwargs))
 
     def streamable_http_app(self, *args, **kwargs):
         if _BUILDING_FOR_RUN.get():
-            return super().streamable_http_app(*args, **kwargs)
+            return LockCheckedASGI(super().streamable_http_app(*args, **kwargs))
         firm.require_unlocked("Handing out the MCP server's ASGI app")
         return LockCheckedASGI(super().streamable_http_app(*args, **kwargs))
 
