@@ -1,0 +1,29 @@
+T20 is built and committed as 8188886. Clicking any figure, money-in bucket or monthly cell in the workspace now opens exactly the lines behind it, and the lines' total equals the figure. The full suite passes: 2136 tests, and lint is clean.
+
+- **What each line shows:** date, description, amount, balance, category, and the rule or override that set the category. An overridden line shows its override as `override:N`. Lines come in the same order the figures layer cites them.
+- **Figures that add up lines** (M2, M17, M18, M19–M25, and the monthly money-in and trading-receipts cells): the lines' signed total is shown, and it equals the figure to the penny.
+- **Money paid out** (M8, M11, M12, M14, and monthly money out): the total is shown and labelled as the figure negated.
+- **Averages, shares, ratios and counts:** these show their inputs and their method. Inputs include the figures used, the period, a share's top and bottom amounts, the proposed repayment for M28, and the end-of-day balances read for M6, M27 and the monthly balance cells. M9 also names the lines it counts only in part.
+- **Where it lives:** two new endpoints, `/api/lines` for the data and `/lines` for the page, each taking an account plus either a figure or a month and cell. The token is required as for every other request. A request that names nothing valid gets a 400. A case whose money-in buckets don't reconcile shows no lines.
+- **Arithmetic:** every total and input is computed in `metrics.py`. The new `src/cma/review/drilldown.py` only assembles and renders the results.
+
+I changed one existing test. The summary page now links each figure and cell to its lines, so `test_p8_the_workspace_html_holds_description_text_only_escaped` had to allow `<a>` and `<strong>` tags. It now checks that every link points only to `/lines` or back to the case, and it also checks that descriptions on the `/lines` page are escaped.
+
+Two smaller things:
+- **Shared refusal handling:** I moved the summary's error handling into shared helpers so the drill-down could reuse it. The summary behaves as before.
+- **Indicators:** they aren't drillable yet, because R16 names only figures, buckets and monthly cells.
+
+The claim is in `/home/user/credit-memo-agent/.bridgie/runs/statement-review/implementer-49/claim.json`:
+
+```json
+{
+  "task": "T20",
+  "claims": [
+    {"text": "For every figure M1-M28 (buckets included) and every monthly cell, /api/lines returns exactly the evidence lines in order, each with date, description, amount, balance, category and rule/override; sum totals equal the figure, outflow totals equal the figure negated, derived figures carry inputs and method; also on 20 random statements", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_drilldown.py -m invariants -k p2", "proof_output": "22 passed, 9 deselected in 17.31s"},
+    {"text": "Derived inputs/method, M9 counted-in-part lines, override as rule, 400 on bad requests, no lines when not reconciled, page links every figure/bucket/cell, lines page escapes descriptions", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_drilldown.py tests/test_workspace_summary.py -m \"invariants or contracts\"", "proof_output": "76 passed in 44.80s"},
+    {"text": "Full suite and lint pass", "proof_cmd": "ruff check src tests evals && python -m pytest -q -p no:cacheprovider", "proof_output": "All checks passed!\n2136 passed in 206.64s (0:03:26)"}
+  ],
+  "files_changed": ["README.md", "src/cma/metrics.py", "src/cma/review/drilldown.py", "src/cma/review/server.py", "src/cma/review/summary.py", "tests/test_drilldown.py", "tests/test_workspace_summary.py"],
+  "notes": "Commit 8188886. Totals/inputs computed in metrics.py; drilldown.py only renders. New /api/lines and /lines endpoints (token required). The P8 test in test_workspace_summary.py was updated to allow the new links and check their targets, and now also checks /lines. Refusal handling factored into summary.refusal/load_figures with no change in behaviour. Indicators not drillable (R16 names figures, buckets, cells)."
+}
+```

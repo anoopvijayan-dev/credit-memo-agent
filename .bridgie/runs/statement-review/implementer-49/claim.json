@@ -1,0 +1,30 @@
+{
+  "task": "T20",
+  "claims": [
+    {
+      "text": "For every figure M1-M28 (buckets M2, M19-M25 included) /api/lines returns exactly the figure's evidence lines in its order, each with date, description, amount, balance, category and the rule or override (rule_id) that set it; a sum figure's line total equals the figure, an outflow figure's equals the figure negated, and a derived figure carries inputs and method instead of a total; likewise for every monthly cell; also on 20 random statements",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_drilldown.py -m invariants -k p2",
+      "proof_output": "22 passed, 9 deselected in 17.31s"
+    },
+    {
+      "text": "Derived figures show their inputs (input figures, period, share numerator/denominator, proposed repayment, closes read) and method; M9 names the lines counted only in part; an override shows as the line's rule (override:N); bad requests answer 400; a case that does not reconcile shows no lines (R3); the page links every figure, bucket and cell to its lines; the lines page escapes description text (P8)",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_drilldown.py tests/test_workspace_summary.py -m \"invariants or contracts\"",
+      "proof_output": "76 passed in 44.80s"
+    },
+    {
+      "text": "Full suite and lint pass",
+      "proof_cmd": "ruff check src tests evals && python -m pytest -q -p no:cacheprovider",
+      "proof_output": "All checks passed!\n2136 passed in 206.64s (0:03:26)"
+    }
+  ],
+  "files_changed": [
+    "README.md",
+    "src/cma/metrics.py",
+    "src/cma/review/drilldown.py",
+    "src/cma/review/server.py",
+    "src/cma/review/summary.py",
+    "tests/test_drilldown.py",
+    "tests/test_workspace_summary.py"
+  ],
+  "notes": "Commit 8188886. Totals and derived inputs are computed in the figures layer (metrics.figure_kind, lines_total, derived_inputs, cell_inputs, daily_closes); review/drilldown.py only assembles and renders. New endpoints: /api/lines and /lines with account, figure or month+cell; the token is required as for every request. summary.render(token=...) now links ids and monthly cells to /lines, so test_p8_the_workspace_html_holds_description_text_only_escaped was updated: it now allows <a>/<strong> tags, checks that every link has only an href to /lines?token= or /?token=, and also checks the /lines page. The summary's refusal handling was moved into summary.refusal/load_figures for reuse, with no change in behaviour. Indicators are not drillable here: R16 names figures, buckets and monthly cells."
+}

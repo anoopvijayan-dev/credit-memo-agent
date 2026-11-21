@@ -1,0 +1,44 @@
+{
+  "task": "T20",
+  "claims": [
+    {
+      "text": "Authz: the new /lines and /api/lines entry points pass through the same token, loopback-Host and Origin checks as every route; requests lacking any of them get 403 (new contracts test).",
+      "proof_cmd": "python -m pytest tests/test_drilldown.py -q -p no:cacheprovider -k entry_points",
+      "proof_output": "1 passed (part of: 12 passed, 31 deselected in 8.38s)"
+    },
+    {
+      "text": "Failure modes: a failure no refusal foresees in the drill-down is answered 500 with a fixed message naming nothing the case holds, on both routes; a malformed target is answered 400 naming only what was asked (new contracts test plus existing test_a_request_that_names_no_figure_or_cell_is_answered_400).",
+      "proof_cmd": "python -m pytest tests/test_drilldown.py -q -p no:cacheprovider -k \"unforeseen or names_no_figure\"",
+      "proof_output": "passed (part of 12 passed run; full file 43 passed in 28.61s)"
+    },
+    {
+      "text": "Correctness (P2): a share's drill-down inputs reproduce the figure exactly, so ratio(numerator, denominator) == M15/M16/M26 and the denominator equals its lines' total, on 10 random statements (new invariants test test_p2_a_share_s_inputs_give_the_figure).",
+      "proof_cmd": "python -m pytest tests/test_drilldown.py -q -p no:cacheprovider -m \"invariants or contracts\"",
+      "proof_output": "43 passed in 28.61s"
+    },
+    {
+      "text": "No regression: lint and the full suite pass with the T20 change and the hardening tests.",
+      "proof_cmd": "ruff check src tests && python -m pytest -q -p no:cacheprovider",
+      "proof_output": "All checks passed! ... 2148 passed in 206.08s (0:03:26)"
+    },
+    {
+      "text": "Idempotency / data / migration: not applicable with reason. The new routes only answer GET requests and only read. They add no stored data, log entry or schema change, so there is nothing to migrate. Rollback is reverting commit 8188886.",
+      "proof_cmd": "git show --stat 8188886",
+      "proof_output": "README.md, src/cma/metrics.py (pure functions), src/cma/review/drilldown.py (new, read-only), src/cma/review/server.py (GET routes), src/cma/review/summary.py (links), tests only; no store/case-log write added"
+    },
+    {
+      "text": "Observability: not applicable with reason. The workspace server logs no requests by design (log_message returns, because the request line carries the token), and the design records only case-log events for writes. A drill-down read writes nothing.",
+      "proof_cmd": "grep -n 'def log_message' -A1 src/cma/review/server.py",
+      "proof_output": "def log_message(self, format, *args):  # the request line holds the token\n        return"
+    },
+    {
+      "text": "Performance: measured, gap recorded. The drill-down is unpaged. On a 10,000-line statement, M17 (5,000 lines) took 2.29s and rendered 904,886 bytes of HTML; M27 took 0.87s.",
+      "proof_cmd": "PYTHONPATH=src python <scratchpad>/probe.py",
+      "proof_output": "M17 5000 2.29s 904886 bytes html\nM27 280 0.87s 62063 bytes html"
+    }
+  ],
+  "files_changed": [
+    "tests/test_drilldown.py"
+  ],
+  "notes": "Gap for the owner: the design says lines are paged in the workspace, with a 2-second target at 10,000 lines (R52, Failure modes 'A very large case'). The T20 drill-down returns every line of a figure in one response. Total money in (M17) on a 10,000-line statement took 2.29s and produced a 0.9 MB page. Paging needs a design choice (page size, how a sum figure's total is shown beside a page of its lines), so it is left as a gap, not fixed here; it may belong with T22's timed recompute. No new dependency or service was needed."
+}
