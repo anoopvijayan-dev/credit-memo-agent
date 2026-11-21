@@ -1,0 +1,51 @@
+{
+  "task": "T16",
+  "criteria": [
+    {
+      "id": "P3",
+      "tier": "adversarial",
+      "check": "Figures are recomputed from scratch on every call: case_figures (src/cma/overrides.py:248-280) reads the case log entries, the hash-checked override records (_read_records :136-168) and statements/<account>.csv, decides which overrides apply (_decide :189-214, latest per line, dropped and stale left out), and runs categorise and metrics on a freshly loaded Statement. No state is cached, and the case log append is the only write (add_override :356-398). So computing twice is identical, and adding overrides one at a time ends in the same figures as one computation with all of them. tests/test_overrides.py:76-111 compares that against an independent load_csv, categorise and metrics.compute; :113-118 checks computing twice; :343-377 covers stale, confirmed and dropped overrides. The runner's invariants-5.log lines 676-685 show these tests ran and passed. Checked that the re-serialised records under _append (:331-338) give the same bytes, since sort_keys and fixed separators survive a JSON round trip, so recorded hashes stay valid. Checked the reader race: case log entries are read before overrides.jsonl, and the file is written before the case log append, so a record not yet in the log is treated as a leftover and ignored.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-230/invariants-5.log"
+    },
+    {
+      "id": "P4",
+      "tier": "adversarial",
+      "check": "An override reaches a line only through classify (src/cma/categorise.py:1286-1289), which returns the override's category and reference. categorise (:1446-1460) sets category, rule_id and reverses and nothing else; link_reversals and unmark_round_trips change only category, rule_id and reverses. The bare run used for marking works on statement.model_copy(deep=True) (overrides.py:262). add_override refuses any other change requested through **changes (:363-366), and categories invalid for the line's direction are refused on add (:380-382) and on confirm (:412-414). tests/test_overrides.py:124-137 checks that the (id, date, amount, balance, description) set and the statement bytes are unchanged after 15 random overrides; :140-147 checks the refusals; :343-377 checks across stale, confirmed and dropped overrides. All passed in invariants-5.log lines 680-685.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-230/invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/overrides.py",
+      "line": 176,
+      "criterion": null,
+      "claim": "_load reads statements/<account>.csv without comparing its bytes with the statement_sha256 that the case log's import entry recorded (src/cma/store.py:592). A hand-edited statement is used silently for figures, and resolve_stale('confirm') records the override against the edited file in the case log. A second import into the same account is refused (store.py:597-599), so a hand edit is in practice the only way an override goes stale.",
+      "repro": "Import SMALL, add an override on L2, then rewrite statements/main.csv with J BLOGGS changed to J BLOGGS LTD (as tests/test_overrides.py:221-223 does). case_figures returns figures from the edited file with no warning that it differs from the import's recorded hash, and resolve_stale(folder, 1, 'confirm', name='Pat') records an override_confirmed entry carrying the edited file's hash."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/overrides.py",
+      "line": 182,
+      "criterion": null,
+      "claim": "load_csv raises StatementError, a ValueError, for a statement that fails the loader. _case_errors (src/cma/cli.py:467-492) does not catch it, so `cma case figures`, `cma case overrides` and `cma case override` print a traceback instead of a refusal.",
+      "repro": "Import SMALL, then rewrite statements/main.csv with L3's balance changed from 1700.00 to 1400.00 so the balances no longer follow. Running `cma case figures <id>` exits 1 with a StatementError traceback rather than exit 2 with 'Refused.'"
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/overrides.py",
+      "line": 384,
+      "criterion": null,
+      "claim": "While a line's latest override is stale, add_override compares the requested category with the line's category without that override (old is the rule's category). Asking for that same category records nothing, so the stale override stays the latest one for the line. If the statement's hash later matches its recorded hash again, it applies again and wins over the underwriter's later choice.",
+      "repro": "With SMALL, add_override L2 -> director_funding (seq 1; L2's rule category is other). Edit the statement so seq 1 goes stale. add_override(folder, 'L2', 'other', ...) returns recorded=False and the CLI prints 'nothing was recorded'. Put the original bytes back: case_figures shows L2 as director_funding again."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
