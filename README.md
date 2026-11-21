@@ -110,7 +110,10 @@ cma case purge <id>
 # file records the table's id and hash, and under "lines" each line's id, category and
 # the rule that set it (no descriptions). CMA_RULESET=v1 is the rollback. The committed
 # lines whose category v2 changes are listed in docs/v2-newly-recognised.md; M1-M16 do
-# not move on any committed case or fixture.
+# not move on any committed case or fixture. To go back to the previous release itself,
+# set CMA_RULESET=v1 first and finish any review drafted under v2 before installing it: a
+# review drafted under v2 can hold a category (director_funding, for one) that the
+# previous release cannot read back.
 CMA_RULESET=v1 cma run examples/cafe_stretched.csv
 
 # Use a real model instead of the offline one. The offline lock in firm.yaml (under
