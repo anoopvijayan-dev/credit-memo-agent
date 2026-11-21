@@ -148,6 +148,38 @@ class Metric(BaseModel):
         return self.display()
 
 
+class MonthlyCell(BaseModel):
+    """One cell of the monthly summary (R11) with the lines behind it, by kind (P2): a sum
+    figure's lines' signed amounts total it; an outflow figure is a positive amount whose
+    lines total it negated; a derived figure (a balance or overdrawn-day cell) carries no
+    total and cites the line that set the close of every day of the month in the period."""
+
+    value: float | None = Field(description="None when the cell cannot be reported to the penny (see `note`).")
+    unit: Literal["GBP", "days"]
+    kind: Literal["sum", "outflow", "derived"]
+    evidence: list[str] = Field(default_factory=list)
+    total: float | None = Field(
+        default=None, description="Signed total of the evidence lines' amounts; None for a derived cell."
+    )
+    note: str | None = Field(default=None, description="Why the value is n/a, when it is.")
+
+
+class MonthRow(BaseModel):
+    """One calendar month of the period. `start` and `end` are the month's days inside the
+    period; a month the period does not cover whole is a part month."""
+
+    month: str = Field(description="YYYY-MM.")
+    part_month: bool
+    start: date
+    end: date
+    money_in: MonthlyCell
+    money_out: MonthlyCell
+    trading_receipts: MonthlyCell
+    average_balance: MonthlyCell
+    lowest_balance: MonthlyCell
+    days_overdrawn: MonthlyCell
+
+
 # How many decimals each unit is shown with. The memo copies figures as shown, and the
 # guard treats a figure written at this precision as exact (see guard._value_fits).
 DISPLAY_DECIMALS = {"GBP": 0, "pct": 1, "ratio": 2}
