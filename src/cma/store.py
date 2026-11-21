@@ -28,9 +28,9 @@ import secrets
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -45,8 +45,9 @@ PROFILE = "case.yaml"
 INPUTS = "inputs"
 STATEMENTS = "statements"
 FORMATS = ("csv", "monzo")
-CASE_ID = re.compile(r"^[0-9a-f]{16}$")  # random; never the applicant's name
-ACCOUNT_KEY = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+# Matched with fullmatch: `$` alone would also take a key ending in a newline (T13 review 2).
+CASE_ID = re.compile(r"[0-9a-f]{16}")  # random; never the applicant's name
+ACCOUNT_KEY = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 DIR_MODE, FILE_MODE, INPUT_MODE = 0o700, 0o600, 0o400
 LIMIT_PENCE = 10_000_000_000_000 * 100  # R2's limit, for the proposed repayment too
 
@@ -146,7 +147,7 @@ def ensure_root(root: Path | None = None) -> Path:
 
 def case_folder(case_id: str, root: Path | None = None) -> Path:
     """The folder of an existing case, after checking the root as ensure_root does."""
-    if not isinstance(case_id, str) or not CASE_ID.match(case_id):
+    if not isinstance(case_id, str) or not CASE_ID.fullmatch(case_id):
         raise CaseStoreError("a case id is 16 lowercase hex characters, as `cma case new` prints it")
     root = ensure_root(root)
     folder = root / CASES / case_id
@@ -175,26 +176,47 @@ def _write_private(target: Path, data: bytes, mode: int = FILE_MODE) -> None:
         raise
 
 
+@dataclass
+class _Save:
+    """What a body under _recorded hands back: the entry to append (None appends nothing),
+    and the steps that put the folder back if the entry is not recorded."""
+
+    entries: list
+    data: dict[str, Any] | None = None
+    undo: list = field(default_factory=list)
+
+
 @contextmanager
-def _recorded(folder: Path, event: str, data_for: Any) -> Iterator[list]:
-    """Hold the case, check its log whole, let the body change files, then append `event`.
-    The body yields undo steps into the list it is given; if the log refuses the entry (or
-    the body fails), they are run, so the folder is as before. A save the log could not
-    confirm keeps its files: its entry may be in the log (R42), and `cma case check` says."""
+def _recorded(folder: Path, event: str) -> Iterator[_Save]:
+    """Hold the case, check its log whole, let the body read the case and change files, then
+    append `event` with the data the body set. Everything the body reads, it reads while
+    the case is held, so a change it bases on the case cannot be based on a stale read
+    (T13 review 2). If the log refuses the entry (or the body fails), the undo steps run,
+    so the folder is as before. A save the log could not confirm keeps its files: its entry
+    may be in the log (R42), and `cma case check` says."""
     log = caselog.for_case(folder)
-    undo: list = []
     with log.writer():
         head = log.require_intact()
+        save = _Save(entries=log.entries())
         try:
-            yield undo
-            log.append(event, data_for(), expected=head.position)
+            yield save
+            if save.data is not None:
+                log.append(event, save.data, expected=head.position)
         except caselog.SaveNotConfirmed:
             raise
         except BaseException:
-            for step in reversed(undo):
+            for step in reversed(save.undo):
                 with suppress(OSError):
                     step()
             raise
+
+
+def _restorer(path: Path, mode: int = FILE_MODE):
+    """An undo step that puts `path` back as it is now: its bytes, or no file."""
+    before = path.read_bytes() if path.is_file() else None
+    if before is None:
+        return lambda: path.unlink(missing_ok=True)
+    return lambda: _write_private(path, before, mode)
 
 
 # --- the profile -----------------------------------------------------------------------
@@ -351,20 +373,29 @@ def new_case(*, label: str | None = None, demo: bool = False, root: Path | None 
     return case_id
 
 
+def update_profile(folder: Path, update: Callable[[dict[str, Any]], dict[str, Any]]) -> dict[str, Any]:
+    """Change a case's profile and log the change (R42). `update` is given the profile as it
+    stands once this process holds the case, and returns the new one, which is checked. So
+    two overlapping changes are made one after the other, the second on the first's
+    result, never on a profile read before the first was saved (T13 review 2)."""
+    folder = Path(folder)
+    target = folder / PROFILE
+    with _recorded(folder, "profile_changed") as save:
+        old = load_profile(folder)
+        new = validate_profile(update({k: (list(v) if isinstance(v, list) else v) for k, v in old.items()}))
+        if new == old:
+            return new  # nothing changed, so nothing is logged
+        save.undo.append(_restorer(target))
+        _write_private(target, _profile_bytes(new))
+        save.data = {"fields": sorted(k for k in PROFILE_FIELDS if new[k] != old[k]),
+                     "profile_sha256": profile_sha256(new)}
+    return new
+
+
 def set_profile(folder: Path, profile: dict[str, Any]) -> dict[str, Any]:
     """Replace a case's profile with `profile`, checked, and log the change (R42)."""
-    folder = Path(folder)
     new = validate_profile(profile)
-    old = load_profile(folder)
-    if new == old:
-        return new  # nothing changed, so nothing is logged
-    changed = sorted(k for k in PROFILE_FIELDS if new[k] != old[k])
-    previous = (folder / PROFILE).read_bytes()
-    with _recorded(folder, "profile_changed",
-                   lambda: {"fields": changed, "profile_sha256": profile_sha256(new)}) as undo:
-        _write_private(folder / PROFILE, _profile_bytes(new))
-        undo.append(lambda: _write_private(folder / PROFILE, previous))
-    return new
+    return update_profile(folder, lambda _old: new)
 
 
 @dataclass(frozen=True)
@@ -375,13 +406,6 @@ class Imported:
     start: str
     end: str
     already: bool = False
-
-
-def _input_path(folder: Path, sha: str) -> Path | None:
-    for p in (folder / INPUTS).glob(sha + "*"):
-        if p.name.split(".", 1)[0] == sha:
-            return p
-    return None
 
 
 def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
@@ -395,7 +419,7 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
     folder = Path(folder)
     if fmt not in FORMATS:
         raise CaseStoreError(f"unknown format {fmt!r}; use one of {', '.join(FORMATS)}")
-    if not ACCOUNT_KEY.match(account or ""):
+    if not isinstance(account, str) or not ACCOUNT_KEY.fullmatch(account):
         raise CaseStoreError("an account key is lowercase letters, digits, _ and -, starting with a "
                              "letter or digit, at most 32 characters")
     src = Path(src)
@@ -403,13 +427,15 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
         raise CaseStoreError(f"no file at {src}")
     data = src.read_bytes()  # read once; hashed and converted from these bytes
     sha = hashlib.sha256(data).hexdigest()
-    existing = _input_path(folder, sha)
-    if existing is not None:
-        return Imported(account, sha, 0, "", "", already=True)
+    # Whether a file was imported is what the case log says, never whether its copy is in
+    # inputs/: a copy whose entry never reached the log (a crash between the two, or a save
+    # not confirmed whose entry a repair dropped) is a leftover, and importing the file
+    # again records it (T13 review 2). A look before the work; the decision is made again
+    # below, holding the case.
+    with suppress(caselog.CaseLogError):
+        if any(_imported(e, sha) for e in caselog.for_case(folder).entries()):
+            return Imported(account, sha, 0, "", "", already=True)
     statement = folder / STATEMENTS / f"{account}.csv"
-    if statement.exists():
-        raise CaseStoreError(f"account {account} already has a statement in this case; "
-                             "import another account with --account")
 
     suffix = "".join(s.lower() for s in src.suffixes[-1:] if re.fullmatch(r"\.[A-Za-z0-9]{1,8}", s))
     inp = folder / INPUTS / f"{sha}{suffix or '.csv'}"
@@ -438,12 +464,24 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
         entry = {"account": account, "format": fmt, "input_sha256": sha,
                  "statement_sha256": hashlib.sha256(out).hexdigest(), "lines": len(stmt.transactions),
                  "start": stmt.start.isoformat(), "end": stmt.end.isoformat()}
-        with _recorded(folder, "import", lambda: entry) as undo:
-            if _input_path(folder, sha) is not None or statement.exists():
-                # Another window imported meanwhile; the case is left as it stands.
-                raise CaseStoreError("the case changed while this file was read; import again")
+        with _recorded(folder, "import") as save:
+            if any(_imported(e, sha) for e in save.entries):
+                return Imported(account, sha, 0, "", "", already=True)  # R39: nothing changes
+            if any(e.event == "import" and e.data.get("account") == account for e in save.entries):
+                raise CaseStoreError(f"account {account} already has a statement in this case; "
+                                     "import another account with --account")
+            # Files left by an import whose entry is not in the log are replaced.
+            for left in (folder / INPUTS).glob(sha + ".*"):
+                if left != inp and left.name.split(".", 1)[0] == sha:
+                    save.undo.append(_restorer(left, INPUT_MODE))
+                    left.unlink()
+            save.undo.append(_restorer(inp, INPUT_MODE))
             _write_private(inp, data, INPUT_MODE)
-            undo.append(lambda: inp.unlink())
+            save.undo.append(_restorer(statement))
             _write_private(statement, out)
-            undo.append(lambda: statement.unlink())
+            save.data = entry
     return Imported(account, sha, entry["lines"], entry["start"], entry["end"])
+
+
+def _imported(entry, sha: str) -> bool:
+    return entry.event == "import" and entry.data.get("input_sha256") == sha

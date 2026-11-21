@@ -375,3 +375,101 @@ def test_store_writes_only_under_the_case_root(home, tmp_path):
     store.import_file(home / "cases" / cid, _statement(tmp_path), "csv")
     after = sorted(p.name for p in tmp_path.iterdir())
     assert set(after) - set(before) == {"statement.csv", "cma-home"}
+
+
+# --- review 2: reads under the lock, the log decides an import, keys end where they end ---
+
+
+@pytest.mark.contracts
+def test_overlapping_profile_changes_keep_both(home, monkeypatch):
+    """A `cma case profile` that read the profile before another one saved builds its change
+    on the profile as it stands once it holds the case, so neither change is lost."""
+    import threading
+
+    cid = store.new_case()
+    folder = home / "cases" / cid
+    real = store.update_profile
+
+    def other_window_saves_first(f, update):
+        t = threading.Thread(target=real, args=(f, lambda p: {**p, "directors": ["Jane Doe"]}))
+        t.start()
+        t.join()
+        return real(f, update)
+
+    monkeypatch.setattr(store, "update_profile", other_window_saves_first)
+    r = runner.invoke(app, ["case", "profile", cid, "--vat-stagger", "2"])
+    assert r.exit_code == 0, r.output
+    profile = store.load_profile(folder)
+    assert profile["directors"] == ["Jane Doe"] and profile["vat_stagger"] == 2
+    events = _events(folder)
+    assert [d["fields"] for e, d in events if e == "profile_changed"] == [["directors"], ["vat_stagger"]]
+    assert events[-1][1]["profile_sha256"] == store.profile_sha256(profile)
+
+
+@pytest.mark.contracts
+def test_a_refused_profile_change_puts_back_the_profile_the_log_last_recorded(home, monkeypatch):
+    folder = home / "cases" / store.new_case()
+    store.update_profile(folder, lambda p: {**p, "directors": ["Jane Doe"]})
+
+    def refuse(self, *a, **k):
+        raise case.SaveNotRecorded("refused for the test; the save was not recorded")
+
+    monkeypatch.setattr(case.CaseLog, "append", refuse)
+    with pytest.raises(case.SaveNotRecorded):
+        store.update_profile(folder, lambda p: {**p, "vat_stagger": 2})
+    profile = store.load_profile(folder)
+    assert profile["directors"] == ["Jane Doe"] and profile["vat_stagger"] is None
+    assert _events(folder)[-1][1]["profile_sha256"] == store.profile_sha256(profile)
+
+
+@pytest.mark.contracts
+def test_an_import_whose_entry_never_reached_the_log_is_recorded_when_imported_again(home, tmp_path, monkeypatch):
+    """Files an import left without its log entry (a save not confirmed whose entry a repair
+    dropped, or a crash between the files and the entry) do not make the file 'already
+    imported': importing it again appends the entry (R42, R39)."""
+    cid = store.new_case()
+    folder = home / "cases" / cid
+    src = _statement(tmp_path)
+
+    def not_confirmed(self, *a, **k):
+        raise case.SaveNotConfirmed("for the test; whether the save is in the log is not confirmed")
+
+    with monkeypatch.context() as m:
+        m.setattr(case.CaseLog, "append", not_confirmed)
+        with pytest.raises(case.SaveNotConfirmed):
+            store.import_file(folder, src, "csv")
+    assert (folder / "statements" / "main.csv").exists() and len(list((folder / "inputs").iterdir())) == 1
+    assert [e for e, _ in _events(folder)] == ["case_created"]
+
+    r = runner.invoke(app, ["case", "import", cid, str(src), "--format", "csv"])
+    assert r.exit_code == 0 and "imported account main" in r.output, r.output
+    assert [e for e, _ in _events(folder)] == ["case_created", "import"]
+    r = runner.invoke(app, ["case", "import", cid, str(src), "--format", "csv"])
+    assert "already imported" in r.output
+    assert [e for e, _ in _events(folder)] == ["case_created", "import"]
+    assert runner.invoke(app, ["case", "check", str(folder)]).exit_code == 0
+
+
+@pytest.mark.contracts
+def test_a_statement_left_without_its_entry_is_replaced_by_the_next_import(home, tmp_path):
+    folder = home / "cases" / store.new_case()
+    (folder / "statements" / "main.csv").write_text("left over by a crash\n")
+    store.import_file(folder, _statement(tmp_path), "csv")
+    assert (folder / "statements" / "main.csv").read_text() == STATEMENT
+    assert [e for e, _ in _events(folder)] == ["case_created", "import"]
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("account", ["main\n", "main\r", " main"])
+def test_an_account_key_with_a_trailing_newline_is_refused(home, tmp_path, account):
+    folder = home / "cases" / store.new_case()
+    with pytest.raises(store.CaseStoreError, match="account key"):
+        store.import_file(folder, _statement(tmp_path), "csv", account=account)
+    assert list((folder / "statements").iterdir()) == []
+
+
+@pytest.mark.contracts
+def test_a_case_id_with_a_trailing_newline_is_refused(home):
+    cid = store.new_case()
+    with pytest.raises(store.CaseStoreError, match="16 lowercase hex"):
+        store.case_folder(cid + "\n")

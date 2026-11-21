@@ -521,18 +521,23 @@ def case_profile(
 
     with _case_errors():
         folder = store.case_folder(case_id)
-        profile = store.load_profile(folder)
+        replacement = None
         if from_file is not None:
             if not from_file.is_file():
                 raise store.CaseStoreError(f"no file at {from_file}")
-            profile = store.parse_profile(from_file.read_bytes(), str(from_file))
-        for key, value in (("label", label), ("demo", demo), ("business_name", business_name),
-                           ("directors", director), ("shareholders", shareholder),
-                           ("own_accounts", own_account), ("vat_stagger", vat_stagger),
-                           ("proposed_monthly_repayment", proposed_repayment)):
-            if value is not None and value != []:
-                profile[key] = value
-        profile = store.set_profile(folder, profile)
+            replacement = store.parse_profile(from_file.read_bytes(), str(from_file))
+        changes = {key: value for key, value in (
+            ("label", label), ("demo", demo), ("business_name", business_name),
+            ("directors", director), ("shareholders", shareholder), ("own_accounts", own_account),
+            ("vat_stagger", vat_stagger), ("proposed_monthly_repayment", proposed_repayment))
+            if value is not None and value != []}
+
+        def update(current: dict) -> dict:
+            # Applied to the profile as it stands once the case is held, so a change made
+            # meanwhile by another window is kept (T13 review 2).
+            return {**(replacement if replacement is not None else current), **changes}
+
+        profile = store.update_profile(folder, update)
     console.print(escape(store._profile_bytes(profile).decode("utf-8")).rstrip())
 
 
