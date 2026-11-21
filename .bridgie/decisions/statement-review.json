@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 322,
+  "next_id": 323,
   "decisions": [
     {
       "id": "D1",
@@ -6446,6 +6446,26 @@
       "decided_at": "2026-11-21T02:40:53.034Z",
       "effect": "task T04 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T04",
       "created_at": "2026-11-21T02:36:43.295Z"
+    },
+    {
+      "id": "D322",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/metrics.py:95 now preserves written fractional pence and src/cma/ingest.py:579 includes readable over-limit amounts in flow checks. The integer conversion can still abort on a readable field, and src/cma/ingest.py:570 skips balance comparisons involving readable over-limit values. M3 and penny display were checked at src/cma/metrics.py:563, src/cma/cli.py:415 and src/cma/graph.py:175.); major: A plain amount within the CSV field-size limit can raise a raw integer conversion error before either importer reports the record line or the flow limit. at src/cma/metrics.py:111; major: The post-read running-balance check omits readable amounts and balances that reach the line limit, even when their exact values establish a separate chain fault. at src/cma/ingest.py:570; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T02:44:48.486Z"
     }
   ]
 }

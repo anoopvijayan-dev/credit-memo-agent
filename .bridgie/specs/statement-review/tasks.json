@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-202/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:81 checks the statement amount and balance round trip, and src/cma/metrics.py:540 computes M3 from integer pence and handles an unrepresentable result. The CLI and memo appendix display GBP to the penny at src/cma/cli.py:415 and src/cma/graph.py:175. Policy validation can still lose a fractional penny, and the statement loader drops readable over-limit amounts from its flow checks.); major: The authored policy threshold can still lose a fractional penny before validation. Decimal construction preserves the lexeme, but multiplication uses the active Decimal precision before the whole-pence check. at src/cma/metrics.py:93; major: The statement loader leaves readable amounts out of the post-read flow check when they reach the line limit. It reports the line fault but omits the independently known flow fault. at src/cma/ingest.py:574; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-203/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/metrics.py:95 now preserves written fractional pence and src/cma/ingest.py:579 includes readable over-limit amounts in flow checks. The integer conversion can still abort on a readable field, and src/cma/ingest.py:570 skips balance comparisons involving readable over-limit values. M3 and penny display were checked at src/cma/metrics.py:563, src/cma/cli.py:415 and src/cma/graph.py:175.); major: A plain amount within the CSV field-size limit can raise a raw integer conversion error before either importer reports the record line or the flow limit. at src/cma/metrics.py:111; major: The post-read running-balance check omits readable amounts and balances that reach the line limit, even when their exact values establish a separate chain fault. at src/cma/ingest.py:570; reviewer verdict fail"
     },
     {
       "id": "T06",
