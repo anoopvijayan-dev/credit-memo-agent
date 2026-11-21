@@ -249,3 +249,37 @@ def test_a_case_with_no_figures_shows_no_policy_check(home, tmp_path, serve):
 @pytest.mark.contracts
 def test_outcome_values_are_the_three_policy_outcomes():
     assert {o.value for o in RuleOutcome} == {"pass", "refer", "fail"}
+
+
+@pytest.mark.contracts
+def test_a_policy_that_cannot_load_is_a_named_refusal_not_a_server_error(home, tmp_path, serve, monkeypatch):
+    """Failure mode: the packaged policy cannot be read or is malformed. The case view refuses,
+    naming it, with no outcome shown; it never answers 500 or shows figures beside no label."""
+    _setting(home, None)
+    case_id, _ = _case(tmp_path)
+
+    def broken(path=None):
+        raise policy.PolicyError("cma/policies/uk_sme_default.yaml: not valid YAML (ScannerError)")
+
+    monkeypatch.setattr(policy, "load_policy", broken)
+    srv = serve(case_id)
+    data = _api(srv)
+    assert data["state"] == "refused" and "uk_sme_default.yaml" in data["refusal"]
+    assert data["accounts"] == [] and data["policy_check"] == {"shown": False}
+    page = _page(srv)
+    assert "uk_sme_default.yaml" in page and "Overall outcome" not in page
+
+
+@pytest.mark.contracts
+def test_with_the_setting_off_the_policy_is_never_read(home, tmp_path, serve, monkeypatch):
+    """Rollback path (R56): turning show_policy_verdict off hides the check without depending on
+    the policy file, so a broken policy cannot keep the case view from opening."""
+    _setting(home, False)
+    case_id, _ = _case(tmp_path)
+
+    def broken(path=None):
+        raise AssertionError("the policy must not be loaded while show_policy_verdict is off")
+
+    monkeypatch.setattr(policy, "load_policy", broken)
+    data = _api(serve(case_id))
+    assert data["state"] == "shown" and data["policy_check"] == {"shown": False}
