@@ -21,6 +21,10 @@ So this module:
 - treats Monzo Flex as the credit line it is: money in is "LOAN DRAWDOWN MONZO FLEX",
   money out is "LOAN REPAYMENT MONZO FLEX", so repayments count as debt service.
 
+The balance walk, the check that the output passes the statement loader and the writing of
+the statement are the importer contract's (importers/contract.py), shared by every importer.
+A refusal names the line of the export its record starts on, never a cell's value (T28).
+
 It reads the file locally and writes a new file. Nothing is sent anywhere.
 """
 
@@ -34,16 +38,9 @@ from pathlib import Path
 
 from ..categorise import INVOICE_REF
 from ..ingest import CsvRecordError, iter_data, read_header, shown
-from ..metrics import (
-    AT_LIMIT,
-    at_limit,
-    flows_at_limit,
-    opening_before,
-    pounds,
-    pounds_text,
-    running_balances,
-    text_pence,
-)
+from ..metrics import AT_LIMIT, at_limit, flows_at_limit, pounds, text_pence
+from . import contract
+from .contract import FORMULA_START, ImportRefused, neutralise_formula  # noqa: F401 (kept importable here)
 
 REQUIRED = ("Transaction ID", "Date", "Type", "Name", "Amount")
 PLAIN_MONEY = re.compile(r"^[-+]?\d+(?:\.\d{1,2})?$")
@@ -54,8 +51,11 @@ CURRENCY_CODE = re.compile(r"^[A-Z]{3}$")
 SAFE_ID = re.compile(r"^[A-Za-z0-9_.:][A-Za-z0-9_.:-]*$")
 
 
-class MonzoImportError(ValueError):
-    pass
+class MonzoImportError(ImportRefused):
+    """A Monzo export refused; an importer's refusal under the contract (T28)."""
+
+
+BALANCE_COLUMN = "Monzo's Balance column"
 
 
 @dataclass
@@ -84,7 +84,8 @@ def _parse_when(raw: str | None) -> tuple[date, str | None, bool]:
     try:
         when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError as e:
-        raise MonzoImportError(f"unrecognised date {shown(raw)}") from e
+        raise MonzoImportError("unrecognised date; Monzo writes DD/MM/YYYY, YYYY-MM-DD or an ISO "
+                               "timestamp") from e
     if when.tzinfo is not None:
         # Dated in UTC too, so a statement's dates keep to the order its rows are walked in,
         # across midnight in any offset (T04 review 64).
@@ -98,20 +99,17 @@ def _money(raw: str | None, field: str, line: int, *, limit: bool = True) -> int
     """The amount in whole pence, read exactly from Monzo's text, never through a binary
     float; one the statement could not carry to the penny is refused (R2, T04 review 4)."""
     text = (raw or "").strip()
-    at = f"line {line}: " if line else ""  # line 0: the command line, not the export
+    # Line 0 is the command line: the person's own option is quoted back to them. A cell of the
+    # export never is; its line is named (the importer contract, T28).
+    at = f"line {line}: {field}" if line else f"{field} {shown(raw)}"
     if not PLAIN_MONEY.match(text):
-        raise MonzoImportError(f"{at}{field} {shown(raw)} is not a plain amount like -12.40")
+        raise MonzoImportError(f"{at} is not a plain amount like -12.40")
     p = text_pence(text)  # exact, in the figures layer (R2, T04 review 13)
     if p is None:
-        raise MonzoImportError(f"{at}{field} {shown(raw)} has more than two decimal places")
+        raise MonzoImportError(f"{at} has more than two decimal places")
     if limit and at_limit(p):
-        raise MonzoImportError(f"{at}{field} {shown(raw)} is {AT_LIMIT}; no figure could be reported to the penny")
+        raise MonzoImportError(f"{at} is {AT_LIMIT}; no figure could be reported to the penny")
     return p
-
-
-def _gbp(p: int) -> str:
-    """Whole pence written as pounds with two decimals, by the figures layer."""
-    return pounds_text(p)
 
 
 def references(*fields: str | None) -> str:
@@ -123,15 +121,6 @@ def references(*fields: str | None) -> str:
             if ref not in found:
                 found.append(ref)
     return " ".join(found)
-
-
-FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
-
-
-def neutralise_formula(text: str) -> str:
-    """A text cell a spreadsheet would read as a formula gets a leading apostrophe (R34).
-    Monzo's Type is provider-written; an unknown one becomes the description's prefix."""
-    return "'" + text if text.startswith(FORMULA_START) else text
 
 
 def describe(kind: str, name: str, amount: float, extra: str = "") -> str:
@@ -200,19 +189,18 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
 
     parsed = []
     skipped = 0
-    seen: set[str] = set()
+    seen: dict[str, int] = {}  # each Transaction ID's line
 
     def flows_before() -> str:
         """Money in or out among the records read so far already at the limit: said with any
         later problem, so a bad row or an unreadable field never hides it (T04 reviews 23-24)."""
         # The row being read counts once its amount is known, even if a later field of it is
         # bad (T04 review 26).
-        reached = flows_at_limit([a for *_, a, _b in parsed] + ([reading] if reading is not None else []))
+        reached = flows_at_limit([x.amount for *_, x in parsed] + ([reading] if reading is not None else []))
         return (f"{' and '.join(reached)} {'total' if len(reached) > 1 else 'totals'} {AT_LIMIT} in the lines "
                 "read so far: no figure could be reported to the penny; ") if reached else ""
 
     reading: int | None = None
-    line_of: dict[str, int] = {}  # each transaction's line, for refusals after sorting
 
     try:
         # A record that cannot be read whole (a field too long to read, a bad byte) is still
@@ -249,14 +237,13 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
                 # "1,000.00" shifts them), so it is refused, never skipped (T04 review 34).
                 shifted = "; the row has more fields than the header has columns, so an amount with a comma " \
                           "in it must be quoted" if None in r else ""
-                raise MonzoImportError(f"line {i}: Currency {shown(r.get('Currency'))} is not a currency code{shifted}")
+                raise MonzoImportError(f"line {i}: Currency is not a currency code{shifted}")
             if partial and "Amount" not in unreadable.readable:
                 raise MonzoImportError(f"{src}: {unreadable}")
             amount = _money(r["Amount"], "Amount", i, limit=False)
             reading = amount
             if at_limit(amount):
-                raise MonzoImportError(f"line {i}: Amount {shown(r['Amount'])} is {AT_LIMIT}; no figure could be "
-                                       "reported to the penny")
+                raise MonzoImportError(f"line {i}: Amount is {AT_LIMIT}; no figure could be reported to the penny")
             if partial:
                 raise MonzoImportError(f"{src}: {unreadable}")  # its amount is counted above
             # More cells than the header has columns: an unquoted thousands separator ("1,000.00")
@@ -272,9 +259,8 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
                 raise MonzoImportError(f"line {i}: unexpected characters in Transaction ID (it must start with a "
                                        "letter, digit, _ . or :, then only letters, digits, _ . : -)")
             if tid in seen:
-                raise MonzoImportError(f"line {i}: duplicate Transaction ID {tid}")
-            seen.add(tid)
-            line_of[tid] = i
+                raise MonzoImportError(f"line {i}: duplicate Transaction ID (first on line {seen[tid]})")
+            seen[tid] = i
             try:
                 d, moment, offset = _parse_when(r["Date"])
             except MonzoImportError as e:
@@ -293,7 +279,8 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
                 if len(cell) > csv.field_size_limit():
                     raise MonzoImportError(f"line {i}: the {name} would be {len(cell):,} characters, longer "
                                            f"than the {csv.field_size_limit():,} a statement's CSV reader reads")
-            parsed.append((d, t, tid, desc, amount, bal))
+            parsed.append((t, tid, contract.Line(line=i, id=tid, date=d, description=desc, amount=amount,
+                                                 balance=bal)))
             reading = None
     except MonzoImportError as e:
         note = flows_before()
@@ -308,7 +295,7 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
         raise MonzoImportError(f"{src}: no GBP transactions")
     # Money in or out at the limit is said before anything else about the export (its
     # opening balance, say) can refuse it (T04 review 25).
-    reached = flows_at_limit([a for *_, a, _b in parsed])
+    reached = flows_at_limit([x.amount for *_, x in parsed])
     if reached:
         raise MonzoImportError(f"{' and '.join(reached)} {'total' if len(reached) > 1 else 'totals'} "
                                f"{AT_LIMIT}: no figure could be reported to the penny")
@@ -317,52 +304,20 @@ def convert(src: Path, dst: Path, opening_balance: str | float | None = None) ->
             "this export has no Balance column; pass --opening-balance (the balance just "
             "before the first transaction, from your Monzo statement)"
         )
-    parsed.sort(key=lambda x: (x[1], x[2]))  # when it happened, then Transaction ID
-    first = parsed[0]
-    # Everything below is whole pence (T04 review 4).
-    implied = opening_before(first[5], first[4]) if first[5] is not None else None
-    if opening_pence is None:
-        if implied is None:
-            raise MonzoImportError(f"line {line_of[first[2]]}: the first transaction, {first[2]}, has no Balance; "
-                                   "pass --opening-balance")
-        opening_pence = implied
-        source = "Monzo Balance column"
-    else:
-        if implied is not None and implied != opening_pence:
-            raise MonzoImportError(
-                f"--opening-balance {_gbp(opening_pence)} disagrees with Monzo's Balance column, which "
-                f"implies {_gbp(implied)} at line {line_of[first[2]]} ({first[2]}, the first transaction); "
-                "leave --opening-balance out to use Monzo's"
-            )
-        source = "opening balance supplied"
-
-    # The totals and the walk are figures-layer arithmetic (R2, T04 review 13).
-    reached = flows_at_limit([a for *_, a, _b in parsed])  # each named (T04 review 6)
-    if reached:
-        raise MonzoImportError(f"{' and '.join(reached)} {'total' if len(reached) > 1 else 'totals'} "
-                               f"{AT_LIMIT}: no figure could be reported to the penny")
-    out_rows = []
-    bal = opening_pence
-    for (d, _t, tid, desc, amount, monzo_bal), bal in zip(parsed, running_balances(opening_pence, [x[4] for x in parsed]),
-                                                          strict=True):
-        if at_limit(bal):
-            raise MonzoImportError(f"line {line_of[tid]}: {tid}: the running balance reaches £10,000,000,000,000; "
-                                   "no figure could be reported to the penny")
-        if monzo_bal is not None and monzo_bal != bal:
-            raise MonzoImportError(
-                f"line {line_of[tid]}: {tid}: walked balance {_gbp(bal)} disagrees with Monzo's {_gbp(monzo_bal)}; "
-                "the export may be missing transactions"
-            )
-        out_rows.append({"id": tid, "date": d.isoformat(), "description": neutralise_formula(desc),
-                         "amount": _gbp(amount), "balance": _gbp(bal)})
-
-    Path(dst).parent.mkdir(parents=True, exist_ok=True)
-    with Path(dst).open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["id", "date", "description", "amount", "balance"])
-        w.writeheader()
-        w.writerows(out_rows)
+    parsed.sort(key=lambda x: (x[0], x[1]))  # when it happened, then Transaction ID
+    lines = [x for *_, x in parsed]
+    # The opening balance, the walk and the writing are the importer contract's, shared by every
+    # importer (T28); everything is whole pence, in the figures layer (R2, T04 reviews 4 and 13).
+    try:
+        opening_pence, source = contract.opening_balance(lines, opening_pence, column=BALANCE_COLUMN,
+                                                         source="Monzo Balance column")
+        balances = contract.walk(lines, opening_pence, column=BALANCE_COLUMN)
+        # The output passes the statement loader, or nothing is written (T28).
+        contract.write_statement(dst, lines, balances, label=src)
+    except ImportRefused as e:  # said as this importer's refusal, as before the contract
+        raise MonzoImportError(str(e)) from None
     return ImportResult(
-        rows=len(out_rows), start=parsed[0][0], end=parsed[-1][0],
-        opening_balance=pounds(opening_pence), closing_balance=pounds(bal),
+        rows=len(lines), start=lines[0].date, end=lines[-1].date,
+        opening_balance=pounds(opening_pence), closing_balance=pounds(balances[-1]),
         balance_source=source, skipped_non_gbp=skipped,
     )

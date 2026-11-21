@@ -448,11 +448,11 @@ def import_monzo(
     ),  # text, read exactly by the importer, never rounded through a float first (T04 review 8)
 ):
     """Convert a Monzo export locally. Nothing is uploaded; the file stays on this machine."""
-    from .importers import monzo
+    from .importers import contract, monzo
 
     try:
         r = monzo.convert(export, out, opening_balance)
-    except monzo.MonzoImportError as e:
+    except contract.ImportRefused as e:  # by line, never a cell's value (T28)
         console.print(f"[red]Import refused.[/red] {escape(str(e))}")  # cells are text, never markup (T04 review 31)
         raise typer.Exit(code=2) from e
     console.print(
