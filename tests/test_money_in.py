@@ -1555,3 +1555,94 @@ def test_a_header_with_a_quote_never_closed_is_refused_on_line_one(tmp_path):
     csv.write_text('id,"date,description,amount,balance\nT1,2026-01-01,A,1.00,1.00\n')
     with pytest.raises(ingest.StatementError, match="line 1: a quoted field in the header is not closed"):
         ingest.load_csv(csv, today=date(2026, 6, 1))
+
+
+def _old_order_and_chain(rows):
+    """The date-order and running-balance checks as they ran before T04 review 54, after
+    reading: the reference the checks made as records are read must match."""
+    parsed = list(rows)
+    out = []
+    dates = [d for _, d, _, _ in parsed if d]
+    if dates and dates[0] > dates[-1]:
+        parsed.reverse()
+    prev = None
+    for line, d, _, _ in parsed:
+        if d and prev and d < prev:
+            out.append(f"line {line}: date {d} is out of order (after {prev})")
+        prev = d or prev
+    prev_balance = None
+    for line, _, a, b in parsed:
+        if None not in (a, b, prev_balance) and round(prev_balance * 100) + round(a * 100) != round(b * 100):
+            out.append(f"line {line}: running balance {b:.2f} does not follow from previous {prev_balance:.2f} "
+                       f"{'+' if a >= 0 else '-'} {abs(a):.2f}")
+        if b is not None:
+            prev_balance = b
+    return out
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("seed", range(300))
+def test_order_and_balance_checked_as_read_report_what_the_after_reading_checks_did(tmp_path, seed):
+    """T04 review 54: date order and the running balance are now checked as each record is
+    read, both ways at once; on random statements, newest or oldest first, with gaps and
+    breaks, they report exactly what the after-reading checks reported."""
+    rng = random.Random(seed)
+    n = rng.randint(1, 12)
+    rows, bal, day = [], 100.0, date(2026, 1, 1)
+    for k in range(n):
+        a = round(rng.uniform(-50, 50), 2)
+        bal = round(bal + a + (rng.choice([0, 0, 0, 1.0]) if k else 0), 2)
+        day = day + timedelta(days=rng.choice([0, 1, 2, -1]))
+        rows.append([f"T{k}", day if rng.random() > 0.1 else None, a, bal if rng.random() > 0.1 else None])
+    if rng.random() < 0.5:
+        rows.reverse()
+    text = "id,date,description,amount,balance\n" + "".join(
+        f"{t},{d.isoformat() if d else 'x'},A,{a:.2f},{f'{b:.2f}' if b is not None else 'x'}\n" for t, d, a, b in rows)
+    csv = tmp_path / "s.csv"
+    csv.write_text(text)
+    want = _old_order_and_chain([(k + 2, d, a, b) for k, (_, d, a, b) in enumerate(rows)])
+    try:
+        ingest.load_csv(csv, today=date(2027, 1, 1))
+        got = []
+    except ingest.StatementError as e:
+        got = [p for p in e.problems if "out of order" in p or "does not follow" in p]
+    assert got == want
+
+
+@pytest.mark.contracts
+def test_a_foreign_row_with_a_bad_byte_left_open_stops_the_import(tmp_path):
+    """T04 review 54: a row in another currency with a bad byte and a quoted field never closed
+    was skipped, and the GBP rows its open quote had swallowed were silently lost."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    src.write_bytes((_MONZO_HEAD + "tx_1,01/01/2026,09:00:00,Faster payment,ACME,-10.00,GBP,90.00\n").encode()
+                    + b'tx_2,02/01/2026,09:00:00,Card payment,CAF\xe9,-5.00,EUR,"\n'
+                    + b"tx_3,03/01/2026,09:00:00,Faster payment,ACME,-1.00,GBP,89.00\n")
+    with pytest.raises(monzo.MonzoImportError, match=r"line 3: not UTF-8.*not closed"):
+        monzo.convert(src, tmp_path / "o.csv")
+
+
+@pytest.mark.contracts
+def test_the_running_balance_is_checked_as_each_record_is_read(tmp_path, monkeypatch):
+    """T04 review 54: the running balance was checked only once every record had been read."""
+    reads = [0]
+    at_first = []
+    real_next, real_follows = ingest._Feed.__next__, ingest.follows
+
+    def counted(self):
+        reads[0] += 1
+        return real_next(self)
+
+    def watched(*a):
+        if not at_first:
+            at_first.append(reads[0])
+        return real_follows(*a)
+
+    monkeypatch.setattr(ingest._Feed, "__next__", counted)
+    monkeypatch.setattr(ingest, "follows", watched)
+    rows = [f"T{k},2026-01-01,A,1.00,{k + 1}.00" for k in range(5000)]
+    csv = tmp_path / "s.csv"
+    csv.write_text("id,date,description,amount,balance\n" + "\n".join(rows) + "\n")
+    ingest.load_csv(csv, today=date(2026, 6, 1))
+    assert at_first and at_first[0] <= 4

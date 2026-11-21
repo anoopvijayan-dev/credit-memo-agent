@@ -425,7 +425,17 @@ def _records(physical: list[str], pos: int, header: list[str], bad: int | None):
                 err = not_utf8(line, first_bad[0])
                 first_bad[0] = None
                 err.line, err.row, err.readable = line, row, set(header) - bad_cells
+                cells, ended, _ = _split_lines(tail(line))
+                if not ended and _ends_in_quotes("".join(physical[line - 1:])):
+                    # Its quoted field is open to the end of the file and has swallowed every
+                    # line after it: reading stops, and no caller may skip it and read on
+                    # (T04 review 54); its open cell is not readable.
+                    err = CsvRecordError(f"{err}; a quoted field in it is not closed before the end of the file")
+                    err.line, err.row, err.stops = line, row, True
+                    err.readable = set(header[:max(len(cells) - 1, 0)]) - bad_cells
                 yield line, row, err
+                if err.stops:
+                    return
             else:
                 pending = (line, row)
 
@@ -471,6 +481,37 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
     extra_amounts: list[int] = []  # a readable amount in a record that cannot be read whole
     parsed: list[tuple[int, str, date | None, str, float | None, float | None]] = []
     seen: dict[str, int] = {}
+    # Date order and the running balance are checked as each record is read (revision 30,
+    # T04 review 54), both ways at once: which way the file runs (newest first or oldest
+    # first) is known from its first and last dates only, so the problems of each way are
+    # kept and the way the file runs decides which are reported.
+    order = {"up": [], "down": []}  # out-of-order dates, read oldest first or newest first
+    chain = {"up": [], "down": []}  # balances that do not follow, either way
+    last = {"dated": None, "balanced": None}  # the latest record with a date, with a balance
+
+    def follow(line: int, d: date | None, amount: float | None, balance: float | None) -> None:
+        if d is not None:
+            if last["dated"] is not None:
+                before_line, before = last["dated"]
+                if d < before:
+                    order["up"].append(f"line {line}: date {d} is out of order (after {before})")
+                if before < d:
+                    order["down"].append(f"line {before_line}: date {before} is out of order (after {d})")
+            last["dated"] = (line, d)
+        if balance is not None:
+            if last["balanced"] is not None:
+                before_line, before_amount, before_balance = last["balanced"]
+                if amount is not None and not follows(float_pence(before_balance), float_pence(amount),
+                                                      float_pence(balance)):
+                    chain["up"].append(
+                        f"line {line}: running balance {balance:.2f} does not follow from previous "
+                        f"{before_balance:.2f} {'+' if amount >= 0 else '-'} {abs(amount):.2f}")
+                if before_amount is not None and not follows(float_pence(balance), float_pence(before_amount),
+                                                             float_pence(before_balance)):
+                    chain["down"].append(
+                        f"line {before_line}: running balance {before_balance:.2f} does not follow from previous "
+                        f"{balance:.2f} {'+' if before_amount >= 0 else '-'} {abs(before_amount):.2f}")
+            last["balanced"] = (line, amount, balance)
 
     def check(i: int, r: dict) -> None:
         """One record's own values, checked as it is read; i is its line in the file, blank
@@ -505,6 +546,7 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
             add("line", f"line {i}: balance {shown(r['balance'])} is not a plain number like 2304.17 "
                             "(under £10,000,000,000,000)")
         parsed.append((i, tid, d, (r["description"] or "").strip(), amount, balance))
+        follow(i, d, amount, balance)
 
     any_record = False
     for line, row, problem in records:
@@ -537,24 +579,13 @@ def load_csv(path: Path, account_name: str | None = None, today: date | None = N
     # Banks export newest first or oldest first. Decide from the dates, then insist
     # the whole file runs one way.
     dates = [d for _, _, d, _, _, _ in parsed if d]
-    if dates and dates[0] > dates[-1]:
+    way = "down" if dates and dates[0] > dates[-1] else "up"
+    if way == "down":
         parsed.reverse()
-    prev_date: date | None = None
-    for line, _, d, _, _, _ in parsed:
-        if d and prev_date and d < prev_date:
-            add("line", f"line {line}: date {d} is out of order (after {prev_date})")
-        prev_date = d or prev_date
-
-    prev_balance: float | None = None
-    for line, _, _, _, amount, balance in parsed:
-        if None not in (amount, balance, prev_balance) and not follows(
-                float_pence(prev_balance), float_pence(amount), float_pence(balance)):
-            add("line",
-                f"line {line}: running balance {balance:.2f} does not follow from previous {prev_balance:.2f} "
-                f"{'+' if amount >= 0 else '-'} {abs(amount):.2f}"
-            )
-        if balance is not None:
-            prev_balance = balance
+    for text in (order[way] if way == "up" else reversed(order[way])):
+        add("line", text)
+    for text in (chain[way] if way == "up" else reversed(chain[way])):
+        add("line", text)
 
     for name in flows_at_limit([float_pence(a) for _, _, _, _, a, _ in parsed if a is not None] + extra_amounts):
         add("flow", f"{name} totals {AT_LIMIT}: no figure could be reported to the penny")  # each named
