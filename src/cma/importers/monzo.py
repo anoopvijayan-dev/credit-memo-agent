@@ -40,7 +40,11 @@ from ..categorise import INVOICE_REF
 from ..ingest import CsvRecordError, iter_data, read_header, shown
 from ..metrics import AT_LIMIT, at_limit, flows_at_limit, pounds, text_pence
 from . import contract
-from .contract import FORMULA_START, ImportRefused, neutralise_formula  # noqa: F401 (kept importable here)
+from .contract import (  # noqa: F401 (kept importable here)
+    FORMULA_START,
+    ImportRefused,
+    neutralise_formula,
+)
 
 REQUIRED = ("Transaction ID", "Date", "Type", "Name", "Amount")
 PLAIN_MONEY = re.compile(r"^[-+]?\d+(?:\.\d{1,2})?$")
