@@ -1782,6 +1782,27 @@ def test_p18_tracing_turned_on_between_stream_steps_does_not_trace_a_run_under_t
 
 
 @pytest.mark.invariants
+@pytest.mark.parametrize("how", ["invoke", "stream"])
+def test_p18_a_tracer_bound_with_with_config_is_taken_out_under_the_lock(home, no_network, monkeypatch, tmp_path, how):
+    """T17 review 21 / R29: only the call's own callbacks were filtered; LangGraph merges the
+    graph's bound callbacks (with_config(callbacks=[tracer])) into the run's afterwards, so a
+    bound LangSmith tracer traced every step under the lock."""
+    from langchain_core.tracers.langchain import LangChainTracer
+
+    names = []
+    monkeypatch.setattr(LangChainTracer, "_start_trace", lambda self, run: names.append(run.name), raising=False)
+    monkeypatch.setattr(LangChainTracer, "_persist_run", lambda self, run: names.append(run.name), raising=False)
+    monkeypatch.setattr(LangChainTracer, "_persist_run_single", lambda self, run: None, raising=False)
+    monkeypatch.setattr(LangChainTracer, "_update_run_single", lambda self, run: None, raising=False)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    bound = build(llm.FakeLLM()).with_config(callbacks=[LangChainTracer(client=types.SimpleNamespace())])
+    args = ({"statement_path": str(_statement(tmp_path))}, {"configurable": {"thread_id": "t"}})
+    out = bound.invoke(*args) if how == "invoke" else list(bound.stream(*args))
+    assert out and names == [] and no_network == []
+    assert bound.config["callbacks"]  # the caller's graph keeps its own callbacks
+
+
+@pytest.mark.invariants
 def test_p5_a_custom_rules_limits_never_reach_the_prompt(home, tmp_path):
     """T17 review 10 / P5: a custom rule's threshold, a number that can come from the case, reached
     the prompt in its requirement and detail cells."""
