@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 286,
+  "next_id": 287,
   "decisions": [
     {
       "id": "D1",
@@ -5734,6 +5734,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T00:06:35.103Z"
+    },
+    {
+      "id": "D286",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:83 checks the exact pence round trip, src/cma/metrics.py:512 computes M3 from integer pence and checks reporting precision, and src/cma/graph.py:175 and src/cma/cli.py:415 show GBP to the penny. Monzo still parses and buffers the export body before checking its first data row at src/cma/importers/monzo.py:169 and :211, and defers a per-row description refusal to :330.); major: Monzo consumes the CSV body before validating its first data row. The new parser removes the repeated suffix rebuild, but it still processes and retains rows after the first problem, so suffix size can delay or prevent the required refusal. at src/cma/importers/monzo.py:169; major: An early row whose generated description cannot be written as a readable statement is checked only after all later rows are validated. A later invalid ID can hide that earlier row problem and make the refusal report flows that would not have been reached. at src/cma/importers/monzo.py:330; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T00:14:11.834Z"
     }
   ]
 }

@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-180/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:83 verifies the text-to-float round trip, src/cma/metrics.py:512 computes M3 in integer pence and checks reporting precision, and src/cma/graph.py:175 and src/cma/cli.py:415 display GBP to the penny. src/cma/ingest.py:287 and :300 still parse the full suffix before Monzo validates the header or can stop at the first bad row.); major: Oversized-record recovery still reads the entire remaining export before the importer can report the first problem. Each recovery iteration rebuilds the physical lines and the CSV reader over a shrinking suffix, so a later series of oversized fields can substantially delay the first refusal or exhaust resources. The regression proves the loop avoids stack exhaustion with a 20-character field limit. at src/cma/ingest.py:300; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-183/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:83 checks the exact pence round trip, src/cma/metrics.py:512 computes M3 from integer pence and checks reporting precision, and src/cma/graph.py:175 and src/cma/cli.py:415 show GBP to the penny. Monzo still parses and buffers the export body before checking its first data row at src/cma/importers/monzo.py:169 and :211, and defers a per-row description refusal to :330.); major: Monzo consumes the CSV body before validating its first data row. The new parser removes the repeated suffix rebuild, but it still processes and retains rows after the first problem, so suffix size can delay or prevent the required refusal. at src/cma/importers/monzo.py:169; major: An early row whose generated description cannot be written as a readable statement is checked only after all later rows are validated. A later invalid ID can hide that earlier row problem and make the refusal report flows that would not have been reached. at src/cma/importers/monzo.py:330; reviewer verdict fail"
     },
     {
       "id": "T06",
