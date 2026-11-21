@@ -15,7 +15,7 @@ Policy outcome: refer. The case needs an analyst decision before any offer: R3 (
 
 
 ---
-APPROVED by A. Analyst (automated, no interactive review) at 2026-11-20 14:06 UTC. Notes: Approved by script (--yes); the draft was not reviewed interactively.
+APPROVED by A. Analyst (automated, no interactive review) at 2026-11-21 09:08 UTC. Notes: Approved by script (--yes); the draft was not reviewed interactively.
 Grounding check: passed (17 numbers checked, 0 unmatched, 0 missing citations).
 
 ## Appendix: the figures behind this memo
@@ -52,6 +52,8 @@ Evidence: every transaction id behind each figure is in the .evidence.json file 
 | M24 | Other explained money in | £0.00 | Grants, insurance claims, interest and cashback. | 0 |
 | M25 | Unexplained money in | £8,000.00 | Credits no rule, firm rule or override explains, and credits whose wording is ambiguous. | 1 |
 | M26 | Unexplained share of money in | 2.5% | Unexplained money in (M25) as a share of money in less lending drawdowns, returned direct debits and own-account transfers, the denominator M16 uses. | 262 |
+| M27 | Average end-of-day balance | £2,570.75 | The closing balance of every calendar day in the period, carried over days with no transactions, averaged over those days. | 287 |
+| M28 | Debt service cover including the proposed facility | n/a | No proposed monthly repayment was given: it comes from the case profile, and this statement has none, so cover including the proposed facility cannot be computed. | 0 |
 
 | id | rule | metric | requirement | outcome | detail |
 |---|---|---|---|---|---|
