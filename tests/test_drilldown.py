@@ -550,3 +550,36 @@ def test_the_drilldown_reads_the_profile_once_with_the_figures(home, tmp_path, s
     d = _lines(srv, figure="M28")
     assert len(reads) == 1
     assert {"label": "Proposed monthly repayment (case profile)", "figure": None, "display": "£250.00"} in d["inputs"]
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("archetype, profile", [("cafe", "good"), ("trades", "stretched"), ("ecommerce", "poor")])
+def test_every_derived_figure_on_generated_statements_shows_inputs_that_give_it(home, tmp_path, archetype,
+                                                                               profile):
+    """R16 (verify-241): a derived figure's drill-down must show what it is computed from. The
+    earlier test only checked that inputs was a list, so M4, M7, M9 and M13 passed with none:
+    every derived figure now shows inputs or the closes it reads, and M4's two quarters give it."""
+    from datetime import date
+
+    from cma import synth
+    from cma.review import drilldown
+
+    rows, truth = synth.generate(archetype, profile, end=date(2026, 9, 30))
+    synth.write(rows, truth, tmp_path, stem=archetype)
+    case_id = store.new_case(label="t20")
+    folder = store.case_folder(case_id)
+    store.update_profile(folder, lambda p: {**p, "vat_stagger": 1, "proposed_monthly_repayment": "1500.00"})
+    store.import_file(folder, tmp_path / f"{archetype}.csv", "csv")
+    f = overrides.case_figures(folder)["main"]
+    for m in f.metrics:
+        if metrics.figure_kind(m.id) != "derived":
+            continue
+        d = drilldown.lines_behind(folder, case_id, figure=m.id)
+        assert d["inputs"] or d["closes"], m.id  # never a derived figure with nothing behind it
+        assert d["method"], m.id
+    m4 = next(m for m in f.metrics if m.id == "M4")
+    if m4.value is not None:
+        quarters = [i for i in drilldown.lines_behind(folder, case_id, figure="M4")["inputs"] if "quarter" in i["label"]]
+        assert len(quarters) == 2
+        early, late = (_pence(q["display"]) for q in quarters)
+        assert round((late - early) / early * 100, 1) == round(m4.value, 1)
