@@ -215,10 +215,19 @@ def _shipped_detail(r, spelt: tuple) -> str:
     return f"{head}; {req}."
 
 
-def _is_shipped(r, shipped: dict[str, tuple]) -> bool:
+def _from_shipped_policy(p: PolicyResult) -> bool:
+    """Whether a policy result came from the shipped policy file itself, by its hash."""
+    try:
+        return bool(p.policy_sha256) and p.policy_sha256 == pol.load_policy()["_sha256"]
+    except Exception:
+        return False
+
+
+def _is_shipped(r, shipped: dict[str, tuple], from_shipped: bool = False) -> bool:
     """Whether a policy result's rule is the shipped policy's own rule, whole: its id, text,
     metric and requirement, referral bands and what a breach or a missing figure means
-    included. A custom rule that reuses a shipped id is custom (T17 reviews 6, 7 and 8)."""
+    included. A custom rule that reuses a shipped id is custom (T17 reviews 6, 7 and 8).
+    `from_shipped`: the result came from the shipped policy file, by its hash."""
     want = shipped.get(r.rule_id)
 
     def num(v):
@@ -226,10 +235,11 @@ def _is_shipped(r, shipped: dict[str, tuple]) -> bool:
     have = (r.description, r.metric_id, r.op, num(r.threshold), num(r.refer_below), num(r.refer_above),
             r.on_fail, r.when_missing)
     if want is not None and r.on_fail == "" and r.when_missing == "":
-        # A checkpoint from before the actions were kept holds neither (T17 review 15). Both are
-        # one of a few fixed words, never text a case or a policy could carry, so such a rule is
-        # the shipped one when everything else it holds is (P5).
-        return want[:6] == have[:6]
+        # A checkpoint from before the actions were kept holds neither (T17 review 15). Its
+        # actions are known only when the result came from the shipped policy file itself, by
+        # its hash: they are then the shipped rule's. Any other such rule is not known to be
+        # the shipped one whole, and is masked (R30, P5, T17 review 16).
+        return from_shipped and want[:6] == have[:6]
     return want is not None and want == have
 
 
@@ -242,6 +252,7 @@ def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = F
     policy itself uses is sent; any other is replaced (T17 reviews 2 and 3)."""
     shipped = _shipped_rules() if for_prompt else {}
     spellings = _shipped_spellings() if for_prompt else {}
+    from_shipped = for_prompt and _from_shipped_policy(p)
     lines = ["| id | rule | metric | requirement | outcome | detail |", "|---|---|---|---|---|---|"]
     if overall_row:
         lines.append(f"| overall | overall outcome | - | - | {p.overall.value} | - |")
@@ -253,7 +264,7 @@ def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = F
             req += f"; referred above {_threshold(r.refer_above, r.unit)}"
         rule_id, description = r.rule_id, r.description
         detail = r.detail
-        if for_prompt and not _is_shipped(r, shipped):
+        if for_prompt and not _is_shipped(r, shipped, from_shipped):
             # A custom rule's limits and detail are its own text too, and a number in them could
             # come from the case: only its metric and outcome are sent (T17 review 10).
             rule_id, description, req, detail = "(custom id)", "(custom rule)", "(custom requirement)", "-"
@@ -268,7 +279,8 @@ def redraft_ids(g: GuardResult, metrics: list[Metric], policy: PolicyResult) -> 
     nothing the model wrote (a made-up tag included) goes back into a prompt, nor a custom
     rule id the rule table masked (T17 review 3)."""
     shipped = _shipped_rules()
-    known = {m.id for m in metrics} | {r.rule_id for r in policy.rules if _is_shipped(r, shipped)}
+    from_shipped = _from_shipped_policy(policy)
+    known = {m.id for m in metrics} | {r.rule_id for r in policy.rules if _is_shipped(r, shipped, from_shipped)}
     found = set(g.missing_citations)
     for f in g.unmatched:
         found.update(re.findall(r"\b[MR]\d+\b", f.reason))
@@ -418,9 +430,15 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
             memo = llm.complete(SYSTEM_PROMPT, user)
         # The model that drafted it, and where the prompt went, are this graph's: a resume that
         # drafts on another graph's model records that model, not the first draft's (T17 review 15).
-        return {"memo": memo, "redrafts": s.get("redrafts", 0),
-                "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
-                "egress": "offline" if isinstance(llm, FakeLLM) else f"{llm.name}:{getattr(llm, 'model', '-')}"}
+        out = {"memo": memo, "redrafts": s.get("redrafts", 0),
+               "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
+               "egress": "offline" if isinstance(llm, FakeLLM) else f"{llm.name}:{getattr(llm, 'model', '-')}"}
+        resumed = ((config or {}).get("configurable") or {}).get(_RESUME_KEY)
+        if resumed is not None:
+            # A resume that drafts records its lock with the destination it drafted to, so the
+            # evidence names both even if the review pauses again before finalising (T17 review 16).
+            out["resume_offline_lock"] = resumed
+        return out
 
     def guard(s: MemoState) -> MemoState:
         g = grd.check(s["memo"], s["metrics"], s["policy"], required_headings=grd.REQUIRED_HEADINGS)
@@ -654,11 +672,10 @@ def _untraced_under_lock(graph, run_reading, astored_lock) -> None:
                 k = {**k, "config": config}
             else:
                 a = (a[0], config, *a[2:])
-            if reading is not None:
-                firm.begin_run(reading)
+        owned = firm.begin_run(reading) if reading is not None else None
         inherited = _untraced_inherited_config() if locked else None
         marks = (_IN_RUN.set((id(graph), locked)), _DELEGATE.set(id(graph))) if mark else None
-        return locked, (marks, reading, inherited), a, k
+        return locked, (marks, (reading, owned) if reading is not None else None, inherited), a, k
 
     def end(token) -> None:
         if token is not None:
@@ -668,7 +685,7 @@ def _untraced_under_lock(graph, run_reading, astored_lock) -> None:
                 _DELEGATE.reset(token[0][1])
                 _IN_RUN.reset(token[0][0])
             if token[1] is not None:
-                firm.end_run(token[1])
+                firm.end_run(*token[1])
 
     def invoke(*a, **k):
         locked, token, a, k = start(a, k)

@@ -18,9 +18,11 @@ server starts, so under the lock neither gets as far as a network call.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import weakref
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -173,22 +175,37 @@ def _here(config: FirmConfig) -> bool:
     return is_reading(config) and config.root == case_root()
 
 
-def begin_run(reading: FirmConfig) -> None:
+# The readings whose runs this context is running: a run's reading allows only that run's own
+# requests, made in its own context (its steps inherit it), never another caller's that holds
+# the same object, such as a thread using a suspended stream's reading (T17 review 16).
+_OWNED: ContextVar[frozenset] = ContextVar("cma_owned_readings", default=frozenset())
+
+
+def begin_run(reading: FirmConfig):
+    """Marks `reading`'s run as going, in this context; returns the token end_run needs."""
     _IN_RUN[id(reading)] = _IN_RUN.get(id(reading), 0) + 1
+    return _OWNED.set(_OWNED.get() | {id(reading)})
 
 
-def end_run(reading: FirmConfig) -> None:
+def end_run(reading: FirmConfig, token=None) -> None:
     left = _IN_RUN.get(id(reading), 0) - 1
     if left > 0:
         _IN_RUN[id(reading)] = left
     else:
         _IN_RUN.pop(id(reading), None)
+    if token is not None:
+        # A stream finished in another context (closed by the garbage collector): the context
+        # it changed is gone with it.
+        with contextlib.suppress(ValueError):
+            _OWNED.reset(token)
 
 
 def allows_request(reading: object) -> bool:
     """Whether `reading` may decide a hosted request: a reading load() made, for the firm folder
-    in use, whose run is still going. Any other is no allowance; firm.yaml is read instead."""
-    return isinstance(reading, FirmConfig) and _here(reading) and id(reading) in _IN_RUN
+    in use, whose run is still going, asked by that run itself (T17 review 16). Any other is no
+    allowance; firm.yaml is read instead."""
+    return (isinstance(reading, FirmConfig) and _here(reading) and id(reading) in _IN_RUN
+            and id(reading) in _OWNED.get())
 
 
 def claim_for_client(reading: object) -> bool:

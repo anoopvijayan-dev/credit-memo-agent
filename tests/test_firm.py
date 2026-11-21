@@ -1554,6 +1554,84 @@ def test_p5_a_shipped_rule_from_a_checkpoint_without_its_actions_is_still_known(
 
 
 @pytest.mark.invariants
+def test_p18_a_suspended_streams_reading_allows_no_other_callers_request(home, no_network, monkeypatch, tmp_path):
+    """T17 review 16 / R29: a reading allowed a hosted request whenever its run was going, so
+    another caller holding a suspended stream's unlocked reading sent one after the firm locked."""
+    import threading
+
+    readings = []
+    real_load = firm.load
+    monkeypatch.setattr(firm, "load", lambda *a, **k: readings.append(real_load(*a, **k)) or readings[-1])
+    sent = []
+
+    class Hosted(llm.HostedLLM):
+        name = "test"
+
+        def _send(self, system, user):
+            sent.append(1)
+            return "ok"
+
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    stream = build(llm.FakeLLM()).stream({"statement_path": str(_statement(tmp_path))},
+                                         {"configurable": {"thread_id": "s"}})
+    next(stream)  # the run is going, suspended between items
+    reading = readings[0]
+    assert reading.offline_lock is False and firm.allows_request(reading)  # the stream's own context
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    outcome = []
+
+    def other_caller():
+        try:
+            Hosted().complete("s", "u", reading=reading)
+            outcome.append("sent")
+        except firm.OfflineLockError:
+            outcome.append("refused")
+
+    worker = threading.Thread(target=other_caller)
+    worker.start()
+    worker.join()
+    stream.close()
+    assert outcome == ["refused"] and sent == [] and no_network == []
+
+
+@pytest.mark.invariants
+def test_r29_a_resume_that_drafts_and_pauses_records_its_lock_with_its_destination(home, no_network, tmp_path):
+    """T17 review 16 / R29: a resume that drafted wrote its model and destination, but its lock
+    only at finalisation, so a review paused again had evidence without the resume's lock."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    saver = InMemorySaver()
+    cfg = {"configurable": {"thread_id": "t"}}
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    first = build(llm.FakeLLM(), checkpointer=saver)
+    first.invoke({"statement_path": str(_statement(tmp_path))}, cfg)
+    first.update_state(cfg, {}, as_node="policy")  # paused again before its draft
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    later = build(llm.FakeLLM(), checkpointer=saver)
+    later.invoke(None, cfg)  # drafts, then pauses for review again
+    values = later.get_state(cfg).values
+    assert values["review"] is None and values["resume_offline_lock"] is True
+    assert evidence_record({**values, "ruleset": None})["egress"]["resume_offline_lock"] is True
+
+
+def test_p5_a_rule_without_its_actions_from_another_policy_is_masked(home, tmp_path):
+    """T17 review 16 / R30, P5: a rule restored without its actions was taken for the shipped rule
+    whatever policy it came from; only a result from the shipped policy file, by its hash, can
+    say its actions are the shipped rule's."""
+    import cma.graph as g
+    from cma import categorise, ingest, metrics, policy
+
+    st = categorise.categorise(ingest.load_csv(_statement(tmp_path), account_name="ACME LTD"))
+    result = policy.evaluate(metrics.compute(st))
+    legacy = result.model_copy(update={"rules": [r.model_copy(update={"on_fail": "", "when_missing": ""})
+                                                 for r in result.rules]})
+    other = legacy.model_copy(update={"policy_sha256": "0" * 64})
+    assert "(custom id)" not in g.rules_table(legacy, for_prompt=True)
+    table = g.rules_table(other, for_prompt=True)
+    assert all(f"| {r.rule_id} |" not in table for r in other.rules) and "(custom id)" in table
+
+
+@pytest.mark.invariants
 def test_p5_a_custom_rules_limits_never_reach_the_prompt(home, tmp_path):
     """T17 review 10 / P5: a custom rule's threshold, a number that can come from the case, reached
     the prompt in its requirement and detail cells."""
