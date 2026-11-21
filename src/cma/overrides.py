@@ -25,7 +25,14 @@ earlier one is superseded.
 Figures are recomputed, every time, from the statements and the whole override log
 (case_figures): nothing is carried from one computation to the next, so applying overrides
 one at a time gives what a fresh computation with all of them gives (P3), and a line's id,
-date, amount, balance and description are never touched (P4). A figure or monthly cell is
+date, amount, balance and description are never touched (P4). Three pure steps are kept by
+the hash of what they read, so that a workspace saving override after override on a large
+case does not repeat them (R52): a statement file parsed from given bytes (each caller gets
+its own copy of the lines to categorise), and the figures of a statement with no overrides,
+which only mark what rests on an override, kept by the statement's hash, the rule table's
+hash and the profile, and what classify gives each line with no override, kept the same
+way (a line with an override is classified afresh, and the passes across lines run every
+time). None depends on the override log. A figure or monthly cell is
 marked when it rests on an overridden line: an overridden line is among its lines, or its
 value or lines differ from what the statements give without overrides.
 
@@ -36,6 +43,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,7 +52,7 @@ from typing import Any
 
 from . import case as caselog
 from . import store
-from .categorise import _MONEY_IN_ONLY, LineOverride, active_ruleset, categorise
+from .categorise import _MONEY_IN_ONLY, LineOverride, active_ruleset, categorise, classify_lines
 from .metrics import ReconciliationError
 from .models import CREDIT_BUCKET, Category, Metric, MonthRow, Statement, Transaction
 
@@ -166,6 +175,55 @@ def _accounts(entries) -> list[str]:
     return sorted({e.data["account"] for e in entries if e.event == "import" and "account" in e.data})
 
 
+class _Memo:
+    """A small cache of a pure step's results, by the hash of what the step read. Thread
+    safe: the workspace serves requests on threads."""
+
+    def __init__(self, size: int):
+        self.size, self._items, self._lock = size, OrderedDict(), threading.Lock()
+
+    def get(self, key):
+        with self._lock:
+            if key in self._items:
+                self._items.move_to_end(key)
+                return self._items[key]
+        return None
+
+    def put(self, key, value) -> None:
+        with self._lock:
+            self._items[key] = value
+            self._items.move_to_end(key)
+            while len(self._items) > self.size:
+                self._items.popitem(last=False)
+
+
+_PARSED = _Memo(8)  # (account, statement sha) -> the statement as load_csv parsed it, never categorised
+_BARE = _Memo(8)    # (statement sha, ruleset, profile) -> figures with no overrides
+_CLASSES = _Memo(8)  # (statement sha, ruleset, profile) -> each line's category with no override
+
+
+def _categorise(statement: Statement, sha: str, profile: dict[str, Any], applied: dict[str, LineOverride]) -> None:
+    """categorise() with the overrides in force; the lines with none take the categories
+    kept for this statement, rule table and profile, which classify would give them again."""
+    ruleset = active_ruleset()
+    key = (sha, ruleset.id, ruleset.sha256, _profile_key(profile))
+    names = store.profile_names(profile)
+    classes = _CLASSES.get(key)
+    if classes is None or len(classes) != len(statement.transactions):
+        classes = classify_lines(statement, ruleset, profile=names)
+        _CLASSES.put(key, classes)
+    categorise(statement, ruleset, overrides=applied, profile=names, unoverridden=classes)
+
+
+def _profile_key(profile: dict[str, Any]) -> str:
+    return json.dumps(profile, sort_keys=True, default=str)
+
+
+def _copy(statement: Statement) -> Statement:
+    """A statement whose lines can be categorised without touching `statement`'s."""
+    return statement.model_copy(update={"transactions": [t.model_copy() for t in statement.transactions]})
+
+
 def _load(folder: Path, account: str) -> tuple[Statement, str] | None:
     from .ingest import load_csv
 
@@ -173,7 +231,13 @@ def _load(folder: Path, account: str) -> tuple[Statement, str] | None:
     if not path.is_file():
         return None
     data = path.read_bytes()
-    return load_csv(path, account_name=account, data=data), _sha(data)
+    sha = _sha(data)
+    parsed = _PARSED.get((account, sha))
+    if parsed is None:
+        parsed = load_csv(path, account_name=account, data=data)
+        _PARSED.put((account, sha), _copy(parsed))
+        return parsed, sha
+    return _copy(parsed), sha
 
 
 @dataclass
@@ -250,12 +314,24 @@ class CaseNotReconciled(ReconciliationError):
         self.account, self.statement = failures[0].account, failures[0].statement
 
 
-def _figures(statement: Statement, profile: dict[str, Any], applied: dict[str, LineOverride]):
+def _figures(statement: Statement, sha: str, profile: dict[str, Any], applied: dict[str, LineOverride]):
     from . import metrics
 
-    categorise(statement, active_ruleset(), overrides=applied, profile=store.profile_names(profile))
+    _categorise(statement, sha, profile, applied)
     return (metrics.compute(statement, profile["vat_stagger"], profile["proposed_monthly_repayment"]),
             metrics.monthly_summary(statement))
+
+
+def _bare_figures(statement: Statement, sha: str, profile: dict[str, Any]):
+    """The figures `statement` (read with hash `sha`) gives with no override applied; only
+    ever compared with. `statement` is not touched."""
+    ruleset = active_ruleset()
+    key = (sha, ruleset.id, ruleset.sha256, _profile_key(profile))
+    got = _BARE.get(key)
+    if got is None:
+        got = _figures(_copy(statement), sha, profile, {})
+        _BARE.put(key, got)
+    return got
 
 
 def _rests_on(a, b, lines: set[str]) -> bool:
@@ -279,9 +355,9 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
             continue
         statement, sha = loaded
         applied = state.applied.get(account, {})
-        bare = statement.model_copy(deep=True)
+        bare = _copy(statement) if applied else None  # as read, before it is categorised
         try:
-            metrics, monthly = _figures(statement, profile, applied)
+            metrics, monthly = _figures(statement, sha, profile, applied)
         except ReconciliationError as e:  # R3: every failing account is named, with its lines
             e.account, e.statement = account, statement
             failed.append(e)
@@ -291,7 +367,7 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
         cells: set[tuple[str, str]] = set()
         if applied:
             try:
-                base_metrics, base_monthly = _figures(bare, profile, {})
+                base_metrics, base_monthly = _bare_figures(bare, sha, profile)
             except ReconciliationError:
                 # The figures as overridden reconcile; only the comparison without overrides
                 # does not (an override may be what puts a line right). The comparison only
@@ -377,6 +453,16 @@ def _check_position(head, expected: int | None) -> None:
         raise caselog.LogConflict(expected, head)
 
 
+def refuse_changes(changes: dict[str, Any]) -> None:
+    """R18: an override changes a line's category and nothing else. Any other change asked
+    for (an amount, date, balance or description, or a line added or removed) is refused,
+    naming it, before anything is read or written."""
+    if changes:
+        which = ", ".join(sorted(changes))
+        raise store.CaseStoreError(f"an override changes a line's category only, never its {which}; "
+                                   "nothing was recorded")
+
+
 def add_override(folder: Path, line: str, category: str, *, reason: str, name: str,
                  account: str = "main", expected: int | None = None, **changes: Any) -> Added:
     """Give one line a category, with a reason and the typed name (R17). Anything but a
@@ -385,10 +471,7 @@ def add_override(folder: Path, line: str, category: str, *, reason: str, name: s
     same category the line has now changes nothing and records nothing. `expected`, when
     given, is the case log position the caller last saw; a stale one is a LogConflict."""
     folder = Path(folder)
-    if changes:
-        which = ", ".join(sorted(changes))
-        raise store.CaseStoreError(f"an override changes a line's category only, never its {which}; "
-                                   "nothing was recorded")
+    refuse_changes(changes)
     if not isinstance(line, str) or not line:
         raise store.CaseStoreError("an override names a line by its id")
     try:
@@ -411,8 +494,7 @@ def add_override(folder: Path, line: str, category: str, *, reason: str, name: s
         # The line's category now, with the overrides in force: categorised only, never the
         # figures, so a case that does not reconcile can still take the override that puts a
         # line right (R3, R17).
-        categorise(loaded[0], active_ruleset(), overrides=state.applied.get(account, {}),
-                   profile=store.profile_names(profile))
+        _categorise(loaded[0], loaded[1], profile, state.applied.get(account, {}))
         t = next((t for t in loaded[0].transactions if t.id == line), None)
         if t is None:
             raise store.CaseStoreError(f"no line {line} in account {account}")

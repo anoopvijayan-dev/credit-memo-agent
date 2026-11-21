@@ -218,6 +218,10 @@ def test_the_page_shows_the_breakdown_the_figures_and_the_monthly_summary(home, 
     # Only the case's own figures: nothing computed in the page; no script or style inline.
     scripts = [a for t, a in p.tags if t == "script"]
     assert len(scripts) == 1 and dict(scripts[0])["src"].startswith("/static/app.js")
+    # A form is the workspace's own: it posts only to its override or stale-override path (R17, R19).
+    for t, a in p.tags:
+        if t == "form":
+            assert dict(a)["method"] == "post" and dict(a)["action"].startswith(("/override?token=", "/stale?token="))
     assert not any(k == "style" or k.startswith("on") for _, a in p.tags for k, _ in a)
 
 
@@ -352,7 +356,8 @@ def _random_statement(rng: random.Random) -> tuple[str, list[tuple[str, str]]]:
 
 def _assert_only_escaped(page: str, texts: list[str], *, shown: bool) -> None:
     allowed = {"html", "head", "meta", "title", "link", "script", "body", "header", "h1", "h2", "h3", "p",
-               "main", "section", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "span", "a", "strong"}
+               "main", "section", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "span", "a", "strong",
+               "form", "input", "select", "option", "button"}  # the override form's own tags (T22)
     p = _parse(page)
     # No text adds markup: every tag is one the workspace writes, with no handler or style.
     assert {t for t, _ in p.tags} <= allowed
@@ -360,6 +365,10 @@ def _assert_only_escaped(page: str, texts: list[str], *, shown: bool) -> None:
     for t, a in p.tags:
         if t == "a":
             assert [k for k, _ in a] == ["href"] and dict(a)["href"].startswith(("/lines?token=", "/?token="))
+    # A form is the workspace's own: it posts only to its override or stale-override path (R17, R19).
+    for t, a in p.tags:
+        if t == "form":
+            assert dict(a)["method"] == "post" and dict(a)["action"].startswith(("/override?token=", "/stale?token="))
     assert not any(k == "style" or k.startswith("on") for _, a in p.tags for k, _ in a)
     assert [t for t, _ in p.tags].count("script") == 1
     page_text = "".join(p.text)

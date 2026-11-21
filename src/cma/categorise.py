@@ -1478,6 +1478,13 @@ def unmark_round_trips(statement: Statement, ruleset_id: str | None = None, *,
     return statement
 
 
+def classify_lines(statement: Statement, ruleset: Ruleset, *, profile: ProfileNames | None = None,
+                   firm_rules: Sequence[Rule] = ()) -> tuple[tuple[Category, str], ...]:
+    """What classify gives each line of `statement` with no override, in order; the
+    statement is not touched. categorise takes it as `unoverridden`."""
+    return tuple(classify(t, ruleset, profile=profile, firm_rules=firm_rules) for t in statement.transactions)
+
+
 def categorise(
     statement: Statement,
     ruleset: Ruleset | None = None,
@@ -1485,11 +1492,23 @@ def categorise(
     overrides: Mapping[str, LineOverride] | None = None,
     profile: ProfileNames | None = None,
     firm_rules: Sequence[Rule] = (),
+    unoverridden: Sequence[tuple[Category, str]] | None = None,
 ) -> Statement:
+    """Categorise every line, then undo round trips and link reversals across lines.
+    `unoverridden`, when given, is what classify gives each line with no override, in
+    order, for this statement, ruleset, profile and firm rules (classify_lines): a line with
+    no override takes it as it is, and a line with one is classified afresh. classify looks
+    at one line only, so the result is the same as classifying every line."""
     ruleset = ruleset or active_ruleset()
     overrides = overrides or {}
-    for t in statement.transactions:
-        t.category, t.rule_id = classify(t, ruleset, override=overrides.get(t.id), profile=profile,
-                                         firm_rules=firm_rules)
+    if unoverridden is not None and len(unoverridden) != len(statement.transactions):
+        raise ValueError("unoverridden must give one result per line")
+    for i, t in enumerate(statement.transactions):
+        override = overrides.get(t.id)
+        if unoverridden is not None and override is None:
+            t.category, t.rule_id = unoverridden[i]
+        else:
+            t.category, t.rule_id = classify(t, ruleset, override=override, profile=profile,
+                                             firm_rules=firm_rules)
         t.reverses = None
     return link_reversals(unmark_round_trips(statement, ruleset.id, overridden=overrides.keys()))

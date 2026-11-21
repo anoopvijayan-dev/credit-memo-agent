@@ -16,6 +16,12 @@
 It is one process that serves requests on threads and never forks (R42's scope). It
 renders what the figures layer computed; it computes no money. Its request log is off, so the token never reaches a log.
 Refusals say only that the request was refused, never what the case holds.
+
+Every page and data path is GET only. The override form and the stale overrides' forms (R17,
+R19; edit.py) are the only writes: POST to /override and /stale from the page, or to
+/api/override and /api/stale for data, each with the token and the workspace's own Origin,
+a body of at most MAX_BODY bytes with its Content-Length (never chunked), and a form or JSON
+content type.
 """
 
 from __future__ import annotations
@@ -29,7 +35,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlsplit
 
 LOOPBACK = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -53,6 +59,10 @@ SECURITY_HEADERS = {
 TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
 INDEX = "index.html"
 REFUSED = b"Refused: this workspace answers only the URL it printed when it started.\n"
+WRITES = {"/override": ("override", "page"), "/stale": ("stale", "page"),
+          "/api/override": ("override", "data"), "/api/stale": ("stale", "data")}
+MAX_BODY = 16 * 1024  # bytes: a form or JSON body is far smaller
+FORM = "application/x-www-form-urlencoded"
 
 
 class NoFreePort(OSError):
@@ -130,16 +140,20 @@ class _Handler(BaseHTTPRequestHandler):
         if not (self._host_ok() and self._origin_ok() and self._token_ok(parts.query if parts else "")):
             self._send(403, REFUSED)
             return
-        if self.command != "GET":
+        path = parts.path if parts else None
+        allowed = "POST" if path in WRITES else "GET"
+        if self.command != allowed:
             self.send_response(405)
             for key, value in SECURITY_HEADERS.items():
                 self.send_header(key, value)
-            self.send_header("Allow", "GET")
+            self.send_header("Allow", allowed)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        path = parts.path if parts else None
+        if path in WRITES:
+            self._write(*WRITES[path])
+            return
         if path in ("/lines", "/api/lines"):
             self._lines(path, parts.query)
         elif path in ("/", "/api/case"):
@@ -160,6 +174,67 @@ class _Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, b"Not found.\n")
 
+
+    def _body(self) -> dict | None:
+        """The request's fields, or None once a refusal has been sent. The connection is
+        closed after every write, so nothing past the body is ever read as a request."""
+        self.close_connection = True
+        if self.headers.get("Transfer-Encoding"):
+            self._send(411, b"Send the body with its Content-Length.\n")
+            return None
+        lengths = self.headers.get_all("Content-Length") or []
+        if len(lengths) != 1 or not lengths[0].isdigit():
+            self._send(411, b"Send the body with its Content-Length.\n")
+            return None
+        n = int(lengths[0])
+        if n > MAX_BODY:
+            self._send(413, b"The request body is too large.\n")
+            return None
+        kind = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        raw = self.rfile.read(n)
+        try:
+            text = raw.decode("utf-8")
+            if kind == "application/json":
+                fields = json.loads(text)
+                if not isinstance(fields, dict):
+                    raise ValueError
+            elif kind == FORM:
+                pairs = parse_qsl(text, keep_blank_values=True, strict_parsing=bool(text))
+                fields = dict(pairs)
+                if len(fields) != len(pairs):
+                    raise ValueError
+            else:
+                self._send(415, b"Send a form or JSON body.\n")
+                return None
+        except ValueError:  # UnicodeDecodeError and JSONDecodeError among them
+            self._send(400, b"The request body could not be read.\n")
+            return None
+        return fields
+
+    def _write(self, kind: str, shape: str) -> None:
+        """Save one override or resolve one stale override (edit.answer). Data paths answer
+        JSON; page paths go back to the page the form was on once saved (303), or show why
+        nothing was saved, with a link to reload the case."""
+        from . import edit
+
+        fields = self._body()
+        if fields is None:
+            return
+        try:
+            status, reply = self.server.save(kind, fields)
+        except Exception:
+            status, reply = 500, {"error": "The change could not be saved."}
+        if shape == "data":
+            self._send(status, json.dumps(reply, ensure_ascii=False).encode("utf-8"), "application/json")
+        elif status == 200:
+            self.send_response(303)
+            for key, value in SECURITY_HEADERS.items():
+                self.send_header(key, value)
+            self.send_header("Location", edit.back_url(fields.get("back"), self.server.token))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        else:
+            self._send(status, self.server.outcome_html(status, reply), "text/html; charset=utf-8")
 
     def _lines(self, path: str, query: str) -> None:
         """The lines behind one figure or monthly cell (R16): as data at /api/lines, as the
@@ -227,6 +302,8 @@ class ReviewServer:
         self.httpd.page_html = self._page_html
         self.httpd.lines_json = self._lines_json
         self.httpd.lines_html = self._lines_html
+        self.httpd.save = self._save
+        self.httpd.outcome_html = self._outcome_html
         self._thread: threading.Thread | None = None
 
     @property
@@ -259,6 +336,17 @@ class ReviewServer:
 
         html = drilldown.render(drilldown.lines_behind(self.folder, self.case_id, **target), self.token)
         return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
+
+    def _save(self, kind: str, fields: dict) -> tuple[int, dict]:
+        """One write from the workspace: its status and reply, the recomputed case included (R17, R52)."""
+        from . import edit
+
+        return edit.answer(self.folder, self.case_id, kind, fields)
+
+    def _outcome_html(self, status: int, reply: dict) -> bytes:
+        from . import edit
+
+        return self._page.replace(SUMMARY_MARK.encode(), edit.outcome_html(status, reply, self.token).encode("utf-8"))
 
     def serve_forever(self) -> None:
         self.httpd.serve_forever()

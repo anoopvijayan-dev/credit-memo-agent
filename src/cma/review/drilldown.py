@@ -27,6 +27,7 @@ from urllib.parse import urlencode
 from .. import metrics
 from ..models import MonthlyCell, format_value, money_exact
 from . import summary
+from .edit import categories_for, override_form
 
 CELL_TITLES = dict(summary.CELLS)
 CELL_METHODS = {
@@ -50,7 +51,8 @@ def _line(t, overridden: dict[str, str], note: set[str]) -> dict[str, Any]:
             "amount": t.amount, "amount_display": money_exact(t.amount),
             "balance": t.balance, "balance_display": money_exact(t.balance),
             "category": t.category.value if t.category else None, "rule": t.rule_id,
-            "overridden": t.id in overridden, "counted_in_part": t.id in note}
+            "overridden": t.id in overridden, "counted_in_part": t.id in note,
+            "categories": categories_for(t)}
 
 
 def _total(statement, ids: list[str], kind: str) -> dict[str, Any] | None:
@@ -69,7 +71,8 @@ def lines_behind(folder: Path, case_id: str, *, account: str | None = None, figu
     if (figure is not None and (month is not None or cell is not None)) or (
             figure is None and (month is None or cell is None)):
         raise DrillError("name a figure, or a month and a cell")
-    out: dict[str, Any] = {"case": case_id, "state": "shown", "refusal": None, "reconciliation": None}
+    out: dict[str, Any] = {"case": case_id, "state": "shown", "refusal": None, "reconciliation": None,
+                           "position": summary.log_position(folder)}  # read first, as the summary's (R17)
     figures, refused = summary.load_figures(folder)
     if refused is not None:
         out.update(refused)
@@ -158,14 +161,21 @@ def render(d: dict[str, Any], token: str) -> str:
                        f'<td>{_e(c["line"])}</td></tr>' for c in d["closes"])
         head += ('<h3>End-of-day closes read</h3><table class="closes"><thead><tr><th>Day</th>'
                  f'<th class="num">Close</th><th>Set by line</th></tr></thead><tbody>{rows}</tbody></table>')
+    position = d.get("position")
+    here = "/lines?" + urlencode({"account": d["account"], **d["target"]})  # where a form comes back to
+
+    def form(x):
+        return f'<td>{override_form(token, d["account"], x, position, here)}</td>' if position is not None else ""
+
     rows = "".join(
         f'<tr><td>{_e(x["id"])}</td><td>{_e(x["date"])}</td><td>{_e(x["description"])}</td>'
         f'<td class="num">{_e(x["amount_display"])}</td><td class="num">{_e(x["balance_display"])}</td>'
         f'<td>{_e(x["category"])}</td><td>{_e(x["rule"])}'
         + (' <span class="overridden">override</span>' if x["overridden"] else "")
         + (' <span class="in-part">counted in part</span>' if x["counted_in_part"] else "")
-        + '</td></tr>' for x in d["lines"])
+        + f'</td>{form(x)}</tr>' for x in d["lines"])
+    change = "<th>Change category</th>" if position is not None else ""
     table = ('<h3>Lines</h3><table class="lines"><thead><tr><th>Line</th><th>Date</th><th>Description</th>'
-             '<th class="num">Amount</th><th class="num">Balance</th><th>Category</th><th>Set by</th></tr></thead>'
-             f'<tbody>{rows}</tbody></table></section>')
+             '<th class="num">Amount</th><th class="num">Balance</th><th>Category</th><th>Set by</th>'
+             f'{change}</tr></thead><tbody>{rows}</tbody></table></section>')
     return back + head + table
