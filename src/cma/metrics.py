@@ -473,8 +473,10 @@ def compute(statement: Statement, vat_stagger: int | None = None, proposed_repay
     # from an own pot that the built-in table recognises keeps the treatment v1 gives the same
     # line, so M1 to M16 do not move under v2 (R10, P7); and with no case profile no line is
     # named, so M9 is the previous release's (R54).
+    # A returned DD that undoes such a line is the same money coming back, so it is named too.
     def own_account_named(t: Transaction) -> bool:
-        return t.category == Category.OWN_ACCOUNT_TRANSFER and t.rule_id == PROFILE_OWN_ACCOUNT
+        u = by_id.get(t.reverses, t) if t.reverses else t
+        return u.category == Category.OWN_ACCOUNT_TRANSFER and u.rule_id == PROFILE_OWN_ACCOUNT
 
     def operating_line(t: Transaction) -> bool:
         if eff(t) in FINANCING or own_account_named(t):

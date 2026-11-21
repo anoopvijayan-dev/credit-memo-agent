@@ -244,9 +244,76 @@ def test_a_single_profile_name_decides_under_v1(home, tmp_path, serve, monkeypat
     _, f, folder = _shown(home, tmp_path, serve, directors=["Jane Doe"])
     lines, _ = _lines(folder)
     assert (lines["L7"].category, lines["L7"].rule_id) == (Category.DIRECTOR_FUNDING, "profile:director")
-    # v1's protected rules come first, and v1 protects neither IWOCA nor REFUND wording on a
-    # credit, so the director's name takes L8 and L9 too (C1, profile names under v1).
-    assert _pounds(f["M20"]) == Decimal("1160.00")
+    # v1 names no lender, so IWOCA wording is no protected verdict there and the name decides L8.
+    assert (lines["L8"].category, lines["L8"].rule_id) == (Category.DIRECTOR_FUNDING, "profile:director")
+    # REFUND is refund wording, a protected verdict, so v1's own rule decides L9 (R5 under R54).
+    assert (lines["L9"].category, lines["L9"].rule_id) == (Category.OTHER, "v1:non_trading_in")
+    assert _pounds(f["M20"]) == Decimal("1150.00")
+
+
+# Lines whose wording carries a protected verdict beside a profile name (R5, R6 under v1, R54),
+# and a returned direct debit that undoes a debit to a named own account (R6, M9).
+PROTECTED_BODY = ("id,date,description,amount,balance\n"
+                  "P1,2026-01-05,CARD SETTLEMENT STRIPE,500.00,1500.00\n"
+                  "P2,2026-01-06,JANE DOE LOAN,100.00,1600.00\n"
+                  "P3,2026-01-07,DD ACME HOLDINGS LOAN,-100.00,1500.00\n"
+                  "P4,2026-01-08,UNPAID DD ACME HOLDINGS,50.00,1550.00\n"
+                  "P5,2026-01-09,FPS CREDIT DIRECTOR JANE DOE ACME HOLDINGS,20.00,1570.00\n"
+                  "P6,2026-01-10,DD ACME HOLDINGS,-300.00,1270.00\n"
+                  "P7,2026-01-11,UNPAID DD ACME HOLDINGS,300.00,1570.00\n")
+
+
+def _protected_case(tmp_path, serve, **profile):
+    case_id = store.new_case(label="t05")
+    folder = store.case_folder(case_id)
+    store.update_profile(folder, lambda p: {**p, **profile})
+    src = tmp_path / "protected.csv"
+    src.write_text(PROTECTED_BODY, encoding="utf-8")
+    store.import_file(folder, src, "csv", account="main")
+    f = _figures(_api(serve(case_id)))
+    lines, metrics = _lines(folder)
+    return f, lines, metrics
+
+
+@pytest.mark.contracts
+def test_a_protected_verdict_outranks_a_profile_name_under_v1(home, tmp_path, serve, monkeypatch):
+    monkeypatch.setenv("CMA_RULESET", "v1")
+    f, lines, _ = _protected_case(tmp_path, serve, directors=["Jane Doe"], own_accounts=["ACME HOLDINGS"])
+    # JANE DOE LOAN is a lending drawdown (R5's example), under v1 as under v2.
+    assert (lines["P2"].category, lines["P2"].rule_id) == (Category.LOAN_DRAWDOWN, "v1:loan_drawdown")
+    # A debit to a lender, and a returned direct debit, that name an own account keep their
+    # protected verdicts (R6): debt service keeps the repayment.
+    assert (lines["P3"].category, lines["P3"].rule_id) == (Category.LOAN_REPAYMENT, "v1:loan_repayment")
+    assert (lines["P4"].category, lines["P4"].rule_id) == (Category.RETURNED_DD, "v1:returned_dd")
+    # Director wording decides before two kinds of profile name make the credit ambiguous.
+    assert (lines["P5"].category, lines["P5"].rule_id) == (Category.OTHER, "v1:non_trading_in")
+    assert _pounds(f["M21"]) == Decimal("100.00")
+    assert _pounds(f["M8"]) == Decimal("100.00")
+
+
+@pytest.mark.contracts
+def test_a_protected_verdict_outranks_a_profile_name_under_v2(home, tmp_path, serve):
+    f, lines, _ = _protected_case(tmp_path, serve, directors=["Jane Doe"], own_accounts=["ACME HOLDINGS"])
+    assert lines["P2"].category == Category.LOAN_DRAWDOWN
+    assert lines["P3"].category == Category.LOAN_REPAYMENT
+    assert lines["P4"].category == Category.RETURNED_DD
+    assert lines["P5"].category == Category.DIRECTOR_FUNDING
+    assert _pounds(f["M8"]) == Decimal("100.00")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("ruleset", ["v1", "v2"])
+def test_a_returned_dd_undoing_an_own_account_debit_stays_out_of_m9(home, tmp_path, serve, monkeypatch, ruleset):
+    monkeypatch.setenv("CMA_RULESET", ruleset)
+    f_named, lines, metrics = _protected_case(tmp_path, serve, own_accounts=["ACME HOLDINGS"])
+    assert (lines["P6"].category, lines["P6"].rule_id) == (Category.OWN_ACCOUNT_TRANSFER, "profile:own_account")
+    assert lines["P7"].category == Category.RETURNED_DD and lines["P7"].reverses == "P6"
+    # The debit is the applicant's own money moving, so the return that undoes it is too (R6).
+    assert not {"P6", "P7"} & set(metrics["M9"].evidence)
+    # Without the own account named the two lines net to zero in M9, as before this change.
+    f_plain, _, plain = _protected_case(tmp_path, serve)
+    assert {"P6", "P7"} <= set(plain["M9"].evidence)
+    assert _pounds(f_named["M9"]) == _pounds(f_plain["M9"])
 
 
 @pytest.mark.contracts

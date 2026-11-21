@@ -40,7 +40,10 @@ naming someone else); the case profile's names (directors and shareholders, own
 accounts); firm rules; an unprotected verdict; the default (a debit is supplier, a credit
 is OTHER, unexplained).
 Debits, and every line under the frozen v1 table, keep first-match order: the protected
-rules, the profile, firm rules, the rest of the table. Every line records the rule that
+rules, the profile, firm rules, the rest of the table. v1 marks no rule protected, so under
+v1 the rules that give a protected verdict by the requirements' term are read before a
+profile name only when one matches (_v1_protected), and a statement with no profile keeps
+v1's first-match order exactly (R54). Every line records the rule that
 set its category in Transaction.rule_id: "<ruleset>:<rule id>", "<ruleset>:default",
 "<ruleset>:round_trip", "<ruleset>:conflict:<id>+<id>...", "profile:director",
 "profile:own_account", "firm:<rule id>" or the override's own reference.
@@ -1305,6 +1308,15 @@ def classify(
     # kinds as its candidates (R5, R6). A debit is never ambiguous: an own account's name
     # decides it (R6).
     kinds = _profile_matches(t, _fold(t.description), profile)
+    if kinds and ruleset.frozen:
+        # v1 marks no rule protected, but its rules for a returned payment, HMRC, loan wording,
+        # owner drawings and director, owner, shareholder, capital-introduced, refund, reversal
+        # and own-pot wording are protected verdicts by the term, and a protected verdict decides
+        # before a case-profile name in either direction (R5, R6 under R54). Read only when a
+        # profile name matches, so a statement with no profile keeps v1's first-match order.
+        for rule in ruleset.rules:
+            if _v1_protected(rule, desc, t.amount):
+                return rule.category, f"{ruleset.id}:{rule.id}"
     if len(kinds) > 1:
         candidates = [r.id for r in ruleset.rules if rule_matches(r, desc, t.amount)] + [ref for _, ref in kinds]
         return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(candidates)
@@ -1317,6 +1329,26 @@ def classify(
         if rule.category is not None and rule_matches(rule, desc, t.amount):
             return rule.category, f"{ruleset.id}:{rule.id}"
     return (Category.SUPPLIER if t.amount < 0 else Category.OTHER), f"{ruleset.id}:default"
+
+
+# The rules of the frozen v1 table that give a protected verdict (the requirements' term). Its
+# non_trading_in rule also lists explained non-trading words and bare words (INTEREST, GRANT,
+# INSURANCE CLAIM, CAPITAL, SAVINGS), which are no protected verdict, so for it only the
+# protected wording counts. v1's bytes are pinned, so this lives in code (R54).
+_V1_PROTECTED = frozenset({"returned_dd", "hmrc_vat", "hmrc_paye", "loan_repayment", "loan_drawdown",
+                           "owner_drawings"})
+_V1_PROTECTED_IN = re.compile(
+    r"\bDIRECTOR\b|\bOWNER\b|\bSHAREHOLDER\b|\bCAPITAL (?:INTRODUCED|INJECTED|CONTRIBUTED)\b|\bHMRC\b"
+    r"|\bREFUND\b|\bREVERSAL\b|\bPOT TRANSFER\b|\b(?:TO|FROM) SAVINGS\b"
+)
+
+
+def _v1_protected(rule: Rule, desc: str, amount: float) -> bool:
+    if rule.category is None or not rule_matches(rule, desc, amount):
+        return False
+    if rule.id == "non_trading_in":
+        return _V1_PROTECTED_IN.search(desc) is not None
+    return rule.id in _V1_PROTECTED
 
 
 def _profile_matches(t: Transaction, desc: str, profile: ProfileNames | None) -> list[tuple[Category, str]]:
