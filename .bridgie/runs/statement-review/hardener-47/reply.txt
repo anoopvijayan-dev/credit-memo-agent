@@ -1,0 +1,33 @@
+I could not reproduce any of the three majors from the last review, and every test tier, lint, compile and the offline evals pass. I made one change, a README fix. The claim is in `/home/user/credit-memo-agent/.bridgie/runs/statement-review/hardener-47/claim.json`.
+
+**The three majors.** Each is answered by the implementer's commit `ca9a33b`, which I checked:
+- **M9 leak:** a returned direct debit that undoes a debit to a named own account now counts as the same own-account money. Neither line is in M9, under v1 or v2, and M9 matches the value with no profile.
+- **v1 credits:** under v1, a protected verdict now decides before a profile name. For example, JANE DOE LOAN is a lending drawdown, as R5's own example asks.
+- **v1 debits:** a loan repayment or a returned direct debit that names an own account keeps its own category, so debt service (M8) keeps the repayment.
+
+**Test results:**
+
+| Run | Result |
+|---|---|
+| `tests/test_case_profile.py` | 19 passed |
+| Full suite | 2105 passed |
+| `contracts` tier | 631 passed |
+| `invariants` tier | 845 passed |
+| `dual_run` tier | 84 passed |
+| P7 and previous-release tests under `CMA_RULESET=v1` | 20 passed |
+| ruff, compileall | clean |
+| Offline evals | 9/9 memos grounded |
+
+**Change I made (`9e16723`):** README.md's categoriser row still said a profile name naming the payer settles an ambiguous credit. It now says a profile name only adds a candidate, and it states the both-kinds rule under v1 and v2.
+
+**Checklist lines:**
+- **Not applicable, with the reason in the claim:** data and migration (no stored format, table, log or evidence key changes), and new dependencies (none).
+- **Idempotency:** each read recomputes from the case files. A test shows a profile edit appears at the next read and an unchanged case reads the same.
+- **Security:** profile names are HTML-escaped on the page, and `/api/case` refuses a request without the session token and leaks no name.
+- **Performance:** argued from the code (one lookup per line, and the v1 check runs only when a profile name matches), not measured.
+- **Observability:** the tool is local-only with no remote alert, by design; each line's recorded rule id shows which verdict ran.
+
+**Gaps for the owner (in `notes`):**
+- **v1 protected list:** the v1 rules that count as a protected verdict are a list in code beside the pinned v1 table. I chose them by reading the requirements' term against v1's rules. v1's `non_trading_in` rule mixes protected wording (DIRECTOR, REFUND, HMRC) with bare words (CAPITAL, SAVINGS, INTEREST, GRANT), and only the protected wording counts. The owner should confirm that split.
+- **No lender list in v1:** v1 lists no lenders, so under v1 a profile name decides IWOCA JANE DOE ACME HOLDINGS rather than a lending verdict.
+- **Windows:** the Windows run of the suite is Rollout step 3, not CI.

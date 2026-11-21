@@ -1,0 +1,566 @@
+diff --git a/src/cma/categorise.py b/src/cma/categorise.py
+index 4a81db7..5772cb5 100644
+--- a/src/cma/categorise.py
++++ b/src/cma/categorise.py
+@@ -40,7 +40,10 @@ naming someone else); the case profile's names (directors and shareholders, own
+ accounts); firm rules; an unprotected verdict; the default (a debit is supplier, a credit
+ is OTHER, unexplained).
+ Debits, and every line under the frozen v1 table, keep first-match order: the protected
+-rules, the profile, firm rules, the rest of the table. Every line records the rule that
++rules, the profile, firm rules, the rest of the table. v1 marks no rule protected, so under
++v1 the rules that give a protected verdict by the requirements' term are read before a
++profile name only when one matches (_v1_protected), and a statement with no profile keeps
++v1's first-match order exactly (R54). Every line records the rule that
+ set its category in Transaction.rule_id: "<ruleset>:<rule id>", "<ruleset>:default",
+ "<ruleset>:round_trip", "<ruleset>:conflict:<id>+<id>...", "profile:director",
+ "profile:own_account", "firm:<rule id>" or the override's own reference.
+@@ -1299,9 +1302,26 @@ def classify(
+     for rule in ruleset.protected:
+         if rule.category is not None and rule_matches(rule, desc, t.amount):
+             return rule.category, f"{ruleset.id}:{rule.id}"
+-    found = _profile(t, desc, profile)
+-    if found:
+-        return found
++    # The case profile is new behaviour under any ruleset (R54), so under v1 too its names
++    # are matched as rules and profile names are under v2 (whole words, separators), and a
++    # credit both kinds of name match is ambiguous, with every v1 rule it matches and both
++    # kinds as its candidates (R5, R6). A debit is never ambiguous: an own account's name
++    # decides it (R6).
++    kinds = _profile_matches(t, _fold(t.description), profile)
++    if kinds and ruleset.frozen:
++        # v1 marks no rule protected, but its rules for a returned payment, HMRC, loan wording,
++        # owner drawings and director, owner, shareholder, capital-introduced, refund, reversal
++        # and own-pot wording are protected verdicts by the term, and a protected verdict decides
++        # before a case-profile name in either direction (R5, R6 under R54). Read only when a
++        # profile name matches, so a statement with no profile keeps v1's first-match order.
++        for rule in ruleset.rules:
++            if _v1_protected(rule, desc, t.amount):
++                return rule.category, f"{ruleset.id}:{rule.id}"
++    if len(kinds) > 1:
++        candidates = [r.id for r in ruleset.rules if rule_matches(r, desc, t.amount)] + [ref for _, ref in kinds]
++        return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(candidates)
++    if kinds:
++        return kinds[0]
+     for rule in firm_rules:
+         if rule_matches(rule, desc, t.amount):
+             return rule.category, f"firm:{rule.id}"
+@@ -1311,6 +1331,26 @@ def classify(
+     return (Category.SUPPLIER if t.amount < 0 else Category.OTHER), f"{ruleset.id}:default"
+ 
+ 
++# The rules of the frozen v1 table that give a protected verdict (the requirements' term). Its
++# non_trading_in rule also lists explained non-trading words and bare words (INTEREST, GRANT,
++# INSURANCE CLAIM, CAPITAL, SAVINGS), which are no protected verdict, so for it only the
++# protected wording counts. v1's bytes are pinned, so this lives in code (R54).
++_V1_PROTECTED = frozenset({"returned_dd", "hmrc_vat", "hmrc_paye", "loan_repayment", "loan_drawdown",
++                           "owner_drawings"})
++_V1_PROTECTED_IN = re.compile(
++    r"\bDIRECTOR\b|\bOWNER\b|\bSHAREHOLDER\b|\bCAPITAL (?:INTRODUCED|INJECTED|CONTRIBUTED)\b|\bHMRC\b"
++    r"|\bREFUND\b|\bREVERSAL\b|\bPOT TRANSFER\b|\b(?:TO|FROM) SAVINGS\b"
++)
++
++
++def _v1_protected(rule: Rule, desc: str, amount: float) -> bool:
++    if rule.category is None or not rule_matches(rule, desc, amount):
++        return False
++    if rule.id == "non_trading_in":
++        return _V1_PROTECTED_IN.search(desc) is not None
++    return rule.id in _V1_PROTECTED
++
++
+ def _profile_matches(t: Transaction, desc: str, profile: ProfileNames | None) -> list[tuple[Category, str]]:
+     """Every kind of case-profile name the line's wording matches, director first."""
+     found: list[tuple[Category, str]] = []
+@@ -1322,11 +1362,6 @@ def _profile_matches(t: Transaction, desc: str, profile: ProfileNames | None) ->
+     return found
+ 
+ 
+-def _profile(t: Transaction, desc: str, profile: ProfileNames | None) -> tuple[Category, str] | None:
+-    found = _profile_matches(t, desc, profile)
+-    return found[0] if found else None
+-
+-
+ def _classify_credit(t: Transaction, desc: str, ruleset: Ruleset, profile: ProfileNames | None,
+                      firm_rules: Sequence[Rule]) -> tuple[Category, str]:
+     """Design C1's precedence for a credit, after the override: (2) a protected verdict,
+diff --git a/src/cma/metrics.py b/src/cma/metrics.py
+index d42acce..20e4d20 100644
+--- a/src/cma/metrics.py
++++ b/src/cma/metrics.py
+@@ -76,6 +76,7 @@ BUCKET_METRICS: dict[Bucket, tuple[str, str, str]] = {
+ }
+ # Left out of the denominator M16 and M26 share: borrowing, money that only undoes a
+ # payment, and the applicant's own money moving between its accounts.
++PROFILE_OWN_ACCOUNT = "profile:own_account"  # the rule a case profile's own-account name records (R6)
+ NOT_IN_SHARE = {Category.LOAN_DRAWDOWN, Category.RETURNED_DD, Category.OWN_ACCOUNT_TRANSFER}
+ 
+ 
+@@ -466,8 +467,19 @@ def compute(statement: Statement, vat_stagger: int | None = None, proposed_repay
+     # too, for the same reason.
+     reversed_ids = {t.reverses for t in txns if t.reverses}
+ 
++    # A line the case profile names as one of the applicant's other accounts is the
++    # applicant's own money moving, not operating cash, in either direction (R6): it is never
++    # an operating line, and never sent or sent back in the round trip below. A move to or
++    # from an own pot that the built-in table recognises keeps the treatment v1 gives the same
++    # line, so M1 to M16 do not move under v2 (R10, P7); and with no case profile no line is
++    # named, so M9 is the previous release's (R54).
++    # A returned DD that undoes such a line is the same money coming back, so it is named too.
++    def own_account_named(t: Transaction) -> bool:
++        u = by_id.get(t.reverses, t) if t.reverses else t
++        return u.category == Category.OWN_ACCOUNT_TRANSFER and u.rule_id == PROFILE_OWN_ACCOUNT
++
+     def operating_line(t: Transaction) -> bool:
+-        if eff(t) in FINANCING:
++        if eff(t) in FINANCING or own_account_named(t):
+             return False
+         if pence(t) <= 0:
+             return True
+@@ -481,11 +493,12 @@ def compute(statement: Statement, vat_stagger: int | None = None, proposed_repay
+     # them, but never by more than was sent, so the round trip can't add cash.
+     sent: dict[str, int] = defaultdict(int)
+     for t in txns:
+-        if pence(t) < 0 and eff(t) not in FINANCING and OUTGOING_TRANSFER.search(t.description.upper()):
++        if pence(t) < 0 and operating_line(t) and OUTGOING_TRANSFER.search(t.description.upper()):
+             sent[counterparty(t.description)] += -pence(t)
+     back: dict[str, list[Transaction]] = defaultdict(list)
+     for t in txns:
+-        if pence(t) > 0 and t.category in NON_TRADING_IN and counterparty(t.description) in sent:
++        if (pence(t) > 0 and t.category in NON_TRADING_IN and not own_account_named(t)
++                and counterparty(t.description) in sent):
+             back[counterparty(t.description)].append(t)
+     offset = sum(min(total(ts), sent[cp]) for cp, ts in back.items())
+     # A derived figure (P2): the cap is allocated to a counterparty's credits in statement
+diff --git a/src/cma/review/summary.py b/src/cma/review/summary.py
+index f29f1ad..23a84eb 100644
+--- a/src/cma/review/summary.py
++++ b/src/cma/review/summary.py
+@@ -21,6 +21,7 @@ comes from this module alone.
+ 
+ from __future__ import annotations
+ 
++from decimal import Decimal
+ from html import escape
+ from pathlib import Path
+ from typing import Any
+@@ -33,6 +34,10 @@ from ..models import Metric, MonthlyCell, format_value, money_exact
+ 
+ BREAKDOWN = ("M2", "M19", "M20", "M21", "M22", "M23", "M24", "M25")  # the money-in buckets (R1)
+ TOTAL, CASH = "M17", "M18"
++# The profile fields the figures read (R5, R6, R13), shown with them so the underwriter sees
++# what made a credit director funding or an own-account transfer, and what M28 includes.
++PROFILE_SHOWN = ("directors", "shareholders", "own_accounts", "proposed_monthly_repayment")
++PROFILE_TITLES = {"directors": "Directors", "shareholders": "Shareholders", "own_accounts": "Own accounts"}
+ CELLS = (("money_in", "Money in"), ("money_out", "Money out"), ("trading_receipts", "Trading receipts"),
+          ("average_balance", "Average end-of-day balance"), ("lowest_balance", "Lowest end-of-day balance"),
+          ("days_overdrawn", "Days overdrawn"))
+@@ -96,11 +101,13 @@ def _not_reconciled(e: metrics.ReconciliationError) -> dict[str, Any]:
+ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+     """The case as the workspace shows it, computed afresh from its files."""
+     folder = Path(folder)
+-    out: dict[str, Any] = {"case": case_id, "label": None, "business_name": None, "state": "shown",
+-                           "accounts": [], "reconciliation": None, "refusal": None}
++    out: dict[str, Any] = {"case": case_id, "label": None, "business_name": None, "profile": None,
++                           "state": "shown", "accounts": [], "reconciliation": None, "refusal": None}
+     try:
+         profile = store.load_profile(folder)
+         out["label"], out["business_name"] = profile.get("label"), profile.get("business_name")
++        out["profile"] = {key: (list(profile[key]) if key in store.LIST_FIELDS else profile[key])
++                          for key in PROFILE_SHOWN}
+         figures = overrides.case_figures(folder)
+     except metrics.ReconciliationError as e:  # R3: nothing is shown
+         out.update(state="not_reconciled", reconciliation=_not_reconciled(e))
+@@ -195,11 +202,29 @@ def _reconciliation_html(r: dict[str, Any]) -> str:
+             f'<th class="num">Amount</th><th>Category</th></tr></thead><tbody>{rows}</tbody></table></section>')
+ 
+ 
++def _profile_html(p: dict[str, Any] | None) -> str:
++    """The profile fields the figures read: each list of names (R5, R6), and the proposed
++    monthly repayment that M28 includes (R13)."""
++    if p is None:
++        return ""
++    rows = []
++    for key, title in PROFILE_TITLES.items():
++        names = p[key]
++        shown = ", ".join(_e(n) for n in names) if names else '<span class="none">none named</span>'
++        rows.append(f"<tr><th>{_e(title)}</th><td>{shown}</td></tr>")
++    repayment = p["proposed_monthly_repayment"]
++    shown = (_e(f"£{Decimal(repayment):,.2f}") if repayment is not None  # as typed, to the penny
++             else '<span class="none">No proposed monthly repayment given: M28 is n/a</span>')
++    rows.append(f"<tr><th>Proposed monthly repayment</th><td>{shown}</td></tr>")
++    return f'<section id="profile"><h2>Case profile</h2><table class="profile"><tbody>{"".join(rows)}</tbody></table></section>'
++
++
+ def render(summary: dict[str, Any]) -> str:
+     """The case summary as HTML for the page's main element; every case text escaped."""
+     names = [x for x in (summary["business_name"], summary["label"]) if x]
+     head = (f'<section id="summary-head"><p class="case-name">{_e(" — ".join(names))}</p></section>'
+             if names else "")
++    head += _profile_html(summary.get("profile"))
+     state = summary["state"]
+     if state == "not_reconciled":
+         return head + _reconciliation_html(summary["reconciliation"])
+diff --git a/tests/test_case_profile.py b/tests/test_case_profile.py
+new file mode 100644
+index 0000000..6774345
+--- /dev/null
++++ b/tests/test_case_profile.py
+@@ -0,0 +1,358 @@
++"""T05: the case profile in the case pipeline (R5, R6, R13).
++
++A case's profile reaches the categoriser and the figures layer whenever the case's figures
++are computed (overrides.case_figures), and the workspace shows the result (C5):
++
++- a director's or shareholder's name makes a credit director and shareholder funding (M20),
++  even with an invoice reference, unless a protected verdict decides it first (R5);
++- an own account's name makes a line an own-account transfer in either direction, out of
++  trading receipts (M2) and out of net operating cash flow (M9) (R6);
++- a credit both kinds of name match, with no protected verdict, is ambiguous: unexplained
++  money in (M25), with every rule it matched and both profile kinds as candidates (R5, R6),
++  under v1 as under v2 (R54);
++- the proposed monthly repayment feeds debt service cover including the proposed facility
++  (M28); with none, M28 is n/a with the reason (R13).
++
++Each test goes through the workspace API (/api/case) of a real server in a thread, on cases
++with and without each profile field."""
++
++import http.client
++import json
++from decimal import Decimal
++
++import pytest
++
++from cma import overrides, store
++from cma.models import Category
++from cma.review import server as rs
++
++# Opening balance £1,000.00.
++BODY = ("id,date,description,amount,balance\n"
++        "L1,2026-01-05,CARD SETTLEMENT STRIPE,500.00,1500.00\n"
++        "L2,2026-01-06,FPS CREDIT JANE DOE INV 42,1000.00,2500.00\n"
++        "L3,2026-01-07,FPS CREDIT ACME HOLDINGS,200.00,2700.00\n"
++        "L4,2026-01-08,FPS TO ACME HOLDINGS,-300.00,2400.00\n"
++        "L5,2026-01-09,DD IWOCA LOAN,-100.00,2300.00\n"
++        "L6,2026-01-10,FPS CREDIT JOHN ROE,50.00,2350.00\n"
++        "L7,2026-01-11,FPS CREDIT JANE DOE ACME HOLDINGS,70.00,2420.00\n"
++        "L8,2026-01-12,IWOCA JANE DOE ACME HOLDINGS,80.00,2500.00\n"
++        "L9,2026-01-13,REFUND JANE DOE,10.00,2510.00\n")
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    return root
++
++
++@pytest.fixture
++def serve():
++    servers = []
++
++    def start(case_id):
++        srv = rs.start(store.case_folder(case_id), case_id, port=0)
++        srv.serve_in_thread()
++        servers.append(srv)
++        return srv
++
++    yield start
++    for srv in servers:
++        srv.close()
++
++
++def _case(tmp_path, **profile):
++    case_id = store.new_case(label="t05")
++    folder = store.case_folder(case_id)
++    if profile:
++        store.update_profile(folder, lambda p: {**p, **profile})
++    src = tmp_path / "main.csv"
++    src.write_text(BODY, encoding="utf-8")
++    store.import_file(folder, src, "csv", account="main")
++    return case_id, folder
++
++
++def _get(srv, path):
++    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=10)
++    try:
++        conn.request("GET", path, headers={"Host": f"127.0.0.1:{srv.port}", "X-CMA-Token": srv.token})
++        r = conn.getresponse()
++        return r.status, r.read()
++    finally:
++        conn.close()
++
++
++def _api(srv) -> dict:
++    status, body = _get(srv, "/api/case")
++    assert status == 200
++    return json.loads(body)
++
++
++def _figures(summary) -> dict:
++    assert summary["state"] == "shown", summary
++    (account,) = summary["accounts"]
++    return {f["id"]: f for f in account["figures"]}
++
++
++def _pounds(f) -> Decimal:
++    return Decimal(f["display"].replace("£", "").replace(",", ""))
++
++
++def _lines(folder) -> dict:
++    (figs,) = overrides.case_figures(folder).values()
++    return {t.id: t for t in figs.statement.transactions}, {m.id: m for m in figs.metrics}
++
++
++def _shown(home, tmp_path, serve, **profile):
++    case_id, folder = _case(tmp_path, **profile)
++    summary = _api(serve(case_id))
++    return summary, _figures(summary), folder
++
++
++@pytest.mark.contracts
++def test_without_a_profile_no_line_is_director_funding_or_an_own_account_transfer(home, tmp_path, serve):
++    summary, f, folder = _shown(home, tmp_path, serve)
++    assert _pounds(f["M20"]) == 0 and _pounds(f["M19"]) == 0
++    assert _pounds(f["M2"]) == Decimal("1500.00")  # the invoice-referenced credit is trading receipts
++    lines, _ = _lines(folder)
++    assert lines["L2"].category == Category.REVENUE_TRANSFER
++    assert summary["profile"] == {"directors": [], "shareholders": [], "own_accounts": [],
++                                  "proposed_monthly_repayment": None}
++
++
++@pytest.mark.contracts
++def test_a_director_s_name_makes_a_credit_director_funding_even_with_an_invoice_reference(home, tmp_path, serve):
++    summary, f, folder = _shown(home, tmp_path, serve, directors=["Jane Doe"])
++    lines, _ = _lines(folder)
++    assert (lines["L2"].category, lines["L2"].rule_id) == (Category.DIRECTOR_FUNDING, "profile:director")
++    assert (lines["L7"].category, lines["L7"].rule_id) == (Category.DIRECTOR_FUNDING, "profile:director")
++    # A protected verdict decides first: a lending drawdown and a refund (R5).
++    assert lines["L8"].category == Category.LOAN_DRAWDOWN
++    assert lines["L9"].category == Category.REFUND_IN
++    assert _pounds(f["M20"]) == Decimal("1070.00")
++    assert _pounds(f["M2"]) == Decimal("500.00")
++    assert f["M20"]["lines"] == 2
++    assert summary["profile"]["directors"] == ["Jane Doe"]
++
++
++@pytest.mark.contracts
++def test_a_shareholder_s_name_makes_a_credit_director_funding(home, tmp_path, serve):
++    summary, f, folder = _shown(home, tmp_path, serve, shareholders=["John Roe"])
++    lines, _ = _lines(folder)
++    assert (lines["L6"].category, lines["L6"].rule_id) == (Category.DIRECTOR_FUNDING, "profile:director")
++    assert _pounds(f["M20"]) == Decimal("50.00")
++    assert lines["L2"].category == Category.REVENUE_TRANSFER  # no director named
++    assert summary["profile"]["shareholders"] == ["John Roe"]
++
++
++@pytest.mark.contracts
++def test_an_own_account_s_name_makes_lines_own_account_transfers_out_of_m2_and_m9(home, tmp_path, serve):
++    summary, f, folder = _shown(home, tmp_path, serve, own_accounts=["ACME HOLDINGS"])
++    lines, metrics = _lines(folder)
++    for line_id in ("L3", "L4", "L7"):  # credits and the debit alike (R6)
++        assert (lines[line_id].category, lines[line_id].rule_id) == (Category.OWN_ACCOUNT_TRANSFER,
++                                                                      "profile:own_account"), line_id
++    assert lines["L8"].category == Category.LOAN_DRAWDOWN  # protected verdict first (R6)
++    assert _pounds(f["M19"]) == Decimal("270.00")
++    assert _pounds(f["M2"]) == Decimal("1500.00")
++    # Neither the own-account credit nor the own-account debit is operating cash flow.
++    assert not {"L3", "L4", "L7"} & set(metrics["M9"].evidence)
++    assert not {"L3", "L4", "L7"} & set(metrics["M2"].evidence)
++    assert _pounds(f["M9"]) == Decimal("1500.00")
++    assert summary["profile"]["own_accounts"] == ["ACME HOLDINGS"]
++
++
++@pytest.mark.contracts
++def test_without_the_own_account_named_the_debit_to_it_stays_in_m9(home, tmp_path, serve):
++    _, f, folder = _shown(home, tmp_path, serve)
++    _, metrics = _lines(folder)
++    assert "L4" in metrics["M9"].evidence
++    assert _pounds(f["M9"]) != Decimal("1500.00")
++
++
++@pytest.mark.contracts
++def test_a_credit_both_kinds_name_is_ambiguous_with_both_candidates(home, tmp_path, serve):
++    summary, f, folder = _shown(home, tmp_path, serve, directors=["Jane Doe"], own_accounts=["ACME HOLDINGS"])
++    lines, _ = _lines(folder)
++    l7 = lines["L7"]
++    assert l7.category == Category.OTHER
++    assert l7.rule_id.startswith("v2:conflict:")
++    assert l7.rule_id.endswith("+profile:director+profile:own_account")
++    assert lines["L8"].category == Category.LOAN_DRAWDOWN  # IWOCA JANE DOE ACME HOLDINGS (R5, R6)
++    assert lines["L2"].category == Category.DIRECTOR_FUNDING
++    assert _pounds(f["M25"]) == Decimal("120.00")  # L6 (no shareholder named) and L7
++    assert _pounds(f["M20"]) == Decimal("1000.00")
++    assert _pounds(f["M19"]) == Decimal("200.00")
++    assert summary["profile"]["directors"] == ["Jane Doe"] and summary["profile"]["own_accounts"] == ["ACME HOLDINGS"]
++
++
++@pytest.mark.contracts
++def test_without_a_proposed_repayment_m28_is_n_a_with_the_reason(home, tmp_path, serve):
++    _, f, _ = _shown(home, tmp_path, serve)
++    assert f["M28"]["value"] is None and f["M28"]["display"] == "n/a"
++    assert "proposed monthly repayment" in f["M28"]["method"]
++
++
++@pytest.mark.contracts
++def test_the_proposed_repayment_feeds_m28(home, tmp_path, serve):
++    summary, f, folder = _shown(home, tmp_path, serve, proposed_monthly_repayment="250.00")
++    assert f["M28"]["value"] is not None
++    assert f["M28"]["value"] < f["M10"]["value"]  # the proposed repayment adds to debt service
++    assert summary["profile"]["proposed_monthly_repayment"] == "250.00"
++    _, metrics = _lines(folder)
++    assert metrics["M28"].evidence
++
++
++@pytest.mark.contracts
++def test_the_page_shows_the_profile_escaped(home, tmp_path, serve):
++    case_id, _ = _case(tmp_path, directors=["<b>Jane</b> & Co"], own_accounts=["ACME HOLDINGS"],
++                       proposed_monthly_repayment="250.00")
++    srv = serve(case_id)
++    status, body = _get(srv, "/")
++    page = body.decode("utf-8")
++    assert status == 200
++    assert "&lt;b&gt;Jane&lt;/b&gt; &amp; Co" in page and "<b>Jane</b>" not in page
++    assert "ACME HOLDINGS" in page and "£250.00" in page
++
++
++@pytest.mark.contracts
++def test_the_page_says_when_no_profile_field_is_given(home, tmp_path, serve):
++    case_id, _ = _case(tmp_path)
++    status, body = _get(serve(case_id), "/")
++    page = body.decode("utf-8")
++    assert status == 200
++    assert 'id="profile"' in page and "none named" in page and "No proposed monthly repayment" in page
++
++
++@pytest.mark.contracts
++def test_a_both_kinds_credit_is_ambiguous_under_v1_too(home, tmp_path, serve, monkeypatch):
++    monkeypatch.setenv("CMA_RULESET", "v1")
++    _, f, folder = _shown(home, tmp_path, serve, directors=["Jane Doe"], own_accounts=["ACME HOLDINGS"])
++    lines, _ = _lines(folder)
++    assert lines["L7"].category == Category.OTHER
++    assert lines["L7"].rule_id.startswith("v1:conflict:")
++    assert lines["L7"].rule_id.endswith("profile:director+profile:own_account")
++    assert lines["L3"].category == Category.OWN_ACCOUNT_TRANSFER
++    assert lines["L2"].category == Category.DIRECTOR_FUNDING
++    assert _pounds(f["M25"]) >= Decimal("70.00") and _pounds(f["M19"]) == Decimal("200.00")
++
++
++@pytest.mark.contracts
++def test_a_single_profile_name_decides_under_v1(home, tmp_path, serve, monkeypatch):
++    monkeypatch.setenv("CMA_RULESET", "v1")
++    _, f, folder = _shown(home, tmp_path, serve, directors=["Jane Doe"])
++    lines, _ = _lines(folder)
++    assert (lines["L7"].category, lines["L7"].rule_id) == (Category.DIRECTOR_FUNDING, "profile:director")
++    # v1 names no lender, so IWOCA wording is no protected verdict there and the name decides L8.
++    assert (lines["L8"].category, lines["L8"].rule_id) == (Category.DIRECTOR_FUNDING, "profile:director")
++    # REFUND is refund wording, a protected verdict, so v1's own rule decides L9 (R5 under R54).
++    assert (lines["L9"].category, lines["L9"].rule_id) == (Category.OTHER, "v1:non_trading_in")
++    assert _pounds(f["M20"]) == Decimal("1150.00")
++
++
++# Lines whose wording carries a protected verdict beside a profile name (R5, R6 under v1, R54),
++# and a returned direct debit that undoes a debit to a named own account (R6, M9).
++PROTECTED_BODY = ("id,date,description,amount,balance\n"
++                  "P1,2026-01-05,CARD SETTLEMENT STRIPE,500.00,1500.00\n"
++                  "P2,2026-01-06,JANE DOE LOAN,100.00,1600.00\n"
++                  "P3,2026-01-07,DD ACME HOLDINGS LOAN,-100.00,1500.00\n"
++                  "P4,2026-01-08,UNPAID DD ACME HOLDINGS,50.00,1550.00\n"
++                  "P5,2026-01-09,FPS CREDIT DIRECTOR JANE DOE ACME HOLDINGS,20.00,1570.00\n"
++                  "P6,2026-01-10,DD ACME HOLDINGS,-300.00,1270.00\n"
++                  "P7,2026-01-11,UNPAID DD ACME HOLDINGS,300.00,1570.00\n")
++
++
++def _protected_case(tmp_path, serve, **profile):
++    case_id = store.new_case(label="t05")
++    folder = store.case_folder(case_id)
++    store.update_profile(folder, lambda p: {**p, **profile})
++    src = tmp_path / "protected.csv"
++    src.write_text(PROTECTED_BODY, encoding="utf-8")
++    store.import_file(folder, src, "csv", account="main")
++    f = _figures(_api(serve(case_id)))
++    lines, metrics = _lines(folder)
++    return f, lines, metrics
++
++
++@pytest.mark.contracts
++def test_a_protected_verdict_outranks_a_profile_name_under_v1(home, tmp_path, serve, monkeypatch):
++    monkeypatch.setenv("CMA_RULESET", "v1")
++    f, lines, _ = _protected_case(tmp_path, serve, directors=["Jane Doe"], own_accounts=["ACME HOLDINGS"])
++    # JANE DOE LOAN is a lending drawdown (R5's example), under v1 as under v2.
++    assert (lines["P2"].category, lines["P2"].rule_id) == (Category.LOAN_DRAWDOWN, "v1:loan_drawdown")
++    # A debit to a lender, and a returned direct debit, that name an own account keep their
++    # protected verdicts (R6): debt service keeps the repayment.
++    assert (lines["P3"].category, lines["P3"].rule_id) == (Category.LOAN_REPAYMENT, "v1:loan_repayment")
++    assert (lines["P4"].category, lines["P4"].rule_id) == (Category.RETURNED_DD, "v1:returned_dd")
++    # Director wording decides before two kinds of profile name make the credit ambiguous.
++    assert (lines["P5"].category, lines["P5"].rule_id) == (Category.OTHER, "v1:non_trading_in")
++    assert _pounds(f["M21"]) == Decimal("100.00")
++    assert _pounds(f["M8"]) == Decimal("100.00")
++
++
++@pytest.mark.contracts
++def test_a_protected_verdict_outranks_a_profile_name_under_v2(home, tmp_path, serve):
++    f, lines, _ = _protected_case(tmp_path, serve, directors=["Jane Doe"], own_accounts=["ACME HOLDINGS"])
++    assert lines["P2"].category == Category.LOAN_DRAWDOWN
++    assert lines["P3"].category == Category.LOAN_REPAYMENT
++    assert lines["P4"].category == Category.RETURNED_DD
++    assert lines["P5"].category == Category.DIRECTOR_FUNDING
++    assert _pounds(f["M8"]) == Decimal("100.00")
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("ruleset", ["v1", "v2"])
++def test_a_returned_dd_undoing_an_own_account_debit_stays_out_of_m9(home, tmp_path, serve, monkeypatch, ruleset):
++    monkeypatch.setenv("CMA_RULESET", ruleset)
++    f_named, lines, metrics = _protected_case(tmp_path, serve, own_accounts=["ACME HOLDINGS"])
++    assert (lines["P6"].category, lines["P6"].rule_id) == (Category.OWN_ACCOUNT_TRANSFER, "profile:own_account")
++    assert lines["P7"].category == Category.RETURNED_DD and lines["P7"].reverses == "P6"
++    # The debit is the applicant's own money moving, so the return that undoes it is too (R6).
++    assert not {"P6", "P7"} & set(metrics["M9"].evidence)
++    # Without the own account named the two lines net to zero in M9, as before this change.
++    f_plain, _, plain = _protected_case(tmp_path, serve)
++    assert {"P6", "P7"} <= set(plain["M9"].evidence)
++    assert _pounds(f_named["M9"]) == _pounds(f_plain["M9"])
++
++
++@pytest.mark.contracts
++def test_a_profile_edited_between_reads_is_shown_at_the_next_read(home, tmp_path, serve):
++    # The summary is computed afresh from the case's files on every read: a director added
++    # while the workspace is open moves the credit on the next read, and reading again
++    # without a change gives the same answer (no state kept between reads).
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    before = _figures(_api(srv))
++    assert _pounds(before["M20"]) == 0
++    assert _figures(_api(srv))["M20"] == before["M20"]
++    store.update_profile(folder, lambda p: {**p, "directors": ["Jane Doe"]})
++    after = _api(srv)
++    assert _pounds(_figures(after)["M20"]) == Decimal("1070.00")
++    assert after["profile"]["directors"] == ["Jane Doe"]
++
++
++@pytest.mark.contracts
++def test_a_malformed_profile_shows_no_figures_and_names_the_field(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path, directors=["Jane Doe"])
++    (folder / store.PROFILE).write_text("directors: Jane Doe\n", encoding="utf-8")  # not a list
++    srv = serve(case_id)
++    summary = _api(srv)
++    assert summary["state"] == "refused" and summary["accounts"] == [] and summary["profile"] is None
++    assert "directors" in summary["refusal"]
++    status, body = _get(srv, "/")
++    assert status == 200 and "No figures are shown" in body.decode("utf-8")
++
++
++@pytest.mark.contracts
++def test_the_api_needs_the_session_token_to_read_the_profile(home, tmp_path, serve):
++    case_id, _ = _case(tmp_path, directors=["Jane Doe"])
++    srv = serve(case_id)
++    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=10)
++    try:
++        conn.request("GET", "/api/case", headers={"Host": f"127.0.0.1:{srv.port}"})
++        r = conn.getresponse()
++        body = r.read()
++    finally:
++        conn.close()
++    assert r.status in (401, 403) and b"Jane" not in body
