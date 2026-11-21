@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-203/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/metrics.py:95 now preserves written fractional pence and src/cma/ingest.py:579 includes readable over-limit amounts in flow checks. The integer conversion can still abort on a readable field, and src/cma/ingest.py:570 skips balance comparisons involving readable over-limit values. M3 and penny display were checked at src/cma/metrics.py:563, src/cma/cli.py:415 and src/cma/graph.py:175.); major: A plain amount within the CSV field-size limit can raise a raw integer conversion error before either importer reports the record line or the flow limit. at src/cma/metrics.py:111; major: The post-read running-balance check omits readable amounts and balances that reach the line limit, even when their exact values establish a separate chain fault. at src/cma/ingest.py:570; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-205/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (Checked exact conversion and limit handling at src/cma/metrics.py:95 and src/cma/ingest.py:533, M3 at src/cma/metrics.py:563, and penny display at src/cma/cli.py:415 and src/cma/graph.py:175. The runner passed the large-amount and balance-limit regressions separately. Combining them breaks the refusal formatter, and the Monzo walk drops time from timestamps carried in Date.); major: Formatting a balance-chain fault can raise Python's integer-to-string digit-limit error before the loader reports the offending line or the flow limit. at src/cma/metrics.py:191; major: The Monzo balance walk can reject a consistent export because an ISO timestamp in Date loses its time and the sort falls back to transaction ID. at src/cma/importers/monzo.py:257; reviewer verdict fail"
     },
     {
       "id": "T06",
