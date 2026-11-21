@@ -68,6 +68,7 @@ class FirmConfig:
     offline_lock: bool = True
     show_policy_verdict: bool = True
     paths: tuple[tuple[str, str], ...] = tuple(DEFAULT_PATHS.items())
+    named: tuple[str, ...] = ()  # the paths firm.yaml names itself, not left at their defaults
 
     def _path(self, key: str) -> Path:
         return self.root / dict(self.paths)[key]  # an absolute path replaces the root
@@ -79,6 +80,11 @@ class FirmConfig:
     @property
     def thresholds_path(self) -> Path:
         return self._path("thresholds")
+
+    def names_path(self, key: str) -> bool:
+        """Whether firm.yaml itself names the file for `key`: the firm chose that file, so a
+        missing one is refused, never replaced by the packaged default."""
+        return key in self.named
 
     @property
     def memo_fields_path(self) -> Path:
@@ -265,6 +271,7 @@ def _load(root: Path | None = None, data: bytes | None = None) -> FirmConfig:
             else:
                 problems.append(f"{key} must be true or false")
     paths = dict(DEFAULT_PATHS)
+    named: list[str] = []
     raw_paths = data.get("paths")
     if raw_paths is None:  # absent, or `paths:` with nothing under it
         raw_paths = {}
@@ -278,6 +285,7 @@ def _load(root: Path | None = None, data: bytes | None = None) -> FirmConfig:
             problems.append(f"paths.{key} must be a file path")
         else:
             paths[key] = value
+            named.append(key)
     if problems:
         raise FirmConfigError(f"{path}: " + "; ".join(problems))
-    return FirmConfig(root=root, paths=tuple(paths.items()), **flags)
+    return FirmConfig(root=root, paths=tuple(paths.items()), named=tuple(named), **flags)

@@ -21,6 +21,11 @@ OPS = {">=": operator.ge, "<=": operator.le, ">": operator.gt, "<": operator.lt,
 ON_FAIL = {"refer", "fail"}
 WHEN_MISSING = {"pass", "refer", "fail"}
 DEFAULT_POLICY_NAME = "uk_sme_default.yaml"
+# The illustrative label (R25): shown in the same workspace panel and the same pack section as
+# every policy outcome, so copying the section copies it. It holds no digits, so it never
+# trips the grounding guard.
+ILLUSTRATIVE_LABEL = ("Illustrative thresholds shipped with this tool. They are not your firm's lending "
+                      "policy, and this is not a lending decision: the underwriter decides.")
 
 
 class PolicyError(ValueError):
