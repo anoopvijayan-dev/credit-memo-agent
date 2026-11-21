@@ -1,0 +1,39 @@
+Waiting for the full suite to finish.
+
+T28 is done: the importer contract is in place, the shared balance walk has been moved out of `monzo.py` into it, and the Monzo output is byte-for-byte unchanged. The full suite passes: 2032 tests, plus ruff, compileall, the evals and the marker tiers.
+
+- **Contract** (`src/cma/importers/contract.py`): one shared step works out the opening balance and walks the running balance in whole pence. Before anything is written, the output is loaded with `ingest.load_csv`, so the only file written is one the loader accepts. Every refusal is an `ImportRefused`.
+- **Callers:** `monzo.convert` now runs on the contract. `cma import monzo` and `cma case import` (both formats) catch `ImportRefused`.
+- **Refusals name lines, never cell values:** the Monzo messages no longer quote dates, amounts, currencies or transaction ids. When the loader refuses an importer's output, the refusal names the line in the source export, not the line in the converted file. The line-only wording the MCP server already used now lives in one shared helper in `ingest.py`; the MCP server's output is unchanged.
+- **Golden test (contracts):** I captured the golden files from the importer before changing it and checked them against the original `monzo.py`. `monzo.convert`, `cma import monzo` and `cma case import` all reproduce them exactly. The files end in `.golden` because `.gitignore` ignores `*.csv`, and the P7 baseline test requires every committed CSV under `tests/` to have a baseline.
+
+Things the verifier should know:
+- **Tests I changed:** 13 assertions in `tests/test_money_in.py` expected refusals to quote the cell, for example `'someday'`, `'X1'` and the amount at the limit. I moved them to the line-only wording; what they check for R2 (the line, the limit, the totals of the lines read so far) is the same. In one test I also moved two monkeypatch targets to the contract.
+- **Values still shown on purpose:** the user's own `--opening-balance` is still quoted, because it is an option they typed, not a cell. The opening balance implied by Monzo's Balance column is still named, because the user needs that figure to correct the option.
+- **Behaviour change:** `cma import monzo` now refuses, and writes nothing for, an export whose converted statement the loader would refuse, such as one with a future-dated row. Before, it wrote a file that `cma run` would then refuse.
+
+The work is in two commits on the task branch: c831ff0 (golden capture) and f213416 (contract). No findings were passed in.
+
+```json
+{
+  "task": "T28",
+  "claims": [
+    {"text": "Monzo golden output unchanged: monzo.convert, `cma import monzo` and `cma case import --format monzo` each produce byte-identical statements (and identical ImportResult) to the golden files captured from the pre-change importer (commit c831ff0; verified against d973281's monzo.py before the refactor).",
+     "proof_cmd": "python -m pytest -q -m contracts tests/test_importer_contract.py -k golden",
+     "proof_output": "6 passed"},
+    {"text": "Importer contract (src/cma/importers/contract.py): ImportRefused, Line, opening_balance and walk (the shared balance walk extracted from monzo.py), statement_bytes, checked and write_statement (output loaded by ingest.load_csv before anything is written). monzo.convert uses it; MonzoImportError subclasses ImportRefused; `cma import monzo` (cli.py) and `cma case import` (store.import_file, both formats) catch ImportRefused.",
+     "proof_cmd": "python -m pytest -q -m contracts tests/test_importer_contract.py",
+     "proof_output": "31 passed in 1.29s"},
+    {"text": "Refusals give line numbers, never cell values: Monzo row refusals (date, amount, decimals, amount at limit, balance, currency, duplicate id, disagreeing balance, first balance missing) and `cma case import` of a statement CSV name the line and quote no cell, through convert, `cma import monzo` and `cma case import`; a loader refusal of importer output is mapped back to the source file's line.",
+     "proof_cmd": "python -m pytest -q -m contracts tests/test_importer_contract.py -k 'cell or line'",
+     "proof_output": "included in: 31 passed in 1.29s"},
+    {"text": "Full suite, ruff, compileall, evals and marker tiers pass.",
+     "proof_cmd": "ruff check src tests; python -m compileall -q src; python -m pytest -q; python -m pytest -q -m contracts; python -m pytest -q -m 'invariants or dual_run'; python evals/run_evals.py",
+     "proof_output": "All checks passed!; compile ok; 2032 passed in 169.79s; 589 passed, 1443 deselected; 832 passed, 1200 deselected; 9/9 memos fully grounded; model = fake; ruleset = v1"}
+  ],
+  "files_changed": ["src/cma/importers/contract.py", "src/cma/importers/monzo.py", "src/cma/ingest.py", "src/cma/mcp_server.py", "src/cma/store.py", "src/cma/cli.py", ".gitattributes", "tests/golden/monzo/results.json", "tests/golden/monzo/personal_export.golden", "tests/golden/monzo/personal_statement.golden", "tests/golden/monzo/business_export.golden", "tests/golden/monzo/business_statement.golden", "tests/test_importer_contract.py", "tests/test_money_in.py"],
+  "notes": "Golden files use a .golden suffix because .gitignore ignores *.csv and test_p7_golden_covers_every_case requires every committed tests/**/*.csv to have a P7 baseline. The MCP server's no-cell labelling moved into ingest.refusal_parts, shared with the contract; MCP output is unchanged. Thirteen assertions in tests/test_money_in.py that expected a Monzo refusal to quote the cell (e.g. 'someday', 'X1', Amount '10000000000000.00', the Transaction ID) were updated to the contract's line-only wording; the R2 order and content (line, limit, flows read so far) they test are unchanged. Two monkeypatch targets in test_import_flow_totals_and_balance_chain_come_from_the_figures_layer moved to the contract (the walk lives there now; the ingest patches are undone before the importer runs, since the importer's output is now loaded). Kept on purpose: the person's own --opening-balance value is still quoted (an option, not a cell), and the opening balance Monzo's column implies is still named, being the tool's arithmetic needed to mend the option. Behaviour change: `cma import monzo` now refuses (and writes nothing) an export whose converted statement the loader would refuse, e.g. a future-dated row, where it previously wrote a file `cma run` would then refuse. Commits c831ff0 and f213416 on the task branch."
+}
+```
+
+The background watcher hit its time limit and was stopped. Nothing is lost: it was only waiting for a suite run that had already finished, and I didn't need it after that. After my last changes I ran the full suite again (2032 passed) along with the marker tiers. T28's result and `claim.json` are as reported above.
