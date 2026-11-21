@@ -110,7 +110,7 @@ def test_root_inside_a_git_tree_that_does_not_ignore_it_is_refused(tmp_path, mon
         store.new_case()
     assert not (repo / "cases-here").exists()  # refused before anything was made
     r = runner.invoke(app, ["case", "new"])
-    assert r.exit_code == 2 and "does not ignore" in r.output
+    assert r.exit_code == 2 and "does not ignore" in " ".join(r.output.split())  # Rich wraps long lines
     assert not (repo / "cases-here").exists()
 
 
@@ -305,7 +305,7 @@ def test_importing_the_same_file_again_leaves_the_case_unchanged(home, tmp_path)
     store.import_file(folder, src, "csv")
     head = case.for_case(folder).verify().head
     r = runner.invoke(app, ["case", "import", cid, str(src), "--format", "csv", "--account", "other"])
-    assert r.exit_code == 0 and "already imported" in r.output
+    assert r.exit_code == 0 and "already imported" in " ".join(r.output.split())
     assert case.for_case(folder).verify().head == head
     assert sorted(p.name for p in (folder / "statements").iterdir()) == ["main.csv"]
 
@@ -442,10 +442,10 @@ def test_an_import_whose_entry_never_reached_the_log_is_recorded_when_imported_a
     assert [e for e, _ in _events(folder)] == ["case_created"]
 
     r = runner.invoke(app, ["case", "import", cid, str(src), "--format", "csv"])
-    assert r.exit_code == 0 and "imported account main" in r.output, r.output
+    assert r.exit_code == 0 and "imported account main" in " ".join(r.output.split()), r.output
     assert [e for e, _ in _events(folder)] == ["case_created", "import"]
     r = runner.invoke(app, ["case", "import", cid, str(src), "--format", "csv"])
-    assert "already imported" in r.output
+    assert "already imported" in " ".join(r.output.split())
     assert [e for e, _ in _events(folder)] == ["case_created", "import"]
     assert runner.invoke(app, ["case", "check", str(folder)]).exit_code == 0
 
@@ -475,7 +475,7 @@ def test_a_case_root_the_file_system_refuses_is_a_refusal_not_a_traceback(tmp_pa
     monkeypatch.setenv("CMA_HOME", str(blocker / "cma"))  # its parent is a file
     r = runner.invoke(app, ["case", "new"])
     assert r.exit_code == 2, (r.output, r.exception)
-    assert "Refused." in r.output and "Traceback" not in r.output
+    assert "Refused." in " ".join(r.output.split()) and "Traceback" not in r.output
     assert blocker.read_text() == "not a folder"
 
 
