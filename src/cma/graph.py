@@ -188,6 +188,32 @@ def _shipped_rules() -> dict[str, tuple]:
         return {}
 
 
+def _shipped_spellings() -> dict[str, tuple]:
+    """Each shipped rule's limits as the shipped policy writes them: a custom rule equal to it
+    is sent with these, never with its own spelling of the same number (T17 review 12)."""
+    try:
+        def spell(v):
+            return str(v) if v is not None else None
+        return {r["id"]: (spell(r.get("threshold")), spell(r.get("refer_below")), spell(r.get("refer_above")))
+                for r in pol.load_policy().get("rules", []) if isinstance(r, dict) and isinstance(r.get("id"), str)}
+    except Exception:
+        return {}
+
+
+def _shipped_detail(r, spelt: tuple) -> str:
+    """A shipped rule's detail for the prompt, its limits written as the shipped policy writes
+    them; a figure that cannot be computed names no limit."""
+    head, sep, tail = r.detail.partition("; rule requires ")
+    if not sep:
+        return r.detail
+    req = f"rule requires {r.op} {spelt[0]}"
+    if "referred below" in tail:
+        req += f", referred below {spelt[1]}"
+    if "referred above" in tail:
+        req += f", referred above {spelt[2]}"
+    return f"{head}; {req}."
+
+
 def _is_shipped(r, shipped: dict[str, tuple]) -> bool:
     """Whether a policy result's rule is the shipped policy's own rule, whole: its id, text,
     metric and requirement, referral bands and what a breach or a missing figure means
@@ -208,6 +234,7 @@ def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = F
     policy too, whatever its spelling (R4242 can be a sentinel), so only an id the shipped
     policy itself uses is sent; any other is replaced (T17 reviews 2 and 3)."""
     shipped = _shipped_rules() if for_prompt else {}
+    spellings = _shipped_spellings() if for_prompt else {}
     lines = ["| id | rule | metric | requirement | outcome | detail |", "|---|---|---|---|---|---|"]
     if overall_row:
         lines.append(f"| overall | overall outcome | - | - | {p.overall.value} | - |")
@@ -223,6 +250,8 @@ def rules_table(p: PolicyResult, overall_row: bool = False, for_prompt: bool = F
             # A custom rule's limits and detail are its own text too, and a number in them could
             # come from the case: only its metric and outcome are sent (T17 review 10).
             rule_id, description, req, detail = "(custom id)", "(custom rule)", "(custom requirement)", "-"
+        elif for_prompt and r.rule_id in spellings:
+            detail = _shipped_detail(r, spellings[r.rule_id])
         lines.append(f"| {rule_id} | {description} | {r.metric_id} | {req} | {r.outcome.value} | {detail} |")
     return "\n".join(lines)
 
@@ -461,11 +490,11 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
                 stored = compiled_get_state(config).values.get("offline_lock")
             except Exception:
                 stored = None
-            if stored is not None:
-                # A resume is a run of its own and reads firm.yaml as it resumes, never reusing
-                # the draft's reading, even with firm.yaml unchanged (R29 revision 32, T17 review 11).
-                now = _read_or_locked()
-                return None, stored is not False or now is None or now.offline_lock is not False
+            # A resume is a run of its own and reads firm.yaml as it resumes, never reusing the
+            # draft's reading or one handed to build(), even with firm.yaml unchanged, and for a
+            # draft from before the lock (stored None) too (R29 revision 32, T17 reviews 11, 12).
+            now = _read_or_locked()
+            return None, stored is True or now is None or now.offline_lock is not False
         reading = handed.pop() if handed else None
         if reading is None or not firm.take_for_run(reading):
             reading = firm.load()  # a reading drives one run only (T17 review 6)

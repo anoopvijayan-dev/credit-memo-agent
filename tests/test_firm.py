@@ -1252,6 +1252,53 @@ def test_r29_evidence_of_a_pre_lock_draft_keeps_the_lock_in_force_at_resume():
 
 
 @pytest.mark.invariants
+def test_p18_a_pre_lock_resume_reads_firm_yaml_not_a_reading_handed_to_build(home, no_network, monkeypatch, tmp_path):
+    """T17 review 12 / R29: resuming a draft from before the lock (no lock in its checkpoint) took
+    the reading handed to build() instead of reading firm.yaml as it resumed."""
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
+
+    saver = InMemorySaver()
+    cfg = {"configurable": {"thread_id": "t"}}
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    first = build(llm.FakeLLM(), checkpointer=saver)
+    first.invoke({"statement_path": str(_statement(tmp_path))}, cfg)
+    first.update_state(cfg, {"offline_lock": None, "egress": None})  # as a pre-lock draft left it
+    handed = firm.load()
+    reads = []
+    real_load = firm.load
+    monkeypatch.setattr(firm, "load", lambda *a, **k: reads.append(1) or real_load(*a, **k))
+    later = build(llm.FakeLLM(), checkpointer=saver, firm_config=handed)
+    final = later.invoke(Command(resume={"approved": True, "reviewer": "A"}), cfg)
+    assert reads and firm.take_for_run(handed) and no_network == []
+    assert evidence_record({**final, "ruleset": None})["egress"]["resume_offline_lock"] is False
+
+
+@pytest.mark.invariants
+def test_p5_a_custom_rule_equal_to_a_shipped_one_is_sent_in_the_shipped_spelling(home, tmp_path):
+    """T17 review 12 / P5: a custom rule equal to a shipped rule but writing its limit as another
+    spelling of the same number (12.0 for 12) sent that spelling in the prompt's detail."""
+    import copy
+
+    from cma import categorise, ingest, metrics, policy
+
+    st = categorise.categorise(ingest.load_csv(_statement(tmp_path), account_name="ACME LTD"))
+    ms = metrics.compute(st)
+    shipped = policy.load_policy()
+    custom = copy.deepcopy({k: v for k, v in shipped.items() if not k.startswith("_")})
+    custom["name"] = "Our own"
+    for r in custom["rules"]:
+        for key in ("threshold", "refer_below", "refer_above"):
+            if isinstance(r.get(key), int):
+                r[key] = float(r[key])  # 12 written as 12.0
+    mine = policy.evaluate(ms, custom)
+    ours = policy.evaluate(ms, shipped)
+    assert any(".0" in r.detail for r in mine.rules)  # the custom spelling is in its own detail
+    assert (draft_prompt(st, ms, mine).split("Policy table:")[1]
+            == draft_prompt(st, ms, ours).split("Policy table:")[1])
+
+
+@pytest.mark.invariants
 def test_p5_a_custom_rules_limits_never_reach_the_prompt(home, tmp_path):
     """T17 review 10 / P5: a custom rule's threshold, a number that can come from the case, reached
     the prompt in its requirement and detail cells."""
