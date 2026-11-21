@@ -35,6 +35,7 @@ from .graph import (
     ruleset_used,
     sqlite_checkpointer,
 )
+from .indicators import ThresholdsError, load_thresholds
 from .ingest import StatementError, load_csv
 from .llm import get_llm
 from .metrics import AmountError, ReconciliationError
@@ -64,6 +65,9 @@ def generate(
 def run(
     statement: Path,
     policy: Path | None = typer.Option(None, help="Policy YAML; defaults to the packaged uk_sme_default policy."),
+    thresholds: Path | None = typer.Option(
+        None, help="Indicator thresholds YAML (R14); defaults to the packaged, illustrative indicators.yaml."
+    ),
     llm: str = typer.Option("fake", help="fake | anthropic | openai"),
     vat_stagger: int | None = typer.Option(
         None, min=1, max=3,
@@ -93,7 +97,8 @@ def run(
         # Refuse a bad CMA_RULESET before the graph checkpoints anything: a refusal after the first
         # checkpoint would leave the review id taken, so a corrected retry could not reuse it.
         active_ruleset()
-    except RulesetError as e:
+        load_thresholds(thresholds)  # a malformed file is refused naming its line (R14)
+    except (RulesetError, ThresholdsError) as e:
         console.print(f"[red]Refused.[/red] {escape(str(e))}")
         raise typer.Exit(code=2) from e
     thread_id = thread or str(uuid.uuid4())
@@ -109,10 +114,10 @@ def run(
             try:
                 state = graph.invoke(
                     {"statement_path": str(statement), "policy_path": str(policy) if policy else None,
-                     "vat_stagger": vat_stagger},
+                     "thresholds_path": str(thresholds) if thresholds else None, "vat_stagger": vat_stagger},
                     cfg,
                 )
-            except (StatementError, PolicyError, RulesetError, AmountError) as e:
+            except (StatementError, PolicyError, RulesetError, ThresholdsError, AmountError) as e:
                 console.print(f"[red]Refused.[/red] {escape(str(e))}")
                 raise typer.Exit(code=2) from e
             except ReconciliationError as e:  # R3: no figures for a case whose buckets do not add up

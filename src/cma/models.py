@@ -180,6 +180,27 @@ class MonthRow(BaseModel):
     days_overdrawn: MonthlyCell
 
 
+class IndicatorThreshold(BaseModel):
+    """A threshold an indicator fired at, as the thresholds file gives it (R14)."""
+
+    key: str = Field(description="section.key in the thresholds file, e.g. single_cash_deposit.amount_at_least.")
+    value: str = Field(description="As compared: money to the penny in pounds, a share or multiple as written.")
+    unit: Literal["GBP", "pct", "times", "days", "count"]
+    illustrative: bool = Field(description="True while the threshold is still at its shipped value.")
+
+
+class Indicator(BaseModel):
+    """A risk indicator raised from the thresholds file (R14), with the lines behind it."""
+
+    id: str = Field(description="I1, I2, ... in the order the indicators are raised.")
+    kind: Literal["large_credit", "single_cash_deposit", "cash_heavy_month", "cash_round_trip", "gambling",
+                  "returned_dd", "overdrawn_run", "irregular_acquirer"]
+    thresholds: list[IndicatorThreshold]
+    evidence: list[str] = Field(description="Ids of the lines that made it fire, in statement order.")
+    reason: str = Field(description="One line saying why it fired; never a line's description.")
+    illustrative: bool = Field(description="True when a threshold that fired is still at its shipped value.")
+
+
 # How many decimals each unit is shown with. The memo copies figures as shown, and the
 # guard treats a figure written at this precision as exact (see guard._value_fits).
 DISPLAY_DECIMALS = {"GBP": 0, "pct": 1, "ratio": 2}
