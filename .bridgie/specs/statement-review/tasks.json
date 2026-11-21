@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-196/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:83-95 verifies the pence round trip, src/cma/metrics.py:510-517 handles unrepresentable M3 values, and src/cma/graph.py:175 and src/cma/cli.py:415 render GBP to the penny. The loader now runs cross-record checks after the read loop, but excludes readable dates and balances from some terminal records and truncates diagnostics. GBP policy comparisons still run outside the figures layer on unconverted values.); major: A partially unreadable terminal record contributes its readable amount to flow totals but loses its independently readable date and balance before the deferred cross-record checks. at src/cma/ingest.py:521; major: The refusal truncates ordinary diagnostics even though revision 31 requires the loader to name every problem it found in the records it read. at src/cma/ingest.py:60; major: GBP rules compare raw reported values and YAML numbers outside the figures layer. The main threshold, referral bands and stored-policy replay all bypass whole-pence comparisons. at src/cma/policy.py:176; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-198/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:83 checks the statement-value round trip, :522 keeps readable terminal fields for deferred checks, and :60 renders the accumulated diagnostics. src/cma/metrics.py:517 handles unrepresentable M3 values. src/cma/graph.py:175 and src/cma/cli.py:415 display money to the penny. GBP policy comparisons still accept fractional-penny thresholds and compare Decimal values directly. The oversized-record recovery also drops a detected encoding fault.); major: GBP policy comparisons use decimal pounds with arbitrary fractional-penny precision. The policy validator admits those limits, and the same comparison feeds the main threshold, referral bands and stored-result replay. at src/cma/metrics.py:140; major: When the same record contains an oversized field and a separate invalid UTF-8 cell, recovery detects the invalid cell to exclude it from the readable set but drops the encoding diagnostic from the statement refusal. at src/cma/ingest.py:397; reviewer verdict fail"
     },
     {
       "id": "T06",
