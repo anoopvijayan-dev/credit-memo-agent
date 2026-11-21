@@ -1,0 +1,167 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55-69 defines the credit-to-bucket mapping. src/cma/metrics.py:481-495 and :523-574 construct the GBP figures and their line IDs, with M18 drawn from M2. The runner's invariant tests exercised the bucket partition and totals.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "Checked exact text parsing and flow limits at src/cma/ingest.py:68-84 and :138-175, Monzo arithmetic delegation at src/cma/importers/monzo.py:186-227, the M3 fallback at src/cma/metrics.py:509-517, and penny presentation at src/cma/cli.py:292 and src/cma/graph.py:172 and :226. Both statement readers let a duplicate money column erase a line value before the limit check.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578-588 checks membership independently of the signed pence difference, including a zero difference with bad membership. src/cma/graph.py:257-265 computes before policy or drafting, src/cma/cli.py:99-102 exits 6, and src/cma/mcp_server.py:90-96 propagates refusal before returning metrics. The CLI and MCP refusal tests ran and passed.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The v1 and v2 fallback paths at src/cma/categorise.py:1311 and :1360 assign unmatched credits to OTHER. src/cma/models.py:66 maps OTHER to unexplained and :69 excludes it from trading.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "Verified the pence and membership checks at src/cma/metrics.py:578-588 and that M18 is a separate subtotal at :562-570. The runner passed both named P1 tests, including large values read back as decimal pence.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For T04's emitted figures, verified M5/M6 and carried-day evidence at src/cma/metrics.py:296-310 and :373-378, exact obligations and zero-denominator M10 at :382-388 and :432-440, partial-credit notes at :418-431, and signed sums, outflows and M26 evidence at :523-574. The named P2 invariants and previous-release evidence comparisons ran and passed. The monthly cells and M27/M28 are outside this task's deliverables.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "Traced unmatched credits into M25 through src/cma/models.py:66 and src/cma/metrics.py:483-488 and :568-570. The runner passed the named P6 tests for both rulesets, including explicit assertions that the same IDs are absent from M2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-140/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-140/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-140/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-140/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-140/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-140/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-140/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 96,
+      "criterion": "R2",
+      "claim": "Duplicate money columns silently replace earlier values before exact parsing. A statement can therefore carry a line amount at the refusal limit and still produce figures. The Monzo reader uses the same header handling at src/cma/importers/monzo.py:149-157.",
+      "repro": "Use header `id,date,description,amount,amount,balance` and row `L1,2026-01-01,CARD SETTLEMENT,10000000000000.00,1.00,1.00`. DictReader keeps the second amount, so load_csv accepts the line and cma run computes £1.00. For Monzo use header `Transaction ID,Date,Type,Name,Amount,Amount,Currency,Balance` and row `tx_1,01/01/2026,Faster payment,ACME,10000000000000.00,1.00,GBP,1.00`."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 88,
+      "criterion": null,
+      "claim": "Changing --opening-balance from float to text also removed support for exact scientific notation. This contradicts the producer's compatibility claim.",
+      "repro": "Convert a GBP Monzo export with a £10.00 credit and no Balance column using `--opening-balance 1e2`. The former float option accepted £100.00 and wrote a £110.00 closing balance. The current plain-money check refuses the option."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 104,
+      "criterion": "R2",
+      "claim": "The producer's no-fixed-ceiling claim describes a direct figures helper call and does not hold for imported statements under revision 27. No runner row executed the cited scratchpad probe.",
+      "repro": "Compare the direct pence and _gbp calls in tests/test_money_in.py:260 with ingest._number at src/cma/ingest.py:80-84. A CSV credit of £10,000,000,000,000.01 is refused at import. The cited historical probe would require `PYTHONPATH=src python scratchpad/probe.py` with the scratchpad file available."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 314,
+      "criterion": null,
+      "claim": "The producer's repeated-compute probe result is unverified. The cited scratchpad command has no runner result and the named categoriser idempotency test checks a different function.",
+      "repro": "Search the runner results for `scratchpad/probe.py` and `idem True`. To verify the cited result, run `PYTHONPATH=src python scratchpad/probe.py` with the cited script, or run a test that compares two complete metrics.compute results on the same statement, including evidence and notes."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": null,
+      "claim": "The producer notes say the committed example was left unregenerated and has no evidence_note key. The reviewed artifact already contains the key and the new figures.",
+      "repro": "Read the committed example and search for `evidence_note` and `\"id\": \"M26\"`."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 398,
+      "criterion": null,
+      "claim": "The cited penny-display proof exercises Metric.display_exact directly. It does not verify the rendered CLI or memo appendix, although both production call sites use that formatter. The scratchpad invocation cited for the rendered-output claim has no runner result.",
+      "repro": "Read the passing formatter test and compare it with src/cma/cli.py:289-293 and src/cma/graph.py:167-174. To prove the rendered-output claim, run a CLI integration test that captures both the interactive table and the generated memo for a £0.60-per-bucket fixture and checks the displayed £1.80 total and each component."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 119,
+      "criterion": null,
+      "claim": "The producer's 878-test head claim is historical. The reviewed head is 4a63021, and the current runner reports 903 full-suite passes and 84 dual-run passes. The runner logs verify the named current tests and do not establish the counts cited for ca0092c.",
+      "repro": "Compare `git log -1 --oneline` and specified-3.log and dual_run-7.log with the claim. Verifying the historical counts would require `python -m pytest -q` and `python -m pytest -q -m dual_run` at ca0092c."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

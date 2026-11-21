@@ -1,0 +1,88 @@
+```json
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "Traced the category mapping at src/cma/models.py:55, signed credit allocation and reconciliation at src/cma/metrics.py:405, and GBP values and evidence at src/cma/metrics.py:447 and src/cma/metrics.py:486. Checked that M18 is a subset of M2 and that both CLI and MCP call the same computation at src/cma/graph.py:258 and src/cma/mcp_server.py:80.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "Checked the statement limit and flow checks at src/cma/ingest.py:64 and src/cma/ingest.py:151, the Monzo opening-balance fix at src/cma/importers/monzo.py:137, exact M3 and its n/a path at src/cma/metrics.py:436, and table, evidence and prose precision at src/cma/cli.py:292, src/cma/graph.py:172, src/cma/graph.py:226 and src/cma/metrics.py:518. The normal figures pipeline still uses GBP float arithmetic outside the figures layer to decide whether a credit reverses a debit, which determines the exact figures and evidence that follow.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "Checked the integer difference and independent membership check at src/cma/metrics.py:502, the CLI exit before review or export at src/cma/cli.py:99, and MCP error propagation at src/cma/mcp_server.py:80. The runner passed the missing-category, escaped-line-ID and MCP refusal contracts.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "Unmatched credits receive OTHER at src/cma/categorise.py:1311 and src/cma/categorise.py:1360. The category maps to M25 and is excluded from revenue at src/cma/models.py:66 and src/cma/models.py:69. The runner exercised unmatched payers under both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "Checked the exact pence sum and one-occurrence-per-credit invariant at src/cma/metrics.py:502 and cash subset construction at src/cma/metrics.py:419. The runner passed the partition and large-amount invariants in tests/test_money_in.py.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For T04's figures, checked signed evidence totals for the sum and outflow figures at src/cma/metrics.py:447, src/cma/metrics.py:462 and src/cma/metrics.py:486, the capped-credit note at src/cma/metrics.py:341 and src/cma/metrics.py:469, M5 and M6 evidence at src/cma/metrics.py:454, exact zero debt service and empty M10 evidence at src/cma/metrics.py:354 and src/cma/metrics.py:470, and M26 denominator evidence at src/cma/metrics.py:423 and src/cma/metrics.py:495. The runner passed the named P2 invariants and the previous-release evidence comparisons for the committed cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "Traced the unmatched-credit default through src/cma/models.py:66 to bucket evidence at src/cma/metrics.py:405 and src/cma/metrics.py:492. The runner passed both the generated-statement invariant and the explicitly inserted unknown-payer cases at tests/test_money_in.py:136 and tests/test_money_in.py:147.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/categorise.py",
+      "line": 1404,
+      "criterion": "R2",
+      "claim": "Returned-payment matching still performs money arithmetic in binary GBP floats outside the figures layer. The categoriser multiplies floats to build candidate keys and then sums the original GBP floats against a half-penny tolerance. That decision sets the effective category used for M8, M9, M12 and M14.",
+      "repro": "Load a two-row statement containing DD IWOCA LTD for -0.29 and then UNPAID DD IWOCA LTD for +0.29, with running balances -0.29 and 0.00. Follow the normal CLI or MCP categorisation call through src/cma/categorise.py:1455. The candidate keys at lines 1397 and 1401 are computed from GBP floats, and line 1404 adds the GBP floats to decide the link before the figures layer runs. This input can reconcile correctly while still violating the pence-only computation requirement."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 238,
+      "criterion": null,
+      "claim": "The submitted scratchpad probe results are not proven by the runner. This includes the claimed twice-on-one-statement idempotency result. The named runner tests independently support several of the individual behaviors.",
+      "repro": "Compare the claim's PYTHONPATH=src python scratchpad/probe.py proof with the configured commands and logs under reviewer-137. No result row ran that command, and the probe file is absent from the reviewed worktree. Supplying the probe and a passing runner result for PYTHONPATH=src python scratchpad/probe.py would prove the reported outputs."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 238,
+      "criterion": null,
+      "claim": "The claimed full-suite result of 878 passes at ca0092c is not the runner result for the reviewed checkout. The current full-suite and dual-run executions did pass.",
+      "repro": "Read the checkout's git log and reviewer-137/specified-3.log and dual_run-7.log. The reviewed head is 3172bce, with 897 full-suite passes and 84 dual-run passes. A runner execution of python -m pytest -q on ca0092c would be needed to verify the historical count."
+    }
+  ],
+  "verdict": "fail"
+}
+```

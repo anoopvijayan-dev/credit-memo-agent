@@ -1,0 +1,138 @@
+{
+  "task": "T17",
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "src/cma/firm.py:68 defaults the lock on. src/cma/llm.py:79 and :103 gate client creation and requests. src/cma/mcp_server.py:45, :69, :103, :112 and :167 gate native starts, app factories, lifespan, requests and tools. Revision 32 excludes the post-lifespan bind window. Two gaps remain: a separate nested graph invocation skips lock and tracer setup at src/cma/graph.py:527, and final evidence retains the draft lock after a locked resume at src/cma/graph.py:289 and :454.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:190 compares all required rule fields. Lines 211–222 put the outcome in the rule table and mask nonmatching custom ids and descriptions. Lines 226–249 restrict production redrafts to known ids and build the prompt from the tables, period and placeholder name. The custom numeric limit finding concerns P5's additional sentinel guarantee.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "The runner log records passing hosted redraft and custom-rule collision tests. The masking at src/cma/graph.py:219–222 covers ids and descriptions, but src/cma/policy.py:90 and :107 copy a custom threshold into detail, which reaches both the first prompt and redrafts. A case sentinel that matches that custom limit survives.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "The runner log records both real SDK retryable-503 cases, both native transport bind checks, delayed saved-app startup refusal, native app HTTP refusal and both explicit tracer inputs. The native bind window is outside revision 32. The direct tracer tests do not cover a separate nested invocation, whose callback configuration bypasses the filter at src/cma/graph.py:527–539.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-195/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-195/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-195/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-195/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-195/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-195/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-195/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 528,
+      "criterion": "P18",
+      "claim": "A separate graph invoked during an unlocked invocation inherits the outer wrapper's tracing decision and bypasses removal of a LangSmith tracer explicitly supplied to the inner run. The callback exclusion covers the caller's callback code itself. The inner graph's handling of its own supplied tracer is part of R29 and P18.",
+      "repro": "Start an unlocked graph with a local on_chain_start callback. Have that callback switch firm.yaml to offline_lock: true and synchronously invoke a separately built graph with a fresh thread and an explicit LangChainTracer. Instrument the tracer's _start_trace as in tests/test_firm.py:1130. The inner load node reads the locked file, but the inner wrapper returns early while the outer invocation is active and passes the tracer through."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 289,
+      "criterion": "R29",
+      "claim": "Evidence has no record of the effective lock for the resume that finalised the review. The resume wrapper computes the effective lock for tracing, while evidence reports only the saved draft value.",
+      "repro": "Create a pending durable review using the fake model with offline_lock: false. Set offline_lock: true, run cma resume and approve with --out. The resumed graph runs under the lock, but the generated evidence contains egress.offline_lock=false and no resume lock value."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/graph.py",
+      "line": 222,
+      "criterion": "P5",
+      "claim": "A custom policy's numeric limit can carry a case sentinel into the prompt. The rule id and description are masked, but the requirement and detail cells retain the custom limit.",
+      "repro": "Put 987654321.25 in a statement description and the case profile notes. Supply a valid custom policy with a rule on M6, operator <=, threshold 987654321.25 and on_fail: refer. Capture the prompt from cma run --policy with a recording hosted client. M6 is a count, so the case datum need not occur in any metric value. The literal appears in the rule detail as 'rule requires <= 987654321.25' and is carried forward on redraft."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/firm.py",
+      "line": 199,
+      "criterion": "R29",
+      "claim": "The performance claim understates the file reads. The suite runtime also supplies no before-and-after timing for this path.",
+      "repro": "With a present firm.yaml, trace read_bytes and read_text for one out-of-run hosted lock check or one MCP tool lock check. The call hashes the file at src/cma/firm.py:143 and reads it again at :215. The runner's full-suite log contains no baseline measurement."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 220,
+      "criterion": "R30",
+      "claim": "The producer note that a changed custom rule using R2 is sent as R2 contradicts the implementation and the supplied runner evidence.",
+      "repro": "Change only the fail action of the packaged R2 rule in a custom policy and inspect its prompt row. It contains '(custom id)'. The passed failure-action collision test in invariants-5.log covers the same masking branch."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 104,
+      "criterion": "R29",
+      "claim": "The claimed CLI exit code for a retryable hosted failure is not proven by the cited SDK test. The runner confirms the SDK test ran, and that test calls complete directly and checks the request count.",
+      "repro": "Use a CLI test that injects a retryable 503 and asserts exit 4 and one request. The command to prove that assertion would be python -m pytest -v tests/test_firm.py -k cli_hosted_503_exits_four after adding the CLI case."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

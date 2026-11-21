@@ -3,6 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import tempfile
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
 import json
 import uuid
 from contextlib import contextmanager
@@ -12,15 +20,26 @@ import typer
 from langgraph.types import Command
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.table import Table
 
 from . import firm, synth
 from . import guard as grd
 from .categorise import RulesetError, active_ruleset
 from .firm import FirmConfigError, OfflineLockError
-from .graph import build, evidence_record, ruleset_used, sqlite_checkpointer
-from .ingest import StatementError
+from .graph import (
+    StaleReviewError,
+    build,
+    evidence_record,
+    guard_fields,
+    refreshed,
+    ruleset_used,
+    sqlite_checkpointer,
+)
+from .indicators import ThresholdsError, load_thresholds
+from .ingest import StatementError, load_csv
 from .llm import get_llm
+from .metrics import AmountError, ReconciliationError
 from .policy import PolicyError
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -47,6 +66,9 @@ def generate(
 def run(
     statement: Path,
     policy: Path | None = typer.Option(None, help="Policy YAML; defaults to the packaged uk_sme_default policy."),
+    thresholds: Path | None = typer.Option(
+        None, help="Indicator thresholds YAML (R14); defaults to the packaged, illustrative indicators.yaml."
+    ),
     llm: str = typer.Option("fake", help="fake | anthropic | openai"),
     vat_stagger: int | None = typer.Option(
         None, min=1, max=3,
@@ -76,35 +98,44 @@ def run(
         # Refuse a bad CMA_RULESET before the graph checkpoints anything: a refusal after the first
         # checkpoint would leave the review id taken, so a corrected retry could not reuse it.
         active_ruleset()
+        load_thresholds(thresholds)  # a malformed file is refused naming its line (R14)
         firm_config = firm.load()  # the run's one reading of firm.yaml
         model = get_llm(llm, firm_config=firm_config)  # under the lock a hosted model is refused here
-    except (RulesetError, OfflineLockError, FirmConfigError) as e:
-        console.print(f"[red]Refused.[/red] {e}")
+    except (RulesetError, ThresholdsError, OfflineLockError, FirmConfigError) as e:
+        console.print(f"[red]Refused.[/red] {escape(str(e))}")
         raise typer.Exit(code=2) from e
     thread_id = thread or str(uuid.uuid4())
     with _checkpointer(checkpoint_db) as saver:
         graph = build(model, checkpointer=saver, firm_config=firm_config)
         cfg = {"configurable": {"thread_id": thread_id}}
-        if graph.get_state(cfg).values:
-            console.print(f"[red]Review id {thread_id} is already used in {checkpoint_db}. Pick a new --thread.[/red]")
-            raise typer.Exit(code=2)
-        try:
-            state = graph.invoke(
-                {"statement_path": str(statement), "policy_path": str(policy) if policy else None,
-                 "vat_stagger": vat_stagger},
-                cfg,
-            )
-        except (StatementError, PolicyError, FirmConfigError, OfflineLockError, RulesetError) as e:
-            # OfflineLockError here: a hosted request refused before it was sent, so a
-            # refusal, not a model failure.
-            console.print(f"[red]Refused.[/red] {e}")
-            raise typer.Exit(code=2) from e
-        except Exception as e:  # the model provider: network, auth, cut-off reply
-            console.print(f"[red]The model call failed[/red] ({type(e).__name__}): {e}")
-            raise typer.Exit(code=4) from e
+        # The id check and the first write are one step under the review lock, so two runs
+        # never both start the same review id (T04 review 27).
+        with _review_lock(checkpoint_db):
+            if graph.get_state(cfg).values:
+                console.print(f"[red]Review id {thread_id} is already used in {checkpoint_db}. Pick a new --thread.[/red]")
+                raise typer.Exit(code=2)
+            try:
+                state = graph.invoke(
+                    {"statement_path": str(statement), "policy_path": str(policy) if policy else None,
+                     "thresholds_path": str(thresholds) if thresholds else None, "vat_stagger": vat_stagger},
+                    cfg,
+                )
+            except (StatementError, PolicyError, RulesetError, ThresholdsError, AmountError,
+                    FirmConfigError, OfflineLockError) as e:
+                # OfflineLockError here: a hosted request refused before it was sent, so a
+                # refusal, not a model failure.
+                console.print(f"[red]Refused.[/red] {escape(str(e))}")
+                raise typer.Exit(code=2) from e
+            except ReconciliationError as e:  # R3: no figures for a case whose buckets do not add up
+                # Line ids come from the statement, so they are escaped, never read as markup.
+                console.print(f"[red]Refused, no figures shown.[/red] {escape(str(e))}")
+                raise typer.Exit(code=6) from e
+            except Exception as e:  # the model provider: network, auth, cut-off reply
+                console.print(f"[red]The model call failed[/red] ({type(e).__name__}): {escape(str(e))}")
+                raise typer.Exit(code=4) from e
         if checkpoint_db:
             console.print(f"review id: {thread_id} (kept in {checkpoint_db}; `cma resume {thread_id}` picks it up)")
-        _review(graph, cfg, state, reviewer, yes, out)
+        _review(graph, cfg, state, reviewer, yes, out, lock=checkpoint_db)
 
 
 @app.command()
@@ -128,20 +159,59 @@ def resume(
             raise typer.Exit(code=1)
         problem = _stored_state_problem(snap.values)
         if problem:
-            console.print(f"[red]Not resuming {thread}:[/red] {problem}")
+            console.print(f"[red]Not resuming {thread}:[/red] {escape(problem)}")
             raise typer.Exit(code=2)
-        state = {**snap.values, "__interrupt__": snap.interrupts}
-        _review(graph, cfg, state, reviewer, False, out)
+        try:
+            # Today's figures, if the review was drafted by an earlier release (T04 review 16).
+            update = refreshed(snap.values)
+        except (AmountError, ReconciliationError) as e:
+            console.print(f"[red]Not resuming {thread}: refused, no figures shown.[/red] {escape(str(e))}")
+            raise typer.Exit(code=6) from e
+        except StaleReviewError as e:
+            console.print(f"[red]Not resuming {thread}:[/red] {escape(str(e))}")
+            raise typer.Exit(code=2) from e
+        if update:
+            # Today's figures are written into the stored review before it is shown, so the
+            # decision is applied to exactly what the reviewer saw: nothing is read again after
+            # they answer (T04 review 24). The review returns to the reviewer as it was. It is
+            # written only if the review is still the pending one read above; a review someone
+            # decided or refreshed meanwhile is never reopened (T04 review 25).
+            with _review_lock(checkpoint_db):  # the check and the write are one step (T04 review 26)
+                if not _still_pending(graph, cfg, snap):
+                    console.print(f"[red]Not resuming {thread}:[/red] the review changed while it was being "
+                                  "opened; run `cma resume` again")
+                    raise typer.Exit(code=2)
+                graph.update_state(cfg, {**update, "refreshed_for_review": True}, as_node="guard")
+                state = graph.invoke(None, cfg)
+        else:
+            state = {**snap.values, "__interrupt__": snap.interrupts}
+        _review(graph, cfg, state, reviewer, False, out, lock=checkpoint_db)
 
 
 def _stored_state_problem(values: dict) -> str | None:
     """A stored review is only resumed if it still says what it said: the statement file
     is unchanged and the stored memo still passes (or fails) the guard the same way."""
     path = Path(values["statement_path"])
-    if not path.is_file():
+    try:
+        data = path.read_bytes()  # read once: the bytes hashed are the bytes checked (T04 review 17)
+    except OSError:
         return f"the statement {path} is no longer there"
-    if hashlib.sha256(path.read_bytes()).hexdigest() != values.get("statement_sha256"):
+    if hashlib.sha256(data).hexdigest() != values.get("statement_sha256"):
         return f"the statement {path} has changed since the memo was drafted"
+    try:
+        # A review drafted by an earlier release is shown only if today's loader would still
+        # take the statement; otherwise its stored figures are not shown (R2, T04 review 15).
+        loaded = load_csv(path, data=data)
+    except StatementError as e:
+        return f"the statement would now be refused, so the stored figures are not shown: {e}"
+
+    # The stored lines must be the lines of the statement the hash names, as today's loader
+    # reads them, or figures recomputed from them would describe another statement (T04 review 17).
+    def raw(ts):
+        return [(t.id, t.date, t.description, t.amount, t.balance) for t in ts]
+
+    if raw(loaded.transactions) != raw(values["statement"].transactions):
+        return f"the stored lines are not the lines of {path} as it reads today"
     again = grd.check(values["memo"], values["metrics"], values["policy"], required_headings=grd.REQUIRED_HEADINGS)
     if again.grounded != values["guard"].grounded:
         return "the stored grounding result does not match the stored memo"
@@ -168,6 +238,44 @@ def _evidence_path(memo: Path) -> Path:
 
 
 @contextmanager
+def _review_lock(db: Path | None):
+    """Held by every `cma` process while it checks a pending review and writes to it: a
+    resume refreshing figures, and a decision being applied. The check and the write are
+    then one step for every process sharing the checkpoint file, so a review decided by one
+    is never reopened or decided again by another (T04 review 26)."""
+    if db is None:
+        yield
+        return
+    real = Path(db).resolve()  # one lock however the file is reached, through a symlink too (T04 review 30)
+    with open(real.with_name(real.name + ".lock"), "a+b") as f:
+        if fcntl is not None:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+        else:  # Windows
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def _still_pending(graph, cfg, snap) -> bool:
+    """Whether the review is still the pending one `snap` read: same checkpoint, waiting."""
+    now = graph.get_state(cfg)
+    if now.interrupts and now.config["configurable"].get("checkpoint_id") == \
+            snap.config["configurable"].get("checkpoint_id"):
+        return True
+    if now.values.get("review"):
+        _decided_elsewhere(now.values)
+    return False
+
+
+@contextmanager
 def _checkpointer(path: Path | None):
     if path is None:
         yield None
@@ -175,16 +283,19 @@ def _checkpointer(path: Path | None):
     try:
         with sqlite_checkpointer(path) as saver:
             yield saver
+    except typer.Exit:
+        raise  # a RuntimeError too: its own exit code stands (T04 review 25)
     except RuntimeError as e:
-        console.print(f"[red]{e}[/red]")
+        console.print(f"[red]{escape(str(e))}[/red]")
         raise typer.Exit(code=2) from e
 
 
-def _review(graph, cfg, state, reviewer, yes, out):
+def _review(graph, cfg, state, reviewer, yes, out, lock: Path | None = None):
     interrupts = state.get("__interrupt__") or []
     if not interrupts:
         raise typer.Exit(code=1)
-    payload = interrupts[0].value
+    # What is shown is what will be decided: the state's figures and grounding result.
+    payload = {**interrupts[0].value, **guard_fields(state["guard"])}
     # Settle which rule table the evidence will name while the review is still pending. A
     # review drafted by an older version has none stored, and naming it reads the packaged
     # v1 table; if that fails after the decision is recorded, the memo has no evidence and
@@ -192,7 +303,7 @@ def _review(graph, cfg, state, reviewer, yes, out):
     try:
         ruleset = ruleset_used(state)
     except RulesetError as e:
-        console.print(f"[red]Refused, nothing recorded.[/red] {e}")
+        console.print(f"[red]Refused, nothing recorded.[/red] {escape(str(e))}")
         raise typer.Exit(code=2) from e
 
     _print_metrics(state["metrics"])
@@ -217,21 +328,33 @@ def _review(graph, cfg, state, reviewer, yes, out):
     else:
         decision = _ask(payload, grounded, reviewer)
 
-    final = _decide(graph, cfg, decision)
+    final = _decide(graph, cfg, decision, lock)
     while "__interrupt__" in final:
         payload = final["__interrupt__"][0].value
         console.print(f"[red]Not accepted:[/red] {payload['error']}")
         if yes:
             raise typer.Exit(code=3)
         decision = _ask(payload, grounded, reviewer)
-        final = _decide(graph, cfg, decision)
+        final = _decide(graph, cfg, decision, lock)
 
     approved = final["review"].approved
     if out:
         target = out if approved else out.with_name(out.stem + ".rejected.md")
         evidence = _evidence_path(target)
-        target.write_text(final["final_memo"])
-        evidence.write_text(json.dumps(evidence_record({**final, "ruleset": ruleset}), indent=2, default=str))
+        # Both are made in full before either is written, each is written beside its target
+        # and moved into place, evidence first: a failure while making them writes nothing,
+        # and no memo is left without its evidence (T04 review 27).
+        record = json.dumps(evidence_record({**final, "ruleset": ruleset}), indent=2, default=str)
+        for path, text in ((evidence, record), (target, final["final_memo"])):
+            # A staging file with a name of its own, never an existing sibling (T04 review 28).
+            fd, part = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".part")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(text)
+                os.replace(part, path)
+            except BaseException:
+                Path(part).unlink(missing_ok=True)
+                raise
         console.print(f"wrote {target} and {evidence}")
     if not approved:
         console.rule("Not approved")
@@ -242,16 +365,28 @@ def _review(graph, cfg, state, reviewer, yes, out):
         console.print(Markdown(final["final_memo"]))
 
 
-def _decide(graph, cfg, decision: dict) -> dict:
+def _decide(graph, cfg, decision: dict, lock: Path | None = None) -> dict:
     """Resume with this decision, and make sure it is the one that was recorded.
 
     Two people can open the same pending review from a shared --checkpoint-db. If
     someone else decided first, resuming is a no-op that returns *their* decision; say
     so instead of reporting it as ours.
     """
+    with _review_lock(lock):  # checked and applied as one step (T04 review 26)
+        return _decide_locked(graph, cfg, decision)
+
+
+def _decide_locked(graph, cfg, decision: dict) -> dict:
     if not graph.get_state(cfg).interrupts:
         _decided_elsewhere(graph.get_state(cfg).values)
-    final = graph.invoke(Command(resume=decision), cfg)
+    try:
+        final = graph.invoke(Command(resume=decision), cfg)
+    except (StaleReviewError, AmountError, ReconciliationError) as e:
+        # Applying the decision works the figures out again; if that now fails (the policy
+        # file changed while the review was open, say), the decision is not recorded and the
+        # review stays pending, as revision 28 says (T04 review 23).
+        console.print(f"[red]Not recorded:[/red] {escape(str(e))}")
+        raise typer.Exit(code=2) from e
     review = final.get("review")
     if "__interrupt__" not in final and (
         review is None or review.reviewer != (decision.get("reviewer") or "").strip()
@@ -288,7 +423,7 @@ def _print_metrics(metrics):
     t = Table(title="Metrics", show_lines=False)
     t.add_column("id"), t.add_column("metric"), t.add_column("value", justify="right"), t.add_column("evidence")
     for m in metrics:
-        t.add_row(m.id, m.name, m.display(), f"{len(m.evidence)} txns")
+        t.add_row(m.id, m.name, m.display_exact(), f"{len(m.evidence)} txns")  # money to the penny
     console.print(t)
 
 
@@ -305,9 +440,9 @@ def _print_policy(p):
 def import_monzo(
     export: Path = typer.Argument(..., help="The CSV exported from the Monzo app."),
     out: Path = typer.Option(..., "-o", "--out", help="Where to write the statement CSV. Keep it out of git."),
-    opening_balance: float | None = typer.Option(
+    opening_balance: str | None = typer.Option(
         None, help="Balance just before the first transaction. Needed when the export has no Balance column."
-    ),
+    ),  # text, read exactly by the importer, never rounded through a float first (T04 review 8)
 ):
     """Convert a Monzo export locally. Nothing is uploaded; the file stays on this machine."""
     from .importers import monzo
@@ -315,7 +450,7 @@ def import_monzo(
     try:
         r = monzo.convert(export, out, opening_balance)
     except monzo.MonzoImportError as e:
-        console.print(f"[red]Import refused.[/red] {e}")
+        console.print(f"[red]Import refused.[/red] {escape(str(e))}")  # cells are text, never markup (T04 review 31)
         raise typer.Exit(code=2) from e
     console.print(
         f"wrote {out}: {r.rows} transactions, {r.start} to {r.end}; "

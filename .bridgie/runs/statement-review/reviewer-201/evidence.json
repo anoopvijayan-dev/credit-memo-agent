@@ -1,0 +1,94 @@
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:512 assigns credits to the eight buckets and reconciles them before returning GBP totals with line IDs at src/cma/metrics.py:592. The CLI graph and MCP use those results at src/cma/graph.py:308 and src/cma/mcp_server.py:97.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:81 checks the statement amount and balance round trip, and src/cma/metrics.py:540 computes M3 from integer pence and handles an unrepresentable result. The CLI and memo appendix display GBP to the penny at src/cma/cli.py:415 and src/cma/graph.py:175. Policy validation can still lose a fractional penny, and the statement loader drops readable over-limit amounts from its flow checks.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:608 checks membership and signed pence independently, so even a zero net difference cannot hide bad membership. src/cma/cli.py:119 reports the pence and line IDs and exits 6 before review or export. The CLI and MCP refusal contracts ran and passed.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The v1 and v2 fallback paths assign OTHER at src/cma/categorise.py:1311 and src/cma/categorise.py:1360. src/cma/metrics.py:512 places those credits in M25 and keeps them out of M2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:608 checks exact sums and one occurrence per credit ID. M18 is built separately from the trading bucket at src/cma/metrics.py:595. The runner passed the named partition and large-amount invariants.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the figures delivered by T04, src/cma/metrics.py:553 and src/cma/metrics.py:592 pair each sum with its input lines, src/cma/metrics.py:568 negates outflow sums, and src/cma/metrics.py:452 identifies each partially counted M9 credit. The legacy evidence paths for M5, M6 and M10 are at src/cma/metrics.py:561 and src/cma/metrics.py:575. The runner passed the named sum, outflow and M9 invariants and the dual-run evidence comparisons.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:512 and src/cma/metrics.py:598 route unmatched credits to M25 evidence. The runner passed both ruleset variants of the unknown-payer invariant and the generated-statement fallback invariant.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 93,
+      "criterion": "R2",
+      "claim": "The authored policy threshold can still lose a fractional penny before validation. Decimal construction preserves the lexeme, but multiplication uses the active Decimal precision before the whole-pence check.",
+      "repro": "Use a GBP M2 rule with op '>=' and YAML threshold 1000.0000000000000000000000000000001. Evaluate it against M2 of £1,000.00 under the default Decimal context. The multiplication rounds the threshold to 100000 pence and the rule passes. The runner-passed authored-threshold test uses fewer significant digits and does not cover this rounding step."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 574,
+      "criterion": "R2",
+      "claim": "The statement loader leaves readable amounts out of the post-read flow check when they reach the line limit. It reports the line fault but omits the independently known flow fault.",
+      "repro": "Load a statement with header id,date,description,amount,balance and one row T1,2026-01-01,A,10000000000000.00,1.00. The loader reports line 2 at the amount limit. _number returns None for that amount and the flow check filters it out, so the refusal does not report that money in also reaches the limit."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 237,
+      "criterion": "R2",
+      "claim": "The producer's full-suite result of 878 passed at ca0092c is not proven by this runner. The reviewed HEAD is 93b05a4 and specified-3.log records 1306 passed for the reviewed worktree.",
+      "repro": "Compare git log -1 with the claim and the summary of specified-3.log. The historical claim would require a runner result for python -m pytest -q at ca0092c."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 344,
+      "criterion": null,
+      "claim": "The producer's scratchpad idempotency result is not proven by a configured runner row.",
+      "repro": "Check the runner commands and the worktree for scratchpad/probe.py. No runner command invokes it and the worktree does not contain it. PYTHONPATH=src python scratchpad/probe.py would prove the cited result in a runner with the probe available."
+    }
+  ],
+  "verdict": "fail"
+}

@@ -1,0 +1,118 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483 assigns positive lines to the bucket mapping, :562 emits M17, :565 emits cash within M2, and :568 emits the seven other GBP buckets with line IDs. src/cma/graph.py:254 and src/cma/mcp_server.py:94 carry the figures into evidence and MCP. The runner passed the P1 and MCP contract tests.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:81 checks exact pence round-tripping and :230 checks flow limits. src/cma/metrics.py:512 computes M3 in integer pence and handles an unrepresentable result. src/cma/graph.py:172 and src/cma/cli.py:326 show pennies, while src/cma/metrics.py:591 keeps the drafting table at whole pounds. An oversized field can still suppress a previously parsed line's limit diagnostic at src/cma/ingest.py:128.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:581 checks duplicate and missing credit IDs independently of the penny difference, so an offsetting error still refuses figures. src/cma/cli.py:107 returns exit 6 and src/cma/mcp_server.py:94 propagates the refusal. The runner passed the CLI and MCP refusal contracts.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER, which src/cma/metrics.py:485 and :568 route to M25. The runner passed the unknown-payer cases under both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483 totals every positive line, :581 checks exactly one placement per credit ID, and :565 reports M18 separately. Both named P1 invariant tests passed, including the large-value decimal round-trip check.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the figures built in T04, src/cma/metrics.py:523 and :562–:574 build sum figures and share evidence from their inputs, :384 and :549–:555 negate outflows, :376 cites overdrawn closes, and :414–:427 names the partially counted M9 credits. The runner passed the P2 invariant tests and the previous-release evidence comparisons on their fixtures.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "Traced the unmatched credit from src/cma/categorise.py:1311 and :1360 through the revenue filter at src/cma/metrics.py:353 and the M25 bucket at :485 and :568. The general P6 invariant and both ruleset-specific unknown-payer cases passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 128,
+      "criterion": "R2",
+      "claim": "A later oversized description discards earlier parsed records before their monetary limits are checked. The statement is refused, but the refusal omits the line containing the over-limit amount and omits the money-in limit.",
+      "repro": "Use the five-column header, line 2 `BIG,2026-01-01,A,10000000000000.00,1.00`, and line 3 with a 200,000-character description and ordinary amounts. `cma run` reports only the unreadable field on line 3. `read_records` raises before returning the parsed line 2 to the monetary checks at line 196."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/mcp_server.py",
+      "line": 66,
+      "criterion": "R2",
+      "claim": "The MCP refusal still infers a monetary limit breach from arbitrary cell text embedded in a different diagnostic.",
+      "repro": "Call `statement_summary` on a CSV whose line 2 is `T1,£10,000,000,000,000 or more,A,1.00,1.00`, quoting the date field so its commas stay inside the cell. The loader reports an invalid date. MCP matches the limit phrase inside that diagnostic and reports that an amount or balance reached the limit on line 2."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/policy.py",
+      "line": 98,
+      "criterion": "R53",
+      "claim": "The additive migration claim misses a changed-figure path for a stored rule without comparison metadata. A raw exception prevents the hash-checked policy fallback and the required refusal.",
+      "repro": "Resume an earlier-release checkpoint whose recomputed M9 differs and whose stored result for that metric omits `op` and `threshold`, which `src/cma/models.py:182` permits. `_band` indexes `OPS` with the default empty operator and raises `KeyError`. With the original policy present, this skips the fallback. With it missing, the CLI fails without the required figure-specific instruction to rerun `cma run`."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 129,
+      "criterion": "R2",
+      "claim": "The oversized-field message asserts that a field of that length would exceed the monetary limit if it were an amount or balance. Length alone does not establish that.",
+      "repro": "Put 200,000 leading zeroes followed by `1.00` in a CSV amount cell. The parser's field-size refusal is expected, but the diagnostic claims the amount would be beyond £10 trillion even though the text represents £1."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 262,
+      "criterion": "R2",
+      "claim": "The producer's scratchpad proof is not proven by a runner row. The checked-in ceiling test exercises helpers only, and the valid-credit wording is stale for statement imports under revision 28.",
+      "repro": "The runner did not execute `PYTHONPATH=src python scratchpad/probe.py`, and the script is absent from the checked-in tree. That command with the cited script would prove its specific outputs. The passed helper test establishes that the amount is representable, while src/cma/ingest.py:81 rejects it at import. The current runner logs separately corroborate the named M3, reconciliation, M9 and rendering tests, but do not show the scratchpad's exact examples or its idempotency probe."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 119,
+      "criterion": "P2",
+      "claim": "The producer's historical test totals are not proven for ca0092c by this runner. The logs support the current candidate's named passing tests and fixture comparisons.",
+      "repro": "Compare the runner checkout at 9efc40c and its 929 full-suite passes and 84 dual-run passes with the claim of 878 and 83 at ca0092c. Runner results from `python -m pytest -q` and `python -m pytest -q -m dual_run` on ca0092c would establish those historical totals."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer note that the committed example lacks evidence_note and was not regenerated is contradicted by the checked-in artifact.",
+      "repro": "Read the committed example at line 2363 for `evidence_note: null` and inspect its review record for the updated timestamp relative to the prior version."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

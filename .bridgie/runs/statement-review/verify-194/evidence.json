@@ -1,0 +1,151 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:481-491 assigns credits and reconciles their integer-pence totals. Lines 557-566 return GBP figures and transaction IDs for M17, M18 and M19-M25 alongside M2. src/cma/graph.py:308 and src/cma/mcp_server.py:92-98 pass the computed figures through to callers.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:77-88 verifies that parsed amounts round-trip to the exact pence. src/cma/metrics.py:510-517 handles unrepresentable M3 values, and src/cma/graph.py:175 and src/cma/cli.py:415 render GBP to the penny. The loader omits readable defects in a partially unreadable record and runs cross-record checks while it is still reading, contrary to revision 31. The Monzo balance walk after sorting is within scope.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578-589 checks ID multiplicity and the signed pence difference before returning figures. src/cma/cli.py:118-121 reports the escaped diagnostic and exits 6 before export. The runner passed the CLI and MCP refusal tests.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/metrics.py:481-491 and :565-566 keep those credits in M25, outside trading receipts. The runner passed the unmatched-payer tests for v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578-589 enforces exact reconciliation and one bucket occurrence per credit ID. Lines 496 and 561-564 make M18 a subset of M2 outside the reconciled bucket list. The runner passed both P1 invariants, including the large-amount property.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For T04 figures, src/cma/metrics.py:525-569 uses the same line sets for signed sums, negated outflows and their evidence. Lines 374-378 select overdrawn closing lines, lines 420-431 identify the partially counted M9 credit, and lines 498-505 and 554-569 share the denominator and its evidence between M16 and M26. Runner logs confirm the named P2 invariants and previous-release evidence comparisons on the tested cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 and src/cma/metrics.py:481-491 route unmatched credits to M25 and exclude them from M2. The runner passed the seeded property and both explicit unknown-payer cases.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-194/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-194/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-194/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-194/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-194/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-194/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-194/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 563,
+      "criterion": "R2",
+      "claim": "A partially unreadable statement record loses defects in its readable ID, date and ordinary numeric fields. The fallback only checks monetary limits and whether a readable amount contributes to the flow total.",
+      "repro": "Use the standard header, then `T1,2026-01-01,A,1.00,1.00`, then a record with ID `T1`, date `invalid`, a description longer than 131072 characters, amount `bad` and balance `2.00`. The loader reports the long description and omits the duplicate ID, invalid date and invalid amount on line 3."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 546,
+      "criterion": "R2",
+      "claim": "The loader executes date and running-balance comparisons during record validation. Revision 31 places cross-record checks after reading stops. Selecting one direction and adding the stored diagnostics at EOF leaves the comparisons themselves inside the read loop.",
+      "repro": "The runner passed `test_both_balance_checks_run_with_no_second_record_read_ahead` in contracts-4.log. Its 20-record fixture instruments `follows` and requires both comparisons to have executed while the reader is still at record 2."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 76,
+      "criterion": "P1",
+      "claim": "The historical suite and marker-tier counts in the claim are stale. The current runner observed 1295 full-suite passes and 84 dual-run passes, and its marker logs verify the relevant named tests on this checkout.",
+      "repro": "Compare the totals and named tests in reviewer-193/specified-3.log, invariants-5.log, contracts-4.log and dual_run-7.log with the claim's counts. To substantiate the historical counts, run the claimed pytest commands at the claimed revision ca0092c."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 84,
+      "criterion": "R2",
+      "claim": "The producer's no-ceiling probe demonstrates a figures-helper call and does not demonstrate accepted statement input. Revision 31 retains the import ceiling. The runner did not execute the cited scratchpad probe for any of its claimed outputs.",
+      "repro": "A five-column statement with amount `10000000000000.01` and balance `1.00` is refused by the loader. Compare the named import-limit and M3 tests in specified-3.log with the producer's probe claims. The exact probe output would require supplying the missing scratchpad/probe.py and a runner result for `PYTHONPATH=src python scratchpad/probe.py`."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The claim says the committed example was never regenerated and has no evidence_note field. The reviewed example already contains that field.",
+      "repro": "Read the first metric in examples/cafe_stretched.memo.evidence.json at line 2363 and compare it with the producer's notes."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

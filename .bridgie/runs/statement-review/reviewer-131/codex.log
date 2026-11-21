@@ -1,0 +1,112 @@
+```json
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to buckets. src/cma/metrics.py:383 partitions credits and src/cma/metrics.py:420 and :461 emit the GBP sums and evidence. The runner passed the named bucket test and the MCP contract.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:56 and :151 validate statement amounts and totals, src/cma/importers/monzo.py:72 reads Monzo amounts in pence, and src/cma/metrics.py:409 handles an unreportable M3. The appendix and interactive table use exact money formatting, but the draft still receives and reports rounded money. Both loaders also give a combined message when only one directional total reaches the limit.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:475 checks membership and difference, and src/cma/cli.py:99 maps the refusal to exit 6. The named CLI and MCP contracts passed. An uncategorised debit still stops computation at src/cma/metrics.py:236 before an accompanying unbucketed credit can be diagnosed.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/models.py:66 maps OTHER to unexplained and src/cma/metrics.py:261 keeps it out of trading receipts. Named unknown-payer tests passed under v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:383 and :475 enforce the penny total and one bucket membership per credit before returning figures. src/cma/metrics.py:392 and :464 report M18 separately. The runner passed both named P1 invariants, including the large-amount round-trip check.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "The named sum, outflow and M9 invariants passed. src/cma/metrics.py:427 and :429 retain the M5 and M6 evidence rules, and :470 cites the M26 inputs. The fixture dual run passed, but src/cma/metrics.py:396 and :460 drop an own-account credit from legacy M16 evidence even when the frozen v1 rules are selected with profile names.",
+      "result": "fail",
+      "artifact": "dual_run-7.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 and src/cma/models.py:66 route unmatched credits to M25. tests/test_money_in.py:128 and :139 assert unexplained membership and exclusion from M2. The runner logged all named P6 cases as passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 491,
+      "criterion": "R2",
+      "claim": "The memo draft still reports GBP figures rounded to whole pounds. The exact appendix and interactive table cover only their own outputs.",
+      "repro": "Run cma run with the fake model on a valid statement containing a £0.60 Stripe payout. src/cma/graph.py:265 passes the rounded metrics table to the model, and src/cma/llm.py:53 copies the rounded M2 value into the memo prose. The body reports £1 while the appendix reports £0.60."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 153,
+      "criterion": "R2",
+      "claim": "The refusal does not identify which directional total reached the limit. The Monzo importer uses the same combined wording at src/cma/importers/monzo.py:195.",
+      "repro": "Load a statement with two £5,000,000,000,000.00 credits and successive balances of £0.00 and £5,000,000,000,000.00. Every line is within the limit and only money in reaches it. The error says 'money in or money out totals' without identifying money in."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 236,
+      "criterion": "R3",
+      "claim": "An uncategorised debit masks the required pence difference and line IDs for an unbucketed credit in the same statement.",
+      "repro": "At the categoriser boundary, return a £5.00 credit L1 with category None and a £1.00 debit L2 with category None, then compute. The code raises AmountError naming only L2. Through cma run this exits 2 without reporting the 500-pence difference or L1. The passing combined-credit test at tests/test_money_in.py:438 uses two credits and does not reach this branch."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 396,
+      "criterion": "P2",
+      "claim": "The M16 compatibility claim exceeds the dual-run cases. The shared denominator changes the evidence for a credit identified as an own-account transfer by profile matching under v1.",
+      "repro": "Use a statement with a £50 `FPS CREDIT ACME HOLDINGS` credit and an £80 `CARD SETTLEMENT` credit. Categorise with v1 and `ProfileNames(own_accounts=('ACME HOLDINGS',))`. src/cma/categorise.py:1303 and :1320 classify the first credit as an own-account transfer, so current M16 cites only the second credit. The previous release includes the first credit in M16. The passing test at tests/test_money_in.py:452 supplies no profile and compares against a filter over the current categoriser's output."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 227,
+      "criterion": null,
+      "claim": "The producer's two-run idempotency claim lacks runner proof. Its proof command refers to a scratchpad script outside the repository.",
+      "repro": "None of the runner result rows ran `PYTHONPATH=src python scratchpad/probe.py`. To prove the claim in a runner tier, add a named invariant that compares the full results of two calls on one statement, then run `python -m pytest -v -m invariants -k compute_is_idempotent`."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 392,
+      "criterion": null,
+      "claim": "The producer cites a formatter assertion as proof that both the appendix and CLI show exact pence. The runner passed that assertion, which exercises neither consumer. Both current call sites were verified by source inspection.",
+      "repro": "Read the assertion at line 392. It calls Metric.display_exact directly. To prove both outputs with runner evidence, exercise cma run and inspect the interactive metrics output and appendix for three £0.60 buckets and M17 £1.80, then run `python -m pytest -v -m contracts -k money_in_outputs` with that contract present."
+    }
+  ],
+  "verdict": "fail"
+}
+```

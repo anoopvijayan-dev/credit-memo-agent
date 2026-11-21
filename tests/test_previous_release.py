@@ -119,14 +119,19 @@ def test_m1_to_m16_are_unchanged_from_the_previous_release(old_src, tmp_path, ar
 
     rows, truth = synth.generate(archetype, profile, end=date(2026, 9, 30))
     csv, _ = synth.write(rows, truth, tmp_path)
-    new = [m.model_dump() for m in metrics.compute(categorise.categorise(ingest.load_csv(csv)))]
+    # T04 adds M17-M26 after M16; only M1-M16 have a previous release to compare with.
+    new = [m.model_dump() for m in metrics.compute(categorise.categorise(ingest.load_csv(csv)))
+           if int(m.id[1:]) <= 16]
     old = prev.python(old_src, (
         "from cma import categorise, ingest, metrics\n"
         f"ms = metrics.compute(categorise.categorise(ingest.load_csv({str(csv)!r})))\n"
         "print(json.dumps([m.model_dump() for m in ms], default=str))"), tmp_path)
     assert _metric_rows(new) == _metric_rows(old)
     assert [m["evidence"] for m in new] == [m["evidence"] for m in old]
-    assert [m["id"] for m in new if m["method"] != next(o for o in old if o["id"] == m["id"])["method"]] == ["M2"]
+    # M2 now names cash paid in (T02); M16's denominator now also leaves out own-account
+    # transfers, which it shares with M26 (T04). Neither case has such a line, so no value moves.
+    changed = [m["id"] for m in new if m["method"] != next(o for o in old if o["id"] == m["id"])["method"]]
+    assert changed == ["M2", "M16"]
 
 
 @pytest.mark.dual_run
@@ -134,7 +139,9 @@ def test_the_committed_example_is_unchanged_from_the_previous_release(old_src, t
     from cma import categorise, ingest, metrics
 
     csv = prev.REPO / "examples" / "cafe_stretched.csv"
-    new = [m.model_dump() for m in metrics.compute(categorise.categorise(ingest.load_csv(csv)))]
+    # T04 adds M17-M26 after M16; only M1-M16 have a previous release to compare with.
+    new = [m.model_dump() for m in metrics.compute(categorise.categorise(ingest.load_csv(csv)))
+           if int(m.id[1:]) <= 16]
     old = prev.python(old_src, (
         "from cma import categorise, ingest, metrics\n"
         f"ms = metrics.compute(categorise.categorise(ingest.load_csv({str(csv)!r})))\n"

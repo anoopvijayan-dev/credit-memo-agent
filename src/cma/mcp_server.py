@@ -173,8 +173,26 @@ def _statement(path: str):
     try:
         return ingest.load_csv(p)
     except ingest.StatementError as e:
-        lines = sorted({x.split(":", 1)[0] for x in e.problems})
-        raise ValueError(f"{path}: statement refused, {len(e.problems)} problem(s) on {', '.join(lines[:10])}; "
+        # Problems are grouped by the kind the loader recorded, never by their text, which can
+        # quote a cell (T04 review 22). Money in or out at the limit is said in full; another
+        # problem with the whole file is named by its label; lines at the limit, and lines
+        # with a field too long to read (whose content is not known), are each named in full,
+        # ahead of up to ten other line labels. No cell value is given (R2, T04 reviews 12-22).
+        problems, kinds = e.problems, e.kinds
+
+        def labels(kind: str) -> list[str]:
+            got = {x.split(":", 1)[0] for x, k in zip(problems, kinds, strict=True) if k == kind}
+            return sorted(got, key=lambda label: int(label.split()[1]))
+
+        flows = [x for x, k in zip(problems, kinds, strict=True) if k == "flow"]
+        files = [x.split(":", 1)[0].split(" (", 1)[0] for x, k in zip(problems, kinds, strict=True) if k == "file"]
+        limit, long_ = labels("limit"), labels("too_long")
+        other = [x for x in labels("line") if x not in limit and x not in long_]
+        parts = flows + files + ([f"amount or balance {metrics.AT_LIMIT} on {', '.join(limit)}"] if limit else [])
+        parts += [f"{ingest.TOO_LONG} on {', '.join(long_)}"] if long_ else []
+        if other:
+            parts.append(f"other problems on {', '.join(other[:10])}{' and more' if len(other) > 10 else ''}")
+        raise ValueError(f"{path}: statement refused, {len(problems)} problem(s): {'; '.join(parts)}; "
                          "run `cma run` locally to see them") from None
 
 
@@ -192,7 +210,9 @@ def statement_summary(path: str) -> dict:
 
 @server.tool()
 def compute_metrics(path: str, vat_stagger: int | None = None) -> list[dict]:
-    """Categorise a statement and compute the cited metrics table (M1..M16).
+    """Categorise a statement and compute the cited metrics table (M1..M28), money-in buckets
+    included. A statement whose buckets do not reconcile is refused (ValueError), naming the
+    difference in pence and the line ids.
     vat_stagger is the HMRC stagger group (1, 2 or 3); without it M13 is n/a."""
     s = categorise.categorise(_statement(path))
     return [m.model_dump() for m in metrics.compute(s, vat_stagger=vat_stagger)]

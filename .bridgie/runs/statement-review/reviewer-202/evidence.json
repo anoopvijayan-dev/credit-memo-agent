@@ -1,0 +1,102 @@
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:534 assigns credits using the category map at src/cma/models.py:57. src/cma/metrics.py:613 emits GBP totals and line IDs, with cash as a subset of M2. The CLI graph and MCP both call compute at src/cma/graph.py:308 and src/cma/mcp_server.py:98.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:95 now preserves written fractional pence and src/cma/ingest.py:579 includes readable over-limit amounts in flow checks. The integer conversion can still abort on a readable field, and src/cma/ingest.py:570 skips balance comparisons involving readable over-limit values. M3 and penny display were checked at src/cma/metrics.py:563, src/cma/cli.py:415 and src/cma/graph.py:175.",
+      "result": "fail",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:629 checks both the pence difference and credit ID multiplicity before returning figures. src/cma/cli.py:118 exits 6 with escaped diagnostics and src/cma/mcp_server.py:98 propagates the refusal. Named CLI and MCP refusal tests passed.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The unmatched-credit defaults at src/cma/categorise.py:1311 and src/cma/categorise.py:1360 feed the unexplained mapping at src/cma/models.py:66.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:629 checks exact sums and one placement per credit ID. The cash subset at src/cma/metrics.py:546 is emitted separately at line 616. Both named P1 tests passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "Checked signed sum and outflow evidence at src/cma/metrics.py:574 and src/cma/metrics.py:589, the partial-credit note at line 471, lowest and overdrawn balance evidence at line 424, and the shared denominator evidence at lines 550 and 625. Named P2 tests passed and the dual-run log records the M1–M16 evidence comparisons.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:66 maps unmatched credits to unexplained and src/cma/metrics.py:534 counts them in M25. The runner passed the P6 property and the explicit unknown-payer cases under both rulesets.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 111,
+      "criterion": "R2",
+      "claim": "A plain amount within the CSV field-size limit can raise a raw integer conversion error before either importer reports the record line or the flow limit.",
+      "repro": "With the default Python 3.11+ integer string conversion limit, use a five-column statement whose line 2 amount is 5,000 ASCII '9' digits followed by '.00', with a valid date and a 1.00 balance. The CSV reader accepts the field, then int() raises ValueError and cma run reports a model call failure. The same amount on a GBP Monzo row raises ValueError before the importer can issue its line and flow diagnostics."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 570,
+      "criterion": "R2",
+      "claim": "The post-read running-balance check omits readable amounts and balances that reach the line limit, even when their exact values establish a separate chain fault.",
+      "repro": "Load the standard five-column header followed by 'A,2026-01-01,A,1.00,1.00' and 'B,2026-01-02,B,10000000000000.00,2.00'. The loader reports the line and money-in limits. It never reports that line 3's balance fails to follow from 1.00 plus 10000000000000.00 because the chain receives None for the amount."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 563,
+      "criterion": "R2",
+      "claim": "The producer's scratchpad results are unproven as runner results. The successful configured tiers include equivalent tests for several individual behaviors, while the cited script has no runner result row and is absent from the checkout.",
+      "repro": "Compare the claim's proof commands with the runner result rows. To prove the literal probe outputs, supply scratchpad/probe.py and have the runner execute 'PYTHONPATH=src python scratchpad/probe.py'."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 532,
+      "criterion": null,
+      "claim": "The producer's historical suite claim names ca0092c and 878 passes. The runner log establishes 1308 passes on the reviewed worktree at e5d2e35.",
+      "repro": "Compare git log -1 and the specified-3.log summary with the claim. To prove the historical result, the runner would need to execute 'python -m pytest -q' at ca0092c."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": null,
+      "claim": "The producer's note that the committed example lacks evidence_note and was left unregenerated conflicts with the checked-in artifact.",
+      "repro": "Inspect the M1 record at line 2363 for evidence_note: null and compare the example's decided_at with its value in the supplied diff."
+    }
+  ],
+  "verdict": "fail"
+}

@@ -1,0 +1,62 @@
+```json
+{
+  "task": "T12",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "P15",
+      "tier": "adversarial",
+      "check": "Reviewed checkout 04ff28a against revision 23 supplied in the task. The checkout bundles revision 2. Canonical serialization and exact-byte validation are at src/cma/case.py:177 and :218. Chain, head and first-bad-entry checks are at :285, with the CLI consumer at src/cma/cli.py:321 and the holder integrity guard at src/cma/case.py:738. Reader locking and retries are at :505 and :703. Writer exclusion and fork refusal are at :764, expected-position conflicts at :1000 and :1030, growth checks at :1048 and :1171, and publication and take-back at :1220 and :1299. The runner logs show named passes for changed, removed, reordered and rebuilt chains, torn tails, duplicate submission, concurrent writers, partial failures, malformed inputs and UTC timestamps. The log performs no currency arithmetic, uses OS file permissions and per-folder paths, and introduces no migration. P15 fails because equal head samples can hide a publish-and-take-back during a read, and the nested-save guard can miss the same case after its folder moves.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 728,
+      "criterion": "P15",
+      "claim": "A reader treats identical head contents as proof that the head did not change during the read. A publication followed by a take-back restores the same contents, so the reader can return recorded entries from a read that was not steady.",
+      "repro": "Keep a writer inside writer() while a second thread holds the shared gate and starts verify(). On each of the five read attempts, let the reader sample the old head, then let the writer append and publish a new head. Inject a one-shot EIO in the writer's read-back so it takes back the head before the reader's second sample. After each failed save, let the writer repair the torn entry with the same one-shot read-back fault on subsequent attempts. Keep the writer lock held. The current verifier accepts the first attempt and returns recorded entries. Every scheduled attempt crosses a head change, so P15 requires the verifier to exhaust its retries and claim no entries."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/case.py",
+      "line": 935,
+      "criterion": "P15",
+      "claim": "The nested-save guard identifies the case by a resolved pathname. Moving the same case folder changes that key, and a replacement lock then lets a same-thread nested save commit. Revision 23 expressly retains refusal of the nested save under interference.",
+      "repro": "Start an append at position 2. In a one-shot _utc_now callback before the outer line is written, rename the case folder to a sibling path, replace log.jsonl.lock in the moved folder, and call for_case on the moved folder to append at expected=2 on the same thread. The new guard key and lock inode let the nested append publish entry 3. The passing test at tests/test_case_log.py:3359 uses another handle at the original location and does not exercise this schedule."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/case.py",
+      "line": 1076,
+      "criterion": "P15",
+      "claim": "A repair that fails while writing or syncing its staging file leaves a temporary copy of case data behind. The unlink handler starts after staging completes. Head staging has the same gap at line 1135.",
+      "repro": "Create a torn tail and make os.fsync raise ENOSPC for the staging descriptor during drop_torn_entry. After the save reports not recorded, inspect the case folder. The log.jsonl.*.tmp file still contains the recorded prefix and proposed repair entry. Retry with the same fault to leave another copy."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 333,
+      "criterion": "P15",
+      "claim": "The producer claims exit 0 with an 'appending' message while another writer holds the case over a torn tail. The CLI returns exit 4 with a 'being saved' message, which matches P15.",
+      "repro": "See the passing contracts runner row for tests/test_case_log.py::test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break. The test at tests/test_case_log.py:1340 asserts exit 4 while held and exit 3 once free."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_case_log.py",
+      "line": 1214,
+      "criterion": "P15",
+      "claim": "The rapid-append test passed, but it does not prove the producer's claim that it forces two commits on every retry and lock contention at the fallback.",
+      "repro": "Read the test body. It starts an unsynchronized append loop and checks 40 results for the absence of a bad entry. It neither counts commits per retry nor observes the fallback. To prove the claimed schedule, add synchronization that forces both commits and asserts fallback contention, then have the runner execute python -m pytest -v tests/test_case_log.py -k keep_landing."
+    }
+  ],
+  "verdict": "fail"
+}
+```

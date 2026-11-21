@@ -40,12 +40,12 @@
         "T01",
         "T02"
       ],
-      "status": "blocked",
+      "status": "passed",
       "attempts": 6,
       "max_attempts": 6,
       "branch": "bridgie-task/statement-review/T03",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-121/evidence.json",
-      "escalation": "blocked after 6 attempts. Last verdict fail: R4 fail (Applied supplied revision 23. The repository copy is revision 2 (.bridgie/specs/statement-review/requirements.md:5). Mapped the maintained lists and directions at src/cma/rules/v2.yaml:63,74,117,128,137,146,155,163,211,254,277,299,304,339,356,373,394. Traced longest-match and overlap handling at src/cma/categorise.py:1125–1198, bank-code and bucket precedence at :1234–1251, and overrides, profile candidates and firm rules at :1254–1330. Traced table selection and per-line provenance at src/cma/graph.py:188–223,250–253 and src/cma/cli.py:224–229. Reviewed exception checks, matcher construction and frozen-table refusal at src/cma/categorise.py:419–690,789–812,825–854,943–989. Revision 23 permits incomplete diagnostics for malformed tables, but the validator accepts two malformed table shapes described below. Checked repeat submission and concurrent or partial output at src/cma/cli.py:81–86,146–158,224–229, amount, date and Unicode boundaries at src/cma/ingest.py:38–57,98–110 and src/cma/categorise.py:228,1001–1009, path scope and per-statement inputs at src/cma/mcp_server.py:37–55 and src/cma/categorise.py:1412–1425, and evidence, checkpoint and MCP consumers at src/cma/graph.py:175–223 and src/cma/mcp_server.py:62–105. Runner logs establish 847 full-suite, 225 contract, 138 invariant and 83 dual-run passes, including the named table cases, CLI provenance, idempotency, rollback, checkpoint replay, timing fixture and both offline evaluations. The review was read-only.); major: The loader accepts rules whose direction contradicts their category. It checks each value independently, so a credit rule can assign an outflow category with no money-in bucket. at src/cma/categorise.py:611; major: An explicitly null category_order is accepted as an omitted field. Revision 23 requires refusal when a field is supplied with a value of the wrong kind. at src/cma/categorise.py:734; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-126/evidence.json",
+      "escalation": null
     },
     {
       "id": "T04",
@@ -62,11 +62,11 @@
       "depends_on": [
         "T03"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 3,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T04",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-216/evidence.json",
       "escalation": null
     },
     {
@@ -81,11 +81,11 @@
       "depends_on": [
         "T04"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T06",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-217/evidence.json",
       "escalation": null
     },
     {
@@ -98,11 +98,11 @@
       "depends_on": [
         "T04"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T07",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-218/evidence.json",
       "escalation": null
     },
     {
@@ -116,11 +116,11 @@
         "T04",
         "T06"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T08",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-219/evidence.json",
       "escalation": null
     },
     {
@@ -132,11 +132,11 @@
       "depends_on": [
         "T08"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T09",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-220/evidence.json",
       "escalation": null
     },
     {
@@ -150,8 +150,8 @@
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T12",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-120/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed revision 23 from the task packet against checkout 43332c6, whose bundled specification is revision 2. Canonical encoding and exact-byte validation are at src/cma/case.py:177, :218 and :1087. Head comparison, torn-tail detection and first-bad-entry reporting are at :285–351. Holder checks and steady reads are at :461, :503–675 and :701–726. Writer exclusion, fork refusal, expected-position conflicts, growth checks, repair and take-back are at :762, :995, :1043, :1177 and :1294. The runner logs confirm named passes for changed, removed, reordered and rebuilt chains, torn tails, duplicate submission, concurrent writers, repair failures, UTC timestamps and malformed input. Reviewed filesystem permissions, per-folder isolation and the CLI consumer at src/cma/cli.py:321. The log performs no currency calculation and requires no migration. The holder integrity guard is at src/cma/case.py:736, with sign-off integration assigned to T27. Revision 23 excludes arbitrary interruption outcomes, including the previous review's read-back finding, but expressly retains refusal of a same-thread nested save before it writes. The per-object guard misses that case through another handle after the lock is replaced.); major: The save guard is scoped to a CaseLog instance. A nested save through a second handle can commit on the same thread if the lock file has been replaced. Revision 23 expressly retains the nested-save refusal under that interference. at src/cma/case.py:937; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-124/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: P15 fail (Reviewed checkout 04ff28a against revision 23 supplied in the task. The checkout bundles revision 2. Canonical serialization and exact-byte validation are at src/cma/case.py:177 and :218. Chain, head and first-bad-entry checks are at :285, with the CLI consumer at src/cma/cli.py:321 and the holder integrity guard at src/cma/case.py:738. Reader locking and retries are at :505 and :703. Writer exclusion and fork refusal are at :764, expected-position conflicts at :1000 and :1030, growth checks at :1048 and :1171, and publication and take-back at :1220 and :1299. The runner logs show named passes for changed, removed, reordered and rebuilt chains, torn tails, duplicate submission, concurrent writers, partial failures, malformed inputs and UTC timestamps. The log performs no currency arithmetic, uses OS file permissions and per-folder paths, and introduces no migration. P15 fails because equal head samples can hide a publish-and-take-back during a read, and the nested-save guard can miss the same case after its folder moves.); major: A reader treats identical head contents as proof that the head did not change during the read. A publication followed by a take-back restores the same contents, so the reader can return recorded entries from a read that was not steady. at src/cma/case.py:728; major: The nested-save guard identifies the case by a resolved pathname. Moving the same case folder changes that key, and a replacement lock then lets a same-thread nested save commit. Revision 23 expressly retains refusal of the nested save under interference. at src/cma/case.py:935; reviewer verdict fail"
     },
     {
       "id": "T13",
@@ -197,12 +197,12 @@
         "P18"
       ],
       "depends_on": [],
-      "status": "todo",
-      "attempts": 0,
+      "status": "verify",
+      "attempts": 3,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
-      "escalation": null
+      "branch": "bridgie-task/statement-review/T17",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-223/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R29 fail (Lock defaults on (src/cma/firm.py FirmConfig offline_lock=True); hosted clients built only on an unlocked reading, max_retries=0, per-request HTTP hook (src/cma/llm.py _require_unlocked_now, _checked_http, HostedLLM._check); MCP run paths, ASGI factories and LockCheckedASGI read the lock (src/cma/mcp_server.py); evidence records offline_lock/resume locks (src/cma/graph.py _egress). verify-222's tracing_v2_enabled gap is closed for a context entered before the run starts (graph.py:598-604, 720; invariants-5.log:140-141 passed for invoke and stream). Gap: tracing is turned off only once, at the stream generator's first step (graph.py:746-757), so a caller that enters tracing_v2_enabled() or langsmith.tracing_context(enabled=True) between stream steps re-enables LangSmith tracing for the later steps of a run under the lock (finding 1).); P18 fail (P18 tests passed (invariants-5.log), including the with_config copy test and the tracing_v2 context tests. P18 validates R29's revision 32 scope that a run under the lock is untraced; a locked stream whose caller re-enters a tracing context between steps is traced (finding 1), so the property does not hold for every run under the lock.); major: Under the offline lock, the stream and astream wrappers clear tracing_v2_callback_var and enter langsmith.tracing_context(enabled=False) once, in the generator's first step (start() at graph.py:748, 720; graph.py:751). A sync or async generator runs in its caller's context, and LangGraph copies the caller's current context for each step (langgraph/pregel/_executor.py:72-79). A caller that enters tracing_v2_enabled() between two next() calls therefore sets tracing_v2_callback_var again for the later steps. _tracing_v2_is_enabled() then returns True (langchain_core/tracers/context.py:141-144), and _configure adds that tracer to each node's callback manager, since the filter left no LangChainTracer there (langchain_core/callbacks/manager.py:2483-2515). The later node runs, with the state and statement data as inputs, are exported to LangSmith. A caller's langsmith.tracing_context(enabled=True) entered mid-stream has the same effect. This fails R29's 'a run under the lock is untraced: LangSmith's own tracing is off whatever the environment says' and P18. Verdict PLAUSIBLE: found from the sources, not run, because the shell was denied. at src/cma/graph.py:748; reviewer verdict fail"
     },
     {
       "id": "T18",

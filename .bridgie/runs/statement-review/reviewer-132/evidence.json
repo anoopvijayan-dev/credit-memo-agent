@@ -1,0 +1,118 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:381-393 assigns each positive line to a bucket and reconciles membership. src/cma/metrics.py:421 and :460-468 return GBP values and evidence for M2 and M17-M25. The named bucket invariants passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:56 and :141-157 and src/cma/importers/monzo.py:72 and :197-214 enforce the statement boundary. src/cma/metrics.py:410-415 handles an unreportable M3. src/cma/graph.py:172 and src/cma/cli.py:292 render exact tables, while src/cma/metrics.py:492 and src/cma/policy.py:107 preserve whole-pound quotations. Both importers give a combined diagnostic when only one directional total reaches the limit. The committed appendix still shows rounded figures.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:390 checks reconciliation before refusing an uncategorised debit, and :476-486 checks amount and membership. src/cma/cli.py:99-102 and src/cma/mcp_server.py:74-80 passed the named refusal contracts. A dangling reversal reference can raise before the reconciliation check and suppress the required diagnostic.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/metrics.py:386 and :466 route that category to M25, outside M2's revenue selection at :260. Named unknown-payer cases passed under v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:383-390 and :476-486 check both the pence difference and per-credit membership. src/cma/metrics.py:463-468 emits cash as a separate figure outside the bucket list. Both named P1 tests passed, including reported values at large amounts.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "The runner passed the named sum, outflow and single-credit M9 invariants and the fixture dual run. src/cma/metrics.py:427-432 preserves M5 and M6 evidence rules, and :397 and :472 cite M26's inputs. The M9 evidence note at :329 cannot identify each partially counted line when several credits share one cap.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 and src/cma/metrics.py:260 and :383-388 put unmatched positive IDs in unexplained evidence and keep them out of M2. The named generated-statement and explicit unknown-payer tests passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 154,
+      "criterion": "R2",
+      "claim": "An import refusal leaves the direction that reached the statement limit ambiguous. The Monzo converter uses the same combined diagnostic at src/cma/importers/monzo.py:200.",
+      "repro": "Load two £5,000,000,000,000 credits with running balances of £0 and £5,000,000,000,000. Each line is within bounds and only money in reaches the limit. The refusal says 'money in or money out totals' instead of identifying money in. Negate the amounts and balances to exercise the money-out-only case."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.md",
+      "line": 30,
+      "criterion": "R2",
+      "claim": "The committed memo appendix presents whole-pound figures despite the exact-display claim. Its accompanying evidence record carries the pence.",
+      "repro": "Compare M2 in the committed appendix (£313,135) with examples/cafe_stretched.memo.evidence.json:2367 (313135.22). M22 likewise shows £190 in the appendix and 189.91 in the evidence."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 250,
+      "criterion": "R3",
+      "claim": "A dangling reversal reference raises KeyError before reconciliation, so an accompanying unbucketed credit loses its pence difference and line ID.",
+      "repro": "Extend the categoriser stub in tests/test_money_in.py's CLI reconciliation contract to return an unbucketed £5 credit and a second credit categorised as RETURNED_DD whose reverses field names an absent ID. The obligations calculation dereferences that ID before line 390. The CLI takes its generic exit-4 path instead of reporting the 500-pence difference and unbucketed line with exit 6."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 329,
+      "criterion": "P2",
+      "claim": "M9 labels every credit for a capped counterparty as partially counted. It computes one cap for the group and records no per-line allocation, so the note can list lines that could only be fully counted or entirely excluded.",
+      "repro": "Use the v2 descriptions from tests/test_money_in.py's _round_trip helper. Send J BLOGGS £0.01 and receive two separate £0.01 credits from J BLOGGS. M9 offsets exactly one penny and lists both credit IDs as partially counted. A one-penny line cannot be partially counted in whole pence."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 262,
+      "criterion": "R2",
+      "claim": "The producer's no-ceiling claim describes a direct DTO conversion and overstates the supported statement-import behavior. The current requirement explicitly sets an import ceiling.",
+      "repro": "The runner passed the test at line 262, which calls pence() and _gbp() directly. Put £10,000,000,000,000.01 in a CSV amount and load it through ingest.load_csv. The loader refuses it at src/cma/ingest.py:63, as R2 requires."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 392,
+      "criterion": "R2",
+      "claim": "The scratchpad proof is not proven by a runner result. The named display contract exercises Metric.display_exact directly and does not exercise the final appendix and CLI output claimed by the producer.",
+      "repro": "Check contracts-4.log for test_the_money_in_figures_are_shown_to_the_penny_so_the_parts_add_up_to_the_whole and read its assertions. The cited PYTHONPATH=src python scratchpad/probe.py command has no runner row, and the script is absent from the review worktree. A runner contract that invokes cma run on fractional-pound data and asserts both the interactive table and written appendix would prove the output claim."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 119,
+      "criterion": "P2",
+      "claim": "The compatibility claim is broader than the dual-run proof. The fixture suite passed on the reviewed tree, but the supplied runner rows do not establish the claimed historical full-suite result at ca0092c.",
+      "repro": "Compare the reviewed commit, 74ad8af, and specified-3.log's 888 passes with the claim of 878 passes at ca0092c. A runner row from python -m pytest -v -rs on a checkout of ca0092c would establish that historical claim."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

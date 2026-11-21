@@ -1,0 +1,159 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to the eight buckets. src/cma/metrics.py:481 and :562 compute the GBP totals from their cited credits. M18 is computed separately from the cash deposits already in M2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:103 and :143–180 reject duplicate columns and enforce the exact line and flow limits for fresh CSV loads. src/cma/importers/monzo.py:189–230 delegates parsing and balance arithmetic to the figures layer. src/cma/metrics.py:512–517 handles an unreportable M3. The CLI and appendix show pence at src/cma/cli.py:292 and src/cma/graph.py:172, and evidence serializes the figure values at src/cma/graph.py:226. The legacy resume path at src/cma/cli.py:130–149 bypasses the import checks and reuses old figures.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578–588 checks the pence difference and line membership, including duplicate credit IDs and failures with a zero difference. src/cma/cli.py:99–102 reports the refusal before review or export. src/cma/mcp_server.py:90–96 propagates the same refusal. The runner passed the CLI and MCP failure contracts.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "The unmatched credit defaults at src/cma/categorise.py:1311 and :1360 produce OTHER. src/cma/models.py:66–69 maps OTHER to unexplained and excludes it from trading receipts.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:481–495 and :562–588 partition the credit IDs and check that M2 plus M19–M25 equal M17 in pence. Both named P1 tests ran and passed, including the large-value round-trip test.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the figures delivered by T04, src/cma/metrics.py:373–388 and :523–574 ties sums and outflows to their source lines, retains the closing-line and lowest-line evidence rules, leaves M10 evidence empty when exact debt service is zero, and cites M26's denominator lines. The cap allocation at :418–431 identifies the partially counted M9 credits. The named invariants passed, and dual_run-7.log confirms the previous-release evidence comparisons ran for the committed example and synthetic fixtures.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:66–69 and src/cma/metrics.py:351 and :483–488 place unmatched credit IDs in M25 and keep them out of M2. All three named P6 runs passed, including unknown payers under v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-141/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-141/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-141/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-141/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-141/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-141/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-141/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 146,
+      "criterion": "R2",
+      "claim": "Resuming a pending review created before the pence limit was introduced can display and export figures for a statement the current loader must refuse. Resume checks the file hash and grounds the memo against the stored metrics, then passes those same metrics to the review.",
+      "repro": "Follow the legacy checkpoint setup in tests/test_previous_release.py:61–89, using a one-row dated CSV with description CARD SETTLEMENT and both amount and balance equal to 10000000000000.00. Leave the old review pending. On the current revision, run cma resume for that thread and approve with an output path. The stored figures reach the interactive table and export, whereas a fresh cma run refuses the statement at the limit."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 196,
+      "criterion": "R2",
+      "claim": "A Monzo export with no GBP rows produces a raw IndexError during import.",
+      "repro": "Run cma import monzo on an otherwise well-formed export containing a single EUR row and a Balance column. The currency filter removes the only row at lines 183–186, and parsed[0] raises IndexError. The CLI catch at src/cma/cli.py:318 handles MonzoImportError only."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 14,
+      "criterion": "R2",
+      "claim": "The claim that the metrics module no longer describes a removed ceiling is contradicted by the reviewed docstring, which says there is no fixed ceiling without distinguishing figure conversion from the fixed import limit.",
+      "repro": "Read src/cma/metrics.py:8–16 beside its import limit at :79–82 and the enforcement at src/cma/ingest.py:143–178. The large-value test at tests/test_money_in.py:261 exercises helpers directly and does not establish that an over-limit credit is accepted at import."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 91,
+      "criterion": "P1",
+      "claim": "The producer's historical suite result for ca0092c is not proven by the runner. The named tests and configured tiers passed on the reviewed revision, 35fcabd.",
+      "repro": "Compare git log and specified-3.log with the claim's 878-pass result at ca0092c. The runner records 906 passes for the reviewed tree. A runner invocation of python -m pytest -v -rs at ca0092c would prove the historical claim."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 91,
+      "criterion": "P1",
+      "claim": "The claim that two calls to compute on the same statement return identical figures is not proven by a runner result. Its cited scratchpad probe is absent from the configured results, and the P1 invariant checks a single computation per statement.",
+      "repro": "Inspect tests/test_money_in.py:80–93 and invariants-5.log. To prove the claim with the runner, add a named invariant that compares two complete results from metrics.compute on the same statement and run python -m pytest -v -m invariants tests/test_money_in.py."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2366,
+      "criterion": "P2",
+      "claim": "The producer's note that the committed example lacks evidence_note and was left unregenerated is stale.",
+      "repro": "Run rg -n 'evidence_note|decided_at' examples/cafe_stretched.memo.evidence.json and inspect the supplied diff. The checked-in artifact contains evidence_note fields and an updated decision timestamp."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

@@ -1,0 +1,118 @@
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:483 partitions categorised credits and :564 emits the GBP bucket sums and line IDs. src/cma/mcp_server.py:98 serialises the figures. The runner logged the bucket and MCP tests passing.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:82 verifies penny round-trips and :256 checks flow limits. src/cma/metrics.py:512 computes M3 in integer pence and handles unrepresentable results. src/cma/graph.py:175 and src/cma/cli.py:352 show pennies, while src/cma/metrics.py:591 preserves whole-pound drafting. Monzo can still omit a known over-limit flow when the row that crosses the limit has a malformed balance.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks multiplicity and the pence difference before emitting figures. src/cma/cli.py:107 handles the failure before rendering or export. The runner logged the CLI exit, unplaced-credit, markup and MCP refusal contracts passing.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default an unmatched credit to OTHER. src/cma/metrics.py:483 routes that category to M25, outside the M2 selection at :351.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 enforces one bucket evidence occurrence per credit and exact reconciliation, with cash reported separately at :567. The runner logged both the general and large-value P1 invariants passing.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For the figures shipped in T04, src/cma/metrics.py:382 computes signed net outflows, :416 tracks partially counted M9 credits, :495 builds share evidence from eligible inflows, and :526–574 attaches the evidence. The runner logged the P2 sum, outflow and M9 tests passing and the previous-release evidence comparisons passing in dual_run-7.log.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 and src/cma/metrics.py:351 and :483 put unmatched credit IDs in M25 and exclude them from M2. The runner logged the P6 invariant and both ruleset-specific unknown-payer tests passing.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 197,
+      "criterion": "R2",
+      "claim": "Monzo knows the GBP amount that brings money in to the limit, but a malformed Balance on that same row prevents it from reporting the flow-limit failure. The exception handler totals only rows already appended to parsed.",
+      "repro": "Import two GBP Monzo rows with distinct valid IDs and dates. Give the first Amount 6000000000000.00 and Balance 1000000000000.00. Give the second Amount 4000000000000.00 and Balance x. The two parsed amounts total £10,000,000,000,000, but the refusal reports only the malformed Balance on line 3. The runner's existing cases cover errors on a later row after the prefix already crosses the limit."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 165,
+      "criterion": "R53",
+      "claim": "The pending-checkpoint comparison and migration write are separate operations. A concurrent decision can commit between them, after which the migration can reopen the decided review.",
+      "repro": "Use a shared SQLite database with an older pending review. Pause resume A immediately before update_state, after its checkpoint comparison succeeds. Let resume B reject and finalise the review, then release A. A updates the thread's latest checkpoint as the guard node and invokes the graph back into review. The passing test at tests/test_cli.py:414 commits B during refresh, before A reads the checkpoint for its comparison."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 288,
+      "criterion": "R53",
+      "claim": "A failure writing the evidence leaves a committed decision and a memo without its evidence record. A retry through resume cannot complete the export.",
+      "repro": "Resume a pending review with --out and make only the evidence write fail after the memo write succeeds. The graph decision has already been recorded at src/cma/cli.py:274. The memo remains on disk, and resume with a fresh output path reports that nothing is waiting for review."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 146,
+      "criterion": "R53",
+      "claim": "The opening-balance option now rejects exact whole-penny forms previously accepted by its float option.",
+      "repro": "Convert a Monzo CSV with one valid GBP credit and no Balance column using --opening-balance=1e2. The previous option parsed this as 100.0 and wrote the statement. The current option passes the text through the plain-decimal pattern at src/cma/importers/monzo.py:85 and refuses it."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 263,
+      "criterion": "R2",
+      "claim": "The scratchpad proof is not_proven. The large-value helper test and the cited probe output bypass statement import, so neither proves that an above-limit credit is accepted through the CLI or MCP. The loader intentionally refuses it under current R2.",
+      "repro": "Compare the helper test with src/cma/ingest.py:90 and the passing import-limit tests at tests/test_money_in.py:406. To verify the historical helper probe as claimed, the runner would need the cited script and a result row for PYTHONPATH=src python scratchpad/probe.py."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 92,
+      "criterion": null,
+      "claim": "The historical suite counts and scratchpad-only repeatability claim are not_proven for the reviewed head. The current runner logs establish 940 full-suite passes, eight named T04 invariants and 84 dual-run passes. They also independently show the named markup and M9 note tests passing.",
+      "repro": "Compare git log -1 and the runner’s specified, contracts, invariants and dual-run logs with the claim’s ca0092c results. Exact proof of the historical counts requires the cited pytest commands at ca0092c. Exact proof of the repeatability probe requires a runner result for PYTHONPATH=src python scratchpad/probe.py."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 4705,
+      "criterion": null,
+      "claim": "The producer note about the committed example is stale. The evidence JSON already contains evidence_note fields and the regenerated decision timestamp.",
+      "repro": "Open the M25 record at line 4697 and the decision timestamp at line 5106 in the reviewed example."
+    }
+  ],
+  "verdict": "fail"
+}

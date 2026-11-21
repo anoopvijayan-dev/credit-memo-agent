@@ -1,0 +1,143 @@
+{
+  "task": "T04",
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "Checked the credit-category map at src/cma/models.py:55, the integer-pence partition at src/cma/metrics.py:536, and the GBP values and evidence at src/cma/metrics.py:617. The graph and MCP return the computed metrics at src/cma/graph.py:308 and src/cma/mcp_server.py:92. The runner passed the MCP output contract.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "Checked amount conversion and flow limits at src/cma/metrics.py:95 and src/cma/ingest.py:591, the large-balance diagnostic at src/cma/metrics.py:188, M3 at src/cma/metrics.py:567, and penny display at src/cma/cli.py:415 and src/cma/graph.py:175. The runner passed the large-value regressions and the same-offset Monzo regression. Monzo still sorts by wall-clock strings when the timestamps carry different offsets.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "Checked that reconciliation compares both the pence difference and the multiplicity of credit IDs at src/cma/metrics.py:633. The CLI refuses before display or export at src/cma/cli.py:118. The runner passed the CLI and MCP refusal tests, including markup-like line IDs.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "Traced unmatched credits through the v1 default at src/cma/categorise.py:1311 and v2 default at src/cma/categorise.py:1360 to the unexplained mapping at src/cma/models.py:66. M2 selects revenue categories at src/cma/metrics.py:406.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "Checked that M18 is emitted separately at src/cma/metrics.py:620 and that the reconciler checks each credit ID and the penny difference at src/cma/metrics.py:633. Both named P1 tests passed in the runner.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "Checked sum and outflow evidence at src/cma/metrics.py:578 and src/cma/metrics.py:593, the legacy lowest-balance and overdrawn-day evidence at src/cma/metrics.py:428, the M9 partial-credit note at src/cma/metrics.py:475 and src/cma/metrics.py:599, and the M26 denominator evidence at src/cma/metrics.py:626. The named P2 invariants passed, and the runner's dual run compared M1–M16 evidence against the previous release. This row covers the figures delivered by T04.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "Traced the unmatched OTHER category into M25 at src/cma/models.py:66 and src/cma/metrics.py:623, and checked that the M2 category set at src/cma/models.py:69 excludes it. The runner passed the named P6 property and both unknown-payer examples.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-209/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-209/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-209/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-209/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-209/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-209/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-209/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 84,
+      "criterion": "R2",
+      "claim": "Monzo drops the UTC offset before the running-balance walk orders timestamps. When an offset changes, the importer can reject a consistent export or reconstruct balances in the wrong transaction order.",
+      "repro": "Import a GBP export with no Time column and with opening balance £100.00. Give transaction A Date 2026-10-25T01:50:00+01:00, amount -10.00 and Balance 90.00. Give transaction B Date 2026-10-25T01:10:00+00:00, amount -5.00 and Balance 85.00. A occurred at 00:50 UTC and B at 01:10 UTC. The sort at src/cma/importers/monzo.py:297 puts B first and reports that the supplied opening balance disagrees with the export."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 263,
+      "criterion": "R2",
+      "claim": "The producer's scratchpad probe is not proven by a runner result. The runner did verify that the low-level helpers can represent the above-limit amount. A statement containing that credit must be refused at import under the current R2.",
+      "repro": "Compare the claimed PYTHONPATH=src python scratchpad/probe.py result with reviewer-208's runner rows, which contain no scratchpad invocation. To prove that historical probe output, make the script available to the runner and run the cited command at the claimed revision. To verify current behavior, the runner's test_an_amount_no_float_carries_to_the_penny_is_refused_at_import covers the import limit."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 120,
+      "criterion": "P2",
+      "claim": "The producer cites a scratchpad probe for repeatability and several figure examples. No runner row establishes that the probe ran. The named repository tests independently cover the relevant P2 examples.",
+      "repro": "Check reviewer-208's runner rows for PYTHONPATH=src python scratchpad/probe.py. To establish the claimed probe outputs, make the cited script available to the runner and run that command at ca0092c. The current checkout is db6cae2, whose runner reports 1312 full-suite passes and 84 dual-run passes. The historical counts would require python -m pytest -q and python -m pytest -q -m dual_run at ca0092c."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": "P2",
+      "claim": "The producer's note says the committed example lacks evidence_note. The reviewed example already contains the field.",
+      "repro": "Run rg -n evidence_note examples/cafe_stretched.memo.evidence.json. The first occurrence is the M1 evidence_note field at line 2363."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "default"
+  }
+}

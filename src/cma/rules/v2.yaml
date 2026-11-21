@@ -1,0 +1,406 @@
+# Built-in categorisation table v2: v1's rules plus the maintained lists of R4 (UK card
+# acquirers, payment gateways, marketplaces and delivery platforms; business lenders and
+# merchant cash advance providers; own pots and savings; cash paid in; cash-withdrawal
+# wording; HMRC repayments; refunds; explained non-trading money in).
+#
+# A rule matches when its pattern (or one of its names) matches the upper-cased
+# description and its direction matches the sign of the amount. A v2 rule has no `unless`
+# or `requires`: an exception could hide another list's wording from the ambiguity check. `names` are plain words matched whole, with any run of
+# spaces between words; `pattern` is a Python regular expression.
+#
+# Two stages (design C1, revision 3). Stage 1, `line_type`, is explicit wording of what the
+# line is: a returned direct debit, a move to or from the applicant's own pot, space or
+# savings, HMRC, a refund or reversal, and the payment rail. The rail has no category: it
+# says the money did not arrive as cash. Stage 2, `names`, says who sent the money or what
+# it is for.
+#
+# The verdict on a credit (src/cma/categorise.py, design C1 revision 4) collects every
+# matching rule from both stages. A match inside a longer match from another rule counts
+# only as the longer one (STRIPE inside STRIPE CAPITAL, REFUND inside HMRC REFUND, LOAN
+# inside DIRECTOR LOAN). The bank's own returned-payment code at the start of the line
+# settles it alone. A payment rail with cash paid-in wording is ambiguous, whatever other
+# cue matches. Otherwise the cues decide when any cue with a category matches; with none,
+# the names decide. Rules in one money-in bucket agree; rules in two or more make the
+# credit ambiguous: unexplained money in, with every rule it matched in either stage (the
+# rail included) recorded as its candidates, for the underwriter. Inside the bucket
+# decided, `category_order` below picks the category. Neither bucket nor category depends
+# on the order of rules within a stage. Debits keep first-match order through the same
+# stages.
+#
+# Names match whole words in any script: no letter or digit on either side, so
+# CAFÉSTRIPE LTD does not contain STRIPE.
+#
+# No hidden tie-breaks: no rule has an exception (`unless` or `requires`), since one could
+# switch a rule off where another list's wording sits. Where two lists' wording meets, a
+# longer phrase goes on one list, or the credit is ambiguous.
+#
+# Protected rules come first and win over the case profile and firm rules; only a
+# per-line override changes a line they settle (R21). They are the line-type cues and the
+# lender, director, capital-introduced, shareholder and generic loan wording. Cash paid
+# in, the trading lists, invoice references and explained words are not protected.
+#
+# Bare words are not evidence (D48). SAVINGS, SAVER, POT, SPACE or a pot label such as TAX
+# POT without move wording is on no list: only move wording ("TO SAVINGS", "FROM POT")
+# or an own account named in the case profile is a move. CAPITAL alone is on no list:
+# only capital introduced, injected or contributed is director funding.
+id: v2
+frozen: false
+# Inside one money-in bucket, when the deciding rules agree on the bucket but carry
+# different categories, the first category in this order is the line's (D61): the one
+# that brings more checks first. Trading receipts: cash deposit (M18 and the cash
+# indicators), then customer transfer (the round-trip check, M15), then card settlement.
+# Refunds and returned payments: returned payment (M7, reversal linking, the returned-DD
+# indicator), then refund.
+category_order:
+  - cash_deposit
+  - revenue_transfer
+  - revenue_card_settlement
+  - returned_dd
+  - refund_in
+rules:
+  # --- stage 1, line type: explicit wording, protected -----------------------------
+  # The bank's own returned-payment code, at the start of the line: settles it alone.
+  - id: returned_dd
+    pattern: '^UNPAID DD\b'
+    direction: any
+    category: returned_dd
+    protected: true
+    stage: line_type
+    bank_code: true  # the bank's own code at the start of the line settles it alone
+  # An explicit move to or from the applicant's own pot, space or savings, either way,
+  # whatever names the pot or account: "TFR TO POT RENT", "TFR FROM SAVINGS CAPITAL
+  # RESERVE" and "FROM POT IWOCA" are own-account transfers. With another cue on a credit
+  # (HMRC, a refund) the cues disagree and the credit is ambiguous.
+  - id: own_pots_savings
+    names:
+      - POT TRANSFER
+      - TO POT
+      - TFR VAT POT
+      - TO VAT POT
+      - FROM VAT POT
+      - TFR TAX POT
+      - TO TAX POT
+      - FROM TAX POT
+      - FROM POT
+      - TO SPACE
+      - FROM SPACE
+      - SAVINGS TRANSFER
+      - SAVINGS TFR
+      - TFR SAVINGS
+      - TRANSFER SAVINGS
+      - TO SAVINGS
+      - FROM SAVINGS
+      - TO SAVER
+      - FROM SAVER
+      - TO BUSINESS SAVER
+      - FROM BUSINESS SAVER
+      - TO INSTANT ACCESS
+      - FROM INSTANT ACCESS
+    direction: any
+    category: own_account_transfer
+    protected: true
+    stage: line_type
+  - id: hmrc_vat
+    pattern: 'HMRC VAT'
+    direction: out
+    category: hmrc_vat
+    protected: true
+    stage: line_type
+  - id: hmrc_paye
+    pattern: 'HMRC PAYE'
+    direction: out
+    category: hmrc_paye
+    protected: true
+    stage: line_type
+  # HMRC paying money back (VAT repayment, tax refund, R&D credit). An HMRC refund is an
+  # HMRC repayment by the longer phrase, not by an exception in the refund list.
+  - id: hmrc_repayment
+    names: [HMRC, HM REVENUE, HMRC REFUND, HMRC VAT REFUND, HMRC TAX REFUND, HMRC CT REFUND, HMRC PAYE REFUND,
+            HMRC SA REFUND]
+    direction: in
+    category: hmrc_repayment
+    protected: true
+    stage: line_type
+  # A returned direct debit in words, anywhere in the line ("RETURNED DD", "DIRECT DEBIT
+  # RETURNED"). Not the bank's code (that is returned_dd, at the start), so it does not
+  # settle the line alone; with refund wording, the category order makes it a returned
+  # payment.
+  - id: returned_payment
+    names: [RETURNED DD, RETURNED DIRECT DEBIT, DD RETURNED, DIRECT DEBIT RETURNED, UNPAID DIRECT DEBIT]
+    direction: in
+    category: returned_dd
+    protected: true
+    stage: line_type
+  # Money given back: a refund, reversal, returned payment or chargeback, from anyone,
+  # a named lender or a payer called CAPITAL or DIRECTOR included. Money out with the same
+  # wording is left to the name lists: a payment to a lender stays debt service.
+  - id: refunds
+    names: [REFUND, REFUNDED, REVERSAL, REVERSED, RETURNED PAYMENT, PAYMENT RETURNED, CHARGEBACK]
+    direction: in
+    category: refund_in
+    protected: true
+    stage: line_type
+  # The payment rail (Faster Payment, including the FP and FPI codes, BACS, CHAPS, a bank
+  # giro credit, a transfer, a standing order, a direct credit), anywhere in the line. No
+  # category: it says the money did not arrive as cash, and otherwise the names decide.
+  - id: payment_rail
+    names: [FPS, FPI, FP, BGC, BANK GIRO CREDIT, FASTER PAYMENT, FASTER PAYMENTS, BACS, CHAPS, TFR, TRANSFER, SO,
+            STO, STANDING ORDER, DIRECT CREDIT]
+    direction: in
+    protected: true
+    stage: line_type
+  # A cheque, like the rail, says what the money is not: cash. No category, so with cash
+  # paid-in wording the credit is ambiguous by the verdict (D70), never hidden by an
+  # exception on the cash list; on its own, the names decide.
+  - id: cheque
+    names: [CHEQUE, CHEQUES, CHQ]
+    direction: in
+    protected: true
+    stage: line_type
+  # --- stage 2, name lists ---------------------------------------------------------
+  # UK business lenders and merchant cash advance providers, named. STRIPE CAPITAL,
+  # SHOPIFY CAPITAL and SUMUP CASH ADVANCE are lenders by the longer phrase.
+  - id: lender_repayment
+    names: &lenders
+      - FUNDING CIRCLE
+      - IWOCA
+      - YOULEND
+      - LIBERIS
+      - 365 BUSINESS FINANCE
+      - CAPIFY
+      - BOOST CAPITAL
+      - FLEXIMIZE
+      - MARKETFINANCE
+      - MARKET FINANCE
+      - NUCLEUS COMMERCIAL FINANCE
+      - ESME LOANS
+      - ALLICA
+      - ULTIMATE FINANCE
+      - BIZCAP
+      - SWIFTFUND
+      - GOT CAPITAL
+      - MERCHANT MONEY
+      - UNCAPPED
+      - CLEARCO
+      - WAYFLYER
+      - OPTIMUM FINANCE
+      - LENDINGCROWD
+      - ARCHOVER
+      - THINCATS
+      - SHAWBROOK
+      - CLOSE BROTHERS
+      - ALDERMORE
+      - STRIPE CAPITAL
+      - PAYPAL WORKING CAPITAL
+      - PAYPAL BUSINESS LOAN
+      - SHOPIFY CAPITAL
+      - AMAZON LENDING
+      - SQUARE CAPITAL
+      - SQUARE LOANS
+      - SUMUP CASH ADVANCE
+      - MERCHANT CASH ADVANCE
+      - BUSINESS CASH ADVANCE
+      - BOUNCE BACK LOAN
+      - BBLS
+      - CBILS
+      - RECOVERY LOAN SCHEME
+    direction: out
+    category: loan_repayment
+    protected: true
+    stage: names
+  - id: lender_drawdown
+    names: *lenders
+    direction: in
+    category: loan_drawdown
+    protected: true
+    stage: names
+  - id: loan_repayment
+    pattern: '\bLOAN\b|FINANCE\b'
+    direction: out
+    category: loan_repayment
+    protected: true
+    stage: names
+  # Money from a director, shareholder or owner, or capital introduced. A director's loan
+  # to the business is director funding by the longer phrase (DIRECTOR LOAN), which
+  # contains the generic loan wording.
+  - id: director_funding
+    names: [DIRECTOR, DIRECTORS, OWNER, SHAREHOLDER, SHAREHOLDERS, CAPITAL INTRODUCED, CAPITAL INJECTION,
+            CAPITAL CONTRIBUTION, DIRECTOR LOAN, DIRECTORS LOAN, DIRECTOR LOAN ACCOUNT, DIRECTORS LOAN ACCOUNT,
+            SHAREHOLDER LOAN, OWNER LOAN]
+    direction: in
+    category: director_funding
+    protected: true
+    stage: names
+  - id: loan_drawdown
+    pattern: '\bLOAN\b|FINANCE\b'
+    # advance wording (D71): a card provider that also lends, with advance wording, is
+    # ambiguous between trading and lending, never trading receipts alone
+    names: [CASH ADVANCE, MERCHANT ADVANCE, BUSINESS ADVANCE]
+    direction: in
+    category: loan_drawdown
+    protected: true
+    stage: names
+  - id: owner_drawings
+    pattern: 'OWNER DRAWINGS|DIRECTOR DRAWINGS|DIVIDEND'
+    direction: out
+    category: owner_drawings
+    protected: true
+    stage: names
+  # Cash paid in at a counter or a machine, at a bank, a Post Office or a PayPoint. Not
+  # protected: a director named in the case profile outranks cash wording (R5). A cheque
+  # is not cash (wording on no list). Post Office and PayPoint count only with cash,
+  # deposit or counter wording: both also pay by transfer. A payment rail with cash
+  # wording is ambiguous by the verdict, not by an exception here.
+  - id: cash_paid_in
+    names:
+      - CASH PAID IN
+      - CASH DEPOSIT
+      - CASH DEP
+      - CASH CREDIT
+      - CASH IN BRANCH
+      - PAID IN AT
+      - COUNTER CREDIT
+      - COUNTER DEPOSIT
+      - DEPOSIT MACHINE
+      - ATM DEPOSIT
+      - CDM DEPOSIT
+      - POST OFFICE CASH
+      - POST OFFICE DEPOSIT
+      - POST OFFICE COUNTER CREDIT
+      - POST OFFICE COUNTER DEPOSIT
+      - PAYPOINT CASH
+      - PAYPOINT DEPOSIT
+    direction: in
+    category: cash_deposit
+    stage: names
+  # Explained, but not trading: grants, insurance claims, interest, cashback.
+  - id: explained_non_trading
+    names: [INTEREST, GRANT, INSURANCE CLAIM, INSURANCE PAYOUT, INSURANCE SETTLEMENT, CASHBACK, COMPENSATION]
+    direction: in
+    category: other_explained_in
+    stage: names
+  - id: bank_fees
+    pattern: 'UNPAID ITEM FEE|ACCOUNT FEES|BANK CHARGES'
+    direction: out
+    category: bank_fees
+    stage: names
+  - id: payroll
+    pattern: 'PAYROLL|SALARIES'
+    direction: out
+    category: payroll
+    stage: names
+  - id: rent
+    pattern: '\bRENT\b'
+    direction: out
+    category: rent
+    stage: names
+  # Trading receipts. v1's synthetic acquirer wording, as a names list so it matches whole
+  # words in any script like every other trading list (CAFÉACQUIRER SETTLEMENT is not it).
+  - id: card_settlement
+    names: [ACQUIRER SETTLEMENT, PAYGATE PAYOUT, CARD SETTLEMENT]
+    direction: in
+    category: revenue_card_settlement
+    stage: names
+  - id: card_acquirers
+    names:
+      - SUMUP
+      - SUM UP
+      - SQUARE UK
+      - SQUARE EUROPE
+      - SQUARE PAYMENTS
+      - ZETTLE
+      - IZETTLE
+      - WORLDPAY
+      - BARCLAYCARD MERCHANT
+      - BARCLAYCARD PAYMENT ACCEPTANCE
+      - ELAVON
+      - GLOBAL PAYMENTS
+      - GLOBALPAYMENTS
+      - CARDNET
+      - TAKEPAYMENTS
+      - DOJO
+      - PAYMENTSENSE
+      - TEYA
+      - SALTPAY
+      - ADYEN
+      - CHECKOUT.COM
+      - CHECKOUT COM
+      - TRUST PAYMENTS
+      - FISERV
+      - FIRST DATA
+      - VIVA WALLET
+      - MYPOS
+      - EVO PAYMENTS
+      - HANDEPAY
+      - TOTAL PROCESSING
+    direction: in
+    category: revenue_card_settlement
+    stage: names
+  - id: payment_gateways
+    names:
+      - STRIPE
+      - PAYPAL
+      - GOCARDLESS
+      - OPAYO
+      - SAGEPAY
+      - SAGE PAY
+      - BRAINTREE
+      - KLARNA
+      - CLEARPAY
+      - PAYSAFE
+    direction: in
+    category: revenue_card_settlement
+    stage: names
+  # Marketplace payouts. Amazon by its payout entities only: a plain AMAZON credit is
+  # usually a refund on a purchase, and stays for a person to look at.
+  - id: marketplaces
+    names:
+      - AMAZON PAYMENTS
+      - AMAZON EU
+      - AMAZON SERVICES EUROPE
+      - AMZN PAYMENTS
+      - AMZN MKTP PAYOUT
+      - EBAY
+      - ETSY
+      - NOT ON THE HIGH STREET
+      - NOTHS
+      - ONBUY
+      - SHOPIFY
+      - FRUUGO
+    direction: in
+    category: revenue_card_settlement
+    stage: names
+  - id: delivery_platforms
+    names:
+      - DELIVEROO
+      - ROOFOODS
+      - JUST EAT
+      - JUSTEAT
+      - JUST-EAT
+      - UBER EATS
+      - PORTIER EATS
+      - FOODHUB
+    direction: in
+    category: revenue_card_settlement
+    stage: names
+  - id: invoice_transfer
+    pattern: '\bINV(?:OICE)?\s*[-#:]?\s*\d+'
+    direction: in
+    category: revenue_transfer
+    stage: names
+  # Cash taken out. The category is what an unmatched debit gets anyway (supplier); the
+  # rule is here so the line records cash_withdrawal as its rule, which the cash round-trip
+  # indicator reads. Last, so it never takes a debit from another rule.
+  - id: cash_withdrawal
+    names:
+      - CASH WITHDRAWAL
+      - CASH WDL
+      - CASH WITHDRAWN
+      - ATM
+      - CASH MACHINE
+      - CASHPOINT
+      - POST OFFICE CASH
+      - COUNTER WITHDRAWAL
+    direction: out
+    category: supplier
+    stage: names

@@ -1,0 +1,120 @@
+```json
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:481-490 assigns credits to buckets and reconciles them. Lines 562-573 emit GBP totals with evidence, with M18 inside M2. src/cma/graph.py:307-308 and src/cma/mcp_server.py:92-98 carry those figures through both consumers.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:76-93 and :256 check exact pence and flow limits. src/cma/metrics.py:512-518 handles unrepresentable M3. src/cma/graph.py:175 and src/cma/cli.py:414 show pennies, while src/cma/metrics.py:591-594 preserves whole-pound drafting. The Monzo reader can bypass the required first-problem and flow diagnostics at src/cma/importers/monzo.py:153 and :210, and its opening-balance refusals at :245 and :250 omit the physical record start.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578-588 checks both the pence difference and evidence multiplicity, including a zero difference with invalid membership. src/cma/cli.py:119-123 exits 6 before review or export. The contracts log records passing CLI and MCP refusal tests.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360 default unmatched credits to OTHER. src/cma/metrics.py:481-490 puts that category in the unexplained bucket without adding it to trading receipts.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:562-569 emits M18 separately, and :578-588 checks the other eight figures against total money in and checks each credit ID. Both named P1 invariants ran and passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:523-569 ties the implemented sum and outflow figures to their evidence. Lines 374-379 preserve the overdrawn-day evidence rule, :418-430 record the partial M9 offset, and :496-504 and :571-574 use the shared share evidence. The named invariants and previous-release comparisons passed for the implemented figures.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "src/cma/categorise.py:1311 and :1360, together with src/cma/metrics.py:481-490 and :568-569, route unmatched credit IDs into M25 and exclude them from M2. The named invariant and explicit unknown-payer tests ran for v1 and v2.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 210,
+      "criterion": "R2",
+      "claim": "A missing Date cell can raise AttributeError instead of naming the first problem and the flow limit already reached. DictReader assigns None to missing trailing cells, and _parse_date calls strip on it at line 69. The handlers only catch MonzoImportError.",
+      "repro": "Use the header Transaction ID,Amount,Type,Name,Date and the records tx_1,9999999999999.99,Faster payment,ACME,01/01/2026 and tx_2,0.01,Faster payment,ACME. Supply --opening-balance 0.00. The importer reads the amount on line 3, which brings money in to the limit, then fails on the absent Date without naming either."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 153,
+      "criterion": "R2",
+      "claim": "Decoding the entire export before checking any records lets a later invalid UTF-8 byte hide an earlier row refusal and its flow diagnostic.",
+      "repro": "Use a normal Monzo header, a first GBP credit of 9999999999999.99, then a GBP credit of 0.01 with Date set to someday. Put a literal 0xFF byte in the following record. The read raises UnicodeDecodeError before checking the earlier date or reporting that money in reached the limit."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/importers/monzo.py",
+      "line": 245,
+      "criterion": "R2",
+      "claim": "Opening-balance refusals identify the first sorted record without naming its physical source line. The disagreement branch at line 250 also omits that location.",
+      "repro": "Put the header on line 1, a bank record dated 02/01/2026 on line 2, a blank line on line 3, and a GBP record dated 01/01/2026 with a blank Balance on line 4. With no opening-balance option, Monzo reports that the first row has no Balance. The record it refers to starts on line 4."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/ingest.py",
+      "line": 141,
+      "criterion": "R2",
+      "claim": "The oversized-field diagnostic adds a false inference about the amount limit. Field length alone cannot establish the magnitude of a numeric value. The current CLI tests at tests/test_money_in.py:731 and :761 require this wording.",
+      "repro": "Supply an amount field consisting of more zero digits than the CSV reader allows, followed by 1.00. The reader must refuse the field as too long, but its message also says that an amount that long would be past £10 trillion. The numeric text describes £1.00."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 283,
+      "criterion": "R2",
+      "claim": "The producer's above-ceiling probe claim applies to an in-memory amount helper. The configured runner did not run scratchpad/probe.py, and the passing repository test does not show that a statement containing that credit can be imported. Revision 29 requires its refusal at import.",
+      "repro": "Compare the helper-only test with the import-limit contract at tests/test_money_in.py:406. To prove the historical probe receipt itself, the runner would need to execute PYTHONPATH=src python scratchpad/probe.py at the claimed revision and preserve its output."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 115,
+      "criterion": null,
+      "claim": "The historical full-suite and dual-run counts are unproven for ca0092c. The current runner proves 949 full-suite passes at the reviewed head and 84 dual-run passes on the cases in its log. The dual run also does not prove blanket compatibility for every possible statement.",
+      "repro": "To establish the historical receipts, the runner would need to run python -m pytest -v -rs and python -m pytest -v -m dual_run at ca0092c. The current logs already establish the named invariant, interface, path-scope, markup and checkpoint compatibility tests at the reviewed head."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 314,
+      "criterion": null,
+      "claim": "The cited runner evidence does not establish the idempotency claim. The P1, P2 and P6 tests check individual results, and no runner row executed the cited scratchpad probe. A successful probe on one statement would demonstrate repeatability for that input.",
+      "repro": "Run PYTHONPATH=src python scratchpad/probe.py through the runner with the cited script present and retain the repeat-computation assertion and output."
+    }
+  ],
+  "verdict": "fail"
+}
+```

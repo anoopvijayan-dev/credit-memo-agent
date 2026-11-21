@@ -1,0 +1,93 @@
+```json
+{
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "src/cma/firm.py:66 defaults the lock on. src/cma/cli.py:79-86 reads it once before building the client, src/cma/graph.py:263-278 records the dispatch value, and src/cma/mcp_server.py:40-78 gates startup and ASGI creation. The hosted API accepts an unchecked authorization override at src/cma/llm.py:98-110, and the CLI graph invocation at src/cma/cli.py:92 can send remote traces under the lock.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "R30",
+      "tier": "adversarial",
+      "check": "src/cma/graph.py:175-225 and :331-338 limit the case-derived prompt to the placeholder, date-only period, metric and rule tables with the overall outcome as a row, and allowlisted redraft IDs. src/cma/metrics.py:295-299 omits evidence IDs. src/cma/policy.py:83-113 builds rule detail from computed metrics, numeric thresholds and fixed outcome text.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P5",
+      "tier": "adversarial",
+      "check": "invariants-5.log confirms the initial and redraft sentinel cases, all five custom ID cases and the hosted CLI custom-policy case ran and passed. src/cma/graph.py:191-209 masks custom rule text and IDs outside the shipped allowlist and applies that allowlist to redraft feedback.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P18",
+      "tier": "adversarial",
+      "check": "invariants-5.log confirms the graph-input override cases, sequential graph reuse, 503 retry checks, MCP entry points and real HTTP bind-spy cases. src/cma/llm.py:92-110 and :131-135 still let a direct hosted caller authorize construction or dispatch without a current firm configuration reading.",
+      "result": "fail",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/llm.py",
+      "line": 98,
+      "criterion": "P18",
+      "claim": "The public hosted API trusts caller-supplied authorization. Direct dispatch accepts a bare boolean, and both constructors accept an unlocked configuration object without checking whether it came from the current run.",
+      "repro": "With a fake SDK that counts client creation and requests, save a configuration reading while unlocked and then enable the lock. Start a new operation using the saved reading with get_llm. It constructs a client. On an existing client, a direct complete call with offline_lock=False reaches the SDK under the same locked file. The graph-input tests exercise neither public argument."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 92,
+      "criterion": "R29",
+      "claim": "The offline CLI can still export LangGraph traces. The lock gates the hosted model and MCP but leaves the graph's environment-driven LangSmith callback enabled, including for graph nodes that process statement data.",
+      "repro": "Use a synthetic statement, the default offline lock, and the fake model. Enable LangSmith tracing with a dummy API key and point its endpoint at a recording test server. The installed LangGraph starts chain callbacks at pregel/main.py:2884 and :2919, and the installed LangChain callback manager attaches the remote tracer when tracing is enabled. The graph invocation attempts trace HTTP independently of hosted model dispatch."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/llm.py",
+      "line": 113,
+      "criterion": "P18",
+      "claim": "The producer's claim that every SDK HTTP request passes its own lock check is false for redirects. Both installed SDKs follow redirects by default. Disabling retries leaves redirect handling enabled.",
+      "repro": "Under an unlocked configuration, direct a hosted adapter to a synthetic endpoint that responds with a 307 and a same-origin Location. Its default transport sends the redirected request after a single HostedLLM.complete check. The passing tests at tests/test_firm.py:544-563 return 503 using an injected client and only prove retry behavior."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/mcp_server.py",
+      "line": 70,
+      "criterion": "R29",
+      "claim": "The producer's API compatibility claim omits the removal of both standalone ASGI factories when the lock is off. Existing embedders now fail at app construction.",
+      "repro": "Set offline_lock to false and use the previously available server.sse_app() or server.streamable_http_app() to mount the app in an external ASGI host. Both raise NoASGIApp. invariants-5.log confirms the unconditional refusal, while contracts-4.log covers only SDK-owned runners."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 43,
+      "criterion": "R30",
+      "claim": "The producer's compatibility claim also omits a Monzo input contract change for previously accepted transaction IDs.",
+      "repro": "Convert an otherwise valid booked GBP Monzo export whose Transaction ID is -tx. The previous pattern accepted that ID and the new pattern refuses it. The contract tests cover IDs starting with a dot or colon."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 102,
+      "criterion": "P18",
+      "claim": "The claimed CLI exit code 4 for a failed hosted request is not_proven by a runner test. The cited SDK test calls the adapter directly and never asserts a CLI exit code.",
+      "repro": "Add a CLI test that lets the unlocked client construct, returns a synthetic 503 at dispatch, and asserts exit 4. Run python -m pytest -v tests/test_firm.py -k cli_hosted_failure_exits_4 after adding that test."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/graph.py",
+      "line": 181,
+      "criterion": "R30",
+      "claim": "The claimed absence of a performance regression is not_proven. The runner's whole-suite duration has no baseline and does not isolate the added policy load.",
+      "repro": "Compare the same prompt-build and redraft workload before and after the change on the same environment. The reported pytest command only measures aggregate suite time."
+    }
+  ],
+  "verdict": "fail"
+}
+```

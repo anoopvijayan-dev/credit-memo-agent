@@ -1,0 +1,104 @@
+```json
+{
+  "task": "T04",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "codex",
+    "model": "GPT-6"
+  },
+  "criteria": [
+    {
+      "id": "R1",
+      "tier": "adversarial",
+      "check": "src/cma/models.py:55 maps credit categories to the eight buckets. src/cma/metrics.py:484 builds the partition and src/cma/metrics.py:563 returns the total and GBP evidence figures. The CLI appendix and MCP consumer use those figures at src/cma/graph.py:175 and src/cma/mcp_server.py:98.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R2",
+      "tier": "adversarial",
+      "check": "src/cma/ingest.py:86 verifies the penny round trip, src/cma/metrics.py:510 computes M3 from pence and handles an unrepresentable result, and src/cma/graph.py:175 and src/cma/cli.py:415 display money to the penny. The BOM-prefixed UTF-8 recovery at src/cma/ingest.py:120 can discard a complete earlier row and misname the bad record. The Monzo CLI can also lose the refusal when it renders row text as Rich markup at src/cma/cli.py:442.",
+      "result": "fail",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:578 checks both the signed penny difference and credit evidence membership, including a zero-difference mismatch. src/cma/cli.py:119 exits 6 before showing or exporting figures, and src/cma/mcp_server.py:98 propagates the refusal. The runner log shows the CLI and MCP refusal tests passed.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R7",
+      "tier": "adversarial",
+      "check": "Both categorisation paths default unmatched credits to OTHER at src/cma/categorise.py:1311 and src/cma/categorise.py:1360. src/cma/models.py:66 maps OTHER to unexplained and src/cma/models.py:69 excludes it from trading receipts.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P1",
+      "tier": "adversarial",
+      "check": "src/cma/metrics.py:484 and src/cma/metrics.py:578 enforce one bucket per credit and penny reconciliation. M18 takes its evidence from the trading subset at src/cma/metrics.py:495 and is outside the reconciliation sum. Both named P1 tests passed.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P2",
+      "tier": "adversarial",
+      "check": "For T04 figures, src/cma/metrics.py:523 and src/cma/metrics.py:538 return the signed sum or negated outflow with its input IDs. M5 and M6 retain their balance evidence at src/cma/metrics.py:373 and src/cma/metrics.py:532, M9 records the partly counted IDs at src/cma/metrics.py:422 and src/cma/metrics.py:545, and M26 cites the denominator inputs at src/cma/metrics.py:571. The named P2 invariants and the legacy evidence comparisons passed. Monthly cells and M27–M28 are assigned to later tasks.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P6",
+      "tier": "adversarial",
+      "check": "The default credit classifications at src/cma/categorise.py:1311 and src/cma/categorise.py:1360 reach M25 through src/cma/metrics.py:73 and src/cma/metrics.py:484. The runner log confirms the explicit unknown-payer test passed under both v1 and v2, alongside the broader invariant.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/ingest.py",
+      "line": 120,
+      "criterion": "R2",
+      "claim": "UTF-8 recovery uses an offset relative to the BOM-stripped input to slice the original bytes. It can drop the preceding complete record, suppress money in at the limit and attribute the UTF-8 error to the wrong line.",
+      "repro": "Use a BOM-prefixed Monzo CSV with the header Transaction ID,Date,Type,Name,Amount,Currency,Balance. Put tx_1,01/01/2026,Faster payment,ACME,9999999999999.99,GBP,1.00 on line 2 and the same values with tx_2 and 02/01/2026 on line 3. Terminate both rows with LF and start line 4 with byte 0xFF. Run cma import monzo. The recovery slice cuts the last two balance digits and newline from line 3 and then drops that row. It reports line 3 and omits that money in reached the limit. The runner’s CR-only and multiline UTF-8 tests use files without a BOM."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/cli.py",
+      "line": 442,
+      "criterion": "R2",
+      "claim": "The Monzo CLI interpolates the import error into Rich markup. A closing tag in a rejected cell can raise a markup error and suppress both the record-start line and the flow-limit diagnostic.",
+      "repro": "Use a Monzo CSV with the header Transaction ID,Date,Type,Name,Amount,Currency,Balance. Put tx_1,01/01/2026,Faster payment,ACME,9999999999999.99,GBP,1.00 on line 2 and tx_2,02/01/2026,Faster payment,ACME,0.01,GBP,[/red] on line 3. Run cma import monzo. The converter includes both the money-in limit and the invalid Balance on line 3 in MonzoImportError. Rich interprets the cell’s unmatched closing tag while rendering that error."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_money_in.py",
+      "line": 262,
+      "criterion": "R2",
+      "claim": "The historical scratchpad claims are not proven by a runner result. The large-credit probe also tests the figures helper, so it does not establish that an above-limit statement is accepted through the loader, which revision 29 requires to refuse it.",
+      "repro": "Compare the claim’s PYTHONPATH=src python scratchpad/probe.py with the runner command rows. To prove the quoted probe outputs, the runner would need the referenced script and a result row for that command. The current suite independently proves the named M3, reconciliation, outflow and display tests."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_previous_release.py",
+      "line": 115,
+      "criterion": "P2",
+      "claim": "The claimed historical suite counts and full-suite pass at ca0092c are not proven by the current runner logs. The logs do prove the named tests on the reviewed checkout.",
+      "repro": "Compare claim.json with specified-3.log and dual_run-7.log. The checkout under review is 36062be, with 955 full-suite passes and 84 dual-run passes. Verifying the historical counts requires runner results at ca0092c for python -m pytest -q, python -m pytest -q -m invariants tests/test_money_in.py, python -m pytest -q -m contracts tests/test_money_in.py, and python -m pytest -q -m dual_run."
+    },
+    {
+      "severity": "minor",
+      "file": "examples/cafe_stretched.memo.evidence.json",
+      "line": 2363,
+      "criterion": null,
+      "claim": "The producer note that the committed example was left unregenerated and has no evidence_note field is stale.",
+      "repro": "Read the committed example at line 2363. It contains evidence_note, and the example also includes M17 through M26 and an updated decision timestamp."
+    }
+  ],
+  "verdict": "fail"
+}
+```

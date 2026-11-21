@@ -49,6 +49,7 @@ from pydantic import ValidationError
 from . import categorise as cat
 from . import firm, ingest
 from . import guard as grd
+from . import indicators as ind
 from . import metrics as met
 from . import policy as pol
 from .llm import LLM, FakeLLM, HostedLLM, get_llm
@@ -124,6 +125,10 @@ Rules you must follow. An automatic check enforces 1-7 and rejects the draft if 
 class MemoState(TypedDict, total=False):
     statement_path: str
     policy_path: str | None
+    # The thresholds file's path (None: the packaged one) and its text as read at the start of
+    # the run, so the indicators in the evidence come from the file the run checked (R14).
+    thresholds_path: str | None
+    thresholds_text: str | None
     vat_stagger: int | None
     model: str
     run_offline_lock: bool | None  # never read: an input before T17 review 3, kept so old checkpoints load
@@ -143,6 +148,9 @@ class MemoState(TypedDict, total=False):
     guard: GuardResult
     guard_feedback: str
     redrafts: int
+    # Set when `cma resume` has written today's figures into a review drafted by an earlier
+    # release, before showing it: the review goes on to the reviewer as it was (T04 review 24).
+    refreshed_for_review: bool
     review: ReviewDecision | None
     final_memo: str | None
 
@@ -321,7 +329,9 @@ def appendix(s: MemoState) -> str:
         "| id | metric | value | method | lines |",
         "|---|---|---|---|---|",
     ]
-    lines += [f"| {m.id} | {m.name} | {m.display()} | {m.method} | {len(m.evidence)} |" for m in s["metrics"]]
+    # Every money figure to the penny in the appendix (T04 review 4); the memo's prose keeps
+    # its own convention, checked by the guard.
+    lines += [f"| {m.id} | {m.name} | {m.display_exact()} | {m.method} | {len(m.evidence)} |" for m in s["metrics"]]
     lines += ["", rules_table(p)]
     return "\n".join(lines)
 
@@ -368,6 +378,89 @@ def _add_draft_resume_lock(out: dict, s: MemoState) -> None:
         out["draft_resume_offline_lock"] = s["draft_resume_offline_lock"]
 
 
+def line_rule_ids(s: MemoState) -> list[str | None]:
+    """Each line's rule id. A checkpoint from before provenance holds none: either no
+    ruleset at all (before T01; the lines were categorised by the table that is now v1,
+    P7) or a recorded ruleset with no rule ids on the lines (T02). The table the state
+    names, or v1 when it names none, is replayed on a copy, provided the installed table
+    has the recorded hash, and its rule id taken for each line whose saved category it
+    reproduces. A line it does not reproduce keeps None rather than a rule that did not
+    set it."""
+    txns = s["statement"].transactions
+    if all(t.rule_id for t in txns):
+        return [t.rule_id for t in txns]
+    recorded = s.get("ruleset") or {}
+    try:
+        table = cat.load_ruleset(recorded.get("id") or "v1")
+    except cat.RulesetError:
+        return [t.rule_id for t in txns]
+    if recorded.get("sha256") and recorded["sha256"] != table.sha256:
+        return [t.rule_id for t in txns]  # not the table that categorised these lines
+    replay = cat.categorise(s["statement"].model_copy(deep=True), table).transactions
+    return [t.rule_id or (r.rule_id if r.category == t.category else None) for t, r in zip(txns, replay, strict=True)]
+
+
+class StaleReviewError(ValueError):
+    """A pending review whose policy outcome could differ under this release's figures."""
+
+
+def refreshed(s: MemoState) -> dict:
+    """A pending review's figures as this release computes them, with the grounding check
+    that follows from them, when they differ from the stored ones; else {}.
+
+    A review drafted by an earlier release can hold figures computed by its arithmetic and
+    no total money in or money-in buckets. Resumed here, it is decided, finalised and
+    recorded on today's figures (R1, R2, P2), and keeps resuming as before (R53); if its
+    memo no longer holds against them, approving it needs the grounding override, as for
+    any memo that fails the check (T04 review 16).
+
+    The stored policy result is re-evaluated for the changed figures from the rules it holds
+    (T04 review 18); where it cannot say a rule's outcome, the policy is read once and used
+    only if its hash is the stored one (T04 review 19). Only if neither settles it is the
+    review refused with StaleReviewError, to be drafted again by `cma run`. Raises AmountError or ReconciliationError when today's
+    figures cannot be computed."""
+    fresh = met.compute(s["statement"].model_copy(deep=True), vat_stagger=s.get("vat_stagger"))
+    if [m.model_dump() for m in fresh] == [m.model_dump() for m in s["metrics"]]:
+        return {}
+    try:
+        policy = pol.reevaluate(s["policy"], s["metrics"], fresh,
+                                Path(s["policy_path"]) if s.get("policy_path") else None)
+    except pol.OutcomeUnknown as e:
+        raise StaleReviewError(f"this review was drafted by an earlier release, and {e} today; "
+                               "run `cma run` on the statement again") from e
+    g = grd.check(s["memo"], fresh, policy, required_headings=grd.REQUIRED_HEADINGS)
+    update = {"metrics": fresh, "guard": g}
+    if policy != s["policy"]:
+        update["policy"] = policy
+    return update
+
+
+def guard_fields(g) -> dict:
+    """The grounding result as the review shows it."""
+    return {"guard_grounded": g.grounded,
+            "guard_unmatched": [f.number_text or f.reason for f in g.unmatched],
+            "guard_missing_citations": g.missing_citations}
+
+
+def run_thresholds(s: MemoState) -> ind.Thresholds:
+    """The thresholds the run read: the text kept in its state, or the packaged file for a run
+    that kept none (a review drafted before indicators existed)."""
+    if s.get("thresholds_text") is not None:
+        return ind.parse_thresholds(s["thresholds_text"], s.get("thresholds_path") or ind.DEFAULT_SOURCE)
+    return ind.load_thresholds()
+
+
+def _indicator_fields(s: MemoState) -> dict:
+    t = run_thresholds(s)
+    raised = ind.raise_indicators(s["statement"], t)
+    return {"thresholds": {"source": t.source, "sha256": t.sha256,
+                           "illustrative": [f"{a}.{b}" for a, b in t.fields() if t.illustrative(a, b)]},
+            "indicators": [i.model_dump(mode="json") for i in raised],
+            # R15: the lines a person has to decide, largest first, assembled from the same
+            # lines and indicators; `cma run` has one account, so no possible own-account pairs.
+            "judgement_queue": [e.model_dump(mode="json") for e in ind.judgement_queue(s["statement"], raised)]}
+
+
 def evidence_record(s: MemoState) -> dict:
     """Everything needed to audit the memo later, as plain JSON."""
     return {
@@ -379,7 +472,17 @@ def evidence_record(s: MemoState) -> dict:
         "egress": _egress(s),
         "vat_stagger": s.get("vat_stagger"),
         "ruleset": ruleset_used(s),
+        # Each line's category and the rule that set it: ids only, no descriptions.
+        "lines": [{"id": t.id, "category": t.category.value if t.category else None, "rule_id": rule_id,
+                   "reverses": t.reverses} for t, rule_id in zip(s["statement"].transactions, line_rule_ids(s),
+                                                                 strict=True)],
         "metrics": [m.model_dump() for m in s["metrics"]],
+        # R11: computed here from the stored lines, as the metrics were, so no new type
+        # travels through the checkpoint (CHECKPOINT_TYPES is unchanged).
+        "monthly_summary": [r.model_dump(mode="json") for r in met.monthly_summary(s["statement"])],
+        # R14: raised here from the stored lines, as the monthly summary is, with the thresholds
+        # file the run read; each indicator names the thresholds it fired at.
+        **_indicator_fields(s),
         "policy": s["policy"].evidence_dump(mode="json"),
         "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
         "redrafts": s.get("redrafts", 0),
@@ -398,10 +501,20 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
     def load(s: MemoState, config: RunnableConfig) -> MemoState:
         reading = _run_reading_of(config) or (handed.pop() if handed else firm.load())
         path = Path(s["statement_path"])
-        statement = ingest.load_csv(path)
+        try:
+            data = path.read_bytes()  # read once: these bytes are both parsed and hashed (T04 review 17)
+        except OSError:
+            ingest.load_csv(path)  # refuses, saying why (no such file)
+            raise
+        statement = ingest.load_csv(path, data=data)
+        # The thresholds file is read and checked once, here: a malformed one is refused naming
+        # its line before anything is computed, and its text is what the indicators come from.
+        tpath = s.get("thresholds_path")
+        thresholds_text, _ = ind.read_thresholds(Path(tpath) if tpath else None)
         return {
             "statement": statement,
-            "statement_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "thresholds_text": thresholds_text,
+            "statement_sha256": hashlib.sha256(data).hexdigest(),
             "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
             # The run's one reading of firm.yaml: the one handed to build() for its first run,
             # or read now; never the graph's input. Every hosted request in this run is
@@ -462,7 +575,7 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
         return {"guard": g, "guard_feedback": "" if g.grounded else "redraft"}
 
     def route_after_guard(s: MemoState) -> str:
-        if s["guard"].grounded or s.get("redrafts", 0) >= MAX_REDRAFTS:
+        if s["guard"].grounded or s.get("redrafts", 0) >= MAX_REDRAFTS or s.get("refreshed_for_review"):
             return "review"
         return "redraft"
 
@@ -475,12 +588,12 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
         Each refusal is a fresh interrupt, so LangGraph replays earlier answers in order
         and the reviewer can always correct theirs.
         """
+        update = refreshed(s)  # a review drafted by an earlier release (T04 review 16)
+        s = {**s, **update}
         payload = {
             "memo": s["memo"],
             "policy_outcome": s["policy"].overall.value,
-            "guard_grounded": s["guard"].grounded,
-            "guard_unmatched": [f.number_text or f.reason for f in s["guard"].unmatched],
-            "guard_missing_citations": s["guard"].missing_citations,
+            **guard_fields(s["guard"]),
             "question": "Approve this memo for the credit file?",
             "error": None,
         }
@@ -488,7 +601,7 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
             decision = interrupt(payload)
             problem = _review_problem(decision, s["guard"].grounded)
             if problem is None:
-                return {"review": ReviewDecision(**decision)}
+                return {"review": ReviewDecision(**decision), **update}
             payload = {**payload, "error": problem}
 
     def finalise(s: MemoState, config: RunnableConfig) -> MemoState:
