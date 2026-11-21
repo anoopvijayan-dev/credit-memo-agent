@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "blocked",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-205/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (Checked exact conversion and limit handling at src/cma/metrics.py:95 and src/cma/ingest.py:533, M3 at src/cma/metrics.py:563, and penny display at src/cma/cli.py:415 and src/cma/graph.py:175. The runner passed the large-amount and balance-limit regressions separately. Combining them breaks the refusal formatter, and the Monzo walk drops time from timestamps carried in Date.); major: Formatting a balance-chain fault can raise Python's integer-to-string digit-limit error before the loader reports the offending line or the flow limit. at src/cma/metrics.py:191; major: The Monzo balance walk can reject a consistent export because an ISO timestamp in Date loses its time and the sort falls back to transaction ID. at src/cma/importers/monzo.py:257; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-209/evidence.json",
+      "escalation": "blocked after 3 attempts. Last verdict fail: R2 fail (Checked amount conversion and flow limits at src/cma/metrics.py:95 and src/cma/ingest.py:591, the large-balance diagnostic at src/cma/metrics.py:188, M3 at src/cma/metrics.py:567, and penny display at src/cma/cli.py:415 and src/cma/graph.py:175. The runner passed the large-value regressions and the same-offset Monzo regression. Monzo still sorts by wall-clock strings when the timestamps carry different offsets.); major: Monzo drops the UTC offset before the running-balance walk orders timestamps. When an offset changes, the importer can reject a consistent export or reconstruct balances in the wrong transaction order. at src/cma/importers/monzo.py:84; reviewer verdict fail"
     },
     {
       "id": "T06",
