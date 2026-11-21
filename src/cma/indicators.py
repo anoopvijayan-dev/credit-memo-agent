@@ -13,6 +13,10 @@ of its kind (an amount with a fraction of a penny, a share above 100, a count be
 
 Each indicator lists the lines that made it fire and the thresholds it fired at, and says
 why in one line that never quotes a line's description (R34).
+
+The judgement queue (R15) is assembled here too, as a pure function of the categorised lines,
+the indicators and any possible own-account transfers: the lines a person has to decide, the
+largest amount first. It does no money arithmetic; it only orders lines by their pence.
 """
 
 from __future__ import annotations
@@ -31,13 +35,16 @@ from pathlib import Path
 
 import yaml
 
-from .categorise import _SEPARATOR_RUN, _fold, names_pattern
+from .categorise import _SEPARATOR_RUN, RulesetError, _fold, load_ruleset, names_pattern
 from .metrics import at_limit, balance_pence, end_of_day_balances, pence, pounds_text, text_pence
 from .models import (
+    CREDIT_BUCKET,
     REVENUE_CATEGORIES,
     Category,
     Indicator,
     IndicatorThreshold,
+    QueueCandidate,
+    QueueEntry,
     Statement,
     Transaction,
 )
@@ -373,3 +380,79 @@ def _shown(v, unit: str) -> str:
     if isinstance(v, Decimal):
         return format(v, "f")
     return str(v)
+
+
+# --- The judgement queue (R15) -----------------------------------------------------------
+
+# The category each kind of case-profile name sets, whatever the ruleset (R5, R6).
+PROFILE_CANDIDATES = {"profile:director": Category.DIRECTOR_FUNDING,
+                      "profile:own_account": Category.OWN_ACCOUNT_TRANSFER}
+CONFLICT = ":conflict:"
+
+
+def queue_candidates(rule_id: str | None) -> list[QueueCandidate]:
+    """An ambiguous credit's candidates, read from its conflict form
+    (<ruleset>:conflict:<id>+<id>...): each table rule with the category it sets in that
+    ruleset (none for a payment-method cue), each profile kind with its own category, and the
+    bucket each category maps to. Any other rule id has no candidates."""
+    if not rule_id or CONFLICT not in rule_id:
+        return []
+    table_id, ids = rule_id.split(CONFLICT, 1)
+    try:
+        categories = {r.id: r.category for r in load_ruleset(table_id).rules}
+    except RulesetError:  # a ruleset not installed: the candidates are named, their categories unknown
+        categories = {}
+    out = []
+    for cid in (c for c in ids.split("+") if c):
+        category = PROFILE_CANDIDATES.get(cid, categories.get(cid))
+        out.append(QueueCandidate(rule_id=cid, category=category,
+                                  bucket=CREDIT_BUCKET.get(category) if category is not None else None))
+    return out
+
+
+def judgement_queue(statement: Statement, indicators: list[Indicator],
+                    possible_own_account: list[list[str]] | None = None) -> list[QueueEntry]:
+    """The lines a person has to decide (R15): every unexplained credit, ambiguous ones among
+    them with their candidates; every line of a possible own-account transfer, when the case
+    has any (R9: a debit and each credit it could pair with, given as one group); and every
+    line an indicator flagged, which includes each cash deposit at or above the single-deposit
+    limit. One entry per line, largest amount first (by size, either way), and statement
+    order between equal amounts. The statement and the indicators are read, never changed."""
+    txns = statement.transactions
+    by_id = {t.id: t for t in txns}
+    pos = {t.id: i for i, t in enumerate(txns)}
+    entries: dict[str, dict] = {}
+
+    def entry(line_id: str) -> dict:
+        return entries.setdefault(line_id, {"reasons": [], "indicators": [], "indicator_kinds": [],
+                                            "candidates": [], "pairs_with": []})
+
+    def reason(e: dict, r: str) -> None:
+        if r not in e["reasons"]:
+            e["reasons"].append(r)
+
+    for t in txns:
+        if pence(t) > 0 and t.category == Category.OTHER:
+            e = entry(t.id)
+            reason(e, "unexplained")
+            candidates = queue_candidates(t.rule_id)
+            if candidates:
+                reason(e, "ambiguous")
+                e["candidates"] = candidates
+    for group in possible_own_account or []:
+        ids = [i for i in dict.fromkeys(group) if i in by_id]
+        for i in ids:
+            e = entry(i)
+            reason(e, "possible_own_account_transfer")
+            e["pairs_with"] += [j for j in ids if j != i and j not in e["pairs_with"]]
+    for ind in indicators:
+        for i in ind.evidence:
+            if i not in by_id:
+                continue
+            e = entry(i)
+            reason(e, "indicator")
+            if ind.id not in e["indicators"]:
+                e["indicators"].append(ind.id)
+                e["indicator_kinds"].append(ind.kind)
+    order = sorted(entries, key=lambda i: (-abs(pence(by_id[i])), pos[i]))
+    return [QueueEntry(line_id=i, amount=by_id[i].amount, **entries[i]) for i in order]
