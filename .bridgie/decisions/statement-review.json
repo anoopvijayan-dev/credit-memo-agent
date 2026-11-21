@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 329,
+  "next_id": 330,
   "decisions": [
     {
       "id": "D1",
@@ -6586,6 +6586,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T08:29:59.081Z"
+    },
+    {
+      "id": "D329",
+      "type": "unblock",
+      "task": "T17",
+      "raised_by": null,
+      "context": "Task T17 \"firm.yaml (offline_lock and show_policy_verdict default on, file paths), read once per run; under the lock no hosted client is built, and the MCP server and its ASGI app refuse at startup before any socket opens; hosted clients are built with SDK retries off so the lock check covers every request; evidence records the same lock value the dispatch used; prompts carry only the metric table, the rule table (outcome as a row), the period and the placeholder name, with redraft feedback limited to metric and rule ids; test (invariants): p5, p18\" is blocked after 3 attempts. Last verdict fail: R29 fail (src/cma/firm.py:68 defaults the lock on; llm.py builds clients with max_retries=0 and checks every request; mcp_server.py checks every start path, the ASGI factories and the app at start-up and per request; graph.py:324-356 records egress. The verify-210 majors are fixed in eac4a4b: firm.py:181-208 adds _OWNED, graph.py:436-440 records a drafting resume's lock, graph.py:242 requires the shipped file's hash. Two gaps remain. The sync stream wrapper (graph.py stream -> start -> firm.begin_run, firm.py:184-187) sets _OWNED in the caller's own context, so while the stream is suspended any same-thread caller holding the reading is allowed. finalise (graph.py:494-496) overwrites a drafting resume's resume_offline_lock with the finalising resume's.); P18 fail (Runner passed 89 test_firm p18 invariants (invariants-5.log): constructor refusal, one attempt per check, no redirects, native bind refusal, saved ASGI refusal, async resume. P18 validates R29, and R29's run-ownership gate leaks within the same thread (finding 1), so a hosted request can go out after the lock is on through a reading whose run the caller does not own.); major: The review-16 fix to allows_request works only across threads. graph.py's sync stream wrapper calls start() and firm.begin_run() inside a plain generator, and a sync generator has no context of its own, so _OWNED.set lands in the caller's context and stays there while the stream is suspended. Any other code on that thread holding the stream's unlocked reading passes allows_request (firm.py:203-208) after the firm locks, and HostedLLM._check sends the request on the stale reading without reading firm.yaml. This also fails P18. at src/cma/firm.py:187; major: finalise always writes resume_offline_lock from its own resume config, overwriting the value a drafting resume recorded (graph.py:436-440). When one resume drafts and pauses and a later resume approves, the evidence keeps the drafting resume's destination and model next to the finalising resume's lock. It then no longer records the lock value the hosted dispatch was checked against. at src/cma/graph.py:496; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T08:33:07.772Z"
     }
   ]
 }
