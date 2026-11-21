@@ -1,0 +1,101 @@
+{
+  "task": "T28",
+  "criteria": [
+    {
+      "id": "R53",
+      "tier": "adversarial",
+      "check": "cma import monzo and cma case import keep their options and output. cli.py:451-457 and store.py:543,576-590 call monzo.convert and contract.checked and catch contract.ImportRefused; MonzoImportError subclasses ImportRefused (monzo.py:58), so existing except clauses still work. ImportResult fields and balance_source text are unchanged (monzo.py:313-327). contract.statement_bytes (contract.py:91-99) writes the same DictWriter CSV, now always UTF-8. The MCP tool refusal goes through ingest.refusal_parts (mcp_server.py:181, ingest.py:64-91) with the same labels as before. The runner ran the golden tests test_monzo_golden_output_is_unchanged, test_cma_import_monzo_writes_the_golden_statement and test_cma_case_import_keeps_the_golden_statement (contracts-4.log:87-92, all passed), and the unchanged content assertions in tests/test_import_monzo.py:52,143-147 pass in the full suite (specified-3, 2032 passed).",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-232/contracts-4.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-235/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-235/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-235/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-235/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-235/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-235/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-235/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/contract.py",
+      "line": 109,
+      "criterion": "R53",
+      "claim": "checked() maps a loader line n to source_lines[n-2], which assumes each statement row is exactly one line of the file. describe() (monzo.py:155) keeps a line break from Monzo's Type cell in the description prefix (k.upper()), and csv quotes it as a field spanning two lines, so every later row starts one line lower. The loader then names a statement line that maps to another row's source line, or to a line that is not the problem row's. The refusal names the wrong line, against the task's aim that refusals give line numbers.",
+      "repro": "Monzo export (header line 1) with rows in source order: A tx_a dated 01/01/2099 (line 2); B tx_b Type \"Odd\\nType\" (quoted, lines 3-4) dated 01/01/2026; C tx_c dated 02/01/2026 (line 5); D tx_d dated 01/01/2100 (line 6), with Balance blank and --opening-balance 0. Sorted: B, C, A, D. Statement: B on lines 2-3, C on 4, A on 5, D on 6. The loader refuses statement line 5 (A, future) and line 6 (D). k=3 maps to source_lines[3] = D's line 6, and line 6 maps to out of range, so 6. The refusal says 'other problems on line 6' and never names line 2, where A is."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/contract.py",
+      "line": 113,
+      "criterion": "R53",
+      "claim": "When the statement loader refuses an importer's output, or a statement CSV in cma case import, the refusal says only 'other problems on line N' and not what is wrong (for example that the date is in the future), though the module docstring (contract.py:13-15) promises 'what is wrong'. test_an_output_the_loader_would_refuse_is_never_written asserts that 'future' is not in the message. Before T28, cma case import of a CSV named each problem.",
+      "repro": "cma import monzo on an export with a row dated 01/01/2099: the refusal reads '<export>: 1 problem(s): other problems on line 2', with no reason."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 179,
+      "criterion": "R53",
+      "claim": "A Monzo header with a repeated column name is refused quoting that name, which is text from the file, so a cell value still reaches a refusal under the 'never cell values' contract. The producer disclosed this (notes item 1).",
+      "repro": "Header 'Transaction ID,Date,Type,Name,Amount,ZQXJ,ZQXJ'; cma import monzo prints 'column(s) named more than once: ZQXJ'."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/golden/monzo/personal_statement.golden",
+      "line": 1,
+      "criterion": "R53",
+      "claim": "The claim that the golden files were captured from the importer before the extraction is not shown in the history or by a runner tier. Commit c831ff0 adds only results.json and .gitattributes; the .golden files were added in f213416, together with the refactor. The producer's comparison with c831ff0's importer ran from a scratch folder, not a runner tier.",
+      "repro": "git show --stat c831ff0 (no .golden files); git diff --stat c831ff0 6b80972 -- tests/golden (all four .golden files added). Proof would be the c831ff0 importer run on the golden exports by a configured tier, or the golden files committed in a commit before the code change."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

@@ -1,0 +1,73 @@
+I'd pass T28. Its one requirement, R53, is met, and I found three minor problems but nothing blocker or major. I read the repository at 6b80972 and checked the runner's logs. The evidence is in the JSON block below: I don't have a file-writing tool, so I didn't write `evidence.json` to the run folder.
+
+**R53 (pass).**
+- `cma import monzo` and `cma case import` both run through the new shared step in `src/cma/importers/contract.py` and catch its refusal type (`cli.py:451-457`, `store.py:543, 576-590`).
+- `MonzoImportError` still exists and is a subclass of the new refusal, so existing `except MonzoImportError` code keeps working.
+- The opening-balance source text, the import result fields and the MCP server's refusal wording are unchanged; the MCP server now calls a shared function for that wording.
+- The runner's contracts log shows the golden-output tests ran and passed (`contracts-4.log:87-92`, 589 passed). The pre-existing Monzo import tests also pass unchanged in the full suite (2032 passed).
+- The output is byte-identical: `contract.py:91-99` writes the same CSV as the old code, now always as UTF-8.
+
+**Minor findings:**
+1. **A refusal can name the wrong line.** `write_statement` assumes each statement row is one line of the file (`contract.py:109-111, 127`). But a Monzo Type cell containing a line break is not collapsed by `describe()` (`monzo.py:155`). That makes the description a quoted field spanning two lines, so every later row shifts down a line. If the loader then refuses a later row, the message points at a different row of the export.
+   - Repro: an export whose rows sort as B (Type `"Odd\nType"`), C, A (dated 01/01/2099), D. The loader reports statement line 5, which maps to D's line instead of A's.
+2. **Refusals no longer say what's wrong.** A loader refusal of the importer's output (for example a future-dated row) now reads only `other problems on line N`. `contract.py:13-15` promises "what is wrong", and the test asserts that "future" is *not* in the message. `cma case import` of a statement CSV has the same loss: the old message named each problem.
+3. **One cell value still reaches a refusal.** A Monzo header with a repeated column name prints that name (`monzo.py:177-179`), which is text from the file. The producer disclosed this. `cma case import` of a CSV already drops it.
+
+**Two things to know:**
+- **The golden files are not proven to predate the change.** Commit c831ff0, which says it captured them from the old importer, adds only `results.json` and `.gitattributes`. The `.golden` files came in f213416, together with the refactor. The producer's check against the old code ran from a scratch folder, not a runner tier. Re-running that check, or committing the golden files in a commit before the code change, would prove it.
+- **The claim's file list is wrong.** It lists only `monzo.py`; the diff changes eight source and test files besides the golden files.
+
+```json
+{
+  "task": "T28",
+  "criteria": [
+    {
+      "id": "R53",
+      "tier": "adversarial",
+      "check": "cma import monzo and cma case import keep their options and output. cli.py:451-457 and store.py:543,576-590 call monzo.convert and contract.checked and catch contract.ImportRefused; MonzoImportError subclasses ImportRefused (monzo.py:58), so existing except clauses still work. ImportResult fields and balance_source text are unchanged (monzo.py:313-327). contract.statement_bytes (contract.py:91-99) writes the same DictWriter CSV, now always UTF-8. The MCP tool refusal goes through ingest.refusal_parts (mcp_server.py:181, ingest.py:64-91) with the same labels as before. The runner ran the golden tests test_monzo_golden_output_is_unchanged, test_cma_import_monzo_writes_the_golden_statement and test_cma_case_import_keeps_the_golden_statement (contracts-4.log:87-92, all passed), and the unchanged content assertions in tests/test_import_monzo.py:52,143-147 pass in the full suite (specified-3, 2032 passed).",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-232/contracts-4.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/contract.py",
+      "line": 109,
+      "criterion": "R53",
+      "claim": "checked() maps a loader line n to source_lines[n-2], which assumes each statement row is exactly one line of the file. describe() (monzo.py:155) keeps a line break from Monzo's Type cell in the description prefix (k.upper()), and csv quotes it as a field spanning two lines, so every later row starts one line lower. The loader then names a statement line that maps to another row's source line, or to a line that is not the problem row's. The refusal names the wrong line, against the task's aim that refusals give line numbers.",
+      "repro": "Monzo export (header line 1) with rows in source order: A tx_a dated 01/01/2099 (line 2); B tx_b Type \"Odd\\nType\" (quoted, lines 3-4) dated 01/01/2026; C tx_c dated 02/01/2026 (line 5); D tx_d dated 01/01/2100 (line 6), with Balance blank and --opening-balance 0. Sorted: B, C, A, D. Statement: B on lines 2-3, C on 4, A on 5, D on 6. The loader refuses statement line 5 (A, future) and line 6 (D). k=3 maps to source_lines[3] = D's line 6, and line 6 maps to out of range, so 6. The refusal says 'other problems on line 6' and never names line 2, where A is."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/contract.py",
+      "line": 113,
+      "criterion": "R53",
+      "claim": "When the statement loader refuses an importer's output, or a statement CSV in cma case import, the refusal says only 'other problems on line N' and not what is wrong (for example that the date is in the future), though the module docstring (contract.py:13-15) promises 'what is wrong'. test_an_output_the_loader_would_refuse_is_never_written asserts that 'future' is not in the message. Before T28, cma case import of a CSV named each problem.",
+      "repro": "cma import monzo on an export with a row dated 01/01/2099: the refusal reads '<export>: 1 problem(s): other problems on line 2', with no reason."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/monzo.py",
+      "line": 179,
+      "criterion": "R53",
+      "claim": "A Monzo header with a repeated column name is refused quoting that name, which is text from the file, so a cell value still reaches a refusal under the 'never cell values' contract. The producer disclosed this (notes item 1).",
+      "repro": "Header 'Transaction ID,Date,Type,Name,Amount,ZQXJ,ZQXJ'; cma import monzo prints 'column(s) named more than once: ZQXJ'."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/golden/monzo/personal_statement.golden",
+      "line": 1,
+      "criterion": "R53",
+      "claim": "The claim that the golden files were captured from the importer before the extraction is not shown in the history or by a runner tier. Commit c831ff0 adds only results.json and .gitattributes; the .golden files were added in f213416, together with the refactor. The producer's comparison with c831ff0's importer ran from a scratch folder, not a runner tier.",
+      "repro": "git show --stat c831ff0 (no .golden files); git diff --stat c831ff0 6b80972 -- tests/golden (all four .golden files added). Proof would be the c831ff0 importer run on the golden exports by a configured tier, or the golden files committed in a commit before the code change."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "claude-opus-5-5"
+  }
+}
+```
