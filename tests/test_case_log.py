@@ -3374,3 +3374,50 @@ def test_a_nested_save_through_a_second_handle_is_refused_too(tmp_path, monkeypa
     log.append("override", {"outer": True}, expected=2)
     check = log.verify()
     assert check.ok and check.head.position == 3 and inner
+
+
+def test_a_publish_and_take_back_during_a_read_is_not_a_steady_read(tmp_path, monkeypatch):
+    """T12 review 49 / P15: a reader took equal head contents before and after its read as
+    proof the head did not change; a publication and a take-back during the read leave equal
+    contents in another file, so that read is not steady."""
+    log = _log(tmp_path, 2)
+    real_read = log._read_log
+
+    def published_and_taken_back():
+        data = real_read()
+        same = log.head_path.read_bytes()  # what the take-back restores
+        staged = log.head_path.with_name(log.head_path.name + ".staged")
+        staged.write_bytes(same)
+        os.replace(staged, log.head_path)
+        return data
+
+    monkeypatch.setattr(log, "_read_log", published_and_taken_back)
+    _check, still = log._look()
+    assert not still
+    assert log._steady() is None  # moved during every read: nothing is claimed from them
+
+
+def test_a_nested_save_after_the_case_folder_moved_is_refused(tmp_path, monkeypatch):
+    """T12 review 49 / R42: the nested-save guard named the case by its resolved path, so a
+    nested save through a handle to the same case after its folder moved passed the guard."""
+    folder = tmp_path / "a"
+    folder.mkdir()
+    log = _log(folder, 2)
+    moved = tmp_path / "b"
+    real, inner = case._utc_now, []
+
+    def nested():
+        if not inner:
+            inner.append(None)
+            os.rename(folder, moved)
+            try:
+                with pytest.raises(case.CaseLogError, match="under way"):
+                    case.CaseLog(moved / "log.jsonl").append("override", {"inner": True}, expected=2)
+            finally:
+                os.rename(moved, folder)
+        return real()
+
+    monkeypatch.setattr(case, "_utc_now", nested)
+    log.append("override", {"outer": True}, expected=2)
+    check = log.verify()
+    assert inner and check.ok and check.head.position == 3

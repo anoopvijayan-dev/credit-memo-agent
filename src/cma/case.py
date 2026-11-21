@@ -248,6 +248,26 @@ def _is_hash(value: Any) -> bool:
     return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
 
 
+def _file_identity(path: Path) -> tuple | None:
+    """Which file stands at `path`: its device, inode, size and change times, or None if none
+    does. A file renamed into place is another file, whatever it holds."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def _folder_key(folder: Path) -> tuple:
+    """The case folder as the file system knows it: its device and inode, which stay the same
+    when the folder is moved or renamed; its resolved path if it cannot be looked at."""
+    try:
+        st = os.stat(folder)
+    except OSError:
+        return ("path", os.path.realpath(folder))
+    return ("inode", st.st_dev, st.st_ino)
+
+
 def _read_head(path: Path, *, raise_os: bool = False) -> list[str] | object | None:
     """The hash of every entry the head file records, in order; None if there is no head
     file; _UNREADABLE if it cannot be read or is not exactly what the writer produces.
@@ -722,10 +742,15 @@ class CaseLog:
                           "changed during every read", in_progress=False)
 
     def _look(self) -> tuple[LogCheck, bool]:
-        """One read judged by the head read before it, and whether the head held still."""
+        """One read judged by the head read before it, and whether the head held still: the
+        same contents in the same file. Every publication, and every take-back, renames a new
+        file into place, so a publish and take-back during the read leaves equal contents in
+        another file, and the read is not steady (T12 review 49)."""
+        file_before = _file_identity(self.head_path)
         before = _read_head(self.head_path)
         check = _check(self._read_log(), before)
-        return check, _read_head(self.head_path) == before
+        still = _read_head(self.head_path) == before and _file_identity(self.head_path) == file_before
+        return check, still
 
     def _read_log(self) -> bytes | None:
         try:
@@ -929,10 +954,11 @@ class CaseLog:
         """One save at a time per holder: a save started inside another on the same thread
         (from a signal handler, a finaliser or a callback) is refused, since the writer lock
         admits it and the outer save's check would then be stale (T12 review 20)."""
-        # Keyed by the case folder as the file system names it and the thread, shared by every
-        # CaseLog object, so a save begun inside another through a second handle to the same
-        # case (another object, another spelling of the path) is refused too (review 48).
-        key = (os.path.realpath(self.path), _holder_id())
+        # Keyed by the case folder as the file system knows it (device and inode) and the
+        # thread, shared by every CaseLog object, so a save begun inside another through a
+        # second handle to the same case (another object, another spelling of the path, the
+        # folder moved meanwhile) is refused too (reviews 48 and 49).
+        key = (_folder_key(self.path.parent), _holder_id())
         token = object()
         try:
             # One step: setdefault tests and registers together, so no signal handler can run
