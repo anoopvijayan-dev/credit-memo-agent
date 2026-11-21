@@ -449,6 +449,7 @@ Each finding becomes a test with the R4 outcome; keep the four verify-27 cases a
 - 2026-11-21 D292 (approve_design): approve → design approved [Anoop Vijayan]
 - 2026-11-21 D290 (question): The SDK's app behind a lock check, a wrapper, as 6b43212 builds; R53 says code that checks the app's class sees another class (design default; no build change) — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. → recorded [Anoop Vijayan]
 - 2026-11-21 D291 (question): From the next run: a run keeps the lock its reading found as it started, and a resume reads firm.yaml as it resumes; say it in R29 and P18 in the next revision (design default; T17 changes the resume's read before its review) — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. → recorded [Anoop Vijayan]
+- 2026-11-21 D287 (unblock): take over manually — Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. T17 at 6b43212 (review 5), judged against the R29 and R53 scope limit in the new revision. → task T17 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T17 [Anoop Vijayan]
 
 ## Idea
 
