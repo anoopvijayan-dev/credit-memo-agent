@@ -509,3 +509,26 @@ def test_no_summary_is_computed_for_a_request_without_the_token(home, tmp_path, 
         finally:
             conn.close()
     assert calls == []
+
+
+@pytest.mark.contracts
+def test_an_override_that_puts_a_line_right_lets_the_case_be_shown(home, tmp_path, serve, monkeypatch):
+    """R3, R17: the case was refused whenever the figures without overrides did not reconcile,
+    a comparison made only to mark figures, so an override that puts a line right could never
+    let the case be shown. The figures as overridden decide; the comparison only marks."""
+    case_id, folder = _case(tmp_path)
+    real = overrides.categorise
+
+    def broken_unless_overridden(statement, *args, **kwargs):  # a fault an override corrects
+        out = real(statement, *args, **kwargs)
+        if "L2" not in (kwargs.get("overrides") or {}):
+            next(t for t in statement.transactions if t.id == "L2").category = Category.SUPPLIER
+        return out
+
+    monkeypatch.setattr(overrides, "categorise", broken_unless_overridden)
+    assert _api(serve(case_id))["state"] == "not_reconciled"
+    overrides.add_override(folder, "L2", "director_funding", reason="checked the paying-in slip", name="Pat")
+    data = _api(serve(case_id))
+    assert data["state"] == "shown" and data["reconciliation"] is None
+    figures = {f["id"]: f for f in data["accounts"][0]["figures"]}
+    assert figures["M20"]["overridden"] and figures["M17"]["overridden"]  # L2 is among their lines

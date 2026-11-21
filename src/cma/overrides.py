@@ -290,17 +290,24 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
         if applied:
             try:
                 base_metrics, base_monthly = _figures(bare, profile, {})
-            except ReconciliationError as e:
-                e.account, e.statement = account, bare
-                failed.append(e)
-                continue
-            marked = {m.id for m, b in zip(metrics, base_metrics, strict=True) if _rests_on(m, b, lines)}
-            base_rows = {r.month: r for r in base_monthly}
-            for row in monthly:
-                base = base_rows.get(row.month)
-                for cell in CELLS:
-                    if base is None or _rests_on(getattr(row, cell), getattr(base, cell), lines):
-                        cells.add((row.month, cell))
+            except ReconciliationError:
+                # The figures as overridden reconcile; only the comparison without overrides
+                # does not (an override may be what puts a line right). The comparison only
+                # marks figures, so it never hides the case: a figure or cell is marked when an
+                # overridden line is among its lines (R3, R17).
+                base_metrics, base_monthly = None, None
+            if base_metrics is None:
+                marked = {m.id for m in metrics if lines & set(m.evidence)}
+                cells = {(row.month, cell) for row in monthly for cell in CELLS
+                         if lines & set(getattr(row, cell).evidence)}
+            else:
+                marked = {m.id for m, b in zip(metrics, base_metrics, strict=True) if _rests_on(m, b, lines)}
+                base_rows = {r.month: r for r in base_monthly}
+                for row in monthly:
+                    base = base_rows.get(row.month)
+                    for cell in CELLS:
+                        if base is None or _rests_on(getattr(row, cell), getattr(base, cell), lines):
+                            cells.add((row.month, cell))
         out[account] = CaseFigures(account, sha, statement, metrics, monthly,
                                    {k: v.ref for k, v in applied.items()},
                                    [s for s in state.stale if s.account == account], marked, cells)
@@ -398,7 +405,11 @@ def add_override(folder: Path, line: str, category: str, *, reason: str, name: s
             raise store.CaseStoreError(f"no account {account} in this case")
         state = _decide(records, statements)
         profile = store.load_profile(folder)
-        _figures(loaded[0], profile, state.applied.get(account, {}))
+        # The line's category now, with the overrides in force: categorised only, never the
+        # figures, so a case that does not reconcile can still take the override that puts a
+        # line right (R3, R17).
+        categorise(loaded[0], active_ruleset(), overrides=state.applied.get(account, {}),
+                   profile=store.profile_names(profile))
         t = next((t for t in loaded[0].transactions if t.id == line), None)
         if t is None:
             raise store.CaseStoreError(f"no line {line} in account {account}")
