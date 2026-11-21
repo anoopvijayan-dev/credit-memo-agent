@@ -1738,6 +1738,50 @@ def test_p18_a_callers_tracing_v2_context_does_not_trace_a_run_under_the_lock(ho
 
 
 @pytest.mark.invariants
+@pytest.mark.parametrize("mode", ["sync", "async"])
+def test_p18_tracing_turned_on_between_stream_steps_does_not_trace_a_run_under_the_lock(
+        home, no_network, monkeypatch, tmp_path, mode):
+    """T17 review 20 / R29: a stream under the lock was untraced only at its first step; a caller
+    entering tracing_v2_enabled() or LangSmith's tracing_context(enabled=True) between steps had
+    the later steps traced."""
+    import asyncio
+
+    import langsmith
+    from langchain_core.tracers.context import tracing_v2_callback_var, tracing_v2_enabled
+    from langchain_core.tracers.langchain import LangChainTracer
+    from langsmith import utils as ls_utils
+
+    import cma.graph as g
+
+    seen = []  # what a later step, the draft, sees: a tracing_v2 tracer, LangSmith's switch
+    real_prompt = g.draft_prompt
+    monkeypatch.setattr(g, "draft_prompt", lambda *a, **k: seen.append(
+        (tracing_v2_callback_var.get() is not None, ls_utils.tracing_is_enabled())) or real_prompt(*a, **k))
+    names = []
+    monkeypatch.setattr(LangChainTracer, "_start_trace", lambda self, run: names.append(run.name), raising=False)
+    monkeypatch.setattr(LangChainTracer, "_persist_run", lambda self, run: names.append(run.name), raising=False)
+    monkeypatch.setattr(LangChainTracer, "_persist_run_single", lambda self, run: None, raising=False)
+    monkeypatch.setattr(LangChainTracer, "_update_run_single", lambda self, run: None, raising=False)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    graph = build(llm.FakeLLM())
+    args = ({"statement_path": str(_statement(tmp_path))}, {"configurable": {"thread_id": "t"}})
+
+    if mode == "sync":
+        stream = graph.stream(*args)
+        next(stream)
+        with tracing_v2_enabled(client=types.SimpleNamespace()), langsmith.tracing_context(enabled=True):
+            rest = list(stream)
+    else:
+        async def scenario():
+            stream = graph.astream(*args)
+            await stream.__anext__()
+            with tracing_v2_enabled(client=types.SimpleNamespace()), langsmith.tracing_context(enabled=True):
+                return [item async for item in stream]
+        rest = asyncio.run(scenario())
+    assert rest and seen == [(False, False)] and names == [] and no_network == []
+
+
+@pytest.mark.invariants
 def test_p5_a_custom_rules_limits_never_reach_the_prompt(home, tmp_path):
     """T17 review 10 / P5: a custom rule's threshold, a number that can come from the case, reached
     the prompt in its requirement and detail cells."""

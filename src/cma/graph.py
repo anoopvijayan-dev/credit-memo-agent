@@ -595,6 +595,26 @@ def _untraced_inherited_config():
     return var_child_runnable_config.set({**inherited, "callbacks": _without_network_tracers(callbacks)})
 
 
+@contextlib.contextmanager
+def _untraced_step(locked: bool):
+    """Under the lock, one step of a run untraced: LangSmith's own tracing off, a caller's
+    tracing_v2_enabled() context set aside, and the calling runnable's LangSmith tracers taken
+    out, all set up and taken down within the step (R29, T17 reviews 4, 13, 19 and 20)."""
+    if not locked:
+        yield
+        return
+    import langsmith
+
+    inherited, tracing_v2 = _untraced_inherited_config(), _no_tracing_v2_context()
+    try:
+        with langsmith.tracing_context(enabled=False):
+            yield
+    finally:
+        _reset_tracing_v2_context(tracing_v2)
+        if inherited is not None:
+            _reset_inherited_config(inherited)
+
+
 def _no_tracing_v2_context():
     """Under the lock, a caller's tracing_v2_enabled() context is set aside for the run:
     LangChain adds the tracer that context holds to every run's callbacks, after the run's own
@@ -679,7 +699,7 @@ def _untraced_under_lock(graph, run_reading) -> None:
     def delegated(self) -> bool:
         return (_IN_RUN.get() or (None,))[0] == id(self) and _DELEGATE.get() == id(self)
 
-    def start(self, a, k, mark: bool = True, stored=_UNREAD) -> tuple[bool, object, tuple, dict]:
+    def start(self, a, k, mark: bool = True, stored=_UNREAD, untrace: bool = True) -> tuple[bool, object, tuple, dict]:
         """Whether this run is under the lock, the token to end it, and the call's arguments
         with the run's reading in its config; a call nested in a run already going (invoke's
         own stream) keeps that run's reading. Only invoke and ainvoke mark a run as going,
@@ -717,7 +737,8 @@ def _untraced_under_lock(graph, run_reading) -> None:
                 k = {**k, "config": config}
             else:
                 a = (a[0], config, *a[2:])
-        inherited = (_untraced_inherited_config(), _no_tracing_v2_context()) if locked else None
+        # invoke's run is untraced from here to its end; a stream is untraced step by step.
+        inherited = (_untraced_inherited_config(), _no_tracing_v2_context()) if locked and untrace else None
         marks = (_IN_RUN.set((id(self), locked)), _DELEGATE.set(id(self))) if mark else None
         return locked, (marks, (reading, run_key) if reading is not None else None, inherited), a, k
 
@@ -745,13 +766,24 @@ def _untraced_under_lock(graph, run_reading) -> None:
 
     def stream(self, *a, **k):
         def run():
-            locked, token, args, kwargs = start(self, a, k, mark=False)
+            locked, token, args, kwargs = start(self, a, k, mark=False, untrace=False)
             try:
-                if locked:
-                    with langsmith.tracing_context(enabled=False):
-                        yield from base.stream(self, *args, **kwargs)
-                else:
-                    yield from base.stream(self, *args, **kwargs)
+                # Each step runs untraced under the lock, set up afresh and taken down within
+                # the step, so a tracing context the caller enters between two steps never
+                # reaches the run (T17 review 20), and none of the run's leaks to the caller.
+                with _untraced_step(locked):
+                    inner = base.stream(self, *args, **kwargs)
+                try:
+                    while True:
+                        with _untraced_step(locked):
+                            try:
+                                item = next(inner)
+                            except StopIteration:
+                                return
+                        yield item
+                finally:
+                    with _untraced_step(locked):
+                        inner.close()
             finally:
                 end(token)
         return run()
@@ -776,15 +808,22 @@ def _untraced_under_lock(graph, run_reading) -> None:
 
     def astream(self, *a, **k):
         async def run():
-            locked, token, args, kwargs = start(self, a, k, mark=False, stored=await stored_for(self, a, k))
+            locked, token, args, kwargs = start(self, a, k, mark=False, stored=await stored_for(self, a, k),
+                                                untrace=False)
             try:
-                if locked:
-                    with langsmith.tracing_context(enabled=False):
-                        async for item in base.astream(self, *args, **kwargs):
-                            yield item
-                else:
-                    async for item in base.astream(self, *args, **kwargs):
+                with _untraced_step(locked):
+                    inner = base.astream(self, *args, **kwargs)
+                try:
+                    while True:
+                        with _untraced_step(locked):  # each step afresh, as stream (T17 review 20)
+                            try:
+                                item = await inner.__anext__()
+                            except StopAsyncIteration:
+                                return
                         yield item
+                finally:
+                    with _untraced_step(locked):
+                        await inner.aclose()
             finally:
                 end(token)
         return run()
