@@ -129,6 +129,10 @@ class MemoState(TypedDict, total=False):
     run_offline_lock: bool | None  # never read: an input before T17 review 3, kept so old checkpoints load
     offline_lock: bool
     resume_offline_lock: bool | None  # the lock in force when the review was resumed (T17 review 10)
+    # The lock in force for a resume that drafted (a review paused before its draft): the lock
+    # that resume's hosted request was checked against, kept apart from the finalising
+    # resume's (T17 review 17).
+    draft_resume_offline_lock: bool | None
     egress: str
     statement_sha256: str
     statement: Statement
@@ -344,6 +348,7 @@ def _egress(s: MemoState) -> dict:
             # The lock in force when the review was resumed and finalised, which may differ
             # from the draft's (T17 review 10). An added field; the others are unchanged.
             out["resume_offline_lock"] = s["resume_offline_lock"]
+        _add_draft_resume_lock(out, s)
         return out
     model = s.get("model") or "-"
     out = {"offline_lock": False, "destination": "offline" if model.startswith("fake:") else model,
@@ -352,7 +357,15 @@ def _egress(s: MemoState) -> dict:
         # The lock in force as the review resumed, recorded at finalisation, for a draft from
         # before the lock too (T17 review 11).
         out["resume_offline_lock"] = s["resume_offline_lock"]
+    _add_draft_resume_lock(out, s)
     return out
+
+
+def _add_draft_resume_lock(out: dict, s: MemoState) -> None:
+    """The lock a resume that drafted was checked against, where one drafted: the draft's
+    destination went out under it, whichever later resume finalised (T17 review 17)."""
+    if s.get("draft_resume_offline_lock") is not None:
+        out["draft_resume_offline_lock"] = s["draft_resume_offline_lock"]
 
 
 def evidence_record(s: MemoState) -> dict:
@@ -395,6 +408,7 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
             # checked against it, and the evidence records it.
             "offline_lock": reading.offline_lock is not False,
             "run_offline_lock": None,
+            "draft_resume_offline_lock": None,
             "egress": "offline" if isinstance(llm, FakeLLM) else f"{llm.name}:{getattr(llm, 'model', '-')}",
             # A run starts clean, even on a thread that has run before.
             "redrafts": 0,
@@ -425,7 +439,8 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
             resumed = ((config or {}).get("configurable") or {}).get(_RESUME_KEY)
             # The draft's own lock, if it was on, still holds (T17 review 14).
             lock = s["offline_lock"] if resumed is None else (resumed or s["offline_lock"] is True)
-            memo = llm.complete(SYSTEM_PROMPT, user, offline_lock=lock, reading=_run_reading_of(config))
+            memo = llm.complete(SYSTEM_PROMPT, user, offline_lock=lock, reading=_run_reading_of(config),
+                                run_key=((config or {}).get("configurable") or {}).get(_RUN_KEY))
         else:
             memo = llm.complete(SYSTEM_PROMPT, user)
         # The model that drafted it, and where the prompt went, are this graph's: a resume that
@@ -434,10 +449,11 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
                "model": f"{llm.name}:{getattr(llm, 'model', '-')}",
                "egress": "offline" if isinstance(llm, FakeLLM) else f"{llm.name}:{getattr(llm, 'model', '-')}"}
         resumed = ((config or {}).get("configurable") or {}).get(_RESUME_KEY)
-        if resumed is not None:
-            # A resume that drafts records its lock with the destination it drafted to, so the
-            # evidence names both even if the review pauses again before finalising (T17 review 16).
-            out["resume_offline_lock"] = resumed
+        # A resume that drafts records its lock with the destination it drafted to, so the
+        # evidence names both, even if the review pauses again (T17 review 16), in a field of its
+        # own that a later, finalising resume does not overwrite (T17 review 17). A draft that
+        # is not a resume clears it: its own lock is the run's.
+        out["draft_resume_offline_lock"] = resumed
         return out
 
     def guard(s: MemoState) -> MemoState:
@@ -559,6 +575,7 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
 
 _READING_KEY = "__cma_reading"  # LangGraph never saves a configurable key that starts with "__"
 _RESUME_KEY = "__cma_resume_lock"
+_RUN_KEY = "__cma_run_key"
 
 
 def _without_network_tracers(callbacks):
@@ -655,10 +672,13 @@ def _untraced_under_lock(graph, run_reading, astored_lock) -> None:
         graph_input = a[0] if a else k.get("input")
         reading, locked = run_reading(graph_input, config_of(a, k), stored)
         resumed = graph_input is None or isinstance(graph_input, Command)
+        run_key = firm.begin_run(reading) if reading is not None else None
         if reading is not None or locked or resumed:
             config = dict(config_of(a, k) or {})
             if reading is not None:
-                config["configurable"] = {**(config.get("configurable") or {}), _READING_KEY: reading}
+                # The run's key goes with its reading: only the run's own steps hold it.
+                config["configurable"] = {**(config.get("configurable") or {}), _READING_KEY: reading,
+                                          _RUN_KEY: run_key}
             if resumed:
                 # The lock in force for this resume, which the evidence records beside the
                 # draft's (T17 review 10).
@@ -672,10 +692,9 @@ def _untraced_under_lock(graph, run_reading, astored_lock) -> None:
                 k = {**k, "config": config}
             else:
                 a = (a[0], config, *a[2:])
-        owned = firm.begin_run(reading) if reading is not None else None
         inherited = _untraced_inherited_config() if locked else None
         marks = (_IN_RUN.set((id(graph), locked)), _DELEGATE.set(id(graph))) if mark else None
-        return locked, (marks, (reading, owned) if reading is not None else None, inherited), a, k
+        return locked, (marks, (reading, run_key) if reading is not None else None, inherited), a, k
 
     def end(token) -> None:
         if token is not None:

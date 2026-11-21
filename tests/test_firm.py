@@ -1576,7 +1576,7 @@ def test_p18_a_suspended_streams_reading_allows_no_other_callers_request(home, n
                                          {"configurable": {"thread_id": "s"}})
     next(stream)  # the run is going, suspended between items
     reading = readings[0]
-    assert reading.offline_lock is False and firm.allows_request(reading)  # the stream's own context
+    assert reading.offline_lock is False and not firm.allows_request(reading)  # without the run's key
     (home / "firm.yaml").write_text("offline_lock: true\n")
     outcome = []
 
@@ -1610,8 +1610,8 @@ def test_r29_a_resume_that_drafts_and_pauses_records_its_lock_with_its_destinati
     later = build(llm.FakeLLM(), checkpointer=saver)
     later.invoke(None, cfg)  # drafts, then pauses for review again
     values = later.get_state(cfg).values
-    assert values["review"] is None and values["resume_offline_lock"] is True
-    assert evidence_record({**values, "ruleset": None})["egress"]["resume_offline_lock"] is True
+    assert values["review"] is None and values["draft_resume_offline_lock"] is True
+    assert evidence_record({**values, "ruleset": None})["egress"]["draft_resume_offline_lock"] is True
 
 
 def test_p5_a_rule_without_its_actions_from_another_policy_is_masked(home, tmp_path):
@@ -1629,6 +1629,55 @@ def test_p5_a_rule_without_its_actions_from_another_policy_is_masked(home, tmp_p
     assert "(custom id)" not in g.rules_table(legacy, for_prompt=True)
     table = g.rules_table(other, for_prompt=True)
     assert all(f"| {r.rule_id} |" not in table for r in other.rules) and "(custom id)" in table
+
+
+@pytest.mark.invariants
+def test_p18_a_suspended_streams_reading_allows_no_request_on_its_own_thread(home, no_network, monkeypatch, tmp_path):
+    """T17 review 17 / R29: run ownership was set in the context of the code consuming a sync
+    stream, so while the stream was suspended, other code on that thread holding its unlocked
+    reading sent a hosted request after the firm locked. A request needs the run's own key,
+    which only the run's config holds."""
+    readings = []
+    real_load = firm.load
+    monkeypatch.setattr(firm, "load", lambda *a, **k: readings.append(real_load(*a, **k)) or readings[-1])
+    sent = []
+
+    class Hosted(llm.HostedLLM):
+        name = "test"
+
+        def _send(self, system, user):
+            sent.append(1)
+            return "ok"
+
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    stream = build(llm.FakeLLM()).stream({"statement_path": str(_statement(tmp_path))},
+                                         {"configurable": {"thread_id": "s"}})
+    next(stream)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    with pytest.raises(firm.OfflineLockError):
+        Hosted().complete("s", "u", reading=readings[0])  # same thread, stream suspended
+    stream.close()
+    assert sent == [] and no_network == []
+
+
+@pytest.mark.invariants
+def test_r29_a_finalising_resume_keeps_the_lock_a_drafting_resume_was_checked_against(home, no_network, tmp_path):
+    """T17 review 17 / R29: finalise wrote its own resume's lock over the one a drafting resume
+    recorded, so the evidence named the drafting resume's destination beside another lock."""
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
+
+    saver = InMemorySaver()
+    cfg = {"configurable": {"thread_id": "t"}}
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    first = build(llm.FakeLLM(), checkpointer=saver)
+    first.invoke({"statement_path": str(_statement(tmp_path))}, cfg)
+    first.update_state(cfg, {}, as_node="policy")  # paused again before its draft
+    build(llm.FakeLLM(), checkpointer=saver).invoke(None, cfg)  # a resume drafts, lock off, and pauses
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    final = build(llm.FakeLLM(), checkpointer=saver).invoke(Command(resume={"approved": True, "reviewer": "A"}), cfg)
+    egress = evidence_record({**final, "ruleset": None})["egress"]
+    assert egress["draft_resume_offline_lock"] is False and egress["resume_offline_lock"] is True
 
 
 @pytest.mark.invariants

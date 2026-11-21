@@ -140,11 +140,12 @@ class HostedLLM:
 
     name = "hosted"
 
-    def _check(self, what: str, offline_lock: bool | None, reading: "firm.FirmConfig | None") -> None:
+    def _check(self, what: str, offline_lock: bool | None, reading: "firm.FirmConfig | None",
+               run_key: object = None) -> None:
         # Never on the caller's word (R29, T17 review 4): a request is allowed only by a
         # reading of firm.yaml that load() made, the run's own when it hands it in, or one read
         # now. A bare offline_lock value, or a FirmConfig the caller built, can only refuse.
-        if firm.allows_request(reading):  # the run's own reading, while its run is going
+        if firm.allows_request(reading, run_key):  # the run's own reading, asked by that run
             reading.require_offline_off(what)
         else:
             firm.require_unlocked(what)
@@ -154,8 +155,8 @@ class HostedLLM:
             firm.refuse_if_locked(offline_lock is not False, what)
 
     def complete(self, system: str, user: str, *, offline_lock: bool | None = None,
-                 reading: "firm.FirmConfig | None" = None) -> str:
-        self._check(f"A request to a hosted model ({self.name})", offline_lock, reading)
+                 reading: "firm.FirmConfig | None" = None, run_key: object = None) -> str:
+        self._check(f"A request to a hosted model ({self.name})", offline_lock, reading, run_key)
         allowed = _CHECKED_REQUEST.set(True)
         try:
             return self._send(system, user)

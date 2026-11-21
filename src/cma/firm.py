@@ -18,11 +18,9 @@ server starts, so under the lock neither gets as far as a network call.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import os
 import weakref
-from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -175,37 +173,40 @@ def _here(config: FirmConfig) -> bool:
     return is_reading(config) and config.root == case_root()
 
 
-# The readings whose runs this context is running: a run's reading allows only that run's own
-# requests, made in its own context (its steps inherit it), never another caller's that holds
-# the same object, such as a thread using a suspended stream's reading (T17 review 16).
-_OWNED: ContextVar[frozenset] = ContextVar("cma_owned_readings", default=frozenset())
+# Each going run's key, by its reading: a run's reading allows only the requests its own run
+# makes, which carry the key from the run's config, never those of another caller holding the
+# same reading, on another thread or the same one while a stream is suspended (T17 reviews 16
+# and 17). The key is an object only the run's config holds.
+_RUN_KEYS: dict[int, set] = {}
 
 
-def begin_run(reading: FirmConfig):
-    """Marks `reading`'s run as going, in this context; returns the token end_run needs."""
+def begin_run(reading: FirmConfig) -> object:
+    """Marks `reading`'s run as going; returns the run's key, which its requests carry."""
     _IN_RUN[id(reading)] = _IN_RUN.get(id(reading), 0) + 1
-    return _OWNED.set(_OWNED.get() | {id(reading)})
+    key = object()
+    _RUN_KEYS.setdefault(id(reading), set()).add(key)
+    return key
 
 
-def end_run(reading: FirmConfig, token=None) -> None:
+def end_run(reading: FirmConfig, key: object = None) -> None:
     left = _IN_RUN.get(id(reading), 0) - 1
     if left > 0:
         _IN_RUN[id(reading)] = left
     else:
         _IN_RUN.pop(id(reading), None)
-    if token is not None:
-        # A stream finished in another context (closed by the garbage collector): the context
-        # it changed is gone with it.
-        with contextlib.suppress(ValueError):
-            _OWNED.reset(token)
+    keys = _RUN_KEYS.get(id(reading))
+    if keys is not None:
+        keys.discard(key)
+        if not keys:
+            _RUN_KEYS.pop(id(reading), None)
 
 
-def allows_request(reading: object) -> bool:
+def allows_request(reading: object, key: object = None) -> bool:
     """Whether `reading` may decide a hosted request: a reading load() made, for the firm folder
-    in use, whose run is still going, asked by that run itself (T17 review 16). Any other is no
-    allowance; firm.yaml is read instead."""
+    in use, whose run is still going, asked by that run itself with its key (T17 reviews 16
+    and 17). Any other is no allowance; firm.yaml is read instead."""
     return (isinstance(reading, FirmConfig) and _here(reading) and id(reading) in _IN_RUN
-            and id(reading) in _OWNED.get())
+            and key is not None and key in _RUN_KEYS.get(id(reading), ()))
 
 
 def claim_for_client(reading: object) -> bool:
@@ -226,6 +227,7 @@ def load(root: Path | None = None) -> FirmConfig:
     _STAMP[key] = stamp
     _READINGS[key] = weakref.ref(config, lambda _ref, k=key: (_READINGS.pop(k, None), _CLAIMED.discard(k),
                                                               _IN_RUN.pop(k, None), _RAN.discard(k),
+                                                              _RUN_KEYS.pop(k, None),
                                                               _STAMP.pop(k, None)))
     return config
 
