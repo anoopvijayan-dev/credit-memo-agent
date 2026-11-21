@@ -1,6 +1,6 @@
 {
   "bet": "statement-review",
-  "next_id": 319,
+  "next_id": 320,
   "decisions": [
     {
       "id": "D1",
@@ -6386,6 +6386,26 @@
       "decided_at": null,
       "effect": null,
       "created_at": "2026-11-21T02:22:12.405Z"
+    },
+    {
+      "id": "D319",
+      "type": "unblock",
+      "task": "T04",
+      "raised_by": null,
+      "context": "Task T04 \"Figures layer in integer pence: M17, money-in buckets M19-M25, M18 cash within trading receipts, M26, and M16 renamed with the shared denominator, all returned by metrics.compute so cma run and MCP compute_metrics carry them; cma run exits non-zero naming the difference in pence and the lines when buckets do not reconcile; test (invariants): p1, p2, p6\" is blocked after 3 attempts. Last verdict fail: R2 fail (src/cma/ingest.py:83 checks the statement amount and balance round trip, :397 reports a bad byte in an oversized field's record, and :574 checks flow totals. src/cma/metrics.py:533 computes M3 in integer pence and handles an unrepresentable result. src/cma/graph.py:175 and src/cma/cli.py:415 show money to the penny. GBP policy comparison still accepts a fractional-penny operand, and YAML loading can erase a fractional-penny limit before validation.); major: GBP policy comparison falls back to fractional Decimal pence. The runner-passed contract explicitly expects the fallback, which conflicts with the integer-pence requirement and is reachable when replaying an old stored money figure. at src/cma/metrics.py:153; major: The policy loader can erase a fractional penny before whole-pence validation. The numeric validation at src/cma/policy.py:83 sees the rounded float rather than the authored limit, so equality at the displayed threshold can incorrectly pass. at src/cma/policy.py:38; reviewer verdict fail",
+      "options": [
+        "retry with guidance",
+        "take over manually",
+        "kill task"
+      ],
+      "allow_free_text": true,
+      "status": "pending",
+      "answer": null,
+      "free_text": null,
+      "decided_by": null,
+      "decided_at": null,
+      "effect": null,
+      "created_at": "2026-11-21T02:26:40.520Z"
     }
   ]
 }
