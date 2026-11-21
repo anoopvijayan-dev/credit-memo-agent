@@ -62,12 +62,12 @@
       "depends_on": [
         "T03"
       ],
-      "status": "verify",
+      "status": "passed",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T04",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-214/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: major: Rows are sorted by their UTC moment (line 305) but each is written with its local date, d = when.date() (lines 84-86, 341). When offsets differ near midnight, the written statement's dates run against its row order. cma import monzo succeeds, then the statement loader refuses the file or reads it reversed. ImportResult start and end (line 350) take the same local dates, so they are wrong too. at src/cma/importers/monzo.py:341; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-216/evidence.json",
+      "escalation": null
     },
     {
       "id": "T06",

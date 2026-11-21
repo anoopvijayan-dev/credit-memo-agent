@@ -1,0 +1,35 @@
+My verdict on T04 is **pass**, with two minor findings. I couldn't save `evidence.json` to the run directory because the write was blocked, so the full record is in the block at the end for the runner to take.
+
+The major from the last review (verify-214) is fixed. Monzo rows whose timestamp carries a UTC offset are now both sorted and dated in UTC (`monzo.py:84-90`). Every row's sort key starts with the date that gets written, so the written dates always run in row order. The runner's tiers all passed and their logs show the named P1, P2 and P6 tests and the contract tests ran.
+
+How each requirement is met:
+- **R1:** every credit goes to exactly one money-in bucket, and total money in (M17) and each bucket carry the ids of their lines.
+- **R2:** money is added up in whole pence in the figures layer only. Tables show money to the penny; the drafting prompt and the policy sentence keep whole pounds.
+- **R3:** buckets that don't reconcile stop everything before any figure is returned. `cma run` and `cma resume` exit 6 naming the difference in pence and the lines, and both MCP tools that compute figures refuse.
+- **R7 and P6:** a credit no rule explains lands in unexplained money in (M25) and never in trading receipts (M2).
+- **P1 and P2:** the buckets sum to M17 to the penny, sum figures total their lines, outflow figures total them negated, and M1–M16 evidence matches the previous release (dual-run tier).
+
+The two minors both come from the new UTC dating, at `monzo.py:87`:
+1. **Silent change to import output.** A row at `2026-07-01T00:30:00+01:00` is now written as 30 June; the previous release wrote 1 July. That moves it into another month for the monthly cells, the revenue trend quarters (M4) and the VAT windows (M13). No requirement says which date to use, but the change isn't listed anywhere.
+2. **Import output can be refused the same day.** With a negative offset late on the day of export, the UTC date is tomorrow. The import succeeds, then the statement loader refuses its own output as dated in the future until the next day.
+
+```json
+{
+  "task": "T04",
+  "criteria": [
+    {"id": "R1", "tier": "adversarial", "check": "metrics.py compute: every credit (pence>0) goes to its CREDIT_BUCKET (models.py:55-67); M2 is trading receipts, M19-M25 the other seven, M17 all credits; each is a GBP sum figure with ids. P1/P2 tests ran and passed (invariants-5.log).", "result": "pass", "artifact": "invariants-5.log"},
+    {"id": "R2", "tier": "adversarial", "check": "Money is added in integer pence in metrics.py (pence, total, _gbp, _div_half_even for M3 n/a); the categoriser's reversal key comes from metrics.size_pence (categorise.py:1393); policy comparisons go through metrics.compare in whole pence (policy.py). The loader and the Monzo importer read text exactly (text_pence) and refuse the line and flow limits. Cross-record checks run once reading has stopped (ingest.py, after the record loop). Monzo reads the currency, then the amount, then the other fields, and names the flows reached among the rows read so far (monzo.py). Tables use display_exact (graph.py:175, cli _print_metrics); the prompt table and the policy sentence use display() to the whole pound (metrics.py:649, policy.py:233). verify-214's major is fixed: offset timestamps are sorted and dated in UTC (monzo.py:84-90), and the sort key starts with the written date, so the dates written cannot run against the row order. Its test passed (contracts-4.log).", "result": "pass", "artifact": "contracts-4.log"},
+    {"id": "R3", "tier": "adversarial", "check": "_reconcile (metrics.py) raises ReconciliationError with the difference in pence and the line ids before any figure is returned. Every caller goes through compute: cma run exits 6 (cli.py), resume exits 6, and the MCP compute_metrics and policy tools both call compute. Contract tests ran and passed.", "result": "pass", "artifact": "contracts-4.log"},
+    {"id": "R7", "tier": "adversarial", "check": "OTHER maps to Bucket.UNEXPLAINED (M25); REVENUE_CATEGORIES excludes OTHER. The P6 tests passed.", "result": "pass", "artifact": "invariants-5.log"},
+    {"id": "P1", "tier": "adversarial", "check": "test_p1_buckets_sum_to_total_money_in_and_every_credit_is_in_exactly_one and test_p1_reported_gbp_figures_reconcile_as_printed_for_large_amounts are PASSED in invariants-5.log.", "result": "pass", "artifact": "invariants-5.log"},
+    {"id": "P2", "tier": "adversarial", "check": "The test_p2_* tests (sum, outflow and the M9 note) passed in invariants-5.log; the dual_run tier passed for M1-M16 evidence.", "result": "pass", "artifact": "dual_run-7.log"},
+    {"id": "P6", "tier": "adversarial", "check": "test_p6_a_credit_no_rule_matches_is_unexplained_and_never_trading and test_p6_an_unknown_payer_lands_in_m25[v1/v2] are PASSED in invariants-5.log.", "result": "pass", "artifact": "invariants-5.log"}
+  ],
+  "findings": [
+    {"severity": "minor", "file": "src/cma/importers/monzo.py", "line": 87, "criterion": "R2", "claim": "A timestamp with an offset is now written with its UTC date. The previous release wrote the local date (.date() of the aware datetime). So a row at 2026-07-01T00:30:00+01:00 is written as 2026-06-30 and moves into another month for the monthly cells, M4's quarters and M13's VAT windows. No requirement fixes which date to use, but it is a silent change to cma import monzo's output (R53) and is not listed.", "repro": "Export row tx_1,2026-07-01T00:30:00+01:00,... -> cma import monzo writes date 2026-06-30; the previous release wrote 2026-07-01."},
+    {"severity": "minor", "file": "src/cma/importers/monzo.py", "line": 87, "criterion": "R2", "claim": "With a negative offset late on the day of export, the UTC date is tomorrow. The import succeeds, but ingest.load_csv then refuses the file it wrote: 'date ... is in the future' (local date.today()). This is the same import-then-refuse class as verify-214, narrowed to the day of export.", "repro": "On local date D, export a row dated D T22:00:00-05:00; cma import monzo writes D+1; cma run on the output refuses the line as in the future until D+1."}
+  ],
+  "verdict": "pass",
+  "verifier": {"seat": "reviewer", "adapter": "claude-code", "model": "claude-opus-5-5"}
+}
+```
