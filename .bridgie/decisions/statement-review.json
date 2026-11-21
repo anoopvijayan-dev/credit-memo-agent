@@ -6679,12 +6679,12 @@
         "kill task"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "take over manually",
+      "free_text": "Owner decision of 2026-11-20 (accept edge cases and push the analysis engine forward); recommended reading. T17 at 8d07422 (review 21), judged against revision 33: under the lock a run goes on a copy of the graph without the LangSmith tracers bound to it with with_config(callbacks=...) (test_p18_a_tracer_bound_with_with_config_is_taken_out_under_the_lock, invoke and stream); bridgie/statement-review is merged into the task branch. Owner decision of 2026-11-21, given in chat: while the Codex reviewer is at its usage limit (until 2026-11-25 08:25), the reviewer seat runs on claude-code, the implementer's own model, so this review is not independent of the implementer.",
+      "decided_by": "Anoop Vijayan",
+      "decided_at": "2026-11-21T10:58:07.266Z",
+      "effect": "task T17 handed to Anoop Vijayan; commit in its worktree, then bridgie verify statement-review --task T17",
       "created_at": "2026-11-21T10:51:14.244Z"
     }
   ]
