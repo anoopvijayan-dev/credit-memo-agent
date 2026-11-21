@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import re
+from contextvars import ContextVar
 from typing import Protocol
 
 from . import firm
@@ -89,16 +90,26 @@ def _require_unlocked_now(what: str, firm_config: "firm.FirmConfig | None") -> N
         firm_config.require_offline_off(what)
 
 
+# Set while `complete` sends the one request its lock check allowed: that request is decided
+# by the run's own reading, never by firm.yaml read again mid-run (T17 review 14).
+_CHECKED_REQUEST: ContextVar[bool] = ContextVar("cma_checked_request", default=False)
+
+
 def _checked_http(client, what: str) -> None:
-    """The SDK client's own HTTP client follows no redirect and checks the offline lock before
-    every HTTP request it sends, so no request leaves past the lock, a redirect or a retry
-    included (R29, T17 review 13). A stand-in client without one is left as it is."""
+    """The SDK client's own HTTP client follows no redirect and checks every HTTP request it
+    sends (R29, T17 review 13): the one request a `complete` call's lock check allowed goes,
+    decided by the run's reading (T17 review 14); any other, such as a request made through
+    the client directly, reads firm.yaml and is refused under the lock. A stand-in client
+    without one is left as it is."""
     http = getattr(client, "_client", None)
     if http is None or not hasattr(http, "event_hooks"):
         return
     http.follow_redirects = False
 
     def check(request) -> None:
+        if _CHECKED_REQUEST.get():
+            _CHECKED_REQUEST.set(False)  # one request per check: nothing past it rides on it
+            return
         firm.require_unlocked(what)
 
     hooks = dict(http.event_hooks)
@@ -145,6 +156,7 @@ class HostedLLM:
     def complete(self, system: str, user: str, *, offline_lock: bool | None = None,
                  reading: "firm.FirmConfig | None" = None) -> str:
         self._check(f"A request to a hosted model ({self.name})", offline_lock, reading)
+        allowed = _CHECKED_REQUEST.set(True)
         try:
             return self._send(system, user)
         except Exception as e:
@@ -152,6 +164,8 @@ class HostedLLM:
             if refused is not None and refused is not e:
                 raise refused from None  # the lock's own refusal, not the SDK's wrapping of it
             raise
+        finally:
+            _CHECKED_REQUEST.reset(allowed)
 
     def _send(self, system: str, user: str) -> str:
         raise NotImplementedError

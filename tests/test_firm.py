@@ -1327,14 +1327,48 @@ def test_p18_the_sdk_follows_no_redirect_and_checks_the_lock_before_every_reques
         model.complete("s", "u")
     assert len(sent) == 1  # the redirect was not followed
 
-    # The lock turned on between `complete`'s check and the SDK's request: the HTTP client's
-    # own check refuses before anything is sent, and the refusal is the lock's own.
+    # A request made through the SDK client directly, with no `complete` check before it, is
+    # checked by the HTTP client itself: refused under the lock before anything is sent.
     sent.clear()
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    with pytest.raises(Exception) as e:
+        model._send("s", "u")
+    assert llm._lock_error_in(e.value) is not None and sent == []
+
+
+@pytest.mark.invariants
+def test_p18_a_request_complete_allowed_is_decided_by_the_runs_reading_not_a_second_one(home, monkeypatch):
+    """T17 review 14 / R29: the HTTP client read firm.yaml again for the request `complete` had
+    allowed on the run's reading, so a lock turned on mid-run decided a run already going."""
+    sdk = pytest.importorskip("anthropic")
+    import importlib
+
+    httpx = importlib.import_module("httpx2" if "httpx2" in sdk._base_client.__dict__ else "httpx")
+    sent = []
+
+    def handler(request):
+        sent.append(request.url.path)
+        return httpx.Response(200, json={"id": "m", "type": "message", "role": "assistant", "model": "x",
+                                         "stop_reason": "end_turn", "stop_sequence": None,
+                                         "usage": {"input_tokens": 1, "output_tokens": 1},
+                                         "content": [{"type": "text", "text": "ok"}]})
+
+    real = sdk.Anthropic
+    monkeypatch.setattr(sdk, "Anthropic", lambda **kw: real(api_key="test", http_client=httpx.Client(
+        transport=httpx.MockTransport(handler)), **kw))
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    model = llm.get_llm("anthropic")
+    reads = []
+    real_load = firm.load
     real_check = model._check
-    monkeypatch.setattr(model, "_check", lambda *a: real_check(*a) or (home / "firm.yaml").write_text("offline_lock: true\n"))
-    with pytest.raises(firm.OfflineLockError):
-        model.complete("s", "u")
-    assert sent == []
+
+    def check_then_lock(*a):
+        real_check(*a)
+        (home / "firm.yaml").write_text("offline_lock: true\n")  # turned on mid-run
+        monkeypatch.setattr(firm, "load", lambda *x, **y: reads.append(1) or real_load(*x, **y))
+
+    monkeypatch.setattr(model, "_check", check_then_lock)
+    assert model.complete("s", "u") == "ok" and len(sent) == 1 and reads == []
 
 
 @pytest.mark.invariants
@@ -1397,6 +1431,65 @@ def test_p18_a_resume_that_drafts_is_checked_against_the_lock_it_read_at_resume(
     with pytest.raises(firm.OfflineLockError):
         build(Hosted(), checkpointer=saver).invoke(None, cfg)
     assert sent == [] and no_network == []
+
+
+@pytest.mark.invariants
+def test_p18_an_async_resume_keeps_the_lock_its_draft_was_made_under(home, no_network, tmp_path):
+    """T17 review 14 / R29: an async resume looked the stored lock up synchronously, which
+    AsyncSqliteSaver refuses on its own event loop; the failure was read as a draft from before
+    the lock, so a draft made under the lock was resumed, and drafted, unlocked."""
+    import asyncio
+
+    pytest.importorskip("aiosqlite")
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+    from langgraph.types import Command
+
+    sent = []
+
+    class Hosted(llm.HostedLLM):
+        name = "test"
+
+        def _send(self, system, user):
+            sent.append(1)
+            return llm.FakeLLM().complete(system, user)
+
+    cfg = {"configurable": {"thread_id": "t"}}
+
+    async def scenario():
+        async with AsyncSqliteSaver.from_conn_string(str(tmp_path / "c.sqlite")) as saver:
+            (home / "firm.yaml").write_text("offline_lock: true\n")
+            first = build(llm.FakeLLM(), checkpointer=saver)
+            await first.ainvoke({"statement_path": str(_statement(tmp_path))}, cfg)
+            await first.aupdate_state(cfg, {}, as_node="policy")  # paused again before its draft
+            (home / "firm.yaml").write_text("offline_lock: false\n")
+            with pytest.raises(firm.OfflineLockError):
+                await build(Hosted(), checkpointer=saver).ainvoke(None, cfg)
+            # Drafted again offline, then decided: the resume's lock is the draft's.
+            await build(llm.FakeLLM(), checkpointer=saver).ainvoke(None, cfg)
+            return await build(llm.FakeLLM(), checkpointer=saver).ainvoke(
+                Command(resume={"approved": True, "reviewer": "A"}), cfg)
+
+    final = asyncio.run(scenario())
+    assert sent == [] and no_network == []
+    assert evidence_record({**final, "ruleset": None})["egress"]["resume_offline_lock"] is True
+
+
+def test_r30_a_shipped_rule_is_still_known_after_a_checkpoint_round_trip(home, tmp_path):
+    """T17 review 14 / R30: a checkpoint dropped each rule's fail and missing-figure actions, so a
+    resumed draft masked the shipped rules as custom; they are kept in a checkpoint, and left out
+    of evidence and MCP output as before."""
+    import cma.graph as g
+    from cma import categorise, ingest, metrics, policy
+
+    st = categorise.categorise(ingest.load_csv(_statement(tmp_path), account_name="ACME LTD"))
+    ms = metrics.compute(st)
+    result = policy.evaluate(ms)
+    serde = g._serde()
+    restored = serde.loads_typed(serde.dumps_typed(result))
+    assert restored == result and restored.rules[0].on_fail
+    assert g.rules_table(restored, for_prompt=True) == g.rules_table(result, for_prompt=True)
+    assert "(custom id)" not in g.rules_table(restored, for_prompt=True)
+    assert not any({"on_fail", "when_missing"} & set(r) for r in result.evidence_dump()["rules"])
 
 
 @pytest.mark.invariants

@@ -203,7 +203,7 @@ def check_policy(path: str, policy_path: str | None = None, vat_stagger: int | N
     """Run the lending policy against a statement and return pass/refer/fail per rule."""
     s = categorise.categorise(_statement(path))
     p = policy.load_policy(safe_path(policy_path, (".yaml", ".yml"))) if policy_path else None
-    return policy.evaluate(metrics.compute(s, vat_stagger=vat_stagger), p).model_dump()
+    return policy.evaluate(metrics.compute(s, vat_stagger=vat_stagger), p).evidence_dump()
 
 
 @server.tool()

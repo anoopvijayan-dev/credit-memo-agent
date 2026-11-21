@@ -349,7 +349,7 @@ def evidence_record(s: MemoState) -> dict:
         "vat_stagger": s.get("vat_stagger"),
         "ruleset": ruleset_used(s),
         "metrics": [m.model_dump() for m in s["metrics"]],
-        "policy": s["policy"].model_dump(mode="json"),
+        "policy": s["policy"].evidence_dump(mode="json"),
         "guard": {**s["guard"].model_dump(), "grounded": s["guard"].grounded},
         "redrafts": s.get("redrafts", 0),
         "review": s["review"].model_dump(mode="json") if s.get("review") else None,
@@ -405,7 +405,8 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
             # A resume's own lock, which its reading at resume found (or the draft's, if that was
             # on), decides its hosted requests, as its evidence records (T17 review 13).
             resumed = ((config or {}).get("configurable") or {}).get(_RESUME_KEY)
-            lock = s["offline_lock"] if resumed is None else resumed
+            # The draft's own lock, if it was on, still holds (T17 review 14).
+            lock = s["offline_lock"] if resumed is None else (resumed or s["offline_lock"] is True)
             memo = llm.complete(SYSTEM_PROMPT, user, offline_lock=lock, reading=_run_reading_of(config))
         else:
             memo = llm.complete(SYSTEM_PROMPT, user)
@@ -484,17 +485,17 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
     g.add_edge("finalise", END)
     compiled = g.compile(checkpointer=checkpointer or default_checkpointer())
 
-    def run_reading(graph_input, config):
+    def run_reading(graph_input, config, stored=_UNREAD):
         """The run's one reading of firm.yaml, taken as it starts: the one handed to build() for
         its first run, or read now; it travels with the run's own config, never shared by
         thread, so concurrent runs keep their own (T17 review 5). A resumed run is under the
         lock if its first reading was, or if the lock is on now: by this graph's latest reading,
         or firm.yaml read now (T17 review 5)."""
         if graph_input is None or isinstance(graph_input, Command):
-            try:
-                stored = compiled_get_state(config).values.get("offline_lock")
-            except Exception:
-                stored = None
+            if stored is _UNREAD:
+                stored = stored_lock(config)
+            # A checkpoint whose lock cannot be looked up is treated as drafted under the lock,
+            # never as one from before it (T17 review 14).
             # A resume is a run of its own and reads firm.yaml as it resumes, never reusing the
             # draft's reading or one handed to build(), even with firm.yaml unchanged, and for a
             # draft from before the lock (stored None) too (R29 revision 32, T17 reviews 11, 12).
@@ -503,15 +504,28 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
                 now = None
             # The resume's reading travels with it, so a hosted request it makes (a draft or a
             # redraft, for a review paused before drafting) is checked against it (T17 review 13).
-            return now, stored is True or now is None or now.offline_lock is not False
+            return now, stored is True or stored is _LOOKUP_FAILED or now is None or now.offline_lock is not False
         reading = handed.pop() if handed else None
         if reading is None or not firm.take_for_run(reading):
             reading = firm.load()  # a reading drives one run only (T17 review 6)
             firm.take_for_run(reading)
         return reading, reading.offline_lock is not False
 
-    compiled_get_state = compiled.get_state
-    _untraced_under_lock(compiled, run_reading)
+    def stored_lock(config):
+        try:
+            return compiled.get_state(config).values.get("offline_lock")
+        except Exception:
+            return _LOOKUP_FAILED
+
+    async def astored_lock(config):
+        # An async checkpointer (AsyncSqliteSaver) refuses the synchronous lookup on its own
+        # event loop: an async run looks the lock up the async way (T17 review 14).
+        try:
+            return (await compiled.aget_state(config)).values.get("offline_lock")
+        except Exception:
+            return _LOOKUP_FAILED
+
+    _untraced_under_lock(compiled, run_reading, astored_lock)
     return compiled
 
 
@@ -579,7 +593,11 @@ _IN_RUN: ContextVar[tuple | None] = ContextVar("cma_in_run", default=None)
 _DELEGATE: ContextVar[int | None] = ContextVar("cma_delegate", default=None)
 
 
-def _untraced_under_lock(graph, run_reading) -> None:
+_UNREAD = object()  # the stored lock is looked up by run_reading itself
+_LOOKUP_FAILED = object()  # the checkpoint's stored lock could not be looked up
+
+
+def _untraced_under_lock(graph, run_reading, astored_lock) -> None:
     """Every way of running the graph (invoke and stream, and their async forms) takes the
     run's one reading of firm.yaml as it starts (run_reading keeps it for the run's steps by
     thread), and under the offline lock runs with
@@ -593,7 +611,7 @@ def _untraced_under_lock(graph, run_reading) -> None:
     def config_of(a, k):
         return k.get("config", a[1] if len(a) > 1 else None)
 
-    def start(a, k, mark: bool = True) -> tuple[bool, object, tuple, dict]:
+    def start(a, k, mark: bool = True, stored=_UNREAD) -> tuple[bool, object, tuple, dict]:
         """Whether this run is under the lock, the token to end it, and the call's arguments
         with the run's reading in its config; a call nested in a run already going (invoke's
         own stream) keeps that run's reading. Only invoke and ainvoke mark a run as going,
@@ -607,7 +625,7 @@ def _untraced_under_lock(graph, run_reading) -> None:
             _DELEGATE.set(None)
             return outer[1], None, a, k
         graph_input = a[0] if a else k.get("input")
-        reading, locked = run_reading(graph_input, config_of(a, k))
+        reading, locked = run_reading(graph_input, config_of(a, k), stored)
         resumed = graph_input is None or isinstance(graph_input, Command)
         if reading is not None or locked or resumed:
             config = dict(config_of(a, k) or {})
@@ -665,8 +683,17 @@ def _untraced_under_lock(graph, run_reading) -> None:
                 end(token)
         return run()
 
+    async def stored_for(a, k):
+        """For an async resume that is a run of its own, the checkpoint's lock, looked up the
+        async way; otherwise left to start()."""
+        graph_input = a[0] if a else k.get("input")
+        delegated = (_IN_RUN.get() or (None,))[0] == id(graph) and _DELEGATE.get() == id(graph)
+        if delegated or not (graph_input is None or isinstance(graph_input, Command)):
+            return _UNREAD
+        return await astored_lock(config_of(a, k))
+
     async def ainvoke(*a, **k):
-        locked, token, a, k = start(a, k)
+        locked, token, a, k = start(a, k, stored=await stored_for(a, k))
         try:
             if locked:
                 with langsmith.tracing_context(enabled=False):
@@ -677,7 +704,7 @@ def _untraced_under_lock(graph, run_reading) -> None:
 
     def astream(*a, **k):
         async def run():
-            locked, token, args, kwargs = start(a, k, mark=False)
+            locked, token, args, kwargs = start(a, k, mark=False, stored=await stored_for(a, k))
             try:
                 if locked:
                     with langsmith.tracing_context(enabled=False):

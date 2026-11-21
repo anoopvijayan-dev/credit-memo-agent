@@ -168,9 +168,11 @@ class RuleResult(BaseModel):
     refer_above: float | None = None
     unit: str = Field(default="", description="Unit of the metric the threshold applies to.")
     # What a breach, and a figure that cannot be computed, mean under the rule: kept so a rule
-    # can be told from the shipped one whole (T17 review 8); never written to evidence.
-    on_fail: str = Field(default="", exclude=True)
-    when_missing: str = Field(default="", exclude=True)
+    # can be told from the shipped one whole (T17 review 8), in a checkpoint too, so a resumed
+    # draft still knows a shipped rule (T17 review 14); never written to evidence or MCP output
+    # (PolicyResult.evidence_dump).
+    on_fail: str = ""
+    when_missing: str = ""
 
     def citable_values(self) -> list[float]:
         """Values a memo may quote with this rule's [Rn] tag."""
@@ -182,6 +184,11 @@ class PolicyResult(BaseModel):
     overall: RuleOutcome
     rules: list[RuleResult]
     policy_sha256: str = Field(default="", description="Hash of the policy file the rules came from.")
+
+    def evidence_dump(self, **kwargs) -> dict:
+        """The result as evidence and MCP output show it, as the previous release did: each
+        rule's fail and missing-figure actions left out."""
+        return self.model_dump(exclude={"rules": {"__all__": {"on_fail", "when_missing"}}}, **kwargs)
 
 
 class GuardFinding(BaseModel):
