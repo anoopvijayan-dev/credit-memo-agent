@@ -824,6 +824,27 @@ def test_monzo_walks_timestamps_with_different_offsets_in_the_order_they_happene
 
 
 @pytest.mark.contracts
+def test_monzo_dates_offset_timestamps_in_utc_so_dates_keep_to_the_row_order(tmp_path):
+    """T04 review 64 / R2: rows were walked by their moment in UTC but written with their local
+    dates, so across midnight in different offsets the statement's dates ran against its row
+    order and the statement loader refused, or reversed, the file the import wrote."""
+    from cma.importers import monzo
+
+    src = tmp_path / "m.csv"
+    # 23:30-02:00 on 1 January is 01:30 UTC on 2 January, after 00:30+00:00 on 2 January.
+    src.write_text("Transaction ID,Date,Type,Name,Amount,Currency,Balance\n"
+                   "tx_a,2026-01-01T23:30:00-02:00,Faster payment,ACME,-5.00,GBP,85.00\n"
+                   "tx_b,2026-01-02T00:30:00+00:00,Faster payment,ACME,-10.00,GBP,90.00\n"
+                   "tx_c,2026-01-03T09:00:00+00:00,Faster payment,ACME,-1.00,GBP,84.00\n")
+    out = tmp_path / "o.csv"
+    r = monzo.convert(src, out)
+    assert (r.start, r.end) == (date(2026, 1, 2), date(2026, 1, 3))
+    st = ingest.load_csv(out, today=date(2026, 6, 1))
+    assert [t.id for t in st.transactions] == ["tx_b", "tx_a", "tx_c"]
+    assert [str(t.date) for t in st.transactions] == ["2026-01-02", "2026-01-02", "2026-01-03"]
+
+
+@pytest.mark.contracts
 def test_a_record_too_long_to_read_with_a_bad_byte_names_both(tmp_path):
     """T04 review 58 / R2: a record with a field too long to read and a separate cell that is not
     UTF-8 was refused as too long only; the bad byte was found and then dropped."""

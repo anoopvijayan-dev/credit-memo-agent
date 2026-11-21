@@ -69,9 +69,9 @@ class ImportResult:
 def _parse_when(raw: str | None) -> tuple[date, str | None, bool]:
     """The row's date, the moment its Date cell names if it is a timestamp
     ("2026-01-01T10:00:00Z"), as a sortable text, and whether that timestamp carries a UTC
-    offset. A timestamp with an offset is the moment in UTC, so rows written with different
-    offsets are walked in the order they happened (T04 reviews 62 and 63); one without is the
-    wall-clock time written."""
+    offset. A timestamp with an offset is the moment in UTC, and its date the UTC date, so rows
+    written with different offsets are walked, and dated, in the order they happened (T04
+    reviews 62 to 64); one without is the wall-clock date and time written."""
     raw = (raw or "").strip()
     for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
         try:
@@ -83,8 +83,10 @@ def _parse_when(raw: str | None) -> tuple[date, str | None, bool]:
     except ValueError as e:
         raise MonzoImportError(f"unrecognised date {shown(raw)}") from e
     if when.tzinfo is not None:
+        # Dated in UTC too, so a statement's dates keep to the order its rows are walked in,
+        # across midnight in any offset (T04 review 64).
         moment = when.astimezone(timezone.utc).replace(tzinfo=None)
-        return when.date(), moment.isoformat(timespec="microseconds"), True
+        return moment.date(), moment.isoformat(timespec="microseconds"), True
     return when.date(), when.isoformat(timespec="microseconds"), False
 
 
