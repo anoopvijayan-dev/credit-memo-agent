@@ -1,0 +1,54 @@
+{
+  "task": "T20",
+  "claims": [
+    {
+      "text": "Every derived figure's drill-down has inputs or closes, on RICH and on an eight-month statement with a VAT stagger; M4 shows its two quarters, which give the figure and total its evidence; M9 shows its operating total, the offset and each sent-back credit's counted amount, the two money inputs adding to M9; M13 shows the stagger group and each quarter judged, its late count equal to the figure; M7 shows its count; the drill-down reads the profile once.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_drilldown.py -p no:cacheprovider",
+      "proof_output": "17 passed, 33 deselected in 11.23s"
+    },
+    {
+      "text": "Moving M4, M9 and M13's calculations into shared helpers changed no figure: the full suite, the dual-run tier and the evals pass.",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider; python evals/run_evals.py; python -m pytest -q -m dual_run -p no:cacheprovider",
+      "proof_output": "2155 passed in 203.03s (0:03:23) | 9/9 memos fully grounded; model = fake; ruleset = v1 | 84 passed, 2071 deselected in 23.28s"
+    },
+    {
+      "text": "Lint is clean.",
+      "proof_cmd": "ruff check src tests evals",
+      "proof_output": "All checks passed!"
+    }
+  ],
+  "files_changed": [
+    "src/cma/metrics.py",
+    "src/cma/overrides.py",
+    "src/cma/review/drilldown.py",
+    "tests/test_drilldown.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major, src/cma/metrics.py:786: M4's drill-down lists total revenue (M2) as its only input, though M4 is computed from the earliest and latest three whole calendar months, which are never shown.",
+      "disposition": "reproduced",
+      "evidence": "Removed M4 from DERIVED_FROM. Moved the quarter calculation into metrics.revenue_quarters, which compute() and the new _trend_inputs both use. M4's inputs are now the earliest and latest quarter of whole months, each with its trading receipts and lines, or the number of whole months when there are fewer than six. test_m4_shows_the_two_quarters_it_compares checks that the quarters' months are named, that round((last-first)/first*100, 2) equals M4, that the two quarters total M4's evidence and that their lines are its evidence. test_m4_with_too_few_whole_months_says_how_many_it_has covers the short case."
+    },
+    {
+      "finding": "major, src/cma/metrics.py:844: M13 gets no inputs; the stagger group, each quarter's due date, the collection window and which quarters were late are not shown.",
+      "disposition": "reproduced",
+      "evidence": "Moved the quarter-by-quarter judgement into metrics.vat_quarters (a VatQuarter has the quarter end, due date, window end and the paying line or None), which compute() and _vat_inputs both use. The stagger group now travels on CaseFigures with the figures. Inputs are the stagger group (or 'not given') and one row per quarter: 'Quarter ended Q: due D, collected by W' with 'paid by line X' or 'late or missed'. test_m13_shows_the_stagger_group_and_each_quarter_judged checks three quarters on an eight-month statement, one of them paid by a payment later returned unpaid, and that the late count equals M13 == 2. It also covers 'not given'."
+    },
+    {
+      "finding": "major, src/cma/metrics.py:844: M9 gets no inputs (neither the offset nor a part-counted line's counted amount is shown); M7 likewise gets an empty inputs list.",
+      "disposition": "reproduced",
+      "evidence": "Moved M9's calculation into metrics.operating_cash, which returns its lines, its trading total, the offset, each sent-back credit's counted pence and the capped ids. compute() takes M9's value and evidence note from it. _cash_flow_inputs shows the operating total with its lines, the offset with its lines, and 'Line L11 counts £100.00 of £250.00'. test_m9_shows_its_operating_total_and_the_offset_it_nets checks that the two money inputs add up to M9 and that their lines are M9's evidence. M7 shows its count (test_m7_shows_its_count). test_every_derived_figure_shows_inputs_that_give_it checks that every derived figure has inputs or closes; it also caught M15 with no customer transfers, which now shows a zero numerator."
+    },
+    {
+      "finding": "minor, src/cma/review/drilldown.py:98: the drill-down reads the case profile a second time, outside the refusal handling, so a changed or unreadable profile can show a different M28 repayment or answer 500.",
+      "disposition": "reproduced",
+      "evidence": "CaseFigures now carries vat_stagger and proposed_repayment from the profile read that computed the figures, and lines_behind passes those; drilldown.py no longer imports store. test_the_drilldown_reads_the_profile_once_with_the_figures counts store.load_profile calls during GET /api/lines?figure=M28 and asserts 1, with the £250.00 repayment shown."
+    },
+    {
+      "finding": "minor: the performance claim (M17 2.29s on 10,000 lines) comes from a scratchpad probe the runner did not run; paging is left open.",
+      "disposition": "not_reproduced",
+      "evidence": "No code change. This claim.json makes no performance claim, so nothing unproven is claimed. Paging the drill-down for very large cases is still not built (see notes)."
+    }
+  ],
+  "notes": "M4, M9 and M13 are now computed once, in shared helpers (revenue_quarters, operating_cash, vat_quarters) that compute() and the drill-down's inputs both read, so the inputs shown cannot drift from the figure. The moves are behaviour-neutral: the dual-run, P7 and money-in tests pass unchanged. Paging the drill-down for very large cases (R52) is not built and no timing is claimed."
+}
