@@ -466,3 +466,46 @@ def test_a_monthly_cell_that_is_n_a_shows_its_reason(home, tmp_path):
     page = summary.render(data)
     assert "n/a <span class=\"note\">Too large to report &lt;b&gt;to the penny&lt;/b&gt;.</span>" in page
     assert "<b>" not in page
+
+
+# --- hardening: read-only, and the token before any computation ---------------------------
+
+
+def _tree(folder):
+    return {p.relative_to(folder).as_posix(): (p.stat().st_size, p.read_bytes())
+            for p in sorted(folder.rglob("*")) if p.is_file()}
+
+
+@pytest.mark.contracts
+def test_showing_the_summary_writes_nothing_to_the_case(home, tmp_path, serve, monkeypatch):
+    """GET / and /api/case are read-only: the case folder is byte-for-byte unchanged, shown,
+    refused for reconciliation, or asked for many times (idempotent)."""
+    case_id, folder = _case(tmp_path)
+    overrides.add_override(folder, "L2", "director_funding", reason="loan", name="A Person")
+    before = _tree(folder)
+    srv = serve(case_id)
+    first = _api(srv)
+    for _ in range(3):
+        _page(srv)
+        assert _api(srv) == first
+    _break_reconciliation(monkeypatch)
+    _page(srv)
+    assert _api(srv)["state"] == "not_reconciled"
+    assert _tree(folder) == before
+
+
+@pytest.mark.contracts
+def test_no_summary_is_computed_for_a_request_without_the_token(home, tmp_path, serve, monkeypatch):
+    case_id, _ = _case(tmp_path)
+    calls = []
+    monkeypatch.setattr(summary, "case_summary", lambda *a, **k: calls.append(a) or {})
+    srv = serve(case_id)
+    for path in ("/", "/api/case"):
+        conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=10)
+        try:
+            conn.request("GET", path, headers={"Host": f"127.0.0.1:{srv.port}"})
+            r = conn.getresponse()
+            assert r.status == 403 and b"L2" not in r.read()
+        finally:
+            conn.close()
+    assert calls == []
