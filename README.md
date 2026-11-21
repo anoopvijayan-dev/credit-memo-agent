@@ -29,6 +29,13 @@ pip install -e ".[dev]"
 # with a ground-truth file alongside it).
 cma generate --archetype cafe --profile stretched --out examples
 
+# Opt-in features (repeat --feature, or --feature all): acquirers, director, cash,
+# lenders, two_accounts. The truth file then holds every money-in bucket, every line's
+# category and every indicator, for the v2 rules and the case profile it records;
+# two_accounts also writes the reserve account as cafe_stretched_reserve.csv.
+# Without --feature the statement and truth are byte-identical to earlier releases.
+cma generate --archetype cafe --profile stretched --out /tmp/cma-demo --feature all
+
 # Run the memo graph. It stops, asks your name, and asks you to approve.
 # --vat-stagger is the HMRC stagger group from the VAT certificate (the examples use 3).
 cma run examples/cafe_stretched.csv --vat-stagger 3
@@ -79,6 +86,11 @@ cma case resolve-override <id> 3 --confirm --name "Pat"   # or --drop
 # behind it (date, description, amount, balance, category and the rule or override that
 # set it), with the lines' total for a sum (the figure negated for money paid out), or the
 # inputs and method for an average, share, ratio or count.
+# Each line in the judgement queue and the drill-downs has a form to change its category
+# (only categories valid for its direction), with a reason and your typed name; stale
+# overrides are listed to confirm or drop. A save from a page older than the case log is
+# refused as a conflict: reload and save again. Each save is appended to the case log and
+# the page comes back with the figures, indicators and policy check recomputed.
 cma review <id>                                   # --no-browser to only print the URL
 
 # Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the

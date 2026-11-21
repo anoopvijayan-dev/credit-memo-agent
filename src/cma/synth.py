@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 
-from .models import Category
+from .models import CREDIT_BUCKET, Category
 
 DEFAULT_END = date(2026, 9, 30)
 VAT_STAGGER = 3  # quarters end Feb, May, Aug, Nov; due the 7th of Apr, Jul, Oct, Jan.
@@ -83,6 +83,36 @@ CUSTOMER_NAMES = [
 ]
 
 
+# Opt-in features (R47). With none, generate() is exactly as before: every existing archetype
+# and profile gives a byte-identical statement and truth file. With any, the statement gains
+# lines that the v2 rule table and the case profile recognise, and the truth gains every
+# bucket, every line's category and every indicator, all worked out from the generator's own
+# events (P17). Feature truth is the v2 categoriser's with the case profile in truth.case_profile.
+FEATURES = ("acquirers", "director", "cash", "lenders", "two_accounts")
+
+# Real acquirer and gateway payouts (v2's card_acquirers and payment_gateways lists) and a
+# delivery platform, each with the acquirer it is, as the irregular-acquirer indicator groups.
+ACQUIRER_PAYOUTS = (("SUMUP PAYMENTS LTD", "SUMUP"), ("STRIPE PAYMENTS UK", "STRIPE"),
+                    ("DELIVEROO UK LTD", None))
+PAYOUTS_A_MONTH = {"card": 22, "bacs": 7, "gateway": 9}  # each channel's receipts in a month
+DIRECTOR_NAME = "AMARA OKAFOR"  # fictional; named as a director in the case profile
+LENDER = "IWOCA LTD"
+CASH_DEPOSIT_DESC = "CASH PAID IN AT BRANCH"
+CASH_WITHDRAWAL_DESC = "CASH WITHDRAWAL HIGH ST"
+
+# The shipped indicator thresholds (cma/thresholds/indicators.yaml), restated here so the
+# truth does not come from the module it checks.
+TRUTH_THRESHOLDS = {
+    "large_credit_multiple": 5, "single_cash_pence": 250_000, "cash_month_share_pct": 50,
+    "round_trip_days": 7, "round_trip_tolerance_pct": 10, "returned_dd_count": 1,
+    "overdrawn_run_days": 7, "irregular_multiple": 3, "irregular_min_credits": 3,
+}
+# Money in that is not trading receipts, a drawdown or a returned DD (M9 and M16 leave it out).
+_NON_TRADING_IN = {Category.OTHER, Category.OWN_ACCOUNT_TRANSFER, Category.DIRECTOR_FUNDING, Category.REFUND_IN,
+                   Category.HMRC_REPAYMENT, Category.OTHER_EXPLAINED_IN}
+_TRADING = {Category.REVENUE_CARD, Category.REVENUE_TRANSFER, Category.CASH_DEPOSIT}
+
+
 @dataclass
 class Truth:
     """What the generator knows that the agent must rediscover."""
@@ -107,6 +137,26 @@ class Truth:
     vat_stagger: int = VAT_STAGGER
     late_vat_count: int = 0
     category_by_id: dict[str, str] = field(default_factory=dict)
+    # Set only with features (left out of the truth file otherwise, so it stays byte-identical).
+    features: list[str] = field(default_factory=list)
+    case_profile: dict[str, list[str]] = field(default_factory=dict)
+    total_money_in: float = 0.0
+    buckets: dict[str, dict] = field(default_factory=dict)
+    cash_deposits: dict = field(default_factory=dict)
+    indicators: list[dict] = field(default_factory=list)
+    accounts: list[dict] = field(default_factory=list)
+
+    def to_json(self) -> dict:
+        """The truth file's content. A truth with no features has exactly the fields it had
+        before features existed."""
+        d = dict(self.__dict__)
+        if not self.features:
+            for k in ("features", "case_profile", "total_money_in", "buckets", "cash_deposits", "indicators",
+                      "accounts"):
+                d.pop(k)
+        else:
+            d["accounts"] = [{k: v for k, v in a.items() if k != "rows"} for a in self.accounts]
+        return d
 
 
 def _month_starts(end: date, months: int) -> list[date]:
@@ -133,8 +183,14 @@ def generate(
     seed: int = 7,
     months: int = 12,
     end: date | None = None,
+    features: tuple[str, ...] | list[str] | frozenset[str] = (),
 ) -> tuple[list[dict], Truth]:
-    """Return (rows, truth). Rows are plain dicts ready for CSV."""
+    """Return (rows, truth). Rows are plain dicts ready for CSV. `features` (FEATURES) are
+    opt-in; with "two_accounts" the second account's rows are in truth.accounts."""
+    unknown = sorted(set(features) - set(FEATURES))
+    if unknown:
+        raise ValueError(f"unknown feature {unknown[0]!r}; choose from {list(FEATURES)}")
+    features = [f for f in FEATURES if f in set(features)]
     if archetype not in ARCHETYPES:
         raise ValueError(f"unknown archetype {archetype!r}; choose from {list(ARCHETYPES)}")
     if profile not in PROFILES:
@@ -222,7 +278,9 @@ def generate(
     # The owner props up the account once, half way through.
     if p["capital_in"]:
         mid = starts[len(starts) // 2]
-        events.append((mid + timedelta(days=14), "FPS CREDIT DIRECTOR CAPITAL INTRODUCED", float(p["capital_in"]), Category.OTHER))
+        # Under v1 OTHER; under v2, which feature truth is for, director funding (D48).
+        events.append((mid + timedelta(days=14), "FPS CREDIT DIRECTOR CAPITAL INTRODUCED", float(p["capital_in"]),
+                       Category.DIRECTOR_FUNDING if features else Category.OTHER))
 
     # Returned direct debits: a scheduled DD bounces, the bank returns it two days later
     # and charges a fee, and the payee re-presents it a week after the original.
@@ -236,6 +294,13 @@ def generate(
         events.append((d + timedelta(days=2), "UNPAID ITEM FEE", -15.0, Category.BANK_FEES))
         events.append((d + timedelta(days=7), desc, amt, cat))
         truth.returned_dd_count += 1
+
+    # Opt-in features, after every draw from `rng`, from an rng of their own: with none the
+    # statement is exactly as before.
+    other = None
+    if features:
+        acquirer_of, other = _feature_events(events, truth, a, p, starts, features,
+                                             random.Random(f"features:{archetype}:{profile}:{seed}"))
 
     # Order, then walk the balance.
     events.sort(key=lambda e: (e[0], e[2] < 0, e[1]))
@@ -278,14 +343,15 @@ def generate(
     op = 0.0
     for _, desc, amt, cat in events:
         effective = returned_cat.get(desc, cat) if cat == Category.RETURNED_DD else cat
-        if effective in financing or cat == Category.OTHER:
+        if effective in financing or cat in _NON_TRADING_IN:  # only OTHER without features
             continue
         op += amt
     truth.net_operating = round(op, 2)
     if truth.total_debt_service:
         truth.debt_cover = round((truth.net_operating - truth.total_owner_drawings) / truth.total_debt_service, 4)
-    money_in = sum(a for _, _, a, c in events if a > 0 and c not in (Category.RETURNED_DD, Category.LOAN_DRAWDOWN))
-    other_in = sum(a for _, _, a, c in events if a > 0 and c == Category.OTHER)
+    money_in = sum(a for _, _, a, c in events
+                   if a > 0 and c not in (Category.RETURNED_DD, Category.LOAN_DRAWDOWN, Category.OWN_ACCOUNT_TRANSFER))
+    other_in = sum(a for _, _, a, c in events if a > 0 and c in _NON_TRADING_IN and c != Category.OWN_ACCOUNT_TRANSFER)
     truth.unclassified_share = round(other_in / money_in * 100, 2) if money_in else None
     period_days = (events[-1][0] - events[0][0]).days + 1
     truth.average_monthly_revenue = round(truth.total_revenue / (period_days / (365.25 / 12)), 2)
@@ -297,7 +363,230 @@ def generate(
     truth.monthly_revenue = {k: round(v, 2) for k, v in truth.monthly_revenue.items()}
     if by_customer:
         truth.top_customer_share = round(max(by_customer.values()) / sum(by_customer.values()) * 100, 2)
+    if features:
+        lines = _lines(rows, truth.category_by_id, {r["id"]: acquirer_of.get(r["description"]) for r in rows})
+        _money_in_truth(truth.__dict__, lines)
+        truth.indicators = indicator_truth(lines)
+        if other is not None:
+            truth.accounts = [other]
     return rows, truth
+
+
+def _reserve_name(account_name: str) -> str:
+    """The applicant's second account: a reserve account in the business's name."""
+    return f"{account_name.split()[0]} BUSINESS RESERVE"
+
+
+def _feature_events(events: list, truth: Truth, a: dict, p: dict, starts: list[date], features: list[str],
+                    frng: random.Random) -> tuple[dict[str, str | None], dict | None]:
+    """Add the lines of each feature to `events`, keep the truth's revenue and debt service in
+    step, and return (the acquirer each acquirer payout is, the second account or None)."""
+    truth.features = list(features)
+    profile: dict[str, list[str]] = {"directors": [], "own_accounts": []}
+    acquirer_of: dict[str, str | None] = {}
+    mid = starts[len(starts) // 2]
+    # A payout about the size of the archetype's own typical receipt.
+    base = a["monthly_revenue"] * p["revenue_mult"] / PAYOUTS_A_MONTH[a["channel"]]
+
+    def month_days(s: date, weekday: int) -> list[date]:
+        n = calendar.monthrange(s.year, s.month)[1]
+        return [s + timedelta(i) for i in range(n) if (s + timedelta(i)).weekday() == weekday]
+
+    def trading(d: date, desc: str, amt: float, cat: Category) -> None:
+        events.append((d, desc, amt, cat))
+        key = d.strftime("%Y-%m")
+        truth.monthly_revenue[key] += amt
+        truth.total_revenue += amt
+
+    if "acquirers" in features:
+        # Fortnightly payouts from two real acquirers and, in the other weeks, a delivery
+        # platform; one SumUp payout four times the usual, which the irregular-acquirer
+        # indicator flags.
+        for desc, acquirer in ACQUIRER_PAYOUTS:
+            acquirer_of[desc] = acquirer
+        for s in starts:
+            for i, d in enumerate(month_days(s, 2)):
+                for desc, _ in (ACQUIRER_PAYOUTS[:2] if i % 2 == 0 else ACQUIRER_PAYOUTS[2:]):
+                    trading(d, desc, round(base * frng.uniform(0.8, 1.2), 2), Category.REVENUE_CARD)
+        trading(mid + timedelta(days=12), ACQUIRER_PAYOUTS[0][0], round(base * 4, 2), Category.REVENUE_CARD)
+
+    if "director" in features:
+        # A director pays in by name (the case profile names them, R5) and lends by director
+        # loan wording (the v2 table, R4).
+        profile["directors"].append(DIRECTOR_NAME)
+        events.append((starts[min(2, len(starts) - 1)] + timedelta(days=9), f"FPS CREDIT {DIRECTOR_NAME}", 6000.0,
+                       Category.DIRECTOR_FUNDING))
+        events.append((starts[-1] + timedelta(days=16), "DIRECTOR LOAN A OKAFOR", 2500.0, Category.DIRECTOR_FUNDING))
+
+    if "cash" in features:
+        # Cash takings paid in every Monday, below the single-deposit limit; one deposit at or
+        # above it; and cash withdrawn and paid back in two days later, within 10% (R47, D31).
+        for s in starts:
+            for d in month_days(s, 0):
+                trading(d, CASH_DEPOSIT_DESC, round(frng.uniform(250, 900), 2), Category.CASH_DEPOSIT)
+        trading(mid + timedelta(days=11), CASH_DEPOSIT_DESC, 3200.0, Category.CASH_DEPOSIT)
+        # The limit itself: a deposit of exactly the limit is flagged, a penny under it is not.
+        trading(starts[-1] + timedelta(days=20), CASH_DEPOSIT_DESC, 2500.0, Category.CASH_DEPOSIT)
+        trading(starts[0] + timedelta(days=20), CASH_DEPOSIT_DESC, 2499.99, Category.CASH_DEPOSIT)
+        out = starts[max(0, len(starts) // 2 - 1)] + timedelta(days=17)
+        events.append((out, CASH_WITHDRAWAL_DESC, -1500.0, Category.SUPPLIER))
+        trading(out + timedelta(days=2), CASH_DEPOSIT_DESC, 1450.0, Category.CASH_DEPOSIT)
+
+    if "lenders" in features:
+        # A named lender pays a loan in and takes monthly repayments from the month after.
+        at = len(starts) // 3
+        events.append((starts[at] + timedelta(days=3), LENDER, 15000.0, Category.LOAN_DRAWDOWN))
+        for s in starts[at + 1:]:
+            events.append((s + timedelta(days=14), f"DD {LENDER}", -1375.0, Category.LOAN_REPAYMENT))
+            truth.total_debt_service += 1375.0
+
+    other = None
+    if "two_accounts" in features:
+        # Money moved to and from the applicant's reserve account, which the case profile names
+        # as an own account (R6); the reserve account's own statement names the main account.
+        reserve = _reserve_name(a["account_name"])
+        profile["own_accounts"] += [reserve, a["account_name"]]
+        mirror: list[tuple[date, str, float, Category]] = []
+        for i, s in enumerate(starts):
+            d = s + timedelta(days=19)
+            events.append((d, f"FPS TO {reserve}", -1000.0, Category.OWN_ACCOUNT_TRANSFER))
+            mirror.append((d, f"FPS CREDIT {a['account_name']}", 1000.0, Category.OWN_ACCOUNT_TRANSFER))
+            if i % 3 == 2:
+                d = s + timedelta(days=5)
+                events.append((d, f"FPS CREDIT {reserve}", 2500.0, Category.OWN_ACCOUNT_TRANSFER))
+                mirror.append((d, f"FPS TO {a['account_name']}", -2500.0, Category.OWN_ACCOUNT_TRANSFER))
+            mirror.append((s + timedelta(days=26), "GROSS INTEREST", round(frng.uniform(3, 9), 2),
+                           Category.OTHER_EXPLAINED_IN))
+        mirror.sort(key=lambda e: (e[0], e[2] < 0, e[1]))
+        rows, cats = _walk(mirror, RESERVE_OPENING)
+        other = {"key": "reserve", "account_name": reserve, "opening_balance": float(RESERVE_OPENING),
+                 "rows": rows, "category_by_id": cats}
+        lines = _lines(rows, cats, {})
+        _money_in_truth(other, lines)
+        other["indicators"] = indicator_truth(lines)
+    truth.case_profile = profile
+    return acquirer_of, other
+
+
+RESERVE_OPENING = 20_000
+
+
+def _walk(events: list[tuple[date, str, float, Category]], opening: float) -> tuple[list[dict], dict[str, str]]:
+    """Rows and each line's category for events already in statement order."""
+    balance, rows, cats = float(opening), [], {}
+    for i, (d, desc, amt, cat) in enumerate(events, start=1):
+        balance = round(balance + amt, 2)
+        tid = f"T{i:05d}"
+        rows.append({"id": tid, "date": d.isoformat(), "description": desc, "amount": f"{amt:.2f}",
+                     "balance": f"{balance:.2f}"})
+        cats[tid] = cat.value
+    return rows, cats
+
+
+def _pence(text: str) -> int:
+    whole, _, frac = text.lstrip("-").partition(".")
+    p = int(whole) * 100 + int((frac + "00")[:2])
+    return -p if text.startswith("-") else p
+
+
+def _lines(rows: list[dict], cats: dict[str, str], acquirer: dict[str, str | None]) -> list[dict]:
+    return [{"id": r["id"], "date": date.fromisoformat(r["date"]), "desc": r["description"],
+             "pence": _pence(r["amount"]), "balance": _pence(r["balance"]), "cat": Category(cats[r["id"]]),
+             "acquirer": acquirer.get(r["id"])} for r in rows]
+
+
+def _money_in_truth(target: dict, lines: list[dict]) -> None:
+    """Total money in, every money-in bucket and the cash within trading receipts, each with
+    its lines (R1, R55), from the generator's own categories."""
+    credits = [x for x in lines if x["pence"] > 0]
+    buckets: dict[str, dict] = {}
+    for b in dict.fromkeys(CREDIT_BUCKET.values()):
+        ids = [x["id"] for x in credits if CREDIT_BUCKET[x["cat"]] == b]
+        buckets[b.value] = {"amount": sum(x["pence"] for x in credits if x["id"] in set(ids)) / 100, "ids": ids}
+    target["total_money_in"] = sum(x["pence"] for x in credits) / 100
+    target["buckets"] = buckets
+    cash = [x for x in credits if x["cat"] == Category.CASH_DEPOSIT]
+    target["cash_deposits"] = {"amount": sum(x["pence"] for x in cash) / 100, "ids": [x["id"] for x in cash]}
+
+
+def _median2(xs: list[int]) -> int:
+    """Twice the median, so it stays an integer."""
+    s, n = sorted(xs), len(xs)
+    return 2 * s[n // 2] if n % 2 else s[n // 2 - 1] + s[n // 2]
+
+
+def indicator_truth(lines: list[dict]) -> list[dict]:
+    """Every indicator the shipped thresholds raise on these lines, as [{kind, lines}], in the
+    order of the thresholds file and then of the statement. The generator writes no gambling
+    payment, so none is raised."""
+    th = TRUTH_THRESHOLDS
+    pos = {x["id"]: i for i, x in enumerate(lines)}
+    out: list[dict] = []
+
+    def fire(kind: str, ids: list[str]) -> None:
+        out.append({"kind": kind, "lines": sorted(dict.fromkeys(ids), key=pos.__getitem__)})
+
+    credits = [x for x in lines if x["pence"] > 0]
+    trading = [x for x in credits if x["cat"] in _TRADING]
+    cash = [x for x in credits if x["cat"] == Category.CASH_DEPOSIT]
+    if trading:
+        typical2 = _median2([x["pence"] for x in trading])
+        for x in credits:
+            if 2 * x["pence"] >= th["large_credit_multiple"] * typical2:
+                fire("large_credit", [x["id"]])
+    for x in cash:
+        if x["pence"] >= th["single_cash_pence"]:
+            fire("single_cash_deposit", [x["id"]])
+    months: dict[tuple[int, int], list[dict]] = {}
+    for x in trading:
+        months.setdefault((x["date"].year, x["date"].month), []).append(x)
+    for _, xs in sorted(months.items()):
+        month_cash = [x for x in xs if x["cat"] == Category.CASH_DEPOSIT]
+        c, tr = sum(x["pence"] for x in month_cash), sum(x["pence"] for x in xs)
+        if c > 0 and c * 100 > th["cash_month_share_pct"] * tr:
+            fire("cash_heavy_month", [x["id"] for x in month_cash])
+    withdrawals = [x for x in lines if x["desc"] == CASH_WITHDRAWAL_DESC and x["pence"] < 0]
+    for d in cash:
+        matches = [w for w in withdrawals
+                   if 0 <= (d["date"] - w["date"]).days <= th["round_trip_days"] and pos[w["id"]] < pos[d["id"]]
+                   and abs(d["pence"] + w["pence"]) * 100 <= th["round_trip_tolerance_pct"] * -w["pence"]]
+        if matches:
+            fire("cash_round_trip", [*(w["id"] for w in matches), d["id"]])
+    returned = [x for x in lines if x["cat"] == Category.RETURNED_DD]
+    if len(returned) >= th["returned_dd_count"]:
+        for x in returned:
+            fire("returned_dd", [x["id"]])
+    closes: dict[date, dict] = {}
+    for x in lines:
+        closes[x["date"]] = x
+    day, last, current, run = min(closes), max(closes), None, []
+    while True:
+        current = closes.get(day, current)
+        if current["balance"] < 0:
+            run.append(current["id"])
+        else:
+            if len(run) >= th["overdrawn_run_days"]:
+                fire("overdrawn_run", run)
+            run = []
+        if day == last:
+            break
+        day += timedelta(days=1)
+    if len(run) >= th["overdrawn_run_days"]:
+        fire("overdrawn_run", run)
+    by_acquirer: dict[str, list[dict]] = {}
+    for x in credits:
+        if x["acquirer"]:
+            by_acquirer.setdefault(x["acquirer"], []).append(x)
+    irregular = []
+    for xs in by_acquirer.values():
+        if len(xs) < th["irregular_min_credits"]:
+            continue
+        med2 = _median2([x["pence"] for x in xs])
+        m = th["irregular_multiple"]
+        irregular += [x for x in xs if 2 * x["pence"] >= m * med2 or 2 * x["pence"] * m <= med2]
+    for x in sorted(irregular, key=lambda x: pos[x["id"]]):
+        fire("irregular_acquirer", [x["id"]])
+    return out
 
 
 def _working_days_after(d: date, n: int) -> date:
@@ -308,14 +597,22 @@ def _working_days_after(d: date, n: int) -> date:
     return d
 
 
+def _write_csv(path: Path, rows: list[dict]) -> None:
+    with path.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["id", "date", "description", "amount", "balance"])
+        w.writeheader()
+        w.writerows(rows)
+
+
 def write(rows: list[dict], truth: Truth, out_dir: Path, stem: str | None = None) -> tuple[Path, Path]:
+    """Write STEM.csv and STEM.truth.json, and each further account's statement as
+    STEM_KEY.csv (its truth is in STEM.truth.json, under accounts)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = stem or f"{truth.archetype}_{truth.profile}"
     csv_path = out_dir / f"{stem}.csv"
     truth_path = out_dir / f"{stem}.truth.json"
-    with csv_path.open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["id", "date", "description", "amount", "balance"])
-        w.writeheader()
-        w.writerows(rows)
-    truth_path.write_text(json.dumps(truth.__dict__, indent=2, default=str))
+    _write_csv(csv_path, rows)
+    for account in truth.accounts:
+        _write_csv(out_dir / f"{stem}_{account['key']}.csv", account["rows"])
+    truth_path.write_text(json.dumps(truth.to_json(), indent=2, default=str))
     return csv_path, truth_path

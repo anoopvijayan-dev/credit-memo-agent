@@ -45,6 +45,7 @@ from .. import indicators as ind
 from ..categorise import RulesetError
 from ..ingest import StatementError
 from ..models import (
+    Category,
     Indicator,
     Metric,
     MonthlyCell,
@@ -119,7 +120,10 @@ def _indicator(i: Indicator, lines: dict[str, Transaction]) -> dict[str, Any]:
 
 def _queue_entry(account: str, e: QueueEntry, lines: dict[str, Transaction],
                  kinds: dict[str, str]) -> dict[str, Any]:
-    return {"account": account, "line": _line(lines[e.line_id]), "reasons": list(e.reasons),
+    from .edit import categories_for
+
+    t = lines[e.line_id]
+    return {"account": account, "line": {**_line(t), "categories": categories_for(t)}, "reasons": list(e.reasons),
             "indicators": [{"id": i, "kind": kinds[i]} for i in e.indicators],
             "candidates": [{"rule_id": c.rule_id, "category": c.category.value if c.category else None,
                             "bucket": c.bucket.value if c.bucket else None} for c in e.candidates],
@@ -222,13 +226,41 @@ def load_figures(folder: Path) -> tuple[dict[str, overrides.CaseFigures] | None,
         return None, refused
 
 
+def log_position(folder: Path) -> int | None:
+    """How many entries the case log holds, or None when it cannot be read whole now; a page
+    with no position offers no form."""
+    try:
+        return len(caselog.for_case(folder).entries())
+    except (caselog.CaseLogError, OSError):
+        return None
+
+
+def stale_list(folder: Path, figures: dict[str, overrides.CaseFigures] | None) -> list[dict[str, Any]]:
+    """The stale overrides (R19), each saying whether it can be confirmed: its line is still in
+    the case and its category still valid for the line's direction."""
+    try:
+        stale = overrides.stale_overrides(folder)
+    except Exception:  # the override log could not be read: the figures' refusal says why
+        return []
+    out = []
+    for s in stale:
+        t = figures[s.account].statement.by_id().get(s.line) if figures and s.account in figures else None
+        ok = s.why == "statement changed" and (t is None or Category(s.new) in overrides.valid_categories(t))
+        out.append({"seq": s.seq, "account": s.account, "line": s.line, "new": s.new, "why": s.why,
+                    "can_confirm": ok})
+    return out
+
+
 def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
     """The case as the workspace shows it, computed afresh from its files."""
     folder = Path(folder)
     out: dict[str, Any] = {"case": case_id, "label": None, "business_name": None, "profile": None,
                            "state": "shown", "accounts": [], "queue": [], "thresholds": None,
-                           "reconciliation": None, "refusal": None,
+                           "reconciliation": None, "refusal": None, "position": None, "stale": [],
                            "policy_check": {"shown": False}, "recommendation": None}  # left blank (R24)
+    # The case log position the page is built at, read before anything else, so a save made
+    # from this page is refused as a conflict once anything was recorded after it (R17).
+    out["position"] = log_position(folder)
     try:
         profile = store.load_profile(folder)
         out["label"], out["business_name"] = profile.get("label"), profile.get("business_name")
@@ -241,6 +273,7 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
         out.update(refused)
         return out
     figures, refused = load_figures(folder)
+    out["stale"] = stale_list(folder, figures)
     if refused is not None:
         out.update(refused)
         return out
@@ -413,8 +446,12 @@ def _candidate_html(c: dict[str, Any]) -> str:
     return f'{_e(c["rule_id"])} ({bucket})'
 
 
-def _queue_html(queue: list[dict[str, Any]]) -> str:
-    """The judgement queue, listed first, largest amount first (R15)."""
+def _queue_html(queue: list[dict[str, Any]], token: str | None = None, position: int | None = None) -> str:
+    """The judgement queue, listed first, largest amount first (R15); given the page's token
+    and case log position, each line carries the override form (R17)."""
+    from .edit import override_form
+
+    forms = token is not None and position is not None
     if not queue:
         return ('<section id="judgement-queue"><h2>Judgement queue</h2>'
                 '<p>No line needs a decision.</p></section>')
@@ -424,12 +461,14 @@ def _queue_html(queue: list[dict[str, Any]]) -> str:
         flags = ", ".join(f'{_e(i["id"])} {_e(INDICATOR_TITLES.get(i["kind"], i["kind"]))}' for i in e["indicators"])
         cands = "; ".join(_candidate_html(c) for c in e["candidates"])
         pairs = ", ".join(_e(p) for p in e["pairs_with"])
+        form = override_form(token, e["account"], e["line"], position, "/") if forms else ""
         rows.append(f'<tr><td>{_e(e["account"])}</td>{_line_cells(e["line"])}<td>{why}</td><td>{flags}</td>'
-                    f'<td>{cands}{(" pairs with " + pairs) if pairs else ""}</td></tr>')
+                    f'<td>{cands}{(" pairs with " + pairs) if pairs else ""}</td><td>{form}</td></tr>')
     return ('<section id="judgement-queue"><h2>Judgement queue</h2>'
             '<p>The lines a person has to decide, largest amount first.</p>'
             f'<table class="queue"><thead><tr><th>Account</th>{LINE_HEAD}<th>Why listed</th><th>Indicators</th>'
-            f'<th>Candidates</th></tr></thead><tbody>{"".join(rows)}</tbody></table></section>')
+            f'<th>Candidates</th><th>Change category</th></tr></thead><tbody>{"".join(rows)}</tbody></table>'
+            '</section>')
 
 
 def _pounds(text: str) -> str:
@@ -476,8 +515,11 @@ def render(summary: dict[str, Any], token: str | None = None) -> str:
     names = [x for x in (summary["business_name"], summary["label"]) if x]
     head = (f'<section id="summary-head"><p class="case-name">{_e(" — ".join(names))}</p></section>'
             if names else "")
+    from .edit import stale_html
+
+    head += stale_html(summary.get("stale") or [], token, summary.get("position"))  # R19
     if summary["state"] == "shown":
-        head += _queue_html(summary.get("queue") or [])  # listed first (R15)
+        head += _queue_html(summary.get("queue") or [], token, summary.get("position"))  # listed first (R15)
     head += _profile_html(summary.get("profile"))
     state = summary["state"]
     if state == "not_reconciled":
