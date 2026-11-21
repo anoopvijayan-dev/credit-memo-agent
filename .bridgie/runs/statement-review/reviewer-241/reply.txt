@@ -1,0 +1,42 @@
+**Verdict: pass.** R14 is met, and last round's major is fixed.
+
+**The fix.** `firm.py` now records which paths `firm.yaml` itself names. If it names a thresholds file, `case_thresholds()` (`summary.py:131`) always loads that path. When the file is missing, `read_thresholds` raises `ThresholdsError` with "no such file" (`indicators.py:114`), and `refusal()` turns that into a refused case with no figures (`summary.py:187-189`). The panel also prints which thresholds file the flags came from (`summary.py:336-337`). The runner's full-suite and contracts rows both show `test_a_thresholds_file_firm_yaml_names_but_missing_shows_no_figures` passed.
+
+**R14 itself:**
+- **Thresholds from an editable file:** indicators are raised by the figures layer (`indicators.py:252`) from the firm's `indicators.yaml` or the path `firm.yaml` gives. The packaged file is used only when neither exists.
+- **All eight indicator kinds** are raised at `indicators.py:271-375`.
+- **Each indicator's lines and the threshold that fired** are shown per account (`summary.py:107-113`, `342-348`).
+- **Illustrative label:** each threshold is compared by value against the shipped one (`indicators.py:91-94`), and a shipped value is shown as "illustrative: the shipped value" (`summary.py:326-329`).
+
+The task's own tests (queue order, the cash deposit at the limit in the queue with its indicator, P19) all passed in the runner's logs.
+
+**One minor finding.** The fallback test at `summary.py:131` uses `path.exists()`, which returns False for a broken symlink. So an `indicators.yaml` at the default path that is a symlink to a moved file still opens the case with the shipped thresholds instead of refusing. The panel does now say "(shipped with this tool)", which is why I rated it minor.
+
+I couldn't write `evidence.json` to the run directory: shell commands were denied and I have no file-write tool. It's below for the runner to pick up.
+
+```json
+{
+  "task": "T43",
+  "criteria": [
+    {
+      "id": "R14",
+      "tier": "adversarial",
+      "check": "Indicators are raised by the figures layer (src/cma/indicators.py:252 raise_indicators, covering all eight kinds at 271-375) from case_thresholds() (src/cma/review/summary.py:124-133). That is the firm's file: the case root's indicators.yaml, or the path firm.yaml names, which is now refused when missing (firm.py names_path/named; summary.py:131; indicators.py:114 'no such file'; refusal() at summary.py:187-189). The packaged file is used only when neither exists. Each indicator is shown per account with its lines and every threshold that fired (summary.py:107-113, 342-348), and a threshold at its shipped value is labelled illustrative (indicators.py:91-94, 365-369; summary.py:326-329). The panel names the thresholds source (summary.py:336-337). Runner rows specified:3 and contracts:4 show test_a_cash_deposit_at_the_single_deposit_limit_is_in_the_queue_with_its_indicator, test_the_queue_is_largest_amount_first_by_size_either_way, test_the_page_lists_the_queue_first_and_the_indicators_panel_with_its_thresholds, test_a_firm_threshold_is_not_labelled_illustrative_and_decides_what_fires, test_a_malformed_firm_thresholds_file_shows_no_figures and test_a_thresholds_file_firm_yaml_names_but_missing_shows_no_figures PASSED. Rows specified:3 and invariants:5 show test_p19_every_cash_deposit_at_or_above_the_limit_is_in_the_workspace_queue_with_its_indicator PASSED.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-241/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/review/summary.py",
+      "line": 131,
+      "criterion": "R14",
+      "claim": "When firm.yaml names no thresholds path, the fallback test is path.exists(), which is False for a broken symlink. An indicators.yaml at the case root that is a symlink to a moved or missing file therefore opens the case with the packaged thresholds instead of refusing, although the firm put a thresholds file there (design.md:1298, 1423: no case opens with silently different flags). It is softened by the panel now showing 'Thresholds from cma/thresholds/indicators.yaml (shipped with this tool)'.",
+      "repro": "With CMA_HOME set and no firm.yaml, run `ln -s /nonexistent/t.yaml $CMA_HOME/indicators.yaml`, import the QUEUE statement from tests/test_workspace_indicators.py and GET /api/case. The state is 'shown' with thresholds.shipped true, not refused. Using `path.exists() or path.is_symlink()` would refuse it via load_thresholds."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {"seat": "reviewer", "adapter": "claude-code", "model": "claude-opus-5-5"}
+}
+```
