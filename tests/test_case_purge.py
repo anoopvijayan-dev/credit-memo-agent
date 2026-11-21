@@ -241,3 +241,27 @@ def test_a_purge_racing_another_never_recreates_the_case_or_records_it_twice(hom
         store.purge_case(case_id)
     assert not folder.exists()
     assert len(_ledger(home)) == 1
+
+
+def test_purges_finishing_together_record_the_case_once(tmp_path):
+    """R35: the ledger was checked for the case and then appended to in two steps, so two purges
+    of one case finishing together could both record it. The check and the append are one step
+    under an exclusive lock on the ledger."""
+    import threading
+
+    root = tmp_path / "root"
+    root.mkdir()
+    line = {"case": "0123456789abcdef", "purged_at": "2026-11-21T00:00:00.000000Z", "by": "someone"}
+    start = threading.Barrier(8)
+
+    def finish():
+        start.wait()
+        store._append_ledger(root, dict(line))
+
+    threads = [threading.Thread(target=finish) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    lines = (root / store.PURGE_LEDGER).read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1 and '"case":"0123456789abcdef"' in lines[0]

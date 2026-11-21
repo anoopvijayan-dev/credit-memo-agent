@@ -25,6 +25,7 @@ Messages name files by hash or account key, never by their content.
 
 from __future__ import annotations
 
+import errno
 import getpass
 import hashlib
 import json
@@ -35,6 +36,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import warnings
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
@@ -52,6 +54,7 @@ from . import firm
 CASES = "cases"
 PURGE_LEDGER = "purge_ledger.jsonl"
 PURGING = ".purging-"  # a case folder renamed out of use, while its files are deleted
+LEDGER_WAIT = 10.0  # seconds a purge waits for another to finish writing the ledger
 PROFILE = "case.yaml"
 INPUTS = "inputs"
 STATEMENTS = "statements"
@@ -643,15 +646,28 @@ def _remove_tree(path: Path) -> None:
 
 
 def _append_ledger(root: Path, line: dict[str, str]) -> None:
-    """Append one line to the firm-level purge ledger, owner-only, and make it durable."""
+    """Append one line to the firm-level purge ledger, owner-only, and make it durable, unless
+    it already holds a line for the case. The check and the append are one step under an
+    exclusive lock on the ledger, so two purges of one case finishing together record it once."""
     path = root / PURGE_LEDGER
     data = (json.dumps(line, sort_keys=False, separators=(",", ":")) + "\n").encode("utf-8")
-    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0), FILE_MODE)
+    fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0), FILE_MODE)
     try:
         if os.fstat(fd).st_mode & 0o777 != FILE_MODE:
             os.chmod(path, FILE_MODE)
-        os.write(fd, data)  # one short write in append mode: lines from two purges never mix
-        os.fsync(fd)
+        deadline = time.monotonic() + LEDGER_WAIT
+        while not caselog._try_exclusive(fd):
+            if time.monotonic() > deadline:
+                raise OSError(errno.EBUSY, "the purge ledger is in use by another purge")
+            time.sleep(0.05)
+        try:
+            if _ledger_records(root, line["case"]):
+                return  # another purge of this case recorded it while this one finished
+            os.write(fd, data)  # one short write in append mode: lines from two purges never mix
+            os.fsync(fd)
+        finally:
+            with suppress(OSError):
+                caselog._unlock(fd)
     finally:
         os.close(fd)
 
@@ -705,8 +721,8 @@ def purge_case(case_id: str, *, root: Path | None = None, wait: float | None = N
                              f"({what}); purge again to finish. Nothing was recorded in the ledger") from None
     record = Purged(case_id, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"), _os_user())
     try:
-        if not _ledger_records(root, case_id):  # one line per case, however often it is retried
-            _append_ledger(root, {"case": record.case, "purged_at": record.purged_at, "by": record.by})
+        # One line per case, however often it is retried, and however many purges finish it.
+        _append_ledger(root, {"case": record.case, "purged_at": record.purged_at, "by": record.by})
         gone.rmdir()
     except OSError as e:
         what = e.strerror or type(e).__name__
