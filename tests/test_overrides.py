@@ -339,3 +339,39 @@ def test_cli_override_list_figures_and_resolve(home, tmp_path):
     r = runner.invoke(app, ["case", "resolve-override", cid, "1", "--drop", "--name", "Pat"])
     assert r.exit_code == 0, r.output
     assert overrides.case_figures(folder)["main"].stale == []
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("seed", [11, 12, 13])
+def test_p3_p4_hold_across_stale_confirmed_and_dropped_overrides(home, tmp_path, seed):
+    """P3 and P4 for an override log that holds stale overrides and their confirmations and
+    drops: a fresh computation equals the one made after the last step, computing twice is
+    identical, and no line's id, date, amount, balance or description ever changes."""
+    rng = random.Random(seed)
+    folder = _case(tmp_path, SMALL)
+    first = overrides.case_figures(folder)["main"].statement
+    for line, cat in _random_overrides(first, rng, 3):
+        overrides.add_override(folder, line, cat.value, reason="r", name="Pat")
+    # The statement changes (one line gone, one added): overrides go stale.
+    changed = SMALL.replace("L2,2026-01-06,FPS CREDIT J BLOGGS,300.00,1800.00\n", "") \
+                   .replace("L3,2026-01-07,DD COUNCIL,-100.00,1700.00\n", "L3,2026-01-07,DD COUNCIL,-100.00,1400.00\n") \
+                   .replace("L4,2026-02-02,FPS CREDIT ACME LTD,250.00,1950.00\n",
+                            "L4,2026-02-02,FPS CREDIT ACME LTD,250.00,1650.00\nL5,2026-02-03,FPS CREDIT X,10.00,1660.00\n")
+    _replace_statement(folder, changed)
+    before = _lines(overrides.case_figures(folder))
+    step = None
+    for s in overrides.stale_overrides(folder):
+        action = "drop" if s.why == "line not in the case" or rng.random() < 0.5 else "confirm"
+        try:
+            overrides.resolve_stale(folder, s.seq, action, name="Pat")
+        except store.CaseStoreError:
+            overrides.resolve_stale(folder, s.seq, "drop", name="Pat")
+        step = overrides.case_figures(folder)
+    t = overrides.case_figures(folder)["main"].statement.transactions
+    line = rng.choice(t)
+    overrides.add_override(folder, line.id, rng.choice(sorted(overrides.valid_categories(line),
+                                                             key=lambda c: c.value)).value, reason="r", name="Pat")
+    step = overrides.case_figures(folder)
+    fresh = overrides.case_figures(folder)
+    assert _snapshot(step) == _snapshot(fresh) == _snapshot(overrides.case_figures(folder))
+    assert _lines(fresh) == before and not fresh["main"].stale
