@@ -546,6 +546,14 @@ def _case_errors():
     except (FirmConfigError, RulesetError) as e:  # a malformed firm.yaml or firm_rules.yaml (R20, R21)
         console.print(f"[red]Refused.[/red] {escape(str(e))}")
         raise typer.Exit(code=2) from None
+    except ReconciliationError as e:
+        # R3: no figures for a case whose buckets do not add up, with exit 6 as `cma run` says
+        # it, never a traceback (Antigravity re-review of T16).
+        console.print(f"[red]Refused, no figures shown.[/red] {escape(str(e))}")
+        raise typer.Exit(code=6) from None
+    except (StatementError, AmountError) as e:  # a statement the figures layer refuses, as `cma run`
+        console.print(f"[red]Refused.[/red] {escape(str(e))}")
+        raise typer.Exit(code=2) from None
     except OSError as e:
         # The file system refused a step outside a save (the case root cannot be made, a
         # file cannot be read). Said as a refusal, never a traceback; a save's own errors
