@@ -46,7 +46,8 @@ profile name only when one matches (_v1_protected), and a statement with no prof
 v1's first-match order exactly (R54). Every line records the rule that
 set its category in Transaction.rule_id: "<ruleset>:<rule id>", "<ruleset>:default",
 "<ruleset>:round_trip", "<ruleset>:conflict:<id>+<id>...", "profile:director",
-"profile:own_account", "firm:<rule id>" or the override's own reference.
+"profile:own_account", "firm:<rule id>", "pairing:<account>:<line id>" (an own-account
+pairing across a case's accounts, naming the other half, R8) or the override's own reference.
 
 Revenue is claimed narrowly. A card or gateway settlement is trading income. A bank
 transfer in is only counted as a customer payment when it carries an invoice
@@ -1446,6 +1447,78 @@ def link_reversals(statement: Statement) -> Statement:
                 taken.add(o.id)
                 break
     return statement
+
+
+PAIRING_DAYS = 3  # the days apart a debit and a credit of a case's accounts may be and still pair (R8)
+PAIRING = "pairing"  # the rule a paired line records: "pairing:<account>:<line id>" of its other half
+
+
+def _pairable(t: Transaction, rules: Mapping[str, Rule], ruleset: Ruleset, overridden: Collection[str]) -> bool:
+    """Whether an own-account pairing may set the line's category: it ranks below a per-line
+    override and a protected verdict, and above everything else (C1's precedence (3))."""
+    if t.id in overridden or t.amount == 0 or t.category in (Category.RETURNED_DD, None) or t.reverses:
+        return False
+    head, _, rest = (t.rule_id or "").partition(":")
+    rule = rules.get(rest) if head == ruleset.id else None
+    if rule is None:
+        return True
+    if ruleset.frozen:
+        desc = t.description.upper()
+        return not _v1_protected(rule, desc, t.amount)
+    return not rule.protected
+
+
+def pair_own_accounts(statements: Mapping[str, Statement], ruleset: Ruleset | None = None, *,
+                      overridden: Mapping[str, Collection[str]] | None = None,
+                      days: int = PAIRING_DAYS) -> list[list[tuple[str, str]]]:
+    """Own-account pairing across a case's accounts (R8, R9). Each debit in one account is
+    paired with the single credit of the same amount in another account of the case dated
+    within `days` of it, when that credit is a candidate for no other debit, and both lines
+    become own-account transfers, each recording its other half as "pairing:<account>:<id>".
+    A debit with more than one candidate credit, or a credit more than one debit could pair
+    with, is not paired: each such debit and every candidate are returned as one group of
+    (account, line id), debit first, for the judgement queue (R9). A line an override or a
+    protected verdict settled is never paired. Needs more than one account; the statements
+    are categorised already and are changed in place. Nothing is ordered by statement order,
+    so which lines pair does not depend on the order the accounts are given in."""
+    from .metrics import size_pence  # the figures layer does the arithmetic (R2)
+
+    if len(statements) < 2:
+        return []
+    ruleset = ruleset or active_ruleset()
+    rules = {r.id: r for r in ruleset.rules}
+    overridden = overridden or {}
+    credits: dict[int, list[tuple[str, Transaction]]] = {}
+    debits: list[tuple[str, Transaction, int]] = []
+    for account, s in statements.items():
+        skip = overridden.get(account, ())
+        for t in s.transactions:
+            p = size_pence(t)
+            if p is None or not _pairable(t, rules, ruleset, skip):
+                continue
+            if t.amount > 0:
+                credits.setdefault(p, []).append((account, t))
+            else:
+                debits.append((account, t, p))
+    candidates: dict[tuple[str, str], list[tuple[str, Transaction]]] = {}
+    wanted: dict[tuple[str, str], int] = {}  # how many debits each credit is a candidate for
+    for account, d, p in debits:
+        found = [(a, c) for a, c in credits.get(p, []) if a != account and abs((c.date - d.date).days) <= days]
+        candidates[(account, d.id)] = found
+        for a, c in found:
+            wanted[(a, c.id)] = wanted.get((a, c.id), 0) + 1
+    groups: list[list[tuple[str, str]]] = []
+    for account, d, _ in debits:
+        found = candidates[(account, d.id)]
+        if not found:
+            continue
+        if len(found) == 1 and wanted[(found[0][0], found[0][1].id)] == 1:
+            a, c = found[0]
+            d.category, d.rule_id = Category.OWN_ACCOUNT_TRANSFER, f"{PAIRING}:{a}:{c.id}"
+            c.category, c.rule_id = Category.OWN_ACCOUNT_TRANSFER, f"{PAIRING}:{account}:{d.id}"
+        else:
+            groups.append([(account, d.id)] + [(a, c.id) for a, c in found])
+    return groups
 
 
 OUTGOING_TRANSFER = re.compile(r"^(?:FPS DEBIT|BACS DEBIT|TFR)\b")

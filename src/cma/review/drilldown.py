@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from .. import metrics
+from .. import metrics, overrides
 from ..models import MonthlyCell, format_value, money_exact
 from . import summary
 from .edit import categories_for, override_form
@@ -52,7 +52,7 @@ def _line(t, overridden: dict[str, str], note: set[str]) -> dict[str, Any]:
             "balance": t.balance, "balance_display": money_exact(t.balance),
             "category": t.category.value if t.category else None, "rule": t.rule_id,
             "overridden": t.id in overridden, "counted_in_part": t.id in note,
-            "categories": categories_for(t)}
+            "categories": categories_for(t), "account": t.account_key}
 
 
 def _total(statement, ids: list[str], kind: str) -> dict[str, Any] | None:
@@ -81,7 +81,8 @@ def lines_behind(folder: Path, case_id: str, *, account: str | None = None, figu
         if len(figures) != 1:
             raise DrillError("name the account")
         account = next(iter(figures))
-    f = figures.get(account)
+    # The case's figures across its accounts (R41), for a case of more than one account.
+    f = overrides.combined_figures(figures) if account == overrides.COMBINED else figures.get(account)
     if f is None:
         raise DrillError("no such account in this case")
     out["account"] = account
@@ -107,7 +108,8 @@ def detail(f, *, figure: str | None = None, month: str | None = None, cell: str 
                    total=_total(statement, m.evidence, kind), counted_in_part=list(m.evidence_note or []),
                    inputs=None, closes=None)
         if kind == "derived":
-            out.update(metrics.derived_inputs(statement, f.metrics, m.id, f.proposed_repayment, f.vat_stagger))
+            out.update(metrics.derived_inputs(statement, f.metrics, m.id, f.proposed_repayment, f.vat_stagger,
+                                              closes=getattr(f, "closes", None)))
         return out
     row = next((r for r in f.monthly if r.month == month), None)
     if row is None or cell not in CELL_TITLES:
@@ -120,8 +122,13 @@ def detail(f, *, figure: str | None = None, month: str | None = None, cell: str 
                lines=[_line(by_line[i], f.overridden, set()) for i in c.evidence],
                total=_total(statement, c.evidence, c.kind), counted_in_part=[], inputs=None, closes=None)
     if c.kind == "derived":
-        out.update(metrics.cell_inputs(statement, row))
+        out.update(metrics.cell_inputs(statement, row, closes=getattr(f, "closes", None)))
     return out
+
+
+def account_title(account: str) -> str:
+    """How a page names an account's figures, or the case's across all its accounts (R41)."""
+    return "All accounts" if account == overrides.COMBINED else f"Account {account}"
 
 
 def _cell_display(c: MonthlyCell) -> str:
@@ -152,6 +159,9 @@ def render(d: dict[str, Any], token: str) -> str:
     here = "/lines?" + urlencode({"account": d["account"], **d["target"]})  # where a form comes back to
 
     def form(x):
+        if d["account"] == overrides.COMBINED:  # a line of the case's combined figures (R41): its own
+            account, own = metrics.split_case_line_id(x["id"])  # account and id take the override
+            return override_form(token, account, {**x, "id": own}, position, here)
         return override_form(token, d["account"], x, position, here)
 
     return back + detail_html(d, form if position is not None else None)
@@ -163,7 +173,7 @@ def detail_html(d: dict[str, Any], form=None, section_id: str = "drilldown", bac
     line, gives the cell that changes its category, as the workspace offers it; the pack's
     record offers none. `back` is HTML placed at the end of the section."""
     head = (f'<section class="lines-behind" id="{_e(section_id)}"><h2>{_e(d["id"])}: {_e(d["name"])}</h2>'
-            f'<p class="figure-value">Account {_e(d["account"])}: <strong>{_e(d["display"])}</strong>'
+            f'<p class="figure-value">{_e(account_title(d["account"]))}: <strong>{_e(d["display"])}</strong>'
             + (' <span class="overridden">rests on an override</span>' if d["overridden"] else "")
             + f'</p><p class="method">{_e(d["method"])}</p>')
     if d.get("note"):
