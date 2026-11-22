@@ -1,0 +1,19 @@
+I'm waiting for the full suite to finish before I write claim.json.
+
+The ordering bug the reviewer found in verify-256 is fixed at HEAD, but a related case still rejects valid files and needs your decision. The full suite passed: 2496 tests, plus ruff and compileall.
+
+- **The reviewer's finding:** I reproduced it at f1cbec0, the commit they judged: 8 transactions with no balance, all booked at midnight ahead of the one with a balance, get refused. At HEAD (d6d49f9) the same file imports all 10 rows, and the new tests with 8, 12 and 400 such lines pass. Their minor finding is also fixed: a transaction shown pending on one page and booked on another is no longer counted as left out.
+- **The case that still fails:** if the transactions without a balance all have different amounts, and the one with a balance needs a particular set of them before it, finding the order becomes a "which amounts add up to this" search. From 16 such transactions it hits the 100,000-step cap and refuses a valid file; 15 still import, in 0.14 s. I added a strict xfail test for it (commit 0b15ac5) that will start passing once this is fixed.
+- **Your options:**
+  - (a) Replace the search with one that tracks which balance totals are reachable between consecutive transactions that have balances.
+  - (b) Keep the cap, but refuse with a distinct "could not be ordered within N steps" message, not the current "the export may be missing transactions".
+  - (c) Accept it as outside R36, since exports with balances on only some lines are rare.
+- **Rest of the checklist:** every line has evidence. That covers importing the same file twice, nothing written on refusal, input checks at the boundary, the existing case access checks, the change being purely additive, the README, and no new dependencies or secrets. Not applicable, with reasons: no remote alerting (by design) and no changelog file in the repo.
+
+One timing detail: the full suite started before I added the xfail test. I re-ran the Open Banking test file afterwards: 52 passed, 1 xfailed.
+
+The full claim, with one proof per checklist line, is at `/home/user/credit-memo-agent/.bridgie/runs/statement-review/hardener-64/claim.json`.
+
+```json
+{"task":"T29","files_changed":["tests/test_import_openbanking.py"],"claims":[{"text":"verify-256 finding 1 reproduced at f1cbec0 and fixed at HEAD d6d49f9","proof_cmd":"python /tmp/claude-0/sp/old.py","proof_output":"f1cbec0 REFUSED: ... no order of the transactions booked at the same time keeps the balance chain\nHEAD ok rows 10"},{"text":"Remaining subset-sum ordering gap recorded as strict xfail test (0b15ac5)","proof_cmd":"python /tmp/claude-0/sp/probe.py","proof_output":"subset15 ok 17 0.14\nsubset16 REFUSED"},{"text":"Full suite, ruff, compileall","proof_cmd":"python -m pytest -q -x; ruff check ...; python -m compileall -q src","proof_output":"2496 passed; All checks passed!; compile-ok"}],"dispositions":[{"finding":"verify-256 major: _order permutes interchangeable balance-less lines (openbanking.py:316)","disposition":"reproduced","evidence":"refused at f1cbec0, imports at d6d49f9; distinct-amount subset variant remains, strict xfail"},{"finding":"verify-256 minor: pending later booked counted as left out","disposition":"reproduced","evidence":"fixed at d6d49f9; test passes"}],"notes":"Owner decision needed on the subset-sum ordering gap (16+ distinct loose amounts): DP over reachable sums, a distinct step-cap refusal, or accept as out of R36. Full claim at run dir claim.json."}
+```

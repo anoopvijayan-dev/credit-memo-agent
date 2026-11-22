@@ -1,0 +1,42 @@
+{
+  "task": "T29",
+  "claims": [
+    {
+      "text": "A valid file whose same-moment group has 8, 12 or 400 balance-less lines ahead of the balanced line that must come first is imported, not refused: the search in _order tries only the first unused loose line of each amount and does not search a state again once it has failed (the state is the balance, the balanced lines used, and how many loose lines of each amount are used). A group that mixes loose amounts of 1, 2 and 3 pounds with two balanced lines is ordered too.",
+      "proof_cmd": "python -m pytest -q tests/test_import_openbanking.py -k \"balance_less or mixed_loose or pending_transaction_booked\"",
+      "proof_output": "5 passed, 47 deselected in 0.56s"
+    },
+    {
+      "text": "A transaction that one page shows as Pending and another page shows as Booked is kept as booked, and is not counted among the pending lines left out.",
+      "proof_cmd": "python -m pytest -q tests/test_import_openbanking.py -k pending_transaction_booked",
+      "proof_output": "included in the 5 passed above (test_a_pending_transaction_booked_on_another_page_is_not_counted_as_left_out)"
+    },
+    {
+      "text": "All Open Banking importer tests pass, golden files and refusal fixtures included, and all of them are marked contracts.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_import_openbanking.py",
+      "proof_output": "52 passed in 2.66s"
+    },
+    {
+      "text": "The full suite, ruff and the evals pass.",
+      "proof_cmd": "ruff check src tests evals; python -m compileall -q src && python -m pytest -q; python evals/run_evals.py",
+      "proof_output": "All checks passed! / 2496 passed in 279.22s (0:04:39) / 9/9 featured cases match truth (features: acquirers, director, cash, lenders, two_accounts)"
+    }
+  ],
+  "files_changed": [
+    "src/cma/importers/openbanking.py",
+    "tests/test_import_openbanking.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major: The depth-first search in _order walks every permutation of interchangeable balance-less lines before it reaches a balanced line that has to come first; with 8+ loose lines it passes ORDER_STEPS and refuses a valid file (openbanking.py:316).",
+      "disposition": "reproduced",
+      "evidence": "Before the fix, the new test test_balance_less_lines_ahead_of_the_balanced_line_that_must_come_first_are_ordered (the reviewer's file, E0 then L0..L7 and A at one moment) failed with 'no order of the transactions booked at the same time keeps the balance chain'. _order now tries only the first unused loose line of each amount, since loose lines with the same amount are interchangeable. It also records each state whose search has failed, keyed by (balance, mask of the balanced lines used, count of each loose amount used), and does not enter that state again. The reviewer's case now takes about 2n steps. The test passes for 8, 12 and 400 loose lines, and test_mixed_loose_amounts_and_balanced_lines_at_one_moment_are_ordered covers loose lines of several amounts mixed with balanced lines. The existing large-chain tests and the refusal tests still pass."
+    },
+    {
+      "finding": "minor: the pending count checks a pending id only against other pending ids, so a transaction that is Pending on one page and Booked on another is kept and also counted as pending left out (openbanking.py:394).",
+      "disposition": "reproduced",
+      "evidence": "Before the fix, test_a_pending_transaction_booked_on_another_page_is_not_counted_as_left_out (the reviewer's file) gave pending=1. After the booked lines are read, convert() now subtracts the pending ids that were kept as booked (pending_ids & first.keys()). The test now gives rows=2 and pending=0."
+    }
+  ],
+  "notes": "The search is still bounded by ORDER_STEPS. Choosing which loose lines must come before each balanced line is a subset-sum problem in general, so a group with many distinct loose amounts that cannot be chained could still be refused at the bound, not by proof. With the symmetry and memo, the work grows with the number of distinct loose amounts, not with the number of loose lines. When several orders are valid, the order returned is unchanged: candidates are still tried in file order."
+}

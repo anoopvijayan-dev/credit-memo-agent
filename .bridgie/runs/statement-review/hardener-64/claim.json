@@ -1,0 +1,96 @@
+{
+  "task": "T29",
+  "claims": [
+    {
+      "text": "Failure modes / R36 (verify-256 finding 1): at HEAD (d6d49f9) a valid file with 8 or more balance-less lines booked at one moment ahead of the balanced line that must come first is imported. At f1cbec0, the commit the reviewer judged, the same file is refused. The fix tries only the first unused loose line of each amount and memoises dead (balance, balanced-mask, loose-counts) states.",
+      "proof_cmd": "python /tmp/claude-0/sp/old.py  (loads src/cma/importers/openbanking.py from f1cbec0 beside HEAD's and converts E0 + 8 loose 1.00 lines + A balance 101.00, all at 2026-05-02T00:00Z)",
+      "proof_output": "f1cbec0 REFUSED: line 1: no order of the transactions booked at the same time keeps the balance chain; the export may be missin\nHEAD ok rows 10"
+    },
+    {
+      "text": "Tests cover finding 1 and the mixed case: tests/test_import_openbanking.py has a parametrised test with 8, 12 and 400 loose lines ahead of the balanced line, and a test with 15 loose lines of three amounts and two balanced lines (contracts). The probe also passes 2000 loose lines in 0.1 s.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_import_openbanking.py",
+      "proof_output": "52 passed, 1 xfailed in 2.88s"
+    },
+    {
+      "text": "Failure modes, gap left as evidence: when same-moment lines with no balance have distinct amounts and a balanced line needs a particular subset of them before it, ordering them is subset-sum. The search passes ORDER_STEPS from 16 such lines and refuses a valid file. 15 lines are ordered in 0.14 s. This is recorded as a strict xfail test, test_distinct_loose_amounts_whose_subset_a_balanced_line_needs_are_ordered (commit 0b15ac5), and needs an algorithm decision from the owner (notes).",
+      "proof_cmd": "python /tmp/claude-0/sp/probe.py   (distinct powers-of-two loose amounts, balanced line after the even-indexed subset)",
+      "proof_output": "subset15 ok 17 0.14\nsubset16 REFUSED line 1: no order of the transactions booked at the same time keeps the balance c 0.19"
+    },
+    {
+      "text": "Idempotency (money/data path, never n/a): the same file imported twice leaves the case unchanged (R39). A transaction a page repeats with identical content is kept once and counted. A repeated id with different content is refused. A pending id repeated across pages is counted once, and one later booked is not counted as left out.",
+      "proof_cmd": "python -m pytest -q tests/test_import_openbanking.py -k 'golden_statement_and_counts_pending or repeated_id or pending_transaction'",
+      "proof_output": "included in: 52 passed, 1 xfailed (test_cma_case_import_openbanking_keeps_the_golden_statement_and_counts_pending asserts 'already imported' on the second import)"
+    },
+    {
+      "text": "Partial failure: every refusal writes no statement and leaves the case without statements/main.csv. The conversion stages in a work folder, and the case log entry is written only after the loader passes.",
+      "proof_cmd": "grep -n 'not (tmp_path / \"statement.csv\").exists()\\|statements\" / \"main.csv\").exists()' tests/test_import_openbanking.py",
+      "proof_output": "_refused() asserts no statement.csv for every refusal test; test_case_import_refusal_names_the_file_not_its_cells asserts no statements/main.csv"
+    },
+    {
+      "text": "Security / input validation at the boundary: a key given twice, NaN, deeply nested JSON (RecursionError), bytes that are not UTF-8, ids that start with a formula character, a space or a control character, and amounts with more than two decimals are each refused by line. No refusal quotes a cell, which a sentinel string proves.",
+      "proof_cmd": "python - (convert a file of 100000 nested arrays, and one with Amount NaN)",
+      "proof_output": "OpenBankingImportError line 1: not JSON\nOpenBankingImportError line 1: not JSON"
+    },
+    {
+      "text": "Security / authz (never n/a): the new entry point is a value of the existing `cma case import`, which goes through store.import_file. That function resolves the case with store.case_folder, writes only through _write_private (owner-only) and records through the case log's _recorded. No new path bypasses it.",
+      "proof_cmd": "git diff a92cec2~1 HEAD -- src/cma/store.py | grep -n '_write_private\\|_recorded\\|openbanking'",
+      "proof_output": "fmt == \"openbanking\" branch uses _write_private(raw, data), _write_private(converted, b\"\") and the existing `with _recorded(folder, \"import\")` block"
+    },
+    {
+      "text": "Security: no secrets in the code or fixtures, and no new dependencies (stdlib json, bisect, decimal). pyproject.toml is unchanged.",
+      "proof_cmd": "grep -rnE 'API_KEY|SECRET|TOKEN|password' src/cma/importers/openbanking.py tests/golden/openbanking || echo 'no secrets'; git diff a92cec2~1 --stat -- pyproject.toml",
+      "proof_output": "no secrets  (and an empty diff-stat for pyproject.toml)"
+    },
+    {
+      "text": "Data / migration (reversible, never n/a): the change is additive. FORMATS gains 'openbanking', and the import log entry gains the optional keys pending and repeated. The only readers of import entries (pack._imports, overrides) pick named fields or the account, so they are unaffected. Rollback means not using the format, or reinstalling the previous wheel. Existing case folders need no repair.",
+      "proof_cmd": "grep -rn '\\.data\\[\"account\"\\]\\|imp.get(' src | head",
+      "proof_output": "src/cma/pack.py:552 out[e.data[\"account\"]] = e.data; pack.py:608 reads imp.get(\"format\"), imp.get(\"input_sha256\"); src/cma/overrides.py:175 reads e.data[\"account\"]"
+    },
+    {
+      "text": "PII: the profile is not touched. Descriptions go only into the case's statement file, as with the Monzo importer. Refusals name lines only.",
+      "proof_cmd": "python -m pytest -q tests/test_import_openbanking.py",
+      "proof_output": "52 passed, 1 xfailed (every refusal asserts SENTINEL not in the message)"
+    },
+    {
+      "text": "Performance: a group of 1500 lines booked at one moment is ordered in file or reverse order, and one that no order chains is refused, not crashed. The search has a step cap (ORDER_STEPS = 100000). The whole file is read once, within R2's revision 30 scope.",
+      "proof_cmd": "python -m pytest -q tests/test_import_openbanking.py -k large_group",
+      "proof_output": "included in: 52 passed, 1 xfailed"
+    },
+    {
+      "text": "Observability: the CLI prints the counts of transactions, pending lines left out and repeats kept once. The case log's import entry records format, pending and repeated. A refusal exits 2 with the line named. There is no remote alerting, by design.",
+      "proof_cmd": "python -m pytest -q tests/test_import_openbanking.py -k counts_pending",
+      "proof_output": "asserts 'left out 1 pending transaction', '1 transaction repeated across pages kept once' and entry.data pending/repeated == (1, 1)"
+    },
+    {
+      "text": "Operability: the format is opt-in, the same as a flag, so it runs only when --format openbanking is passed. The balance options are refused for other formats, and --opening-balance is refused for Open Banking. No config or secret changes are needed to deploy.",
+      "proof_cmd": "python -m pytest -q tests/test_import_openbanking.py -k balance_options_for_other_formats",
+      "proof_output": "included in: 52 passed, 1 xfailed"
+    },
+    {
+      "text": "Docs: README.md documents `cma case import --format openbanking` with and without --statement-balance/--at. There is no CHANGELOG file in the repo.",
+      "proof_cmd": "git diff a92cec2~1 HEAD -- README.md | grep openbanking; ls CHANGELOG* 2>/dev/null || echo none",
+      "proof_output": "+cma case import <id> private/transactions.json --format openbanking --account current\n+cma case import <id> private/transactions.json --format openbanking --statement-balance 1389.75 --at 2026-04-03\nnone"
+    },
+    {
+      "text": "The full suite, ruff and compileall pass.",
+      "proof_cmd": "python -m pytest -q -x; ruff check src/cma/importers/openbanking.py src/cma/store.py src/cma/cli.py tests/test_import_openbanking.py; python -m compileall -q src",
+      "proof_output": "2496 passed in 279.69s; All checks passed!; compile-ok"
+    }
+  ],
+  "files_changed": [
+    "tests/test_import_openbanking.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "verify-256 major: the depth-first search in _order walks every permutation of interchangeable balance-less lines, so 8 or more ahead of a balanced line that must come first pass ORDER_STEPS and a valid file is refused (openbanking.py:316)",
+      "disposition": "reproduced",
+      "evidence": "Reproduced at f1cbec0: the 8-loose-line file is refused. It is fixed at d6d49f9 (HEAD), where the same file imports 10 rows, and tests with 8, 12 and 400 loose lines pass. The same class of problem remains when the loose amounts are distinct and a subset is required (16 lines): a strict xfail test records it, and notes explain why."
+    },
+    {
+      "finding": "verify-256 minor: a pending transaction later booked on another page was counted as left out",
+      "disposition": "reproduced",
+      "evidence": "Fixed at d6d49f9 (pending -= len(pending_ids & first.keys())). test_a_pending_transaction_booked_on_another_page_is_not_counted_as_left_out passes."
+    }
+  ],
+  "notes": "Gap for the owner, which needs a design decision, not a hardening edit: _order is exact search over the same-moment lines. When lines with no balance have distinct amounts and a balanced line's balance-before requires a particular subset of them to come first, the problem is subset-sum. From 16 such lines the search passes ORDER_STEPS (100000) and refuses a valid file with 'no order ... keeps the balance chain', which R36 and the failure-modes row allow only when no order exists. Reproducer: the strict xfail test test_distinct_loose_amounts_whose_subset_a_balanced_line_needs_are_ordered (commit 0b15ac5). Options: (a) a pseudo-polynomial DP over the reachable balance sums between consecutive balanced lines (the loose order within a segment is irrelevant to the chain), bounded by the number of distinct sums; (b) state in R36 that a group whose ordering needs more than ORDER_STEPS is refused with a distinct message ('could not be ordered within N steps'), not the 'missing transactions' wording; (c) accept it as outside R36, since banks that put balances on only some lines are rare. Also, when the search gives up, _first_break may name the group's first line rather than a true break. That is acceptable for a refusal but imprecise. The full suite run (2496 passed) began before the xfail test was added, and that file was run again afterwards (52 passed, 1 xfailed)."
+}
