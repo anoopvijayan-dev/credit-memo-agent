@@ -292,8 +292,11 @@ def _order(group: list[tuple], before: int | None, budget: list[int] | None = No
     their amounts), and a state already searched without success is not searched again. Lines
     keep the file's order wherever the balances leave it free.
     """
-    if len(group) == 1 or all(x.balance is None for _, x in group):
+    if all(x.balance is None for _, x in group):
         return group
+    if len(group) == 1:  # one line: it chains from `before` or no order does
+        x = group[0][1]
+        return group if before is None or before + x.amount == x.balance else None
     bal_ids = [i for i, (_, x) in enumerate(group) if x.balance is not None]
     loose_ids = [i for i, (_, x) in enumerate(group) if x.balance is None]
     amt = [x.amount for _, x in group]
@@ -507,7 +510,18 @@ def _first_order(groups: list[list[tuple]], k: int, cache: dict) -> list[tuple] 
             cache[key] = _order(groups[m], before, budget)
         return cache[key]
 
-    for tries, start in enumerate(_starts(group)):
+    # A later group with a balance on every line pins the start: the walk must reach it at the
+    # balance before whichever of its lines comes first, so those are the only starts there are.
+    pinned = None
+    for m in later:
+        if all(x.balance is not None for _, x in groups[m]):
+            offset = sum(totals[k:m])
+            posts = {x.balance for _, x in groups[m]}
+            pres = sorted({x.balance - x.amount for _, x in groups[m]}, key=lambda p: p in posts)  # heads first
+            pinned = [p - offset for p in pres]
+            break
+
+    for tries, start in enumerate(pinned if pinned is not None else _starts(group)):
         if tries >= START_TRIES:
             gave_up = True
             break
@@ -530,7 +544,7 @@ def _first_order(groups: list[list[tuple]], k: int, cache: dict) -> list[tuple] 
             if budget[0] < 0:
                 break  # the budget is spent
     loose = sum(x.balance is None for _, x in group)
-    if gave_up or loose > START_SEARCH:
+    if gave_up or (pinned is None and loose > START_SEARCH):
         # Past START_SEARCH balance-less lines, only the likeliest starts were tried: that none
         # served does not show that no order does.
         raise OrderUnknown(len(group), loose)
@@ -667,6 +681,8 @@ def convert(src: Path, dst: Path, *, statement_balance: str | None = None, at: s
                 "them carry no balance; no order of them that keeps the balance chain was found within the "
                 "search limit, so the file was not imported (it may be valid: an export with a balance on every "
                 "line, or on none, is always read)") from None
+        if group is None and len(same) == 1:
+            group = same  # one line that does not follow: the walk below names it
         if group is None:
             raise OpenBankingImportError(f"line {_first_break(same, walked).line}: no order of the "
                                          "transactions booked at the same time keeps the balance chain; the "

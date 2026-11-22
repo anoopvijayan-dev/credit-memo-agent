@@ -523,3 +523,37 @@ def test_a_heavy_mix_at_one_moment_is_ordered_or_refused_at_the_limit_never_as_a
     except openbanking.OpenBankingImportError as e:
         assert "search limit" in str(e) and "it may be valid" in str(e), str(e)
     assert time.perf_counter() - start < 30  # bounded: the search ends at its limit
+
+
+@pytest.mark.contracts
+def test_a_mixed_first_group_followed_by_single_balanced_lines_starts_where_they_say(tmp_path):
+    # verify-257: a later group of one balanced line must chain from the start tried; a start
+    # that put A before the balance-less line was accepted and the valid file refused.
+    src = _write(tmp_path, [
+        _txn("L0", "5.00", when="2026-05-01T00:00:00Z"),
+        _txn("A", "1.00", when="2026-05-01T00:00:00Z", balance="106.00"),
+        _txn("B", "1.00", when="2026-05-02T00:00:00Z", balance="107.00"),
+    ])
+    r, out = _convert(tmp_path, src)
+    assert [t.id for t in ingest.load_csv(out).transactions] == ["L0", "A", "B"]
+    assert (r.opening_balance, r.closing_balance) == (100.0, 107.0)
+
+
+@pytest.mark.contracts
+def test_a_later_fully_balanced_group_pins_the_start_past_the_start_search(tmp_path):
+    # verify-257 minor: 17 distinct loose amounts in the first group (past START_SEARCH), of
+    # which the even-indexed ones must come before A; a later group with a balance on every
+    # line fixes where the walk starts, so the order is found, not refused at the limit.
+    when = "2026-05-01T00:00:00Z"
+    pence = [2 ** i for i in range(17)]
+    before_a = sum(pence[::2])
+    loose = [_txn(f"L{i}", f"{p / 100:.2f}", when=when) for i, p in enumerate(pence)]
+    end = sum(pence) + 1  # opening 0.00, A is 0.01
+    later = "2026-05-02T00:00:00Z"
+    src = _write(tmp_path, [*loose, _txn("A", "0.01", when=when, balance=f"{(before_a + 1) / 100:.2f}"),
+                            _txn("C2", "0.01", when=later, balance=f"{(end + 2) / 100:.2f}"),
+                            _txn("C1", "0.01", when=later, balance=f"{(end + 1) / 100:.2f}")])
+    r, out = _convert(tmp_path, src)
+    ids = [t.id for t in ingest.load_csv(out).transactions]
+    assert r.rows == 20 and r.opening_balance == 0.0 and ids[-2:] == ["C1", "C2"]
+    assert {f"L{i}" for i in range(0, 17, 2)} == set(ids[:ids.index("A")])
