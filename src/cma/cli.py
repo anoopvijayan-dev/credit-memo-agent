@@ -795,6 +795,10 @@ def case_repair(case_id: str = typer.Argument(..., metavar="CASE", help="The cas
         console.print(f"Entries 1 to {check.head.position} are recorded and intact. Dropping entry "
                       f"{check.first_bad} removes only what was not finished; its save was not recorded.")
         name = typer.prompt("Your name, to confirm dropping it")
+        if not any(ch.isalnum() for ch in name):  # as a sign-off and an override ask (R17, R22)
+            console.print("[red]Refused.[/red] type your name, with at least one letter or digit; "
+                          "nothing was changed.")
+            raise typer.Exit(code=2)
         if not typer.confirm(f"Drop the unfinished entry {check.first_bad} as {name}?", default=False):
             console.print("Not repaired; nothing was changed.")
             raise typer.Exit(code=1)

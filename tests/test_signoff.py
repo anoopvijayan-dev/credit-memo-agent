@@ -793,3 +793,16 @@ def test_r42_case_repair_refuses_a_broken_log_that_is_not_torn(home, tmp_path):
     before = log.read_bytes()
     r = CliRunner().invoke(app, ["case", "repair", case_id], input="Ann\ny\n")
     assert r.exit_code == 3 and "entry 2" in r.output and log.read_bytes() == before
+
+
+@pytest.mark.parametrize("answers, code", [("Ann\nn\n", 1), ("---\n", 2), ("  \n\n", 2)])
+def test_case_repair_changes_nothing_unless_a_named_person_confirms(home, tmp_path, answers, code):
+    """Declining, or giving no name with a letter or digit, drops nothing and records nothing."""
+    case_id, folder = _case(tmp_path)
+    log = caselog.for_case(folder)
+    with open(log.path, "ab") as fh:  # a save the tool stopped part-way through
+        fh.write(b'{"seq": 99, "event": "over')
+    before = _tree(folder)
+    r = CliRunner().invoke(app, ["case", "repair", case_id], input=answers)
+    assert r.exit_code == code, r.output
+    assert _tree(folder) == before and caselog.for_case(folder).verify().torn
