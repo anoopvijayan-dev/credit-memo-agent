@@ -1,0 +1,24 @@
+{
+  "task": "T33",
+  "claims": [
+    {
+      "text": "The multi-account parts of R41 that T33 can deliver are in place at e1b5196, with no code change in this attempt: prefixed line ids, flows combined across accounts, balance figures on the combined end-of-day balance over shared days, n/a with the reason when the days do not overlap, the combined import limit, and the workspace's combined view. All tests in tests/test_multi_account.py pass.",
+      "proof_cmd": "python -m pytest -q tests/test_multi_account.py",
+      "proof_output": "21 passed in 3.78s"
+    },
+    {
+      "text": "No own-account pairing (R8) exists in src. The only mentions of pairing are comments and docstrings, so combined flows cannot remove paired own-account transfers until T34 builds the pairing.",
+      "proof_cmd": "grep -n \"pairing\" src/cma/categorise.py src/cma/store.py",
+      "proof_output": "src/cma/categorise.py:1369:    verdict, (7) the default. Only an override (or an own-account pairing, applied over"
+    }
+  ],
+  "files_changed": [],
+  "dispositions": [
+    {
+      "finding": "major: R41 asks for flow figures across the case's accounts 'after removing paired own-account transfers'. compute_case computes combined flows from each account's categorised lines with no own-account pairing: R8 is implemented nowhere in src (it is T34, which depends on T33). An inter-account transfer that neither the rule table nor the profile names is counted on both sides of the combined figures. at src/cma/metrics.py:468",
+      "disposition": "reproduced",
+      "evidence": "Reproduced. At e1b5196 no code in src pairs a debit in one account with the matching credit in another; the grep in claims[1] finds only a comment. So the reviewer's case (main X1 -1000.00 and savings Y1 +1000.00, no profile) puts savings:Y1 in M25 and M17. Not fixed here: removing paired transfers means building R8's pairing and R9's handling of a debit with more than one candidate credit. The decomposition gives both to T34 (requirements R8, R9 and P11), and T34 depends on T33. Building them in T33 would deliver T34's requirements under T33 and change the case's line provenance and the judgement queue's possible-own-account entries, which are contracts the design assigns to T34 and T21. See notes."
+    }
+  ],
+  "notes": "STOP: T33 cannot pass R41 as R41 is written and the tasks are decomposed. This is the last attempt (3 of 3). R41's clause 'compute flow figures across all the case's accounts after removing paired own-account transfers' needs the own-account pairing of R8 and R9. tasks.json gives R8, R9 and P11 to T34, and T34 depends on T33, so this task cannot meet the clause. Everything else in R41 is built, and verify-262 found it proven: prefixed ids, combined flows, the combined end-of-day balance over shared days with NO_SHARED_DAYS / NO_SHARED_DAYS_IN_MONTH, the combined import limit and the workspace's combined view. All tiers passed. I made no code change this attempt: the only fix would be to build T34's pairing here. That would mean a pairing window from configuration, the ambiguous-candidate rule and new queue entries, none of which the design lists for T33. Each of these owner decisions would unblock it: (a) narrow T33's acceptance of R41 to everything but the pairing clause and verify that clause with T34; (b) move R41's pairing clause, or R41 as a whole, to T34 or to a task that depends on T34; or (c) reorder the dependency so that T34 builds the pairing before T33 is accepted. Under (b) or (c), compute_case (src/cma/metrics.py:468-477) already categorises each account's lines before merging them, and precedence step (3) is reserved for a pairing (src/cma/categorise.py:1369), so a pairing pass can mark both lines own_account_transfer before compute() runs, with no change to the combined figures code."
+}
