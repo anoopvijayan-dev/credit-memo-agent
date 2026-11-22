@@ -1,0 +1,63 @@
+I found no blocker or major defect in T31, so the verdict is **pass**. R38 is met in the code, and the runner's own test results prove the claims that matter.
+
+**How R38 is met**
+- **Named profile or custom mapping:** `--format bank-csv:PROFILE` loads one of the four packaged profiles (barclays, lloyds, natwest, starling). `--format bank-csv --mapping FILE` loads a firm's own mapping. Both are checked by `check_mapping`.
+- **Paid-in and paid-out columns:** the two unsigned columns are read exactly in pence. A row with an amount in both, or in neither, is refused.
+- **Non-ISO dates:** read with the mapping's formats, with English month names whatever the machine's locale.
+- **Newest first:** detected from the dates, or from the bank's balances when the first and last rows share a date. A declared order that the dates contradict is refused.
+- **Same checks as the five-column loader:** this holds by construction. `contract.write_statement` (`src/cma/importers/contract.py:127`) passes the converted bytes through `ingest.load_csv` before anything is written. `store.import_file` checks them again (`src/cma/store.py:654`).
+- **Golden file per profile:** all 54 tests in `tests/test_import_bank_csv.py` show as PASSED in the runner's full-suite and contracts logs. That covers the four profiles, the custom mapping, and the same files through `cma case import`.
+
+**Three minor findings**
+1. **A cited proof command runs no test.** Claim 1 cites `pytest -k given_a_key_twice`, but the test is named `test_a_mapping_file_that_gives_a_key_twice_is_refused`. That filter selects nothing, so its "1 passed" output cannot come from that command. The behaviour is still proven, because the test passed in the runner's full suite (`specified-3.log:737`).
+2. **Silent order guess on a one-day export with no balance column.** On such a file (Barclays, for example), the order cannot be told from the dates or the balances, so the importer treats it as oldest first and says nothing (`src/cma/importers/bankcsv.py:301`). If the bank wrote it newest first, the per-line balances come out wrong, though each day's closing balance is unaffected.
+3. **`files_changed` lists 2 files while the diff touches about 20.** These include `store.py`, `cli.py`, `profiles.yaml`, the README and the golden files.
+
+The lane attacks turned up nothing beyond these. Bash access was cut off partway through, so I could not write `evidence.json` to the run directory; it is below in full.
+
+```json
+{
+  "task": "T31",
+  "criteria": [
+    {
+      "id": "R38",
+      "tier": "adversarial",
+      "check": "Named profile or custom mapping: store.import_file parses bank-csv:PROFILE and --mapping (src/cma/store.py:557-588); profiles in src/cma/bank_profiles/profiles.yaml are loaded with a duplicate-key-refusing loader and checked by bankcsv.check_mapping (src/cma/importers/bankcsv.py:113-161). Paid-in and paid-out columns are read exactly in pence, a paid-out amount written as money out, and a row with both or neither refused (bankcsv.py:321-333). Non-ISO dates are read via the mapping's strptime formats with English month names substituted (bankcsv.py:236-248). Newest first is detected from the dates, else from the balance chain, and a contradicting declared order is refused (bankcsv.py:285-301), then reversed (bankcsv.py:356-358). Same checks as the five-column loader: contract.write_statement passes the bytes through ingest.load_csv before writing (contract.py:123-132), and store re-checks them (store.py:654), so ISO dates none in the future, monotone dates, the balance chain and the £10tn line and flow limits all apply; the converter adds its own per-line limit checks (bankcsv.py:226-227, 345-348) and the walk check (contract.py:81-92). Golden file per profile: test_each_named_profile_converts_its_golden_export[barclays|lloyds|natwest|starling], test_a_custom_mapping_converts_its_golden_export and the cma case import variants show as PASSED in specified-3.log and contracts-4.log (54 test_import_bank_csv tests in each).",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-257/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "tests/test_import_bank_csv.py",
+      "line": 236,
+      "criterion": "R38",
+      "claim": "Claim 1's proof command `python -m pytest tests/test_import_bank_csv.py -q -k given_a_key_twice` selects no test: the test is named test_a_mapping_file_that_gives_a_key_twice_is_refused ('gives', not 'given'), so the claimed output '1 passed' cannot come from that command. The behaviour is proven only because the runner's full suite ran the test (specified-3.log:737 PASSED).",
+      "repro": "pytest --collect-only -q tests/test_import_bank_csv.py -k given_a_key_twice collects 0 items (exit 5); -k gives_a_key_twice collects 1."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/bankcsv.py",
+      "line": 301,
+      "criterion": "R38",
+      "claim": "With order auto, no balance column and every row on one date, _newest_first cannot tell the order (by_dates is None and _chain_holds is False both ways because every balance is None), so it silently treats the file as oldest first and reports order 'oldest first'. A newest-first one-day export then gets its per-line walked balances in the wrong order, with no refusal or warning; end-of-day balances are unaffected.",
+      "repro": "Barclays profile, export rows `,02/03/2026,acct,-40.00,Debit,A` then `,02/03/2026,acct,1500.00,Funds Transfer,B` (bank wrote newest first), --opening-balance 500.00: the statement is written A then B with balances 460.00 and 1960.00 instead of 2000.00 and 1960.00, and ImportResult.order is 'oldest first'."
+    },
+    {
+      "severity": "minor",
+      "file": null,
+      "line": null,
+      "criterion": "R38",
+      "claim": "The claim's files_changed lists only src/cma/importers/bankcsv.py and tests/test_import_bank_csv.py, but the diff also changes src/cma/store.py, src/cma/cli.py, src/cma/bank_profiles/*, README.md, .gitattributes and the tests/golden/bank_csv/* files.",
+      "repro": "git diff --stat 432e090..HEAD in the T31 worktree lists the extra files."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "claude-opus-5-5"
+  }
+}
+```

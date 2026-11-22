@@ -1,0 +1,1060 @@
+diff --git a/.gitattributes b/.gitattributes
+index 7d9ed8d..101242d 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -9,3 +9,5 @@ tests/golden/monzo/* -text
+ tests/golden/openbanking/* -text
+ # So are the TrueLayer golden files (T30).
+ tests/golden/truelayer/* -text
++# So are the bank CSV golden files (T31).
++tests/golden/bank_csv/* -text
+diff --git a/README.md b/README.md
+index 167d404..17f2afe 100644
+--- a/README.md
++++ b/README.md
+@@ -81,6 +81,13 @@ cma case import <id> private/transactions.json --format openbanking --statement-
+ # as the per-line balance. TrueLayer's own categories are kept beside the statement only as
+ # untrusted hints (statements/<account>.hints.json); no figure, rule or indicator reads them.
+ cma case import <id> private/truelayer.json --format truelayer --account current
++# A bank's own CSV download (paid-in and paid-out columns, dates like 03/03/2026 or
++# 3 Mar 2026, newest first) through a named profile (barclays, lloyds, natwest, starling),
++# or through your own column mapping (columns, date_format, order; see
++# src/cma/bank_profiles/profiles.yaml). The statement written passes the same checks as a
++# five-column CSV; without the bank's balance column, pass --opening-balance.
++cma case import <id> private/lloyds.csv --format bank-csv:lloyds --account current
++cma case import <id> private/bank.csv --format bank-csv --mapping private/bank-map.yaml --opening-balance 200.00
+ 
+ # Correct one line's category (only the category; one valid for the line's direction),
+ # with a reason and your typed name. The override goes to overrides.jsonl and the case
+diff --git a/src/cma/bank_profiles/__init__.py b/src/cma/bank_profiles/__init__.py
+new file mode 100644
+index 0000000..84d05c2
+--- /dev/null
++++ b/src/cma/bank_profiles/__init__.py
+@@ -0,0 +1,3 @@
++"""Packaged bank CSV profiles (profiles.yaml): the column mapping of each named bank's CSV
++export, read by importers/bankcsv.py (R38). A firm whose bank is not here, or whose bank has
++changed its layout, passes its own mapping in the same form with --mapping."""
+diff --git a/src/cma/bank_profiles/profiles.yaml b/src/cma/bank_profiles/profiles.yaml
+new file mode 100644
+index 0000000..379c5d5
+--- /dev/null
++++ b/src/cma/bank_profiles/profiles.yaml
+@@ -0,0 +1,51 @@
++# Named bank CSV profiles for `cma case import --format bank-csv:PROFILE` (R38).
++#
++# Each profile maps a bank's CSV export onto the five-column statement:
++#   columns:      date and description (one column or a list, joined with a space), then
++#                 either amount (one signed column) or paid_in and paid_out (two unsigned
++#                 columns, one filled per row); optionally balance (the bank's running
++#                 balance after each row) and id (the bank's own transaction id; without it
++#                 each line's id is L and the line of the file its row starts on).
++#   date_format:  a strptime format, or a list tried in turn; %b and %B read English month
++#                 names whatever the machine's locale.
++#   order:        oldest_first, newest_first or auto (from the dates, then the balances).
++#
++# The layouts are the header rows these banks' online banking writes for a CSV download as
++# commonly seen; a bank can change its export, and the importer then refuses the file naming
++# the columns it cannot find. A custom mapping (--mapping FILE) takes the same keys.
++
++barclays:
++  columns:
++    date: Date
++    description: [Subcategory, Memo]
++    amount: Amount
++  date_format: "%d/%m/%Y"
++  order: auto
++
++lloyds:
++  columns:
++    date: Transaction Date
++    description: [Transaction Type, Transaction Description]
++    paid_out: Debit Amount
++    paid_in: Credit Amount
++    balance: Balance
++  date_format: "%d/%m/%Y"
++  order: auto
++
++natwest:
++  columns:
++    date: Date
++    description: [Type, Description]
++    amount: Value
++    balance: Balance
++  date_format: ["%d %b %Y", "%d/%m/%Y"]
++  order: auto
++
++starling:
++  columns:
++    date: Date
++    description: [Type, Counter Party, Reference]
++    amount: Amount (GBP)
++    balance: Balance (GBP)
++  date_format: "%d/%m/%Y"
++  order: auto
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index 6b971f4..e3f2ed0 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -578,12 +578,17 @@ def case_profile(
+ def case_import(
+     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
+     file: Path = typer.Argument(..., help="The bank file. Copied into the case; nothing is uploaded."),
+-    fmt: str = typer.Option(..., "--format", help="csv (the five-column statement), monzo (a Monzo export) or "
+-                            "openbanking (an OBIE v3.1 transactions file) or truelayer (a TrueLayer Data API "
+-                            "transactions export)."),
++    fmt: str = typer.Option(..., "--format", help="csv (the five-column statement), monzo (a Monzo export), "
++                            "openbanking (an OBIE v3.1 transactions file), truelayer (a TrueLayer Data API "
++                            "transactions export), or bank-csv:PROFILE (a bank's CSV download through a named "
++                            "profile: barclays, lloyds, natwest or starling), or bank-csv with --mapping."),
+     account: str = typer.Option("main", "--account", help="A short key for the account, such as main or savings."),
+     opening_balance: str | None = typer.Option(
+-        None, help="Monzo only: the balance just before the first transaction, when the export has no Balance column."),
++        None, help="Monzo or bank CSV only: the balance just before the first transaction, when the export has no "
++                   "balance column."),
++    mapping: Path | None = typer.Option(
++        None, "--mapping", help="bank-csv only: a YAML column mapping (columns, date_format, order) for an export "
++                                "no named profile covers."),
+     statement_balance: str | None = typer.Option(
+         None, help="Open Banking or TrueLayer only: a balance from the bank's statement, at the end of the date "
+                    "--at, when the file has no per-line balances."),
+@@ -596,7 +601,7 @@ def case_import(
+     with _case_errors():
+         folder = store.case_folder(case_id)
+         r = store.import_file(folder, file, fmt, account=account, opening_balance=opening_balance,
+-                              statement_balance=statement_balance, at=at)
++                              statement_balance=statement_balance, at=at, mapping=mapping)
+     if r.already:
+         console.print(f"already imported (sha256 {r.input_sha256[:12]}); the case is unchanged")
+         return
+diff --git a/src/cma/importers/bankcsv.py b/src/cma/importers/bankcsv.py
+new file mode 100644
+index 0000000..c6e5b1d
+--- /dev/null
++++ b/src/cma/importers/bankcsv.py
+@@ -0,0 +1,370 @@
++"""Convert a bank's CSV export into the five-column statement format (R38), through a named
++bank profile or a custom column mapping, with the same checks as the five-column loader.
++
++A bank's own CSV download rarely is the five-column statement: it can split money into a
++paid-in and a paid-out column, write dates as 03/03/2026 or 3 Mar 2026, run newest first, and
++name its columns its own way. A mapping says where each of the statement's columns is:
++
++    columns:
++      date: Transaction Date                     # required
++      description: [Transaction Type, Details]   # required; one column or a list, joined
++      amount: Value                              # a signed column; or
++      paid_in: Credit Amount                     # two unsigned columns,
++      paid_out: Debit Amount                     # one filled per row
++      balance: Balance                           # optional: the bank's balance after each row
++      id: Reference                              # optional: the bank's own id for each row
++    date_format: "%d/%m/%Y"                      # or a list tried in turn
++    order: auto                                  # oldest_first, newest_first or auto
++
++The named profiles are packaged (src/cma/bank_profiles/profiles.yaml) and take the same keys;
++a firm passes its own mapping file for any other export.
++
++So this module:
++- reads each amount exactly, in whole pence, never through a binary float: a plain amount,
++  with a £ sign and thousands separators allowed where they are grouped as written in the UK
++  (1,234.56); a paid-in or paid-out cell is unsigned, and a paid-out amount is written into
++  the statement as money out;
++- reads each date with the mapping's formats, month names in English whatever the machine's
++  locale;
++- turns a newest-first file oldest first: from its dates, or, where every row has one date,
++  from the bank's balances; a declared order the dates contradict is refused;
++- keeps the bank's id where the mapping names its column, and otherwise gives each line the
++  id L and the line of the file its row starts on, so every figure traces back to the file;
++- walks the balance from the bank's own balance column, or from an opening balance the person
++  supplies, checking every walked balance against the bank's (the importer contract);
++- writes the statement only once the statement loader accepts it, so the five-column checks
++  (ISO dates none in the future, dates running one way, plain amounts, a balance that follows
++  line to line, and the £10,000,000,000,000 limit, R2) all apply.
++
++A refusal names the line of the file a row starts on and what is wrong, never a cell's value
++(the importer contract, T28; R34). It reads the file locally and writes a new file. Nothing is
++sent anywhere.
++"""
++
++from __future__ import annotations
++
++import re
++from dataclasses import dataclass
++from datetime import date, datetime
++from importlib import resources
++from itertools import pairwise
++from pathlib import Path
++from typing import Any
++
++import yaml
++
++from ..firm import _RepeatedKey, _UniqueKeyLoader
++from ..ingest import CsvRecordError, iter_data, read_header
++from ..metrics import AT_LIMIT, at_limit, flows_at_limit, follows, pounds, text_pence
++from . import contract
++from .contract import ImportRefused
++from .openbanking import CONTROL, FORMULA_OR_SPACE, MAX_ID
++
++ROLES = ("date", "description", "amount", "paid_in", "paid_out", "balance", "id")
++ORDERS = ("oldest_first", "newest_first", "auto")
++BALANCE_COLUMN = "the bank's balance column"
++
++# £1,234.56: an optional £, digits grouped in threes by commas (or not at all), and at most
++# two decimal places. A signed amount may also start with - or +.
++_DIGITS = r"£?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?"
++UNSIGNED = re.compile(rf"^{_DIGITS}$")
++SIGNED = re.compile(rf"^[-+]?{_DIGITS}$")
++
++_MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september",
++           "october", "november", "december"]
++_MONTH_NUMBER = {**{m: i for i, m in enumerate(_MONTHS, 1)}, **{m[:3]: i for i, m in enumerate(_MONTHS, 1)},
++                 "sept": 9}
++_MONTH_NAME = re.compile(r"(?<![A-Za-z])(" + "|".join(sorted(_MONTH_NUMBER, key=len, reverse=True))
++                         + r")(?![A-Za-z])", re.IGNORECASE)
++
++
++class BankCsvImportError(ImportRefused):
++    """A bank CSV refused; an importer's refusal under the contract (T28)."""
++
++
++@dataclass
++class ImportResult:
++    rows: int
++    start: date
++    end: date
++    opening_balance: float
++    closing_balance: float
++    balance_source: str  # "opening balance supplied" or "the bank's balance column"
++    order: str  # "oldest first" or "newest first", as the file ran
++
++
++# --- mappings ---------------------------------------------------------------------------------
++
++
++def _column(value: Any, key: str) -> str:
++    if not isinstance(value, str) or not value.strip():
++        raise BankCsvImportError(f"mapping: columns.{key} must be a column name")
++    return value.strip()
++
++
++def _date_format_ok(fmt: str) -> bool:
++    """A format names a day, a month and a year, and reads back the date it writes."""
++    if not ("%d" in fmt and any(m in fmt for m in ("%m", "%b", "%B")) and any(y in fmt for y in ("%Y", "%y"))):
++        return False
++    try:
++        probe = date(2026, 11, 23)
++        return datetime.strptime(probe.strftime(fmt), fmt).date() == probe
++    except ValueError:
++        return False
++
++
++def check_mapping(raw: Any) -> dict[str, Any]:
++    """The mapping, checked and normalised; refused naming the key that is wrong. A mapping is
++    the firm's own configuration, not the applicant's data, so its keys may be named."""
++    if not isinstance(raw, dict):
++        raise BankCsvImportError("mapping: not a mapping of columns, date_format and order")
++    for key in raw:
++        if key not in ("columns", "date_format", "order"):
++            raise BankCsvImportError(f"mapping: unknown key {key}; a mapping has columns, date_format and order")
++    cols = raw.get("columns")
++    if not isinstance(cols, dict):
++        raise BankCsvImportError("mapping: columns is required, a mapping of the statement's columns to the file's")
++    for key in cols:
++        if key not in ROLES:
++            raise BankCsvImportError(f"mapping: unknown key columns.{key}; the columns are {', '.join(ROLES)}")
++    for key in ("date", "description"):
++        if key not in cols:
++            raise BankCsvImportError(f"mapping: columns.{key} is required")
++    out: dict[str, Any] = {}
++    for key, value in cols.items():
++        if key == "description":
++            names = value if isinstance(value, list) else [value]
++            if not names:
++                raise BankCsvImportError("mapping: columns.description must name at least one column")
++            out[key] = [_column(v, key) for v in names]
++        else:
++            out[key] = _column(value, key)
++    split = "paid_in" in out or "paid_out" in out
++    if ("amount" in out) == split or (split and not ("paid_in" in out and "paid_out" in out)):
++        raise BankCsvImportError("mapping: columns names either amount or paid_in and paid_out, not both "
++                                 "and not one of the two alone")
++    used: dict[str, str] = {}
++    for key, value in out.items():
++        for name in value if isinstance(value, list) else [value]:
++            if (name in used and used[name] != key) or (key == "description" and value.count(name) > 1):
++                raise BankCsvImportError(f"mapping: uses column {name} for more than one of the statement's columns")
++            used[name] = key
++    fmts = raw.get("date_format")
++    if fmts is None:
++        raise BankCsvImportError("mapping: date_format is required, such as \"%d/%m/%Y\"")
++    fmts = fmts if isinstance(fmts, list) else [fmts]
++    if not fmts or not all(isinstance(f, str) and _date_format_ok(f) for f in fmts):
++        bad = next((f for f in fmts if not (isinstance(f, str) and _date_format_ok(f))), None)
++        raise BankCsvImportError(f"mapping: date_format {bad!r} must name a day, a month and a year (such as "
++                                 "%d/%m/%Y) and read back the date it writes")
++    order = raw.get("order", "auto")
++    if order not in ORDERS:
++        raise BankCsvImportError("mapping: order is oldest_first, newest_first or auto")
++    return {"columns": out, "date_format": list(fmts), "order": order}
++
++
++def _load(text: str) -> Any:
++    """safe_load with a key given twice refused (firm.yaml's rule): YAML would otherwise keep
++    the last value, so `paid_in: Out` then `paid_in: In` would silently swap money in and out."""
++    return yaml.load(text, Loader=_UniqueKeyLoader)  # a SafeLoader subclass
++
++
++def _profiles() -> dict[str, Any]:
++    return _load(resources.files("cma.bank_profiles").joinpath("profiles.yaml").read_text("utf-8"))
++
++
++def profile_names() -> list[str]:
++    """The packaged bank profiles, by name."""
++    return sorted(_profiles())
++
++
++def profile(name: str) -> dict[str, Any]:
++    """A packaged bank profile's mapping, checked."""
++    table = _profiles()
++    if name not in table:
++        raise BankCsvImportError(f"unknown bank profile; use one of {', '.join(sorted(table))}, or "
++                                 "--format bank-csv with --mapping FILE")
++    return check_mapping(table[name])
++
++
++def parse_mapping(data: bytes, where: str = "the mapping file") -> dict[str, Any]:
++    try:
++        raw = _load(data.decode("utf-8-sig"))
++    except _RepeatedKey as e:
++        raise BankCsvImportError(f"{where}: key {e.key} is given more than once; keep one") from None
++    except (UnicodeDecodeError, yaml.YAMLError):
++        raise BankCsvImportError(f"{where}: not readable YAML") from None
++    if not isinstance(raw, dict):
++        raise BankCsvImportError(f"{where}: not a mapping of columns, date_format and order")
++    return check_mapping(raw)
++
++
++def load_mapping(path: Path) -> dict[str, Any]:
++    """A custom mapping from a YAML file, checked."""
++    path = Path(path)
++    return parse_mapping(path.read_bytes(), path.name)
++
++
++# --- cells ------------------------------------------------------------------------------------
++
++
++def _pence(raw: str | None, column: str, line: int, *, signed: bool) -> int | None:
++    """The cell's amount in whole pence, read exactly; None for an empty cell."""
++    text = (raw or "").strip()
++    if not text:
++        return None
++    if not (SIGNED if signed else UNSIGNED).match(text):
++        kind = "a plain amount like -1,234.56" if signed else "an unsigned amount like 1,234.56"
++        raise BankCsvImportError(f"line {line}: {column} is not {kind}")
++    p = text_pence(text.replace("£", "").replace(",", ""))  # exact, in the figures layer (R2)
++    if p is None:
++        raise BankCsvImportError(f"line {line}: {column} is not whole pence")
++    if at_limit(p):
++        raise BankCsvImportError(f"line {line}: {column} is {AT_LIMIT}; no figure could be reported to the penny")
++    return p
++
++
++def _money_out(raw: str, column: str, line: int) -> int:
++    """A paid-out cell as money out: its text written with a minus sign, read exactly."""
++    text = raw.strip().replace("£", "").replace(",", "")
++    p = text_pence(f"-{text}")
++    if p is None:  # cannot happen for a cell _pence read; kept as a refusal, never a crash
++        raise BankCsvImportError(f"line {line}: {column} is not whole pence")
++    return p
++
++
++def _date(raw: str | None, column: str, formats: list[str], line: int) -> date:
++    text = " ".join((raw or "").split())
++    for fmt in formats:
++        cell, f = text, fmt
++        if "%b" in fmt or "%B" in fmt:  # English month names, whatever the locale
++            cell = _MONTH_NAME.sub(lambda m: f"{_MONTH_NUMBER[m.group(1).lower()]:02d}", text)
++            f = fmt.replace("%B", "%m").replace("%b", "%m")
++        try:
++            return datetime.strptime(cell, f).date()
++        except ValueError:
++            continue
++    raise BankCsvImportError(f"line {line}: {column} is not a date in the form {' or '.join(formats)}")
++
++
++def _id(raw: str | None, column: str, line: int) -> str:
++    tid = (raw or "").strip()
++    if not tid:
++        raise BankCsvImportError(f"line {line}: {column}, the row's id, is empty")
++    if tid.startswith(FORMULA_OR_SPACE) or CONTROL.search(tid) or len(tid) > MAX_ID:
++        raise BankCsvImportError(f"line {line}: {column}, the row's id, starts with a character a spreadsheet "
++                                 f"reads as a formula (= + - @), holds a control character or is longer than "
++                                 f"{MAX_ID} characters")
++    return tid
++
++
++# --- order ------------------------------------------------------------------------------------
++
++
++def _chain_holds(lines: list[contract.Line]) -> bool:
++    return all(a.balance is not None and b.balance is not None and follows(a.balance, b.amount, b.balance)
++               for a, b in pairwise(lines))
++
++
++def _newest_first(lines: list[contract.Line], declared: str) -> bool:
++    """Whether the file runs newest first, from its dates, or, where its first and last rows
++    share a date, from the bank's balances; a declared order the dates contradict is refused."""
++    first, last = lines[0].date, lines[-1].date
++    by_dates = None if first == last else first > last
++    if declared != "auto":
++        newest = declared == "newest_first"
++        if by_dates is not None and by_dates != newest:
++            runs = "newest first" if by_dates else "oldest first"
++            raise BankCsvImportError(f"the mapping says {declared}, but its dates run {runs} (line "
++                                     f"{lines[0].line} to line {lines[-1].line}); set order to auto or fix it")
++        return newest
++    if by_dates is not None:
++        return by_dates
++    return not _chain_holds(lines) and _chain_holds(lines[::-1])
++
++
++# --- convert ----------------------------------------------------------------------------------
++
++
++def convert(src: Path, dst: Path, *, mapping: dict[str, Any], opening_balance: str | None = None) -> ImportResult:
++    """`mapping` is a checked mapping (profile() or load_mapping()); `opening_balance` is the text
++    the person gave, read exactly, for an export with no balance column."""
++    mapping = check_mapping(mapping)  # idempotent: a checked mapping passes unchanged
++    cols = mapping["columns"]
++    formats = mapping["date_format"]
++    supplied = None
++    if opening_balance is not None:
++        text = opening_balance.strip()
++        if not SIGNED.match(text) or text_pence(text.replace("£", "").replace(",", "")) is None:
++            raise BankCsvImportError("--opening-balance is not a plain amount like -1,234.56")
++        supplied = text_pence(text.replace("£", "").replace(",", ""))  # not a line: not held to the line limit
++
++    data = Path(src).read_bytes()  # read once
++    try:
++        header = read_header(data)
++    except CsvRecordError as e:
++        raise BankCsvImportError(f"{src}: {e}") from None
++    twice = sorted({h for h in header if h and header.count(h) > 1})
++    if twice:
++        raise BankCsvImportError(f"{src}: column(s) named more than once: {', '.join(twice)}; keep one of each")
++    wanted = [c for role in ROLES if role in cols for c in (cols[role] if role == "description" else [cols[role]])]
++    missing = [c for c in wanted if c not in header]
++    if missing:
++        raise BankCsvImportError(f"{src}: the file does not match the mapping; missing column(s): {', '.join(missing)}")
++    try:
++        header, records = iter_data(data)
++    except CsvRecordError as e:
++        raise BankCsvImportError(f"{src}: {e}") from None
++
++    lines: list[contract.Line] = []
++    seen: dict[str, int] = {}
++    for i, r, problem in records:
++        if problem is not None:  # a field too long to read, a bad byte, a quoted field left open
++            raise BankCsvImportError(f"{src}: {problem}")
++        if None in r:
++            raise BankCsvImportError(f"line {i}: more fields than the header has columns; an amount with a "
++                                     "comma in it must be quoted")
++        if "amount" in cols:
++            amount = _pence(r[cols["amount"]], cols["amount"], i, signed=True)
++            if amount is None:
++                raise BankCsvImportError(f"line {i}: {cols['amount']} is empty")
++        else:
++            paid_in = _pence(r[cols["paid_in"]], cols["paid_in"], i, signed=False)
++            paid_out = _pence(r[cols["paid_out"]], cols["paid_out"], i, signed=False)
++            if paid_in is None and paid_out is None:
++                raise BankCsvImportError(f"line {i}: neither the paid-in nor the paid-out column holds an amount")
++            if paid_in and paid_out:
++                raise BankCsvImportError(f"line {i}: both the paid-in and the paid-out column hold an amount; a "
++                                         "row is money in or money out")
++            amount = _money_out(r[cols["paid_out"]], cols["paid_out"], i) if paid_out else (paid_in or 0)
++        d = _date(r[cols["date"]], cols["date"], formats, i)
++        bal = _pence(r[cols["balance"]], cols["balance"], i, signed=True) if "balance" in cols else None
++        desc = " ".join(" ".join((r[c] or "") for c in cols["description"]).split()).upper()
++        if not desc:
++            raise BankCsvImportError(f"line {i}: the description is empty")
++        tid = _id(r[cols["id"]], cols["id"], i) if "id" in cols else f"L{i}"
++        if tid in seen:
++            raise BankCsvImportError(f"line {i}: the id repeats line {seen[tid]}'s; each row's id must be its own")
++        seen[tid] = i
++        lines.append(contract.Line(line=i, id=tid, date=d, description=desc, amount=amount, balance=bal))
++    if not lines:
++        raise BankCsvImportError(f"{src}: no transactions")
++    reached = flows_at_limit([x.amount for x in lines])
++    if reached:
++        raise BankCsvImportError(f"{' and '.join(reached)} {'total' if len(reached) > 1 else 'totals'} "
++                                 f"{AT_LIMIT}: no figure could be reported to the penny")
++
++    newest = _newest_first(lines, mapping["order"])
++    if newest:
++        lines.reverse()
++    if supplied is None and "balance" not in cols:
++        raise BankCsvImportError("this export has no balance column; pass --opening-balance (the balance just "
++                                 "before the first transaction, from the bank's statement)")
++    # The opening balance, the walk and the writing are the importer contract's (T28); the
++    # statement loader's checks apply to what is written, by the source file's lines.
++    opening, source = contract.opening_balance(lines, supplied, column=BALANCE_COLUMN, source=BALANCE_COLUMN)
++    balances = contract.walk(lines, opening, column=BALANCE_COLUMN)
++    contract.write_statement(dst, lines, balances, label=src)
++    return ImportResult(rows=len(lines), start=lines[0].date, end=lines[-1].date,
++                        opening_balance=pounds(opening), closing_balance=pounds(balances[-1]),
++                        balance_source=source, order="newest first" if newest else "oldest first")
+diff --git a/src/cma/store.py b/src/cma/store.py
+index 376e5d4..be37732 100644
+--- a/src/cma/store.py
++++ b/src/cma/store.py
+@@ -60,7 +60,9 @@ LEDGER_WAIT = 10.0  # seconds a purge waits for another to finish writing the le
+ PROFILE = "case.yaml"
+ INPUTS = "inputs"
+ STATEMENTS = "statements"
+-FORMATS = ("csv", "monzo", "openbanking", "truelayer")
++FORMATS = ("csv", "monzo", "openbanking", "truelayer", "bank-csv")
++# A bank CSV names its profile after a colon (bank-csv:lloyds), or takes --mapping FILE (R38).
++BANK_CSV = "bank-csv"
+ # Formats that rebuild the balance as an OBIE file does, and so take --statement-balance and --at.
+ BALANCE_FORMATS = ("openbanking", "truelayer")
+ # The provider's own categories, beside statements/<account>.csv: untrusted hints, by line id,
+@@ -546,20 +548,44 @@ class Imported:
+ 
+ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
+                 opening_balance: str | None = None, statement_balance: str | None = None,
+-                at: str | None = None) -> Imported:
++                at: str | None = None, mapping: Path | None = None) -> Imported:
+     """Import a bank file into a case: the original into inputs/ by its hash, the converted
+     statement into statements/<account>.csv, checked by the statement loader, and one log
+     entry (R42). The same file imported again leaves the case unchanged (R39)."""
+-    from .importers import contract, monzo, openbanking, truelayer
++    from .importers import bankcsv, contract, monzo, openbanking, truelayer
+ 
+     folder = Path(folder)
+-    if fmt not in FORMATS:
+-        raise CaseStoreError(f"unknown format {fmt!r}; use one of {', '.join(FORMATS)}")
++    base, colon, bank_profile = fmt.partition(":") if isinstance(fmt, str) else (fmt, "", "")
++    if base not in FORMATS or (colon and base != BANK_CSV):
++        raise CaseStoreError(f"unknown format {fmt!r}; use one of {', '.join(FORMATS)} or {BANK_CSV}:PROFILE")
+     if fmt not in BALANCE_FORMATS and (statement_balance is not None or at is not None):
+         raise CaseStoreError("--statement-balance and --at are for an Open Banking or TrueLayer file")
+     if fmt in BALANCE_FORMATS and opening_balance is not None:
+-        raise CaseStoreError("--opening-balance is for a Monzo export; for an Open Banking or TrueLayer file "
+-                             "pass --statement-balance AMOUNT --at DATE")
++        raise CaseStoreError("--opening-balance is for a Monzo export or a bank CSV; for an Open Banking or "
++                             "TrueLayer file pass --statement-balance AMOUNT --at DATE")
++    bank_mapping: dict[str, Any] | None = None
++    mapping_sha: str | None = None
++    if mapping is not None and base != BANK_CSV:
++        raise CaseStoreError("--mapping is for a bank CSV (--format bank-csv)")
++    if base == BANK_CSV:
++        try:
++            if bank_profile and mapping is not None:
++                raise CaseStoreError("--mapping is for --format bank-csv without a profile; a named profile is "
++                                     "its own mapping")
++            if bank_profile:
++                bank_mapping = bankcsv.profile(bank_profile)
++            elif mapping is None:
++                raise CaseStoreError("--format bank-csv needs a column mapping: pass --mapping FILE or name a "
++                                     f"profile, one of {', '.join(f'{BANK_CSV}:{n}' for n in bankcsv.profile_names())}")
++            else:
++                mapping = Path(mapping)
++                if not mapping.is_file():
++                    raise CaseStoreError(f"no mapping file at {mapping}")
++                mapping_data = mapping.read_bytes()  # read once; hashed and used from these bytes
++                mapping_sha = hashlib.sha256(mapping_data).hexdigest()
++                bank_mapping = bankcsv.parse_mapping(mapping_data, mapping.name)
++        except contract.ImportRefused as e:
++            raise CaseStoreError(str(e)) from None
+     if not isinstance(account, str) or not ACCOUNT_KEY.fullmatch(account):
+         raise CaseStoreError("an account key is lowercase letters, digits, _ and -, starting with a "
+                              "letter or digit, at most 32 characters")
+@@ -595,6 +621,16 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
+             except contract.ImportRefused as e:  # by line, never a cell's value (T28)
+                 raise CaseStoreError(f"import refused: {str(e).replace(str(raw), src.name)}") from None
+             out = converted.read_bytes()
++        elif base == BANK_CSV:
++            raw = work / "export.csv"
++            converted = work / "statement.csv"
++            _write_private(raw, data)
++            _write_private(converted, b"")
++            try:
++                bankcsv.convert(raw, converted, mapping=bank_mapping, opening_balance=opening_balance)
++            except contract.ImportRefused as e:  # by line, never a cell's value (T28)
++                raise CaseStoreError(f"import refused: {str(e).replace(str(raw), src.name)}") from None
++            out = converted.read_bytes()
+         elif fmt in BALANCE_FORMATS:
+             raw = work / "export.json"
+             converted = work / "statement.csv"
+@@ -624,7 +660,8 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
+         entry = {"account": account, "format": fmt, "input_sha256": sha,
+                  "statement_sha256": hashlib.sha256(out).hexdigest(), "lines": len(stmt.transactions),
+                  "start": stmt.start.isoformat(), "end": stmt.end.isoformat(),
+-                 **(counted if fmt in BALANCE_FORMATS else {})}
++                 **(counted if fmt in BALANCE_FORMATS else {}),
++                 **({"mapping_sha256": mapping_sha} if mapping_sha is not None else {})}
+         with _recorded(folder, "import") as save:
+             if any(_imported(e, sha) for e in save.entries):
+                 return Imported(account, sha, 0, "", "", already=True)  # R39: nothing changes
+diff --git a/tests/golden/bank_csv/barclays.export.golden b/tests/golden/bank_csv/barclays.export.golden
+new file mode 100644
+index 0000000..ff958f9
+--- /dev/null
++++ b/tests/golden/bank_csv/barclays.export.golden
+@@ -0,0 +1,4 @@
++Number,Date,Account,Amount,Subcategory,Memo
++,02/03/2026,20-00-00 12345678,-40.00,Debit,TESCO STORES 1234
++,04/03/2026,20-00-00 12345678,1500.00,Funds Transfer,STRIPE PAYMENTS UK
++,06/03/2026,20-00-00 12345678,-210.75,Direct Debit,HMRC VAT
+diff --git a/tests/golden/bank_csv/barclays.statement.golden b/tests/golden/bank_csv/barclays.statement.golden
+new file mode 100644
+index 0000000..bd3762c
+--- /dev/null
++++ b/tests/golden/bank_csv/barclays.statement.golden
+@@ -0,0 +1,4 @@
++id,date,description,amount,balance
++L2,2026-03-02,DEBIT TESCO STORES 1234,-40.00,460.00
++L3,2026-03-04,FUNDS TRANSFER STRIPE PAYMENTS UK,1500.00,1960.00
++L4,2026-03-06,DIRECT DEBIT HMRC VAT,-210.75,1749.25
+diff --git a/tests/golden/bank_csv/custom.export.golden b/tests/golden/bank_csv/custom.export.golden
+new file mode 100644
+index 0000000..a2dfaa7
+--- /dev/null
++++ b/tests/golden/bank_csv/custom.export.golden
+@@ -0,0 +1,4 @@
++Posted,Narrative,Paid in,Paid out,Ref
++09.03.2026,CARD AMAZON,,19.99,R3
++05.03.2026,BACS SHOPIFY PAYMENTS,£640.00,,R2
++01.03.2026,SO RENT,,150.00,R1
+diff --git a/tests/golden/bank_csv/custom.mapping.yaml b/tests/golden/bank_csv/custom.mapping.yaml
+new file mode 100644
+index 0000000..1582f0b
+--- /dev/null
++++ b/tests/golden/bank_csv/custom.mapping.yaml
+@@ -0,0 +1,9 @@
++# A firm's own mapping for an export no named profile covers.
++columns:
++  date: Posted
++  description: Narrative
++  paid_in: Paid in
++  paid_out: Paid out
++  id: Ref
++date_format: "%d.%m.%Y"
++order: newest_first
+diff --git a/tests/golden/bank_csv/custom.statement.golden b/tests/golden/bank_csv/custom.statement.golden
+new file mode 100644
+index 0000000..c2d3ce3
+--- /dev/null
++++ b/tests/golden/bank_csv/custom.statement.golden
+@@ -0,0 +1,4 @@
++id,date,description,amount,balance
++R1,2026-03-01,SO RENT,-150.00,50.00
++R2,2026-03-05,BACS SHOPIFY PAYMENTS,640.00,690.00
++R3,2026-03-09,CARD AMAZON,-19.99,670.01
+diff --git a/tests/golden/bank_csv/lloyds.export.golden b/tests/golden/bank_csv/lloyds.export.golden
+new file mode 100644
+index 0000000..96b1de0
+--- /dev/null
++++ b/tests/golden/bank_csv/lloyds.export.golden
+@@ -0,0 +1,5 @@
++Transaction Date,Transaction Type,Sort Code,Account Number,Transaction Description,Debit Amount,Credit Amount,Balance
++10/03/2026,FPI,30-00-00,12345678,ACME LTD INV 42,,300.00,2374.50
++05/03/2026,DD,30-00-00,12345678,COUNCIL TAX,125.50,,2074.50
++03/03/2026,FPI,30-00-00,12345678,STRIPE PAYMENTS UK,,"1,250.00",2200.00
++03/03/2026,DEB,30-00-00,12345678,TESCO STORES,50.00,,950.00
+diff --git a/tests/golden/bank_csv/lloyds.statement.golden b/tests/golden/bank_csv/lloyds.statement.golden
+new file mode 100644
+index 0000000..0657e42
+--- /dev/null
++++ b/tests/golden/bank_csv/lloyds.statement.golden
+@@ -0,0 +1,5 @@
++id,date,description,amount,balance
++L5,2026-03-03,DEB TESCO STORES,-50.00,950.00
++L4,2026-03-03,FPI STRIPE PAYMENTS UK,1250.00,2200.00
++L3,2026-03-05,DD COUNCIL TAX,-125.50,2074.50
++L2,2026-03-10,FPI ACME LTD INV 42,300.00,2374.50
+diff --git a/tests/golden/bank_csv/natwest.export.golden b/tests/golden/bank_csv/natwest.export.golden
+new file mode 100644
+index 0000000..2cdea30
+--- /dev/null
++++ b/tests/golden/bank_csv/natwest.export.golden
+@@ -0,0 +1,4 @@
++Date,Type,Description,Value,Balance,Account Name,Account Number
++02 Mar 2026,D/D,COUNCIL TAX,-125.00,875.00,BUSINESS,123456-12345678
++03 Mar 2026,BAC,STRIPE PAYMENTS UK,"1,200.00","2,075.00",BUSINESS,123456-12345678
++04 Mar 2026,POS,CARD TESCO,-75.20,"1,999.80",BUSINESS,123456-12345678
+diff --git a/tests/golden/bank_csv/natwest.statement.golden b/tests/golden/bank_csv/natwest.statement.golden
+new file mode 100644
+index 0000000..43c4010
+--- /dev/null
++++ b/tests/golden/bank_csv/natwest.statement.golden
+@@ -0,0 +1,4 @@
++id,date,description,amount,balance
++L2,2026-03-02,D/D COUNCIL TAX,-125.00,875.00
++L3,2026-03-03,BAC STRIPE PAYMENTS UK,1200.00,2075.00
++L4,2026-03-04,POS CARD TESCO,-75.20,1999.80
+diff --git a/tests/golden/bank_csv/starling.export.golden b/tests/golden/bank_csv/starling.export.golden
+new file mode 100644
+index 0000000..37aeec6
+--- /dev/null
++++ b/tests/golden/bank_csv/starling.export.golden
+@@ -0,0 +1,4 @@
++Date,Counter Party,Reference,Type,Amount (GBP),Balance (GBP),Spending Category,Notes
++01/03/2026,Acme Ltd,INV 77,FASTER PAYMENT,450.00,1450.00,INCOME,
++02/03/2026,Iwoca,Loan repayment,DIRECT DEBIT,-200.00,1250.00,REPAYMENTS,
++02/03/2026,Tesco,Tesco Stores,CARD,-12.34,1237.66,GROCERIES,
+diff --git a/tests/golden/bank_csv/starling.statement.golden b/tests/golden/bank_csv/starling.statement.golden
+new file mode 100644
+index 0000000..43c4227
+--- /dev/null
++++ b/tests/golden/bank_csv/starling.statement.golden
+@@ -0,0 +1,4 @@
++id,date,description,amount,balance
++L2,2026-03-01,FASTER PAYMENT ACME LTD INV 77,450.00,1450.00
++L3,2026-03-02,DIRECT DEBIT IWOCA LOAN REPAYMENT,-200.00,1250.00
++L4,2026-03-02,CARD TESCO TESCO STORES,-12.34,1237.66
+diff --git a/tests/test_import_bank_csv.py b/tests/test_import_bank_csv.py
+new file mode 100644
+index 0000000..9d99775
+--- /dev/null
++++ b/tests/test_import_bank_csv.py
+@@ -0,0 +1,339 @@
++"""The bank CSV importer (R38, C4): `cma case import --format bank-csv:PROFILE`, or
++`--format bank-csv --mapping FILE`, converts a bank's CSV export with paid-in and paid-out
++columns, a non-ISO date format or newest-first order into the five-column statement, and
++applies the same checks as the five-column loader (the output passes ingest.load_csv, and a
++refusal names the source file's line, never a cell's value).
++
++The golden files (tests/golden/bank_csv/) were written by hand: one export per named profile
++and one for a custom mapping, each with its statement worked out by hand (oldest first, the
++running balance walked from the bank's own balances or the opening balance given)."""
++
++import hashlib
++import re
++from pathlib import Path
++
++import pytest
++from typer.testing import CliRunner
++
++from cma import case as caselog
++from cma import ingest, store
++from cma.cli import app
++from cma.importers import bankcsv, contract
++
++runner = CliRunner()
++GOLDEN = Path(__file__).parent / "golden" / "bank_csv"
++SENTINEL = "ZQXJ"  # a string no message the tool writes holds
++
++# profile -> the opening balance to pass (None: the export has a balance column)
++PROFILES = {"barclays": "500.00", "lloyds": None, "natwest": None, "starling": None}
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    monkeypatch.setenv("CMA_HOME", str(tmp_path / "cma-home"))
++    monkeypatch.delenv("CMA_RULESET", raising=False)
++    return tmp_path / "cma-home"
++
++
++def _flat(text: str) -> str:
++    return " ".join(text.split())
++
++
++def _custom() -> dict:
++    return bankcsv.load_mapping(GOLDEN / "custom.mapping.yaml")
++
++
++MAP = {"columns": {"date": "Date", "description": "Details", "paid_in": "In", "paid_out": "Out",
++                   "balance": "Balance"},
++       "date_format": "%d/%m/%Y", "order": "auto"}
++
++
++def _write(tmp_path, rows, header="Date,Details,In,Out,Balance", name="export.csv") -> Path:
++    path = tmp_path / name
++    path.write_text("\n".join([header, *rows]) + "\n", encoding="utf-8")
++    return path
++
++
++def _convert(tmp_path, rows, mapping=None, **kw):
++    src = _write(tmp_path, rows, **{k: kw.pop(k) for k in ("header",) if k in kw})
++    out = tmp_path / "out.csv"
++    return bankcsv.convert(src, out, mapping=mapping or MAP, **kw), out
++
++
++# --- golden files: one per profile, and a custom mapping ---------------------------------
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("profile", sorted(PROFILES))
++def test_each_named_profile_converts_its_golden_export(tmp_path, profile):
++    out = tmp_path / "out.csv"
++    r = bankcsv.convert(GOLDEN / f"{profile}.export.golden", out, mapping=bankcsv.profile(profile),
++                        opening_balance=PROFILES[profile])
++    assert out.read_bytes() == (GOLDEN / f"{profile}.statement.golden").read_bytes()
++    # the five-column checks: the output is what the statement loader accepts
++    stmt = ingest.load_csv(out)
++    assert len(stmt.transactions) == r.rows
++
++
++@pytest.mark.contracts
++def test_a_custom_mapping_converts_its_golden_export(tmp_path):
++    out = tmp_path / "out.csv"
++    r = bankcsv.convert(GOLDEN / "custom.export.golden", out, mapping=_custom(), opening_balance="200.00")
++    assert out.read_bytes() == (GOLDEN / "custom.statement.golden").read_bytes()
++    assert r.order == "newest first" and r.balance_source == "opening balance supplied"
++    ingest.load_csv(out)
++
++
++@pytest.mark.contracts
++def test_newest_first_is_found_from_the_dates_and_turned_oldest_first(tmp_path):
++    out = tmp_path / "out.csv"
++    r = bankcsv.convert(GOLDEN / "lloyds.export.golden", out, mapping=bankcsv.profile("lloyds"))
++    assert r.order == "newest first"
++    assert (r.start.isoformat(), r.end.isoformat()) == ("2026-03-03", "2026-03-10")
++    assert r.balance_source == "the bank's balance column"
++
++
++@pytest.mark.contracts
++def test_newest_first_rows_on_one_date_are_ordered_by_the_balances(tmp_path):
++    rows = ["01/03/2026,B,5.00,,115.00", "01/03/2026,A,10.00,,110.00"]
++    r, out = _convert(tmp_path, rows)
++    assert r.order == "newest first"
++    assert [t.description for t in ingest.load_csv(out).transactions] == ["A", "B"]
++
++
++@pytest.mark.contracts
++def test_the_profiles_are_packaged_and_listed():
++    assert set(PROFILES) <= set(bankcsv.profile_names())
++    with pytest.raises(contract.ImportRefused, match="unknown bank profile; use one of barclays"):
++        bankcsv.profile(SENTINEL)
++
++
++# --- the five-column checks and refusals: by line, never a cell's value --------------------
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("rows, match", [
++    ([f"31/02/2026,{SENTINEL},1.00,,1.00"], r"line 2: Date is not a date in the form %d/%m/%Y"),
++    ([f"01/03/2026,{SENTINEL},1.00,2.00,1.00"], r"line 2: both the paid-in and the paid-out column"),
++    ([f"01/03/2026,{SENTINEL},,,1.00"], r"line 2: neither the paid-in nor the paid-out column"),
++    ([f"01/03/2026,{SENTINEL},-1.00,,1.00"], r"line 2: In is not an unsigned amount"),
++    ([f"01/03/2026,{SENTINEL},1.001,,1.00"], r"line 2: In is not an unsigned amount"),
++    ([f"01/03/2026,{SENTINEL},1.00,,{SENTINEL}"], r"line 2: Balance is not a plain amount"),
++    ([f"01/03/2026,{SENTINEL},1.00,,1.00,extra"], r"line 2: more fields than the header has columns"),
++    (["01/03/2026,A,1.00,,1.00", f"02/03/2026,{SENTINEL},1.00,,5.00"],
++     r"line 3: the balance walked from the opening balance disagrees with the bank's balance column"),
++    (["01/03/2026,A,1.00,,1.00", f"01/01/2099,{SENTINEL},1.00,,2.00"], r"problem.*line 3"),  # the loader: a future date
++    (["05/03/2026,A,1.00,,1.00", "01/03/2026,B,1.00,,2.00", f"09/03/2026,{SENTINEL},1.00,,3.00"],
++     r"problem.*line 3"),  # the loader: a date out of order
++    ([f"01/03/2026,{SENTINEL},10000000000000.00,,1.00"], r"line 2: In is £10,000,000,000,000 or more"),
++    ([f"01/03/2026,{SENTINEL},9000000000000.00,,1.00", "02/03/2026,B,9000000000000.00,,2.00"],
++     r"money in totals £10,000,000,000,000 or more"),
++])
++def test_a_bad_row_is_refused_naming_its_line_and_no_cell(tmp_path, rows, match):
++    with pytest.raises(contract.ImportRefused) as e:
++        _convert(tmp_path, rows)
++    assert re.search(match, _flat(str(e.value))), str(e.value)
++    assert SENTINEL not in str(e.value)
++    assert not (tmp_path / "out.csv").exists()
++
++
++@pytest.mark.contracts
++def test_amounts_with_a_pound_sign_and_thousands_separators_are_read_exactly(tmp_path):
++    rows = ['01/03/2026,A,"£1,234.56",,"1,234.56"', '02/03/2026,B,,0.01,"£1,234.55"',
++            "03/03/2026,C,,2000.00,-765.45"]
++    r, out = _convert(tmp_path, rows)
++    assert [(t.amount, t.balance) for t in ingest.load_csv(out).transactions] == [
++        (1234.56, 1234.56), (-0.01, 1234.55), (-2000.00, -765.45)]
++    assert r.closing_balance == -765.45
++
++
++@pytest.mark.contracts
++def test_a_misgrouped_thousands_separator_is_refused(tmp_path):
++    with pytest.raises(contract.ImportRefused, match="line 2: In is not an unsigned amount"):
++        _convert(tmp_path, ['01/03/2026,A,"1,23.00",,1.00'])
++
++
++@pytest.mark.contracts
++def test_a_missing_column_is_refused_naming_the_mapping_not_the_file(tmp_path):
++    with pytest.raises(contract.ImportRefused, match=r"missing column.*: Balance"):
++        _convert(tmp_path, ["01/03/2026,A,1.00,"], header="Date,Details,In,Out")
++
++
++@pytest.mark.contracts
++def test_a_column_named_twice_is_refused(tmp_path):
++    with pytest.raises(contract.ImportRefused, match="named more than once: In"):
++        _convert(tmp_path, ["01/03/2026,A,1.00,,1.00,"], header="Date,Details,In,Out,Balance,In")
++
++
++@pytest.mark.contracts
++def test_no_balance_column_needs_an_opening_balance(tmp_path):
++    mapping = {**MAP, "columns": {k: v for k, v in MAP["columns"].items() if k != "balance"}}
++    with pytest.raises(contract.ImportRefused, match="no balance column; pass --opening-balance"):
++        _convert(tmp_path, ["01/03/2026,A,1.00,,"], mapping=mapping)
++    r, out = _convert(tmp_path, ["01/03/2026,A,1.00,,"], mapping=mapping, opening_balance="-3.50")
++    assert ingest.load_csv(out).transactions[0].balance == -2.50 and r.opening_balance == -3.50
++
++
++@pytest.mark.contracts
++def test_an_opening_balance_that_disagrees_with_the_balance_column_is_refused(tmp_path):
++    with pytest.raises(contract.ImportRefused, match=r"--opening-balance 5\.00 disagrees"):
++        _convert(tmp_path, ["01/03/2026,A,1.00,,1.00"], opening_balance="5.00")
++
++
++@pytest.mark.contracts
++def test_a_repeated_id_is_refused_naming_both_lines(tmp_path):
++    mapping = {**MAP, "columns": {**MAP["columns"], "id": "Ref"}}
++    with pytest.raises(contract.ImportRefused, match=r"line 3: the id repeats line 2's"):
++        _convert(tmp_path, [f"01/03/2026,A,1.00,,1.00,{SENTINEL}", f"02/03/2026,B,1.00,,2.00,{SENTINEL}"],
++                 mapping=mapping, header="Date,Details,In,Out,Balance,Ref")
++
++
++@pytest.mark.contracts
++def test_a_declared_order_the_dates_contradict_is_refused(tmp_path):
++    with pytest.raises(contract.ImportRefused, match="says newest_first, but its dates run oldest first"):
++        _convert(tmp_path, ["01/03/2026,A,1.00,,1.00", "02/03/2026,B,1.00,,2.00"],
++                 mapping={**MAP, "order": "newest_first"})
++
++
++@pytest.mark.contracts
++def test_month_names_are_read_in_english_whatever_the_locale(tmp_path):
++    mapping = {**MAP, "date_format": ["%d %b %Y", "%d %B %Y"]}
++    _, out = _convert(tmp_path, ["1 Sep 2026,A,1.00,,1.00", "2 october 2026,B,1.00,,2.00"], mapping=mapping)
++    assert [t.date.isoformat() for t in ingest.load_csv(out).transactions] == ["2026-09-01", "2026-10-02"]
++
++
++@pytest.mark.contracts
++def test_a_description_cell_a_spreadsheet_reads_as_a_formula_is_neutralised(tmp_path):
++    _, out = _convert(tmp_path, ["01/03/2026,=HYPERLINK(1),1.00,,1.00"])
++    assert ingest.load_csv(out).transactions[0].description.startswith("'=")
++
++
++# --- the mapping a firm supplies -------------------------------------------------------------
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("change, match", [
++    ({"columns": {"date": "D", "description": "X", "amount": "A", "paid_in": "I", "paid_out": "O"}},
++     "either amount or paid_in and paid_out"),
++    ({"columns": {"date": "D", "description": "X", "paid_in": "I"}}, "either amount or paid_in and paid_out"),
++    ({"columns": {"description": "X", "amount": "A"}}, "columns.date is required"),
++    ({"columns": {"date": "D", "description": "X", "amount": "A", "colour": "C"}}, "unknown key columns.colour"),
++    ({"columns": {"date": "D", "description": "D", "amount": "A"}}, "uses column D for more than one"),
++    ({"date_format": "%Y"}, "date_format .* must name a day, a month and a year"),
++    ({"date_format": None}, "date_format is required"),
++    ({"order": "sideways"}, "order is oldest_first, newest_first or auto"),
++    ({"extra": 1}, "unknown key extra"),
++])
++def test_a_bad_mapping_is_refused_naming_the_key(tmp_path, change, match):
++    mapping = {**MAP, **change}
++    if change.get("date_format", 0) is None:
++        del mapping["date_format"]
++    with pytest.raises(contract.ImportRefused, match=match):
++        bankcsv.check_mapping(mapping)
++
++
++@pytest.mark.contracts
++def test_a_mapping_file_that_is_not_a_mapping_is_refused(tmp_path):
++    bad = tmp_path / "m.yaml"
++    bad.write_text("- just a list\n", encoding="utf-8")
++    with pytest.raises(contract.ImportRefused, match="not a mapping"):
++        bankcsv.load_mapping(bad)
++    bad.write_text("columns: [\n", encoding="utf-8")
++    with pytest.raises(contract.ImportRefused, match="not readable YAML"):
++        bankcsv.load_mapping(bad)
++
++
++@pytest.mark.contracts
++def test_a_mapping_file_that_gives_a_key_twice_is_refused():
++    # YAML keeps the last of two equal keys; here that would swap money in and money out.
++    data = (b"columns:\n  date: Date\n  description: Details\n  paid_in: Out\n  paid_out: In\n"
++            b"  paid_in: In\n  paid_out: Out\ndate_format: '%d/%m/%Y'\n")
++    with pytest.raises(contract.ImportRefused, match="key paid_in is given more than once"):
++        bankcsv.parse_mapping(data, "m.yaml")
++
++
++@pytest.mark.contracts
++def test_cma_case_import_bank_csv_twice_leaves_the_case_unchanged(home):
++    cid = store.new_case()
++    folder = store.case_folder(cid)
++    args = ["case", "import", cid, str(GOLDEN / "lloyds.export.golden"), "--format", "bank-csv:lloyds"]
++    assert runner.invoke(app, args).exit_code == 0
++    before = [e.event for e in caselog.for_case(folder).entries()]
++    again = runner.invoke(app, args)
++    assert again.exit_code == 0 and "already imported" in again.output  # R39
++    assert [e.event for e in caselog.for_case(folder).entries()] == before
++
++
++@pytest.mark.contracts
++def test_every_packaged_profile_is_a_valid_mapping():
++    for name in bankcsv.profile_names():
++        bankcsv.check_mapping(bankcsv.profile(name))
++
++
++# --- cma case import ------------------------------------------------------------------------
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("profile", sorted(PROFILES))
++def test_cma_case_import_bank_csv_keeps_the_golden_statement_and_logs_the_profile(home, profile):
++    cid = store.new_case()
++    folder = store.case_folder(cid)
++    args = ["case", "import", cid, str(GOLDEN / f"{profile}.export.golden"), "--format", f"bank-csv:{profile}"]
++    if PROFILES[profile]:
++        args += ["--opening-balance", PROFILES[profile]]
++    res = runner.invoke(app, args)
++    assert res.exit_code == 0, res.output
++    assert "imported account main" in res.output
++    kept = folder / "statements" / "main.csv"
++    assert kept.read_bytes() == (GOLDEN / f"{profile}.statement.golden").read_bytes()
++    entry = [e for e in caselog.for_case(folder).entries() if e.event == "import"][-1]
++    assert entry.data["format"] == f"bank-csv:{profile}"
++
++
++@pytest.mark.contracts
++def test_cma_case_import_with_a_custom_mapping_records_its_hash(home):
++    cid = store.new_case()
++    folder = store.case_folder(cid)
++    mapping = GOLDEN / "custom.mapping.yaml"
++    res = runner.invoke(app, ["case", "import", cid, str(GOLDEN / "custom.export.golden"), "--format", "bank-csv",
++                              "--mapping", str(mapping), "--opening-balance", "200.00"])
++    assert res.exit_code == 0, res.output
++    assert (folder / "statements" / "main.csv").read_bytes() == (GOLDEN / "custom.statement.golden").read_bytes()
++    entry = [e for e in caselog.for_case(folder).entries() if e.event == "import"][-1]
++    assert entry.data["mapping_sha256"] == hashlib.sha256(mapping.read_bytes()).hexdigest()
++    assert entry.data["format"] == "bank-csv"
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("fmt, extra, match", [
++    ("bank-csv", [], "pass --mapping FILE or name a profile"),
++    ("bank-csv:lloyds", ["--mapping", "MAP"], "--mapping is for --format bank-csv without a profile"),
++    ("bank-csv:nosuch", [], "unknown bank profile"),
++    ("monzo", ["--mapping", "MAP"], "--mapping is for a bank CSV"),
++    ("bank-csv:lloyds", ["--statement-balance", "1.00", "--at", "2026-03-01"], "--statement-balance and --at are for"),
++])
++def test_cma_case_import_refuses_options_that_do_not_fit(home, fmt, extra, match):
++    cid = store.new_case()
++    folder = store.case_folder(cid)
++    extra = [str(GOLDEN / "custom.mapping.yaml") if x == "MAP" else x for x in extra]
++    res = runner.invoke(app, ["case", "import", cid, str(GOLDEN / "lloyds.export.golden"), "--format", fmt, *extra])
++    assert res.exit_code != 0
++    assert match in _flat(res.output), res.output
++    assert not (folder / "statements" / "main.csv").exists()
++
++
++@pytest.mark.contracts
++def test_cma_case_import_refusal_names_the_line_never_a_cell(home, tmp_path):
++    cid = store.new_case()
++    folder = store.case_folder(cid)
++    src = tmp_path / "export.csv"
++    src.write_text("Transaction Date,Transaction Type,Sort Code,Account Number,Transaction Description,"
++                   "Debit Amount,Credit Amount,Balance\n"
++                   f"01/03/2026,FPI,1,2,A,,1.00,1.00\n02/03/2026,FPI,1,2,{SENTINEL},,1.00,{SENTINEL}\n",
++                   encoding="utf-8")
++    res = runner.invoke(app, ["case", "import", cid, str(src), "--format", "bank-csv:lloyds"])
++    assert res.exit_code != 0
++    out = _flat(res.output)
++    assert "import refused: line 3: Balance" in out, res.output
++    assert SENTINEL not in res.output
++    assert not (folder / "statements" / "main.csv").exists()
