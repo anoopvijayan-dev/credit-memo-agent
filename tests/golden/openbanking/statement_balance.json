@@ -1,0 +1,45 @@
+{
+  "Data": {
+    "Transaction": [
+      {
+        "AccountId": "9001",
+        "TransactionId": "A-1",
+        "Amount": {"Amount": "500.00", "Currency": "GBP"},
+        "CreditDebitIndicator": "Credit",
+        "Status": "Booked",
+        "BookingDateTime": "2026-04-01T00:00:00+01:00",
+        "TransactionInformation": "BACS CREDIT SUMUP PAYMENTS"
+      },
+      {
+        "AccountId": "9001",
+        "TransactionId": "A-2",
+        "Amount": {"Amount": "120.25", "Currency": "GBP"},
+        "CreditDebitIndicator": "Debit",
+        "Status": "Booked",
+        "BookingDateTime": "2026-04-02T00:00:00+01:00",
+        "TransactionInformation": "DD",
+        "CreditorAccount": {"SchemeName": "UK.OBIE.SortCodeAccountNumber", "Identification": "40400411112222", "Name": "iwoca Ltd"}
+      },
+      {
+        "AccountId": "9001",
+        "TransactionId": "A-3",
+        "Amount": {"Amount": "10.00", "Currency": "GBP"},
+        "CreditDebitIndicator": "Credit",
+        "Status": "Booked",
+        "BookingDateTime": "2026-04-03T00:00:00+01:00",
+        "TransactionInformation": "INTEREST"
+      },
+      {
+        "AccountId": "9001",
+        "TransactionId": "A-4",
+        "Amount": {"Amount": "9.99", "Currency": "GBP"},
+        "CreditDebitIndicator": "Debit",
+        "Status": "Pending",
+        "BookingDateTime": "2026-04-03T15:00:00+01:00",
+        "TransactionInformation": "CARD PAYMENT"
+      }
+    ]
+  },
+  "Links": {"Self": "https://api.bank.example/open-banking/v3.1/aisp/accounts/9001/transactions"},
+  "Meta": {"TotalPages": 1}
+}

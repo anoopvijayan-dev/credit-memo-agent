@@ -66,6 +66,12 @@ cma case new --demo --label "Cafe trial"          # prints a random case id
 cma case profile <id> --director "Jane Doe" --own-account "ACME HOLDINGS" --proposed-repayment 1500
 cma case import <id> private/statement.csv --format csv
 cma case import <id> "private/Monzo Data Export.csv" --format monzo --account monzo --opening-balance 123.45
+# An OBIE v3.1 transactions file (one response, an array of pages, or pages one after
+# another): booked GBP lines only, pending ones left out and counted, the bank's
+# TransactionId kept as the line id, a transaction a page repeats kept once. The balance
+# comes from the per-line balances, or from a statement balance at the end of a date.
+cma case import <id> private/transactions.json --format openbanking --account current
+cma case import <id> private/transactions.json --format openbanking --statement-balance 1389.75 --at 2026-04-03
 
 # Correct one line's category (only the category; one valid for the line's direction),
 # with a reason and your typed name. The override goes to overrides.jsonl and the case
