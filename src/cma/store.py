@@ -58,7 +58,7 @@ LEDGER_WAIT = 10.0  # seconds a purge waits for another to finish writing the le
 PROFILE = "case.yaml"
 INPUTS = "inputs"
 STATEMENTS = "statements"
-FORMATS = ("csv", "monzo")
+FORMATS = ("csv", "monzo", "openbanking")
 # Matched with fullmatch: `$` alone would also take a key ending in a newline (T13 review 2).
 CASE_ID = re.compile(r"[0-9a-f]{16}")  # random; never the applicant's name
 ACCOUNT_KEY = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
@@ -533,18 +533,26 @@ class Imported:
     start: str
     end: str
     already: bool = False
+    pending: int = 0  # Open Banking: pending transactions left out (R36)
+    repeated: int = 0  # Open Banking: transactions a paged export repeated, kept once
 
 
 def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
-                opening_balance: str | None = None) -> Imported:
+                opening_balance: str | None = None, statement_balance: str | None = None,
+                at: str | None = None) -> Imported:
     """Import a bank file into a case: the original into inputs/ by its hash, the converted
     statement into statements/<account>.csv, checked by the statement loader, and one log
     entry (R42). The same file imported again leaves the case unchanged (R39)."""
-    from .importers import contract, monzo
+    from .importers import contract, monzo, openbanking
 
     folder = Path(folder)
     if fmt not in FORMATS:
         raise CaseStoreError(f"unknown format {fmt!r}; use one of {', '.join(FORMATS)}")
+    if fmt != "openbanking" and (statement_balance is not None or at is not None):
+        raise CaseStoreError("--statement-balance and --at are for an Open Banking file")
+    if fmt == "openbanking" and opening_balance is not None:
+        raise CaseStoreError("--opening-balance is for a Monzo export; for an Open Banking file pass "
+                             "--statement-balance AMOUNT --at DATE")
     if not isinstance(account, str) or not ACCOUNT_KEY.fullmatch(account):
         raise CaseStoreError("an account key is lowercase letters, digits, _ and -, starting with a "
                              "letter or digit, at most 32 characters")
@@ -578,6 +586,17 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
             except contract.ImportRefused as e:  # by line, never a cell's value (T28)
                 raise CaseStoreError(f"import refused: {str(e).replace(str(raw), src.name)}") from None
             out = converted.read_bytes()
+        elif fmt == "openbanking":
+            raw = work / "export.json"
+            converted = work / "statement.csv"
+            _write_private(raw, data)
+            _write_private(converted, b"")
+            try:
+                ob = openbanking.convert(raw, converted, statement_balance=statement_balance, at=at)
+            except contract.ImportRefused as e:  # by line, never a cell's value (T28)
+                raise CaseStoreError(f"import refused: {str(e).replace(str(raw), src.name)}") from None
+            out = converted.read_bytes()
+            counted = {"pending": ob.pending, "repeated": ob.repeated}
         else:
             if opening_balance is not None:
                 raise CaseStoreError("--opening-balance is for a Monzo export; a statement CSV has its balances")
@@ -591,7 +610,8 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
 
         entry = {"account": account, "format": fmt, "input_sha256": sha,
                  "statement_sha256": hashlib.sha256(out).hexdigest(), "lines": len(stmt.transactions),
-                 "start": stmt.start.isoformat(), "end": stmt.end.isoformat()}
+                 "start": stmt.start.isoformat(), "end": stmt.end.isoformat(),
+                 **(counted if fmt == "openbanking" else {})}
         with _recorded(folder, "import") as save:
             if any(_imported(e, sha) for e in save.entries):
                 return Imported(account, sha, 0, "", "", already=True)  # R39: nothing changes
@@ -614,7 +634,8 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
             save.undo.append(_restorer(statement))
             _write_private(statement, out)
             save.data = entry
-    return Imported(account, sha, entry["lines"], entry["start"], entry["end"])
+    return Imported(account, sha, entry["lines"], entry["start"], entry["end"],
+                    pending=entry.get("pending", 0), repeated=entry.get("repeated", 0))
 
 
 def _imported(entry, sha: str) -> bool:

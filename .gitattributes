@@ -5,3 +5,5 @@ src/cma/rules/*.yaml text eol=lf
 
 # The Monzo golden files are compared byte for byte, CRLF line ends included (T28).
 tests/golden/monzo/* -text
+# So are the Open Banking golden files (T29).
+tests/golden/openbanking/* -text
