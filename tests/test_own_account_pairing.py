@@ -252,3 +252,36 @@ def test_a_malformed_pairing_days_setting_refuses_the_workspace_figures(home, tm
     figures, refused = summary.load_figures(folder)
     assert figures is None and refused["state"] == "refused"
     assert "own_account_pairing_days" in refused["refusal"]
+
+
+@pytest.mark.contracts
+def test_two_debits_with_the_same_single_candidate_are_both_unpaired_and_listed(home, tmp_path):
+    # Each debit has one candidate, but it is the same credit: pairing either would leave the
+    # other out by statement order, so neither pairs and all three lines are listed (R9, P11).
+    main = _csv([("M1", D0, "CARD SETTLEMENT STRIPE", 500_00), ("M2", D0 + timedelta(days=1), "FPS TO 12345678", -100_00)])
+    res = _csv([("R1", D0, "CARD SETTLEMENT STRIPE", 321_45), ("R2", D0 + timedelta(days=1), "FPS TO 99998888", -100_00)])
+    sav = _csv([("S1", D0 + timedelta(days=2), "FPS FROM 87654321", 100_00)])
+    case_id, folder = _case(tmp_path, {"main": main, "reserve": res, "savings": sav})
+    rules = _rules(folder)
+    assert not any((rules[k] or "").startswith(PAIRING) for k in ("main:M2", "reserve:R2", "savings:S1"))
+    queue = summary.case_summary(folder, case_id)["queue"]
+    listed = {(e["account"], e["line"]["id"]): set(e["pairs_with"]) for e in queue
+              if "possible_own_account_transfer" in e["reasons"]}
+    assert listed == {("main", "M2"): {"savings:S1"}, ("reserve", "R2"): {"savings:S1"},
+                      ("savings", "S1"): {"main:M2", "reserve:R2"}}
+
+
+@pytest.mark.contracts
+def test_zero_pairing_days_pairs_only_same_day_moves_in_either_order(home, tmp_path):
+    main = _csv([("M1", D0, "CARD SETTLEMENT STRIPE", 500_00), ("M2", D0 + timedelta(days=4), "FPS TO 12345678", -100_00)])
+    sav = _csv([("S1", D0 + timedelta(days=3), "FPS FROM 87654321", 100_00)])
+    _, folder = _case(tmp_path, {"main": main, "savings": sav})
+    assert _rules(folder)["main:M2"] == "pairing:savings:S1"  # the credit a day before the debit
+    _firm(home, "own_account_pairing_days: 1\n")
+    assert _rules(folder)["main:M2"] == "pairing:savings:S1"
+    _firm(home, "own_account_pairing_days: 0\n")
+    assert not (_rules(folder)["main:M2"] or "").startswith(PAIRING)
+    main = _csv([("M1", D0, "CARD SETTLEMENT STRIPE", 500_00), ("M2", D0 + timedelta(days=1), "FPS TO 12345678", -100_00)])
+    sav = _csv([("S1", D0 + timedelta(days=1), "FPS FROM 87654321", 100_00)])
+    _, same_day = _case(tmp_path, {"main": main, "savings": sav})
+    assert _rules(same_day)["main:M2"] == "pairing:savings:S1"
