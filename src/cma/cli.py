@@ -63,6 +63,11 @@ def generate(
         help=f"Opt-in synthetic feature, repeatable: one of {list(synth.FEATURES)}, or 'all'. The truth then "
         "holds every bucket, line category and indicator, for the v2 rules and the case profile it gives.",
     ),
+    case: bool = typer.Option(
+        False, "--case",
+        help="Also make a demo case in the case root (CMA_HOME) holding every account written, with the case "
+        "profile the generator gives; the truth's 'case' then holds that case's truth, own-account pairs included.",
+    ),
 ):
     """Write a synthetic statement CSV and its ground-truth JSON."""
     features = list(synth.FEATURES) if "all" in feature else feature
@@ -76,6 +81,15 @@ def generate(
     for account in truth.accounts:
         other = out / f"{csv_path.stem}_{account['key']}.csv"
         console.print(f"wrote {other} ({len(account['rows'])} transactions), the applicant's {account['key']} account")
+    if case:
+        from . import store
+
+        try:
+            case_id, folder = synth.to_case(rows, truth, out)
+        except store.CaseStoreError as e:
+            console.print(f"[red]Refused.[/red] {escape(str(e))}")
+            raise typer.Exit(code=2) from e
+        console.print(f"made case {case_id} at {folder}, demo, with {1 + len(truth.accounts)} account(s)")
 
 
 @app.command()

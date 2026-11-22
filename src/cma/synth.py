@@ -145,6 +145,8 @@ class Truth:
     cash_deposits: dict = field(default_factory=dict)
     indicators: list[dict] = field(default_factory=list)
     accounts: list[dict] = field(default_factory=list)
+    # With "two_accounts": the truth of the accounts as one case (case_truth); empty otherwise.
+    case: dict = field(default_factory=dict)
 
     def to_json(self) -> dict:
         """The truth file's content. A truth with no features has exactly the fields it had
@@ -152,9 +154,11 @@ class Truth:
         d = dict(self.__dict__)
         if not self.features:
             for k in ("features", "case_profile", "total_money_in", "buckets", "cash_deposits", "indicators",
-                      "accounts"):
+                      "accounts", "case"):
                 d.pop(k)
         else:
+            if not self.case:
+                d.pop("case")
             d["accounts"] = [{k: v for k, v in a.items() if k != "rows"} for a in self.accounts]
         return d
 
@@ -370,7 +374,51 @@ def generate(
         truth.indicators = indicator_truth(lines)
         if other is not None:
             truth.accounts = [other]
+            truth.case = case_truth(truth, rows, a["account_name"])
     return rows, truth
+
+
+MAIN_KEY = "main"  # the business account's key in the case to_case makes; the other is its own key
+
+
+def _case_id(account: str, line_id: str) -> str:
+    """A line's id in a case of more than one account: its account key, a colon, its own id (R41)."""
+    return f"{account}:{line_id}"
+
+
+def case_truth(truth: Truth, rows: list[dict], account_name: str) -> dict:
+    """The truth of the generated accounts as one case (R8, R41, R47, P11, P17), from the
+    generator's own events: every line's category under its case line id; each own-account
+    pair, debit first, which is a move the generator made between the accounts (the business
+    account's FPS line to or from the reserve account and the reserve account's line naming
+    the business account, on the same day, for the same amount); the money-in buckets and the
+    cash deposits across the case; the money in from outside the applicant's accounts, every
+    credit that is half of no move; and each account's indicators, raised on that account."""
+    other = truth.accounts[0]
+    reserve = other["account_name"]
+    mine = {f"FPS TO {reserve}", f"FPS CREDIT {reserve}"}
+    theirs = {f"FPS TO {account_name}", f"FPS CREDIT {account_name}"}
+    # A move's two halves share a day and an amount, of opposite signs; no two moves share both.
+    halves = {(r["date"], -_pence(r["amount"])): r["id"] for r in other["rows"] if r["description"] in theirs}
+    pairs = []
+    for r in rows:
+        if r["description"] in mine:
+            p = _pence(r["amount"])
+            ids = (_case_id(MAIN_KEY, r["id"]), _case_id(other["key"], halves.pop((r["date"], p))))
+            pairs.append(list(ids if p < 0 else ids[::-1]))
+    assert not halves, "every reserve-account move has its half in the business account"
+    pairs.sort()
+    lines = [dict(x, id=_case_id(key, x["id"])) for key, rs, cats in
+             ((MAIN_KEY, rows, truth.category_by_id), (other["key"], other["rows"], other["category_by_id"]))
+             for x in _lines(rs, cats, {})]
+    case: dict = {"accounts": [MAIN_KEY, other["key"]],
+                  "category_by_id": {x["id"]: x["cat"].value for x in lines},
+                  "own_account_pairs": pairs}
+    _money_in_truth(case, lines)
+    in_moves = {i for p in pairs for i in p}
+    case["outside_money_in"] = sum(x["pence"] for x in lines if x["pence"] > 0 and x["id"] not in in_moves) / 100
+    case["indicators"] = {MAIN_KEY: truth.indicators, other["key"]: other["indicators"]}
+    return case
 
 
 def _reserve_name(account_name: str) -> str:
@@ -617,3 +665,25 @@ def write(rows: list[dict], truth: Truth, out_dir: Path, stem: str | None = None
         _write_csv(out_dir / f"{stem}_{account['key']}.csv", account["rows"])
     truth_path.write_text(json.dumps(truth.to_json(), indent=2, default=str))
     return csv_path, truth_path
+
+
+def to_case(rows: list[dict], truth: Truth, work: Path, *, label: str | None = None,
+            root: Path | None = None) -> tuple[str, Path]:
+    """Make one demo case in the case store from a generated statement (R47, R48): every
+    account imported under its key (the business account as "main"), and the case profile
+    the generator gives (its directors and own accounts) with the VAT stagger it used. The
+    statements are written to `work` first. Returns (case id, case folder)."""
+    from . import store
+
+    csv_path, _ = write(rows, truth, Path(work))
+    case_id = store.new_case(label=label or f"synthetic {truth.archetype} {truth.profile}", demo=True, root=root)
+    folder = store.case_folder(case_id, root)
+    names = truth.case_profile or {"directors": [], "own_accounts": []}
+    store.update_profile(folder, lambda old: {**old, "directors": list(names["directors"]),
+                                              "own_accounts": list(names["own_accounts"]),
+                                              "vat_stagger": truth.vat_stagger})
+    store.import_file(folder, csv_path, "csv", account=MAIN_KEY)
+    for account in truth.accounts:
+        store.import_file(folder, csv_path.with_name(f"{csv_path.stem}_{account['key']}.csv"), "csv",
+                          account=account["key"])
+    return case_id, folder
