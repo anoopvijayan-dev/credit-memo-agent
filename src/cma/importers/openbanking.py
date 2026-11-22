@@ -267,39 +267,64 @@ def _order(group: list[tuple], before: int | None) -> list[tuple] | None:
     # balance are those with no balance and those whose balance before them is that balance,
     # looked up rather than scanned, and tried in file order, so a group that chains is
     # ordered in about one step per line whichever order the file wrote it in.
+    # Lines with no balance matter only by their amount, so of those with one amount only the
+    # first unused is tried, and a state already searched without success (the balance, the
+    # balanced lines used and how many of each loose amount) is not searched again: loose
+    # lines ahead of a balanced line that must come first cost a step each, not every ordering.
     n = len(group)
     by_before: dict[int, list[int]] = {}
-    loose: list[int] = []
+    loose_of: dict[int, list[int]] = {}  # amount -> loose lines with it, in file order
     for i, (_, x) in enumerate(group):
         if x.balance is None:
-            loose.append(i)
+            loose_of.setdefault(x.amount, []).append(i)
         else:
             by_before.setdefault(x.balance - x.amount, []).append(i)
+    amounts = list(loose_of)
+    slot = {i: a for a, ids in loose_of.items() for i in ids}
+    taken = dict.fromkeys(amounts, 0)  # loose lines of each amount used so far, first ones first
     used = [False] * n
     afters = {x.balance for _, x in group if x.balance is not None}
     # With no balance known yet, a line whose balance before it is no other line's balance
     # after it is where the chain starts, so such lines are tried first.
     heads = [i for b, ids in by_before.items() if b not in afters for i in ids]
 
+    def loose_next():
+        return [loose_of[a][taken[a]] for a in amounts if taken[a] < len(loose_of[a])]
+
     def candidates(bal):
         if bal is None:
             first = sorted(i for i in heads if not used[i])
-            taken = set(first)
-            return first + [i for i in range(n) if not used[i] and i not in taken]
-        return sorted(i for i in [*by_before.get(bal, ()), *loose] if not used[i])
+            rest = sorted({i for ids in by_before.values() for i in ids if not used[i]} - set(first))
+            return first + sorted([*rest, *loose_next()])
+        return sorted([*(i for i in by_before.get(bal, ()) if not used[i]), *loose_next()])
+
+    def state(bal):
+        return bal, mask, tuple(taken[a] for a in amounts)
 
     order: list[int] = []
+    mask = 0  # the balanced lines used
+    dead: set = set()
     frames = [[candidates(before), 0, before]]  # one more frame than lines chosen
     steps = 0
+
+    def undo(i):
+        nonlocal mask
+        used[i] = False
+        if i in slot:
+            taken[slot[i]] -= 1
+        else:
+            mask &= ~(1 << i)
+
     while frames:
         if len(order) == n:
             return [group[i] for i in order]
         frame = frames[-1]
         cands, k, bal = frame
         if k >= len(cands):
+            dead.add(state(bal))
             frames.pop()
             if order:
-                used[order.pop()] = False
+                undo(order.pop())
             continue
         frame[1] += 1
         steps += 1
@@ -310,6 +335,13 @@ def _order(group: list[tuple], before: int | None) -> list[tuple] | None:
         after = None if bal is None else bal + x.amount
         nxt = x.balance if x.balance is not None else after
         used[i] = True
+        if i in slot:
+            taken[slot[i]] += 1
+        else:
+            mask |= 1 << i
+        if state(nxt) in dead:
+            undo(i)
+            continue
         order.append(i)
         frames.append([candidates(nxt), 0, nxt])
     return None
@@ -404,6 +436,9 @@ def convert(src: Path, dst: Path, *, statement_balance: str | None = None, at: s
         x = contract.Line(line=line, id=tid, date=d, description=_description(t, amount, line), amount=amount,
                           balance=_balance(t, line))
         booked.append(((d, moment, pos), x))
+    # A transaction one page shows pending and another booked (it settled between fetches) is
+    # kept as booked, so it was not left out.
+    pending -= len(pending_ids & first.keys())
     if not booked:
         raise OpenBankingImportError(f"{src}: no booked transactions ({pending} pending left out)")
     reached = flows_at_limit([x.amount for _, x in booked])

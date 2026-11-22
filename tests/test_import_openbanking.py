@@ -377,3 +377,41 @@ def test_a_large_group_that_no_order_chains_is_refused_not_crashed(tmp_path):
     lines[700]["Balance"]["Amount"]["Amount"] = "99999.00"
     src = _write(tmp_path, lines)
     _refused(tmp_path, src, "no order of the transactions booked at the same time keeps the balance chain")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("loose", [8, 12, 400])
+def test_balance_less_lines_ahead_of_the_balanced_line_that_must_come_first_are_ordered(tmp_path, loose):
+    # verify-256: lines with no balance are interchangeable, so the search must not walk their
+    # orderings before it reaches the balanced line that has to come first.
+    when = "2026-05-02T00:00:00+00:00"
+    group = [_txn(f"L{i}", "1.00", when=when) for i in range(loose)] + [
+        _txn("A", "1.00", when=when, balance="101.00")]
+    src = _write(tmp_path, [_txn("E0", "1.00", when="2026-05-01T00:00:00+00:00", balance="100.00"), *group])
+    r, out = _convert(tmp_path, src)
+    ids = [t.id for t in ingest.load_csv(out).transactions]
+    assert r.rows == loose + 2 and ids[:2] == ["E0", "A"]
+    assert r.closing_balance == 101.0 + loose
+
+
+@pytest.mark.contracts
+def test_mixed_loose_amounts_and_balanced_lines_at_one_moment_are_ordered(tmp_path):
+    when = "2026-05-02T00:00:00+00:00"
+    loose = [_txn(f"L{i}", f"{1 + i % 3}.00", when=when) for i in range(15)]  # 1, 2 or 3 pounds
+    # The balanced lines need 2 and then 5 pounds of loose lines before them.
+    balanced = [_txn("B2", "1.00", when=when, balance="108.00"), _txn("B1", "1.00", when=when, balance="103.00")]
+    src = _write(tmp_path, [_txn("E0", "1.00", when="2026-05-01T00:00:00+00:00", balance="100.00"),
+                            *loose, *balanced])
+    r, out = _convert(tmp_path, src)
+    assert r.rows == 18 and r.closing_balance == 100.0 + 2 + sum(1 + i % 3 for i in range(15))
+    ids = [t.id for t in ingest.load_csv(out).transactions]
+    assert ids.index("B1") < ids.index("B2")
+
+
+@pytest.mark.contracts
+def test_a_pending_transaction_booked_on_another_page_is_not_counted_as_left_out(tmp_path):
+    # verify-256 minor: a page fetched while it settled shows it pending, another booked.
+    src = _write(tmp_path, [_txn("K1", "1.00", balance="101.00"), _txn("X", "5.00", status="Pending")],
+                 [_txn("X", "5.00", balance="106.00", when="2026-05-01T11:00:00+00:00")])
+    r, _ = _convert(tmp_path, src)
+    assert (r.rows, r.pending) == (2, 0)
