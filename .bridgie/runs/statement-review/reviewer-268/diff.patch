@@ -1,0 +1,1194 @@
+diff --git a/README.md b/README.md
+index 894b09d..875a1ee 100644
+--- a/README.md
++++ b/README.md
+@@ -139,6 +139,18 @@ cma case preview <id>
+ # workspace (`cma review`) offers the same preview and sign-off from the case page.
+ cma case sign <id>
+ 
++# Verify an evidence record: recompute every figure, bucket and monthly cell from the
++# inputs it recorded and list each mismatch by id (never a description). A pack is checked
++# against its case's statements, profile and firm rules, which must be the ones recorded,
++# and the override log up to the position the pack recorded, so later overrides and
++# accounts imported later change nothing. A `cma run` record is checked against its
++# statement file, which must hash as recorded. A record made with another ruleset is
++# refused, naming the package version and ruleset that made it; a record without
++# schema_version (v0) is checked for M1 to M16 only. It writes nothing. Exit 0 with no
++# mismatch, 1 with a mismatch, 2 when the record cannot be verified.
++cma verify private/cma/cases/<id>/packs/<snapshot>/evidence.json
++cma verify memo.evidence.json --statement private/statement.csv
++
+ # Drop an entry the case log holds past its recorded entries that a crash, a full disk or a
+ # lost power left unfinished, once you confirm it with your typed name; the drop is itself
+ # recorded. Refused, changing nothing, when nothing is torn or the log is broken before it
+diff --git a/examples/cafe_stretched.memo.evidence.json b/examples/cafe_stretched.memo.evidence.json
+index ffcf723..ba83229 100644
+--- a/examples/cafe_stretched.memo.evidence.json
++++ b/examples/cafe_stretched.memo.evidence.json
+@@ -9852,5 +9852,6 @@
+     "override_grounding": false,
+     "mode": "automated"
+   },
+-  "memo": "## Business overview\nThe statements cover 12 [M1] months. Total revenue over the period was \u00a3313,135 [M2], averaging \u00a326,112 [M3] a month.\n\n## Revenue\nRevenue moved 10.8% [M4], comparing the latest quarter with the earliest. The largest single payer accounted for n/a [M15] of transfer revenue. Money in that is not trading receipts was 2.5% [M16] of inflows.\n\n## Cash position\nThe lowest balance reached was -\u00a319,760 [M5], and the account closed overdrawn on 165 [M6] days. Net operating cash flow was \u00a354,192 [M9].\n\n## Obligations and conduct\nLoan repayments totalled \u00a313,800 [M8] and owner drawings \u00a330,000 [M11], giving debt service cover after drawings of 1.75x [M10]. Returned direct debits in the period: 1 [M7]. VAT paid was \u00a336,158 [M12] with late or missed payments of 0 [M13]; PAYE paid was \u00a319,114 [M14].\n\n## Recommendation\nPolicy outcome: refer. The case needs an analyst decision before any offer: R3 (limit 2 [R3]) is refer; R4 (limit 15 [R4]) is refer.\n"
+-}
+\ No newline at end of file
++  "memo": "## Business overview\nThe statements cover 12 [M1] months. Total revenue over the period was \u00a3313,135 [M2], averaging \u00a326,112 [M3] a month.\n\n## Revenue\nRevenue moved 10.8% [M4], comparing the latest quarter with the earliest. The largest single payer accounted for n/a [M15] of transfer revenue. Money in that is not trading receipts was 2.5% [M16] of inflows.\n\n## Cash position\nThe lowest balance reached was -\u00a319,760 [M5], and the account closed overdrawn on 165 [M6] days. Net operating cash flow was \u00a354,192 [M9].\n\n## Obligations and conduct\nLoan repayments totalled \u00a313,800 [M8] and owner drawings \u00a330,000 [M11], giving debt service cover after drawings of 1.75x [M10]. Returned direct debits in the period: 1 [M7]. VAT paid was \u00a336,158 [M12] with late or missed payments of 0 [M13]; PAYE paid was \u00a319,114 [M14].\n\n## Recommendation\nPolicy outcome: refer. The case needs an analyst decision before any offer: R3 (limit 2 [R3]) is refer; R4 (limit 15 [R4]) is refer.\n",
++  "package_version": "0.1.0"
++}
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index 8622a61..e504874 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -961,6 +961,60 @@ def review_workspace(
+     console.print("Review workspace stopped.")
+ 
+ 
++@app.command("verify")
++def verify_evidence(
++    evidence: Path = typer.Argument(..., metavar="EVIDENCE", help="An evidence JSON: a pack's evidence.json or "
++                                    "the .evidence.json `cma run` writes."),
++    case_id: str = typer.Option(None, "--case", metavar="CASE",
++                                help="A signed pack's case; by default the case the record names."),
++    statement: Path = typer.Option(None, "--statement",
++                                   help="A `cma run` record's statement file, if not at the path it records."),
++):
++    """Recompute every figure, bucket and monthly cell of an evidence record from the inputs it
++    recorded and report each mismatch, or that there is none (R44). A record made with a
++    ruleset other than the one installed is refused, naming the package version and ruleset
++    that made it (R45); a record with no schema_version (v0) is checked for M1 to M16 only.
++    Exit 0 with no mismatch, 1 with a mismatch, 2 when the record cannot be verified."""
++    from . import store
++    from . import verify as vf
++
++    def refused(msg: str):
++        console.print(f"[red]Refused.[/red] {escape(msg)}")
++        raise typer.Exit(code=2)
++
++    try:
++        record = json.loads(Path(evidence).read_bytes().decode("utf-8"))
++    except OSError as e:
++        refused(f"{evidence} cannot be read ({e.strerror or type(e).__name__})")
++    except (UnicodeDecodeError, ValueError):
++        refused(f"{evidence} is not a JSON evidence record")
++    folder = None
++    try:
++        if case_id is not None:
++            folder = store.case_folder(case_id)
++        with _case_errors():
++            result = vf.verify(record, case_folder=folder, base=Path(evidence).parent, statement=statement)
++    except vf.VerifyRefused as e:
++        refused(str(e))
++    except store.CaseStoreError as e:
++        refused(str(e))
++    c = result.checked
++    what = f"{c['figures']} figures, {c['buckets']} buckets and {c['monthly_cells']} monthly cells"
++    rs = result.ruleset
++    console.print(f"Recomputed {what} of this {result.kind} record under ruleset {escape(str(rs.get('id')))} "
++                  f"(sha256 {escape(str(rs.get('sha256')))}).")
++    if result.note:
++        console.print(f"[yellow]Note:[/yellow] {escape(result.note)}.")
++    if not result.mismatches:
++        console.print("[green]Verified:[/green] no mismatch.")
++        return
++    console.print(f"[red]{len(result.mismatches)} mismatches:[/red]")
++    for m in result.mismatches:  # ids, values and line ids only: never a description
++        console.print(f"- {escape(m.where)}: recorded {escape(json.dumps(m.recorded))}, recomputed "
++                      f"{escape(json.dumps(m.recomputed))}", soft_wrap=True, highlight=False)
++    raise typer.Exit(code=1)
++
++
+ @app.command()
+ def truth(path: Path):
+     """Print the ground truth for a generated statement."""
+diff --git a/src/cma/graph.py b/src/cma/graph.py
+index cae1f6b..80f109d 100644
+--- a/src/cma/graph.py
++++ b/src/cma/graph.py
+@@ -46,8 +46,8 @@ from langgraph.graph import END, START, StateGraph
+ from langgraph.types import Command, interrupt
+ from pydantic import ValidationError
+ 
++from . import __version__, firm, ingest
+ from . import categorise as cat
+-from . import firm, ingest
+ from . import guard as grd
+ from . import indicators as ind
+ from . import metrics as met
+@@ -488,6 +488,8 @@ def evidence_record(s: MemoState) -> dict:
+         "redrafts": s.get("redrafts", 0),
+         "review": s["review"].model_dump(mode="json") if s.get("review") else None,
+         "memo": s.get("memo"),
++        # R45: verify names the version that made a record it cannot check.
++        "package_version": __version__,
+     }
+ 
+ 
+diff --git a/src/cma/overrides.py b/src/cma/overrides.py
+index f8258d4..2ef7691 100644
+--- a/src/cma/overrides.py
++++ b/src/cma/overrides.py
+@@ -45,6 +45,7 @@ import hashlib
+ import json
+ import threading
+ from collections import OrderedDict
++from collections.abc import Iterable
+ from dataclasses import dataclass, field
+ from datetime import UTC, datetime
+ from pathlib import Path
+@@ -368,20 +369,32 @@ def _rests_on(a, b, lines: set[str]) -> bool:
+     return bool(lines & set(a.evidence)) or a.value != b.value or a.evidence != b.evidence
+ 
+ 
+-def case_figures(folder: Path, *, pairing_days: int | None = None) -> dict[str, CaseFigures]:
++def case_figures(folder: Path, *, pairing_days: int | None = None,
++                 override_position: int | None = None,
++                 accounts: Iterable[str] | None = None) -> dict[str, CaseFigures]:
+     """Every account's figures, recomputed from its statement, the profile and the whole
+     override log; stale overrides listed and not applied (R17, R19). In a case of more than
+     one account, every account is categorised first and then a debit in one account is
+     paired with the single credit of the same amount in another, within the configured days,
+     both becoming own-account transfers, before any account's figures are computed; a debit
+     with more than one candidate stays unpaired and is listed with its candidates (R8, R9).
+-    The days are `pairing_days`, or firm.yaml's own_account_pairing_days read now."""
++    The days are `pairing_days`, or firm.yaml's own_account_pairing_days read now.
++    `override_position`: only the override log's first that many records count, as a signed
++    pack recorded the log (verify, R44); a log that holds fewer is refused. `accounts`: only
++    these accounts are the case's, as a signed pack recorded them (verify, P13), so an account
++    imported after the sign-off neither pairs with them nor is computed."""
+     folder = Path(folder)
+     entries = caselog.for_case(folder).entries()
+     profile = store.load_profile(folder)
+-    accounts = _accounts(entries)
++    accounts = sorted(set(accounts)) if accounts is not None else _accounts(entries)
+     statements = {a: _load(folder, a) for a in accounts}
+-    state = _decide(_read_records(folder, entries), statements)
++    records = _read_records(folder, entries)
++    if override_position is not None:
++        if len(records) < override_position:
++            raise store.CaseStoreError(f"{OVERRIDES} holds {len(records)} records; {override_position} were "
++                                       "recorded")
++        records = records[:override_position]
++    state = _decide(records, statements)
+     out: dict[str, CaseFigures] = {}
+     failed: list[ReconciliationError] = []
+     missing = [a for a in accounts if statements[a] is None]
+diff --git a/src/cma/verify.py b/src/cma/verify.py
+new file mode 100644
+index 0000000..0038f13
+--- /dev/null
++++ b/src/cma/verify.py
+@@ -0,0 +1,464 @@
++"""Verify an evidence record (C8; R44, R45, P3, P13).
++
++`verify` recomputes every figure, bucket and monthly cell an evidence record holds from the
++inputs it recorded, with the figures layer as every other path computes them, and reports each
++mismatch, or that there is none (R44):
++
++- a `cma run` record: the statement file it names, read only when its bytes are the ones the
++  record hashed, categorised with the ruleset it records and computed with its VAT stagger;
++- a signed pack's record: the case's statements, profile and firm rules, each only when it is
++  the one the pack recorded, and the override log up to the position the pack recorded, so an
++  override made after the sign-off is not among the inputs (P13);
++- a record with no schema_version (v0, the previous release's `cma run`): M1 to M16 only,
++  recomputed under v1, the table the previous release categorised with; verify says that is
++  all it can check.
++
++A record made with a ruleset other than the one installed (another id, or the installed
++table's bytes hashing differently) is refused before anything is computed, naming the
++package version and ruleset that made it (R45). An input that is not there, or not the one
++recorded, is refused naming it: the figures could not then be recomputed from the recorded
++inputs. Reports name figures, buckets, months and cells by id and line ids only, never a
++description."""
++
++from __future__ import annotations
++
++import hashlib
++import os
++from contextlib import contextmanager
++from dataclasses import dataclass, field
++from pathlib import Path
++from typing import Any
++
++from . import __version__
++
++V0_METRICS = tuple(f"M{i}" for i in range(1, 17))
++METRIC_FIELDS = ("value", "unit", "evidence", "evidence_note")
++BUCKET_FIELDS = ("value", "unit", "evidence")
++
++
++class VerifyRefused(ValueError):
++    """The record cannot be verified: nothing was recomputed or nothing could be compared."""
++
++
++@dataclass(frozen=True)
++class Mismatch:
++    where: str      # e.g. "account main: figure M2 value"
++    recorded: Any
++    recomputed: Any
++
++
++@dataclass
++class VerifyResult:
++    kind: str                       # "run" or "pack"
++    scope: str                      # "full", or "v0" for M1 to M16 only
++    ruleset: dict[str, Any]
++    checked: dict[str, int]         # figures, buckets and monthly cells compared
++    mismatches: list[Mismatch] = field(default_factory=list)
++    note: str = ""
++
++
++# --- R45: the ruleset ------------------------------------------------------------------------
++
++
++def _check_ruleset(record: dict[str, Any], recorded: dict[str, Any]) -> None:
++    from .categorise import RULESETS, RulesetError, load_ruleset
++
++    rid, sha = recorded.get("id"), recorded.get("sha256")
++    version = record.get("package_version") or "an unrecorded package version"
++    made = f"package version {version} with ruleset {rid} (sha256 {sha})"
++    if rid not in RULESETS:
++        raise VerifyRefused(f"this evidence record was made by {made}; the installed package "
++                            f"(version {__version__}) has no ruleset {rid}. Verify it with package "
++                            f"version {version}.")
++    try:
++        installed = load_ruleset(rid)
++    except RulesetError as e:
++        raise VerifyRefused(f"the installed ruleset {rid} cannot be loaded: {e}") from None
++    if installed.sha256 != sha:
++        raise VerifyRefused(f"this evidence record was made by {made}; the installed package (version "
++                            f"{__version__}) has ruleset {rid} with sha256 {installed.sha256}. Verify it "
++                            f"with package version {version}.")
++
++
++@contextmanager
++def _ruleset(ruleset_id: str):
++    """The figures layer reads the table CMA_RULESET names; while verifying, that is the
++    record's, whatever the environment says."""
++    from .categorise import RULESET_ENV
++
++    old = os.environ.get(RULESET_ENV)
++    os.environ[RULESET_ENV] = ruleset_id
++    try:
++        yield
++    finally:
++        if old is None:
++            os.environ.pop(RULESET_ENV, None)
++        else:
++            os.environ[RULESET_ENV] = old
++
++
++# --- comparing --------------------------------------------------------------------------------
++
++
++def _same(a: Any, b: Any) -> bool:
++    """Equal as JSON values, so a boolean is never a number: in Python True == 1 and
++    False == 0.0, which would let a figure tampered to true or a flag given as 0 pass."""
++    if isinstance(a, bool) or isinstance(b, bool):
++        return type(a) is type(b) and a == b
++    if isinstance(a, dict) or isinstance(b, dict):
++        return (isinstance(a, dict) and isinstance(b, dict) and a.keys() == b.keys()
++                and all(_same(a[k], b[k]) for k in a))
++    if isinstance(a, list) or isinstance(b, list):
++        return (isinstance(a, list) and isinstance(b, list) and len(a) == len(b)
++                and all(_same(x, y) for x, y in zip(a, b, strict=True)))
++    return a == b
++
++
++def _compare(prefix: str, kind: str, recorded: list[dict[str, Any]], recomputed: list[dict[str, Any]],
++             fields: tuple[str, ...], out: list[Mismatch], only: tuple[str, ...] | None = None) -> int:
++    """Compare figures (or buckets) by id; return how many recorded ones were compared."""
++    got = {m["id"]: m for m in recomputed}
++    n = 0
++    for m in recorded:
++        mid = m.get("id") if isinstance(m, dict) else None
++        if only is not None and mid not in only:
++            continue
++        n += 1
++        new = got.get(mid)
++        if new is None:
++            out.append(Mismatch(f"{prefix}{kind} {mid}", "recorded", "not recomputed"))
++            continue
++        for f in fields:
++            if (f in m or f in new) and not _same(m.get(f), new.get(f)):
++                out.append(Mismatch(f"{prefix}{kind} {mid} {f}", m.get(f), new.get(f)))
++    seen = {m.get("id") for m in recorded if isinstance(m, dict)}
++    for mid in got:
++        if mid not in seen and (only is None or mid in only):
++            n += 1
++            out.append(Mismatch(f"{prefix}{kind} {mid}", "not recorded", "recomputed"))
++    return n
++
++
++def _compare_months(prefix: str, recorded: list[dict[str, Any]], recomputed: list[dict[str, Any]],
++                    out: list[Mismatch]) -> int:
++    from .pack import MONTHLY_CELLS
++
++    got = {r["month"]: r for r in recomputed}
++    n = 0
++    for row in recorded:
++        month = row.get("month")
++        new = got.get(month)
++        if new is None:
++            out.append(Mismatch(f"{prefix}monthly {month}", "recorded", "not recomputed"))
++            n += len(MONTHLY_CELLS)
++            continue
++        for f in ("part_month", "start", "end"):
++            if not _same(row.get(f), new.get(f)):
++                out.append(Mismatch(f"{prefix}monthly {month} {f}", row.get(f), new.get(f)))
++        for cell in MONTHLY_CELLS:
++            n += 1
++            a, b = row.get(cell) or {}, new.get(cell) or {}
++            for f in sorted(set(a) | set(b)):
++                if not _same(a.get(f), b.get(f)):
++                    out.append(Mismatch(f"{prefix}monthly {month} {cell} {f}", a.get(f), b.get(f)))
++    seen = {r.get("month") for r in recorded}
++    for month in got:
++        if month not in seen:
++            out.append(Mismatch(f"{prefix}monthly {month}", "not recorded", "recomputed"))
++            n += len(MONTHLY_CELLS)
++    return n
++
++
++def _compare_money_in(prefix: str, recorded: dict[str, Any] | None, recomputed: dict[str, Any],
++                      out: list[Mismatch]) -> int:
++    """Compare total money in (M17) and the cash within trading receipts (M18) each in its own
++    place, and the buckets by id; return how many were compared. A figure moved from its place
++    into the buckets, or the other way, is a mismatch, never flattened away."""
++    recorded = recorded or {}
++    n = 0
++    for slot in ("total", "cash_within_trading"):
++        a, b = recorded.get(slot), recomputed.get(slot)
++        if a is None and b is None:
++            continue
++        n += 1
++        if a is None or b is None:
++            out.append(Mismatch(f"{prefix}bucket {slot}", "not recorded" if a is None else "recorded",
++                                "recomputed" if b is not None else "not recomputed"))
++            continue
++        if not _same(a.get("id"), b.get("id")):
++            out.append(Mismatch(f"{prefix}bucket {slot} id", a.get("id"), b.get("id")))
++            continue
++        for f in BUCKET_FIELDS:
++            if (f in a or f in b) and not _same(a.get(f), b.get(f)):
++                out.append(Mismatch(f"{prefix}bucket {a['id']} {f}", a.get(f), b.get(f)))
++    return n + _compare(prefix, "bucket", recorded.get("buckets") or [], recomputed.get("buckets") or [],
++                        BUCKET_FIELDS, out)
++
++
++def _dumped(metrics) -> list[dict[str, Any]]:
++    return [m.model_dump(mode="json") for m in metrics]
++
++
++# --- a `cma run` record -----------------------------------------------------------------------
++
++
++def _statement_path(recorded: dict[str, Any], base: Path | None, statement: Path | None) -> Path:
++    if statement is not None:
++        return Path(statement)
++    raw = recorded.get("path")
++    if not isinstance(raw, str) or not raw:
++        raise VerifyRefused("the record names no statement file")
++    path = Path(raw)
++    if path.is_absolute() or path.is_file() or base is None:
++        return path
++    beside = Path(base) / path
++    return beside if beside.is_file() else path
++
++
++def _verify_run(record: dict[str, Any], v0: bool, base: Path | None, statement: Path | None) -> VerifyResult:
++    from . import metrics as met
++    from .categorise import categorise, load_ruleset
++    from .ingest import StatementError, load_csv
++    from .metrics import AmountError, ReconciliationError
++
++    recorded = record.get("statement")
++    if not isinstance(recorded, dict):
++        raise VerifyRefused("the record holds no statement")
++    path = _statement_path(recorded, base, statement)
++    try:
++        data = path.read_bytes()
++    except OSError as e:
++        raise VerifyRefused(f"the statement file {path} cannot be read ({e.strerror or e.__class__.__name__})") from None
++    sha = hashlib.sha256(data).hexdigest()
++    if not isinstance(recorded.get("sha256"), str) or not recorded["sha256"]:
++        raise VerifyRefused("the record names no statement sha256, so the statement it was made from "
++                            "cannot be known")
++    if sha != recorded["sha256"]:
++        raise VerifyRefused(f"the statement file {path} is not the one the record was made from "
++                            f"(sha256 {sha}, recorded {recorded['sha256']})")
++    ruleset = {"id": "v1", "sha256": load_ruleset("v1").sha256} if v0 else record.get("ruleset") or {}
++    try:
++        s = categorise(load_csv(path, data=data), load_ruleset(ruleset["id"]))
++        computed = met.compute(s, vat_stagger=record.get("vat_stagger"))
++        monthly = [r.model_dump(mode="json") for r in met.monthly_summary(s)] if not v0 else []
++    except (StatementError, AmountError, ReconciliationError) as e:
++        raise VerifyRefused(f"the figures cannot be recomputed from {path}: {e}") from None
++    out: list[Mismatch] = []
++    if v0:
++        n = _compare("", "figure", record.get("metrics") or [], _dumped(computed), ("value", "evidence"), out,
++                     only=V0_METRICS)
++        return VerifyResult("run", "v0", ruleset, {"figures": n, "buckets": 0, "monthly_cells": 0}, out,
++                            "a v0 record (no schema_version): only M1 to M16 were recomputed and compared, "
++                            "under v1; that is all it can check")
++    n = _compare("", "figure", record.get("metrics") or [], _dumped(computed), METRIC_FIELDS, out)
++    cells = _compare_months("", record.get("monthly_summary") or [], monthly, out)
++    # A run's buckets are its figures M17 to M25 (and M18), compared above.
++    ids = {"M2", "M17", "M18", *(fid for fid, _, _ in met.BUCKET_METRICS.values())}
++    buckets = sum(1 for m in record.get("metrics") or [] if m.get("id") in ids)
++    return VerifyResult("run", "full", ruleset, {"figures": n, "buckets": buckets, "monthly_cells": cells}, out)
++
++
++# --- a signed pack's record -------------------------------------------------------------------
++
++
++def _verify_pack(record: dict[str, Any], folder: Path | None) -> VerifyResult:
++    from . import firm, overrides, pack, store
++    from .metrics import AmountError, ReconciliationError
++
++    case_id = record.get("case")
++    if folder is None:
++        try:
++            folder = store.case_folder(case_id)
++        except store.CaseStoreError as e:
++            raise VerifyRefused(f"the record's case cannot be found: {e}; give it with --case") from None
++    folder = Path(folder)
++    if folder.name != case_id:
++        raise VerifyRefused(f"the record was made for case {case_id}, not for case {folder.name}")
++    inputs = record.get("inputs")
++    if not isinstance(inputs, dict):
++        raise VerifyRefused("the record holds no recorded inputs")
++    # The inputs the figures rest on must be the recorded ones (R44); the override log is read
++    # up to the recorded position below.
++    changed = []
++    for account, sha in sorted((inputs.get("statements") or {}).items()):
++        if pack._file_sha(folder / store.STATEMENTS / f"{account}.csv") != sha:
++            changed.append(f"the statement for account {account}")
++    config = firm.load()
++    if pack._file_sha(config.firm_rules_path) != inputs.get("firm_rules_sha256"):
++        changed.append("the firm rules file")
++    try:
++        if store.profile_sha256(store.load_profile(folder)) != inputs.get("profile_sha256"):
++            changed.append("the case profile")
++    except store.CaseStoreError as e:
++        raise VerifyRefused(f"the case profile cannot be read: {e}") from None
++    if changed:
++        raise VerifyRefused("the figures cannot be recomputed from the recorded inputs, which are no longer "
++                            "in the case: " + "; ".join(changed) + " changed since the pack was signed")
++    position = inputs["override_log"]["position"]
++    ruleset = inputs.get("ruleset") or record.get("ruleset") or {}
++    try:
++        with _ruleset(ruleset["id"]):
++            # Only the accounts the pack recorded: one imported since is no recorded input (P13).
++            figures = overrides.case_figures(folder, pairing_days=inputs["own_account_pairing_days"],
++                                             override_position=position, accounts=inputs["statements"])
++    except store.CaseStoreError as e:
++        raise VerifyRefused(f"the case's override log cannot be read as recorded: {e}") from None
++    except (AmountError, ReconciliationError) as e:
++        raise VerifyRefused(f"the figures cannot be recomputed from the case: {e}") from None
++    out: list[Mismatch] = []
++    checked = {"figures": 0, "buckets": 0, "monthly_cells": 0}
++    for acct in record.get("accounts") or []:
++        a = acct.get("account")
++        prefix = f"account {a}: "
++        f = figures.get(a)
++        if f is None or not f.statement.transactions:
++            out.append(Mismatch(f"account {a}", "recorded", "not recomputed"))
++            continue
++        metrics = _dumped(f.metrics)
++        checked["figures"] += _compare(prefix, "figure", acct.get("metrics") or [], metrics, METRIC_FIELDS, out)
++        checked["buckets"] += _compare_money_in(prefix, acct.get("money_in"), pack._money_in(f.metrics), out)
++        checked["monthly_cells"] += _compare_months(prefix, acct.get("monthly_summary") or [],
++                                                    [r.model_dump(mode="json") for r in f.monthly], out)
++    recorded_accounts = {acct.get("account") for acct in record.get("accounts") or []}
++    for a, f in figures.items():
++        if a not in recorded_accounts and f.statement.transactions:
++            out.append(Mismatch(f"account {a}", "not recorded", "recomputed"))
++    return VerifyResult("pack", "full", ruleset, checked, out)
++
++
++# --- the record's shape ----------------------------------------------------------------------------
++
++
++def _list_of_objects(value: Any, what: str, key: str | None = None, *, required: bool = False) -> None:
++    """A list of objects, each with a text `key` given once across the list."""
++    if value is None and not required:
++        return
++    if not isinstance(value, list) or not all(isinstance(v, dict) for v in value):
++        raise VerifyRefused(f"the record's {what} is not a list of objects")
++    if key is not None:
++        if not all(isinstance(v.get(key), str) for v in value):
++            raise VerifyRefused(f"an entry of the record's {what} has no {key}")
++        keys = [v[key] for v in value]
++        if len(set(keys)) != len(keys):
++            raise VerifyRefused(f"the record's {what} gives a {key} more than once")
++
++
++def _count(value: Any) -> bool:
++    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
++
++
++def _months(rows: Any, what: str) -> None:
++    from .pack import MONTHLY_CELLS
++
++    _list_of_objects(rows, what, "month")
++    for row in rows or []:
++        if "part_month" in row and not isinstance(row["part_month"], bool):
++            raise VerifyRefused(f"the record's {what} {row['month']} part_month is not true or false")
++        for f in ("start", "end"):
++            if row.get(f) is not None and not isinstance(row[f], str):
++                raise VerifyRefused(f"the record's {what} {row['month']} {f} is not a date")
++        for cell in MONTHLY_CELLS:
++            if row.get(cell) is not None and not isinstance(row[cell], dict):
++                raise VerifyRefused(f"the record's {what} {row['month']} {cell} is not an object")
++
++
++def _figure(value: Any, what: str) -> None:
++    if value is not None and not (isinstance(value, dict) and isinstance(value.get("id"), str)):
++        raise VerifyRefused(f"the record's {what} is not a figure with a text id")
++
++
++def _account_keys(keys: Any, what: str) -> None:
++    """An account key names a file in the case's statements folder, so only a key the case
++    store itself accepts is read: a hand-edited key such as ../../x would reach a file outside
++    the case."""
++    from .store import ACCOUNT_KEY
++
++    for key in keys:
++        if not ACCOUNT_KEY.fullmatch(key):
++            raise VerifyRefused(f"the record's {what} names an account key that is not one the case store "
++                                "accepts (lowercase letters, digits, _ and -)")
++
++
++def _check_inputs(inputs: dict[str, Any]) -> None:
++    """A pack's recorded inputs: the statements by account, the override log's position and
++    the pairing window, each of the kind the pack writes, so none is read as something else
++    (a position of true read as 1, or of -1 as all but the last record)."""
++    statements = inputs.get("statements")
++    if not isinstance(statements, dict) or not all(isinstance(k, str) and isinstance(v, str)
++                                                   for k, v in statements.items()):
++        raise VerifyRefused("the record's inputs.statements is not an object of statement hashes by account")
++    _account_keys(statements, "inputs.statements")
++    log = inputs.get("override_log")
++    if not isinstance(log, dict) or not _count(log.get("position")):
++        raise VerifyRefused("the record's inputs.override_log has no position that is a whole number of "
++                            "records")
++    if not _count(inputs.get("own_account_pairing_days")):
++        raise VerifyRefused("the record's inputs.own_account_pairing_days is not a whole number of days")
++
++
++def _check_shape(record: dict[str, Any]) -> None:
++    """Refuse, naming the field, a record whose fields are not of the kinds an evidence record
++    writes, so a hand-edited or truncated record is refused (exit 2), never reported as a
++    mismatch or raised as an error."""
++    _list_of_objects(record.get("metrics"), "metrics", "id")
++    _months(record.get("monthly_summary"), "monthly summary")
++    vat = record.get("vat_stagger")
++    if vat is not None and (isinstance(vat, bool) or vat not in (1, 2, 3)):
++        raise VerifyRefused("the record's vat_stagger is not 1, 2 or 3")
++    if "statement" in record and not isinstance(record["statement"], dict):
++        raise VerifyRefused("the record's statement is not an object")
++    if "accounts" in record:
++        _list_of_objects(record["accounts"], "accounts", "account", required=True)
++        _account_keys([acct["account"] for acct in record["accounts"]], "accounts")
++        for acct in record["accounts"]:
++            a = acct["account"]
++            _list_of_objects(acct.get("metrics"), f"account {a} metrics", "id")
++            _months(acct.get("monthly_summary"), f"account {a} monthly summary")
++            money_in = acct.get("money_in")
++            if money_in is not None and not isinstance(money_in, dict):
++                raise VerifyRefused(f"the record's account {a} money_in is not an object")
++            if isinstance(money_in, dict):
++                _list_of_objects(money_in.get("buckets"), f"account {a} buckets", "id")
++                for slot in ("total", "cash_within_trading"):
++                    _figure(money_in.get(slot), f"account {a} money_in {slot}")
++    for name in ("ruleset", "inputs"):
++        if name in record and not isinstance(record[name], dict):
++            raise VerifyRefused(f"the record's {name} is not an object")
++    if "accounts" in record and "case" in record and isinstance(record.get("inputs"), dict):
++        _check_inputs(record["inputs"])
++    for ruleset in (record.get("ruleset"), (record.get("inputs") or {}).get("ruleset")):
++        if ruleset is not None and (not isinstance(ruleset, dict)
++                                    or not isinstance(ruleset.get("id"), (str, type(None)))):
++            raise VerifyRefused("the record's ruleset is not an object with a text id")
++    if not isinstance(record.get("statement", {}).get("sha256", ""), (str, type(None))):
++        raise VerifyRefused("the record's statement sha256 is not text")
++
++
++# --- the entry point -----------------------------------------------------------------------------
++
++
++def verify(record: dict[str, Any], *, case_folder: Path | None = None, base: Path | None = None,
++           statement: Path | None = None) -> VerifyResult:
++    """Recompute `record`'s figures, buckets and monthly cells from its recorded inputs and
++    report every mismatch (R44). `case_folder`: a signed pack's case, found by the record's case
++    id when not given. `base`: the folder a `cma run` record's relative statement path is also
++    looked for in (the record's own folder). `statement`: the statement file, in place of the
++    path the record names; it is still checked against the recorded hash."""
++    if not isinstance(record, dict):
++        raise VerifyRefused("an evidence record is a JSON object")
++    _check_shape(record)
++    v0 = "schema_version" not in record
++    is_pack = isinstance(record.get("accounts"), list) and "case" in record
++    if v0:
++        if is_pack:
++            raise VerifyRefused("a pack's evidence record always carries a schema_version")
++        # v0: the previous release categorised with the table now packaged as v1 (R54).
++        return _verify_run(record, True, base, statement)
++    recorded = (record.get("inputs") or {}).get("ruleset") if is_pack else record.get("ruleset")
++    if not isinstance(recorded, dict):
++        raise VerifyRefused("the record names no ruleset")
++    _check_ruleset(record, recorded)  # R45: before anything is computed
++    if is_pack:
++        return _verify_pack(record, case_folder)
++    with _ruleset(recorded["id"]):
++        return _verify_run(record, False, base, statement)
+diff --git a/tests/test_pack_evidence.py b/tests/test_pack_evidence.py
+index c0a743b..d028498 100644
+--- a/tests/test_pack_evidence.py
++++ b/tests/test_pack_evidence.py
+@@ -31,7 +31,8 @@ pytestmark = pytest.mark.contracts
+ # those of its policy key. R53: new evidence fields are additive; none of these goes.
+ TODAY_KEYS = {"schema_version", "statement", "model", "egress", "vat_stagger", "ruleset", "lines", "metrics",
+               "monthly_summary", "thresholds", "indicators", "judgement_queue", "policy", "guard", "redrafts",
+-              "review", "memo"}
++              "review", "memo",
++              "package_version"}  # added by T38 so verify can name the version that made a record (R45)
+ POLICY_KEYS = {"overall", "policy_name", "policy_sha256", "rules"}
+ # The keys of today's record that describe its one statement; a pack carries them per account.
+ STATEMENT_KEYS = {"statement", "vat_stagger", "lines", "metrics", "monthly_summary", "thresholds", "indicators",
+diff --git a/tests/test_verify.py b/tests/test_verify.py
+new file mode 100644
+index 0000000..a1ba290
+--- /dev/null
++++ b/tests/test_verify.py
+@@ -0,0 +1,530 @@
++"""T38: cma verify (C8; R44, R45, P3, P13).
++
++Verify recomputes every figure, bucket and monthly cell an evidence record holds from the
++inputs it recorded (the statement file for a `cma run` record; the case's statements, profile,
++firm rules and override log up to the recorded position for a signed pack), and reports each
++mismatch, or that there is none. A record made with a ruleset other than the one installed is
++refused, naming the package version and ruleset that made it. A record with no schema_version
++(v0, the previous release's) is checked for M1 to M16 only, and verify says so."""
++
++import contextlib
++import json
++from pathlib import Path
++
++import pytest
++from typer.testing import CliRunner
++
++from cma import overrides, pack, store, verify
++from cma.categorise import load_ruleset
++from cma.cli import app
++
++ROOT = Path(__file__).resolve().parent.parent
++EXAMPLE = ROOT / "examples" / "cafe_stretched.memo.evidence.json"
++
++STATEMENT = ("id,date,description,amount,balance\n"
++             "L1,2026-01-05,CARD SETTLEMENT STRIPE,500.60,1500.60\n"
++             "L2,2026-01-06,FPS CREDIT J BLOGGS,300.25,1800.85\n"
++             "L3,2026-01-07,IWOCA LOAN REPAYMENT,-100.00,1700.85\n"
++             "L4,2026-02-02,CASH PAID IN,250.10,1950.95\n"
++             "L5,2026-02-20,FPS CREDIT A SMITH,75.00,2025.95\n")
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    monkeypatch.setenv("CMA_HOME", str(tmp_path / "cma-home"))
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    return tmp_path / "cma-home"
++
++
++def _signed(tmp_path, with_override=True):
++    case_id = store.new_case(label="t38")
++    folder = store.case_folder(case_id)
++    src = tmp_path / "main.csv"
++    src.write_text(STATEMENT, encoding="utf-8")
++    store.import_file(folder, src, "csv")
++    if with_override:
++        overrides.add_override(folder, "L2", "revenue_transfer", reason="customer", name="Ann")
++    p = pack.build_preview(folder, case_id)
++    s = pack.sign_off(folder, case_id, p.snapshot, "Ann Smith")
++    return case_id, folder, json.loads((s.pack / "evidence.json").read_text(encoding="utf-8"))
++
++
++def _run_record(tmp_path, monkeypatch, ruleset="v2"):
++    monkeypatch.setenv("CMA_RULESET", ruleset)
++    monkeypatch.chdir(tmp_path)
++    (tmp_path / "s.csv").write_text(STATEMENT, encoding="utf-8")
++    out = tmp_path / "memo.md"
++    r = CliRunner().invoke(app, ["run", "s.csv", "--vat-stagger", "1", "--yes", "--reviewer", "A. Analyst",
++                                 "--out", str(out)])
++    assert r.exit_code == 0, r.output
++    return tmp_path / "memo.evidence.json"
++
++
++# --- P13: a signed pack's evidence reproduces exactly ---------------------------------------
++
++
++@pytest.mark.invariants
++def test_p13_signed_pack_evidence_reproduces_every_figure_bucket_and_cell(home, tmp_path):
++    _case_id, folder, ev = _signed(tmp_path)
++    result = verify.verify(ev, case_folder=folder)
++    assert result.mismatches == []
++    assert result.kind == "pack" and result.scope == "full"
++    assert result.checked["figures"] == len(ev["accounts"][0]["metrics"]) == 28
++    assert result.checked["buckets"] == 1 + len(ev["accounts"][0]["money_in"]["buckets"]) + 1
++    assert result.checked["monthly_cells"] == 6 * len(ev["accounts"][0]["monthly_summary"]) == 12
++
++
++@pytest.mark.invariants
++def test_p13_later_overrides_do_not_change_what_a_signed_pack_verifies_against(home, tmp_path):
++    """The recorded inputs are the override log up to the position the pack recorded: an
++    override made after the sign-off is not part of them."""
++    _case_id, folder, ev = _signed(tmp_path)
++    overrides.add_override(folder, "L5", "revenue_transfer", reason="customer", name="Ann")
++    assert verify.verify(ev, case_folder=folder).mismatches == []
++
++
++@pytest.mark.invariants
++def test_p13_a_changed_figure_bucket_or_cell_is_reported(home, tmp_path):
++    _case_id, folder, ev = _signed(tmp_path)
++    acct = ev["accounts"][0]
++    m2 = next(m for m in acct["metrics"] if m["id"] == "M2")
++    m2["value"] = m2["value"] + 1
++    acct["money_in"]["buckets"][0]["evidence"] = ["L9"]
++    acct["monthly_summary"][1]["money_in"]["value"] = 0.01
++    found = verify.verify(ev, case_folder=folder).mismatches
++    where = [m.where for m in found]
++    assert "account main: figure M2 value" in where
++    assert any(w.startswith("account main: bucket ") and w.endswith(" evidence") for w in where)
++    assert "account main: monthly 2026-02 money_in value" in where
++    assert len(found) == 3
++
++
++@pytest.mark.contracts
++def test_pack_whose_case_inputs_changed_is_refused_naming_the_input(home, tmp_path):
++    _case_id, folder, ev = _signed(tmp_path)
++    store.update_profile(folder, lambda cur: {**cur, "directors": ["A Smith"]})
++    with pytest.raises(verify.VerifyRefused, match="the case profile"):
++        verify.verify(ev, case_folder=folder)
++
++
++@pytest.mark.contracts
++def test_pack_against_another_case_is_refused(home, tmp_path):
++    case_id, _folder, ev = _signed(tmp_path)
++    _other, other_folder, _ = _signed(tmp_path)
++    with pytest.raises(verify.VerifyRefused, match=f"made for case {case_id}"):
++        verify.verify(ev, case_folder=other_folder)
++
++
++@pytest.mark.invariants
++def test_p3_figures_twice_and_overrides_one_at_a_time_equal_a_fresh_computation(home, tmp_path):
++    """Overrides applied one at a time give the figures a fresh computation with all of them
++    gives, and verifying (a recomputation) twice gives the same answer."""
++    _case_id, folder, ev = _signed(tmp_path, with_override=False)
++    for line in ("L2", "L5"):
++        overrides.add_override(folder, line, "revenue_transfer", reason="customer", name="Ann")
++        overrides.case_figures(folder)
++    stepwise = overrides.case_figures(folder)["main"]
++    for memo in (overrides._PARSED, overrides._BARE, overrides._CLASSES):
++        memo._items.clear()
++    fresh = overrides.case_figures(folder)["main"]
++    dump = lambda f: ([m.model_dump(mode="json") for m in f.metrics],  # noqa: E731
++                      [r.model_dump(mode="json") for r in f.monthly])
++    assert dump(stepwise) == dump(fresh)
++    first, second = verify.verify(ev, case_folder=folder), verify.verify(ev, case_folder=folder)
++    assert first == second and first.mismatches == []
++
++
++# --- R44 on a `cma run` record --------------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_run_record_reproduces_and_reports_a_changed_cell(tmp_path, monkeypatch):
++    path = _run_record(tmp_path, monkeypatch)
++    ev = json.loads(path.read_text())
++    assert verify.verify(ev, base=path.parent).mismatches == []
++    ev["monthly_summary"][0]["days_overdrawn"]["evidence"] = ["L1"]
++    found = verify.verify(ev, base=path.parent).mismatches
++    assert [m.where for m in found] == ["monthly 2026-01 days_overdrawn evidence"]
++
++
++@pytest.mark.contracts
++def test_committed_example_verifies_with_no_mismatch(monkeypatch):
++    monkeypatch.delenv("CMA_RULESET", raising=False)
++    monkeypatch.chdir(ROOT)
++    ev = json.loads(EXAMPLE.read_text())
++    assert verify.verify(ev, base=EXAMPLE.parent).mismatches == []
++
++
++@pytest.mark.contracts
++def test_run_record_whose_statement_changed_is_refused(tmp_path, monkeypatch):
++    path = _run_record(tmp_path, monkeypatch)
++    (tmp_path / "s.csv").write_text(STATEMENT.replace("75.00,2025.95", "76.00,2026.95"), encoding="utf-8")
++    with pytest.raises(verify.VerifyRefused, match="not the one the record was made from"):
++        verify.verify(json.loads(path.read_text()), base=path.parent)
++
++
++@pytest.mark.contracts
++def test_run_record_under_v1_is_verified_under_v1_whatever_cma_ruleset_says(tmp_path, monkeypatch):
++    path = _run_record(tmp_path, monkeypatch, ruleset="v1")
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    ev = json.loads(path.read_text())
++    assert ev["ruleset"]["id"] == "v1"
++    assert verify.verify(ev, base=path.parent).mismatches == []
++
++
++# --- R45: another ruleset is refused, naming the version and ruleset ------------------------
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("ruleset", [{"id": "v2", "sha256": "0" * 64}, {"id": "v9", "sha256": "1" * 64}])
++def test_r45_record_from_another_ruleset_is_refused_naming_version_and_ruleset(tmp_path, monkeypatch, ruleset):
++    path = _run_record(tmp_path, monkeypatch)
++    ev = json.loads(path.read_text())
++    ev["ruleset"], ev["package_version"] = ruleset, "0.0.9"
++    with pytest.raises(verify.VerifyRefused) as e:
++        verify.verify(ev, base=path.parent)
++    msg = str(e.value)
++    assert "0.0.9" in msg and ruleset["id"] in msg and ruleset["sha256"] in msg
++
++
++@pytest.mark.contracts
++def test_r45_cli_refuses_with_exit_2(tmp_path, monkeypatch):
++    path = _run_record(tmp_path, monkeypatch)
++    ev = json.loads(path.read_text())
++    ev["ruleset"] = {"id": "v2", "sha256": "0" * 64}
++    path.write_text(json.dumps(ev))
++    r = CliRunner().invoke(app, ["verify", str(path)])
++    assert r.exit_code == 2
++    assert "0" * 64 in r.output and "package version" in r.output
++
++
++# --- v0 records: M1 to M16 only ---------------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_v0_record_is_checked_for_m1_to_m16_only_and_says_so(tmp_path, monkeypatch):
++    path = _run_record(tmp_path, monkeypatch, ruleset="v1")
++    ev = json.loads(path.read_text())
++    v0 = {"statement": ev["statement"], "model": ev["model"], "vat_stagger": ev["vat_stagger"],
++          "metrics": [m for m in ev["metrics"] if int(m["id"][1:]) <= 16], "policy": ev["policy"]}
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    result = verify.verify(v0, base=path.parent)
++    assert result.scope == "v0" and result.mismatches == []
++    assert result.checked == {"figures": 16, "buckets": 0, "monthly_cells": 0}
++    assert "M1 to M16" in result.note
++    v0["metrics"][3]["value"] = 12345.0
++    assert [m.where for m in verify.verify(v0, base=path.parent).mismatches] == [f"figure {v0['metrics'][3]['id']} value"]
++
++
++# --- the CLI ---------------------------------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_cli_verify_exit_0_when_reproduced_and_1_on_a_mismatch(home, tmp_path):
++    case_id, _folder, ev = _signed(tmp_path)
++    path = tmp_path / "ev.json"
++    path.write_text(json.dumps(ev))
++    r = CliRunner().invoke(app, ["verify", str(path), "--case", case_id])
++    assert r.exit_code == 0, r.output
++    assert "no mismatch" in r.output
++    ev["accounts"][0]["metrics"][0]["value"] = -1.0
++    path.write_text(json.dumps(ev))
++    r = CliRunner().invoke(app, ["verify", str(path)])  # the case is found by the record's id
++    assert r.exit_code == 1, r.output
++    assert "figure M1 value" in r.output
++
++
++@pytest.mark.contracts
++def test_cli_verify_unreadable_record_exits_2(tmp_path):
++    path = tmp_path / "bad.json"
++    path.write_text("{not json")
++    assert CliRunner().invoke(app, ["verify", str(path)]).exit_code == 2
++
++
++@pytest.mark.contracts
++def test_installed_ruleset_check_names_the_installed_hash(tmp_path, monkeypatch):
++    path = _run_record(tmp_path, monkeypatch)
++    ev = json.loads(path.read_text())
++    ev["ruleset"] = {"id": "v2", "sha256": "0" * 64}
++    with pytest.raises(verify.VerifyRefused) as e:
++        verify.verify(ev, base=path.parent)
++    assert load_ruleset("v2").sha256 in str(e.value)
++
++
++# --- the boundary: a malformed record is refused, never raised or called a mismatch ----------
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("change", [
++    {"metrics": [1, 2]}, {"metrics": "x"}, {"monthly_summary": ["x"]}, {"vat_stagger": "zz"},
++    {"vat_stagger": True}, {"ruleset": {"id": ["v2"], "sha256": "x"}}, {"statement": "s.csv"},
++    {"inputs": [], "accounts": [], "case": "abc"}, {"accounts": [{"account": "main", "metrics": [3]}], "case": "abc"},
++])
++def test_cli_verify_malformed_record_is_refused_with_exit_2(tmp_path, change):
++    ev = {**json.loads(EXAMPLE.read_text()), **change}
++    path = tmp_path / "ev.json"
++    path.write_text(json.dumps(ev))
++    r = CliRunner().invoke(app, ["verify", str(path)])
++    assert r.exit_code == 2, r.output
++    assert r.exception is None or isinstance(r.exception, SystemExit)
++    assert "Refused." in r.output
++
++
++@pytest.mark.contracts
++def test_verify_writes_nothing_in_the_case_folder(home, tmp_path):
++    _case_id, folder, ev = _signed(tmp_path)
++
++    def snapshot():
++        return {p.relative_to(folder): p.read_bytes() for p in sorted(folder.rglob("*")) if p.is_file()}
++
++    before = snapshot()
++    verify.verify(ev, case_folder=folder)
++    verify.verify(ev, case_folder=folder)
++    assert snapshot() == before
++
++
++# --- P13 on generated two-account packs (T38 pass) ------------------------------------------
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("seed", range(12))
++def test_p13_generated_two_account_packs_reproduce_exactly(home, tmp_path, seed):
++    """Any signed pack: a generated case of two accounts (own-account pairs across them), some
++    with a firm pairing window other than the default or a firm rule, each with overrides made
++    before the sign-off, verifies with no mismatch."""
++    import random
++    from datetime import date
++
++    from cma import firm, synth
++
++    rng = random.Random(seed)
++    archetype, profile = [(a, p) for a in synth.ARCHETYPES for p in synth.PROFILES][seed % 9]
++    features = tuple(f for f in synth.FEATURES if f == "two_accounts" or rng.random() < 0.5)
++    rows, truth = synth.generate(archetype, profile, seed=300 + seed, months=rng.choice([3, 6, 12]),
++                                 end=date(2026, 9, 30), features=features)
++    home.mkdir(parents=True, exist_ok=True)
++    if seed % 3 == 0:
++        (home / firm.FILE_NAME).write_text("own_account_pairing_days: 5\n", encoding="utf-8")
++    if seed % 4 == 1:
++        (home / "firm_rules.yaml").write_text(
++            "rules:\n  - id: interest\n    pattern: GROSS INTEREST\n    direction: in\n    category: revenue_transfer\n"
++            "    by: X\n    at: '2026-01-01T00:00:00Z'\n    reason: r\n", encoding="utf-8")
++    case_id, folder = synth.to_case(rows, truth, tmp_path / "work")
++    credits = [(a, t) for a, f in overrides.case_figures(folder).items() for t in f.statement.transactions
++               if t.amount > 0]
++    for account, t in rng.sample(credits, min(3, len(credits))):
++        overrides.add_override(folder, t.id, "other_explained_in", reason="r", name="Ann", account=account)
++    p = pack.build_preview(folder, case_id)
++    s = pack.sign_off(folder, case_id, p.snapshot, "Ann Smith")
++    ev = json.loads((s.pack / "evidence.json").read_text(encoding="utf-8"))
++    result = verify.verify(ev, case_folder=folder)
++    assert result.mismatches == [], result.mismatches[:5]
++    assert len(ev["accounts"]) == 2 and result.checked["monthly_cells"] > 0
++    if seed % 3 == 0:
++        # The pairing window the pack recorded is the one verify uses, whatever firm.yaml says now.
++        (home / firm.FILE_NAME).write_text("own_account_pairing_days: 0\n", encoding="utf-8")
++        assert verify.verify(ev, case_folder=folder).mismatches == []
++
++
++# --- verify-270's findings --------------------------------------------------------------------
++
++SAVINGS = ("id,date,description,amount,balance\n"
++           "S1,2026-01-05,FPS DEBIT ACME,-500.60,1000.00\n"
++           "S2,2026-01-20,GROSS INTEREST,1.25,1001.25\n")
++
++
++@pytest.mark.invariants
++def test_p13_an_account_imported_after_sign_off_is_not_among_the_recorded_inputs(home, tmp_path):
++    """The recorded inputs are the accounts the pack recorded: another account imported into
++    the case after the sign-off, which could pair with the signed one, changes nothing verify
++    checks."""
++    _case_id, folder, ev = _signed(tmp_path)
++    src = tmp_path / "savings.csv"
++    src.write_text(SAVINGS, encoding="utf-8")
++    store.import_file(folder, src, "csv", account="savings")
++    assert set(overrides.case_figures(folder)) == {"main", "savings"}
++    result = verify.verify(ev, case_folder=folder)
++    assert result.mismatches == []
++    assert result.checked["figures"] == 28
++
++
++@pytest.mark.contracts
++def test_a_boolean_in_place_of_a_number_is_a_mismatch_and_a_flag_given_as_a_number_is_refused(monkeypatch):
++    monkeypatch.setenv("CMA_RULESET", "v1")
++    ev = json.loads(EXAMPLE.read_text())
++    by_id = {m["id"]: m for m in ev["metrics"]}
++    for mid in ("M7", "M13"):
++        assert by_id[mid]["value"] in (0, 1) and not isinstance(by_id[mid]["value"], bool)
++        by_id[mid]["value"] = bool(by_id[mid]["value"])
++    row = next(r for r in ev["monthly_summary"] if r["money_out"]["value"] == 0 or r["days_overdrawn"]["value"] in (0, 1))
++    cell = row["days_overdrawn"] if row["days_overdrawn"]["value"] in (0, 1) else row["money_out"]
++    name = "days_overdrawn" if cell is row["days_overdrawn"] else "money_out"
++    cell["value"] = bool(cell["value"])
++    where = [m.where for m in verify.verify(ev, base=EXAMPLE.parent).mismatches]
++    month = row["month"]
++    assert {"figure M7 value", "figure M13 value", f"monthly {month} {name} value"} <= set(where)
++    ev = json.loads(EXAMPLE.read_text())
++    ev["monthly_summary"][0]["part_month"] = int(ev["monthly_summary"][0]["part_month"])
++    with pytest.raises(verify.VerifyRefused, match="part_month"):
++        verify.verify(ev, base=EXAMPLE.parent)
++
++
++def _example():
++    return json.loads(EXAMPLE.read_text())
++
++
++def _cell(ev, value):
++    ev["monthly_summary"][0]["money_in"] = value
++    return ev
++
++
++def _no_sha(ev):
++    del ev["statement"]["sha256"]
++    return ev
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("edit", [
++    lambda ev: {**ev, "accounts": None, "case": "abc"},
++    lambda ev: _cell(ev, 500.0), lambda ev: _cell(ev, "500.00"),
++    lambda ev: {**ev, "metrics": ev["metrics"] + ev["metrics"][:1]},
++    lambda ev: {**ev, "monthly_summary": ev["monthly_summary"] + ev["monthly_summary"][:1]},
++    _no_sha, lambda ev: {**ev, "statement": {**ev["statement"], "sha256": ""}},
++])
++def test_a_malformed_run_record_is_refused_never_raised(monkeypatch, edit):
++    monkeypatch.setenv("CMA_RULESET", "v1")
++    with pytest.raises(verify.VerifyRefused):
++        verify.verify(edit(_example()), base=EXAMPLE.parent)
++
++
++def _set(path, value):
++    def edit(ev):
++        cur = ev
++        for k in path[:-1]:
++            cur = cur[k]
++        cur[path[-1]] = value
++        return ev
++    return edit
++
++
++def _dup(ev, key):
++    acct = ev["accounts"][0]
++    if key == "accounts":
++        ev["accounts"] = ev["accounts"] + ev["accounts"][:1]
++    elif key == "buckets":
++        acct["money_in"]["buckets"] = acct["money_in"]["buckets"] + acct["money_in"]["buckets"][:1]
++    else:
++        acct[key] = acct[key] + acct[key][:1]
++    return ev
++
++
++def _moved_total(ev):
++    mi = ev["accounts"][0]["money_in"]
++    mi["buckets"] = [mi["total"], *mi["buckets"]]
++    mi["total"] = None
++    return ev
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("edit", [
++    _set(("inputs", "statements"), "bad"), _set(("inputs", "statements"), {"main": 3}),
++    _set(("inputs", "override_log"), "bad"),
++    _set(("inputs", "override_log"), {"position": -1}), _set(("inputs", "override_log"), {"position": True}),
++    _set(("inputs", "override_log"), {"position": False}), _set(("inputs", "override_log"), {"position": None}),
++    _set(("inputs", "override_log"), {}), _set(("inputs", "own_account_pairing_days"), "3"),
++    _set(("inputs", "own_account_pairing_days"), True), _set(("inputs", "own_account_pairing_days"), -1),
++    _set(("accounts", 0, "money_in", "total"), {"id": ["M17"]}),
++    _set(("accounts", 0, "money_in", "total"), "bad"),
++    _set(("accounts", 0, "money_in", "cash_within_trading"), 5),
++    _set(("accounts", 0, "monthly_summary", 0, "money_in"), 500.0),
++    lambda ev: _dup(ev, "metrics"), lambda ev: _dup(ev, "monthly_summary"),
++    lambda ev: _dup(ev, "accounts"), lambda ev: _dup(ev, "buckets"),
++])
++def test_a_malformed_pack_record_is_refused_never_raised_or_misread(home, tmp_path, edit):
++    _case_id, folder, ev = _signed(tmp_path)
++    overrides.add_override(folder, "L5", "revenue_transfer", reason="customer", name="Ann")
++    with pytest.raises(verify.VerifyRefused):
++        verify.verify(edit(ev), case_folder=folder)
++
++
++@pytest.mark.contracts
++def test_a_bucket_moved_out_of_its_place_is_a_mismatch(home, tmp_path):
++    _case_id, folder, ev = _signed(tmp_path)
++    where = [m.where for m in verify.verify(_moved_total(ev), case_folder=folder).mismatches]
++    assert "account main: bucket total" in where
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("where", ["inputs", "accounts"])
++def test_an_account_key_that_leaves_the_case_folder_is_refused_and_nothing_outside_is_read(home, tmp_path,
++                                                                                          where):
++    """A hand-edited record whose account key is a path (../../../x) is refused before any file
++    it names is read: verify reads only statements the case store itself could have written."""
++    import hashlib
++    import shutil
++
++    _case_id, folder, ev = _signed(tmp_path)
++    outside = folder.parent.parent / "x.csv"
++    shutil.copy(folder / store.STATEMENTS / "main.csv", outside)
++    key = "../../../x"
++    if where == "inputs":
++        ev["inputs"]["statements"] = {key: hashlib.sha256(outside.read_bytes()).hexdigest()}
++    else:
++        ev["accounts"][0]["account"] = key
++    with pytest.raises(verify.VerifyRefused, match="account key"):
++        verify.verify(ev, case_folder=folder)
++
++
++# --- any corrupted record is reported or refused, never raised (T38 pass) -------------------
++
++_JUNK = [None, True, False, 0, 1, -1, 1.5, "", "x", "../../etc", [], [1], {}, {"id": 1}, {"id": "M2"}, 10**30,
++         "0" * 70]
++
++
++def _paths(o, p=()):
++    yield p
++    if isinstance(o, dict):
++        for k, v in o.items():
++            yield from _paths(v, (*p, k))
++    elif isinstance(o, list):
++        for i, v in enumerate(o[:3]):
++            yield from _paths(v, (*p, i))
++
++
++def _corrupt(record, rng):
++    import copy
++
++    paths = [p for p in _paths(record) if p]
++    bad = copy.deepcopy(record)
++    for _ in range(rng.randint(1, 3)):
++        p, o = rng.choice(paths), bad
++        try:
++            for k in p[:-1]:
++                o = o[k]
++            o[p[-1]] = copy.deepcopy(rng.choice(_JUNK))
++        except (TypeError, KeyError, IndexError):
++            pass  # an earlier change replaced this path's parent
++    return bad
++
++
++@pytest.mark.contracts
++def test_a_corrupted_pack_record_is_reported_or_refused_never_raised(home, tmp_path):
++    import random
++
++    _case_id, folder, ev = _signed(tmp_path)
++    rng = random.Random(38)
++    for _ in range(800):
++        with contextlib.suppress(verify.VerifyRefused):  # refused is fine; any other error fails
++            verify.verify(_corrupt(ev, rng), case_folder=folder)
++
++
++@pytest.mark.contracts
++def test_a_corrupted_run_record_is_reported_or_refused_never_raised(tmp_path, monkeypatch):
++    import random
++
++    path = _run_record(tmp_path, monkeypatch)
++    ev = json.loads(path.read_text(encoding="utf-8"))
++    rng = random.Random(83)
++    for _ in range(800):
++        with contextlib.suppress(verify.VerifyRefused):  # refused is fine; any other error fails
++            verify.verify(_corrupt(ev, rng), base=path.parent)

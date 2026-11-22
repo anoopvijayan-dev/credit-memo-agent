@@ -1,0 +1,98 @@
+Reviewed **T38** (`cma verify`) in `/home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review` against `R44`, `R45`, `P3`, `P13`, `claim.json`, and the runner logs (`mechanical-1.log`, `mechanical-2.log`, `specified-3.log`, `contracts-4.log`, `invariants-5.log`, `behavioural-6.log`, `dual_run-7.log`).
+
+### Summary of Verification
+- **Previous findings (`verify-270`) resolved**:
+  - [verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L302-L303) and [overrides.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/overrides.py#L389-L396) now scope `case_figures()` to `accounts=inputs["statements"]` and slice overrides to `override_position`, preventing post-sign-off accounts or overrides from affecting verification (proven by `invariants-5.log:1062, 1075`).
+  - `_same()` in [verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L103-L114) prevents Python `bool`/`int`/`float` equality confusion, and `_months()` enforces boolean `part_month` (`contracts-4.log:1061`).
+  - `_check_shape()`, `_check_inputs()`, and `_account_keys()` in [verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L332-L435) validate malformed pack/run shapes, duplicate IDs, and path-traversing account keys (`contracts-4.log:1062-1102`).
+- **Requirements**: All four requirements (`R44`, `R45`, `P3`, `P13`) are satisfied and proven by passing runner logs (`specified-3.log:2777-2848`, `contracts-4.log:1061-1115`, `invariants-5.log:730-736, 1061-1077`).
+- **Minor findings remaining** (none blocking or major):
+  1. Uncaught `ValueError` on NUL byte in `statement.path` ([verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L229-L231)) and uncaught `StatementError` in `_verify_pack` ([verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L302-L307)).
+  2. `store.case_folder()` calls `ensure_root()` ([store.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/store.py#L251-L270)), creating `CMA_HOME/cases` on disk when absent (contradicting Claim #2 and [README.md](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/README.md#L149)), and [cli.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/cli.py#L994) calls it outside `_case_errors()`.
+  3. `_ruleset()` in [verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L83-L98) mutates process-global `os.environ["CMA_RULESET"]` without synchronization.
+  4. v0 verification in [verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L248) omits `"unit"` when comparing M1-M16.
+  5. `claim.json` contains an unproven `1.64 s` cold-process timing benchmark (Claim #8) and stale test counts (`70`/`2966` vs the runner's `72`/`2972`).
+
+```json
+{
+  "task": "T38",
+  "criteria": [
+    {
+      "id": "R44",
+      "tier": "adversarial",
+      "check": "Verified src/cma/verify.py (_verify_run:218-258, _verify_pack:264-326, _same:103-114, _compare:117-139, _compare_months:142-169, _compare_money_in:172-195, _check_shape:399-435, verify:440-464), src/cma/overrides.py (case_figures:372-472), and src/cma/cli.py (verify_evidence:964-1015). Every figure (M1-M28), money-in bucket/slot, and monthly cell is recomputed from recorded inputs for both cma run and signed pack records, v0 records check M1-M16 under v1 with an explicit scope note, mismatches are reported by id without description text, and exit codes 0/1/2 match. Proven by contracts-4.log:1061-1115 (55 passed) and specified-3.log:2777-2848 (72 passed).",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R45",
+      "tier": "adversarial",
+      "check": "Verified src/cma/verify.py (_check_ruleset:63-80, verify:457-460), src/cma/graph.py (evidence_record:492 adding package_version), src/cma/pack.py (_evidence:656), and src/cma/cli.py (verify_evidence:997-998). Records made with an unknown ruleset id or a ruleset whose sha256 differs from the installed table are refused before any recomputation, naming package_version, ruleset id, recorded sha256, and installed version/sha256, exiting 2 in CLI. Proven by contracts-4.log:1105, 1108-1110.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P3",
+      "tier": "adversarial",
+      "check": "Verified src/cma/overrides.py (case_figures:372-472, _categorise:214-226, _BARE/_CLASSES/_PARSED caches keyed by content/ruleset/profile/firm-rules hashes) and src/cma/verify.py (verify:440-464). Computing figures twice and verifying twice give identical results, and stepwise overrides equal a fresh computation with caches cleared. Proven by invariants-5.log:730-736 and invariants-5.log:1077.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P13",
+      "tier": "adversarial",
+      "check": "Verified src/cma/verify.py (_verify_pack:264-326), src/cma/overrides.py (case_figures:372-472 restricting to recorded accounts and override_position), and src/cma/pack.py (_evidence:585-657). Signed single-account and generated two-account packs (with own-account pairs, overrides, firm rules, and non-default pairing windows) reproduce every figure, bucket, and monthly cell exactly, unaffected by later overrides, later pairing-window changes in firm.yaml, or accounts imported after sign-off. Proven by invariants-5.log:1061-1076.",
+      "result": "pass",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/verify.py",
+      "line": 229,
+      "criterion": "R44",
+      "claim": "Two malformed/tampered record paths raise unhandled exceptions instead of VerifyRefused (exit 2), slightly refuting Claim #4: (1) _verify_run catches only OSError around path.read_bytes() (line 229-231), so a statement.path containing a NUL byte raises ValueError; (2) _verify_pack catches CaseStoreError, AmountError and ReconciliationError (lines 304-307) but not StatementError, and cli.py:_case_errors() does not catch StatementError either.",
+      "repro": "(1) Set statement.path to \"a\\u0000b\" in a cma run evidence JSON and run `cma verify ev.json` -> unhandled `ValueError: embedded null byte` traceback (exit 1). (2) Replace a case's `statements/main.csv` with `\"bad\\n\"`, update `inputs.statements.main` in `evidence.json` to its SHA-256, and run `cma verify ev.json` -> unhandled `StatementError` traceback (exit 1)."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 994,
+      "criterion": "R44",
+      "claim": "Claim #2 (\"It writes nothing anywhere\") and README.md:149 (\"It writes nothing\") are overstated because store.case_folder() (called at cli.py:994 and verify.py:271) invokes store.ensure_root() (store.py:251-270), which creates and chmods CMA_HOME and CMA_HOME/cases on disk even when the case does not exist. Additionally, cli.py:994 calls store.case_folder(case_id) outside `with _case_errors():`, leaving an OSError from ensure_root uncaught when --case is passed.",
+      "repro": "Set `CMA_HOME=/tmp/cma-missing` and run `cma verify <pack_evidence.json>`: `/tmp/cma-missing/cases` is created on disk before refusing with `no case ...`. With `CMA_HOME` under a read-only parent directory, run `cma verify <pack_evidence.json> --case 0123456789abcdef` -> unhandled `PermissionError` traceback at src/cma/cli.py:994."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/verify.py",
+      "line": 89,
+      "criterion": "R44",
+      "claim": "_ruleset() mutates process-global os.environ[\"CMA_RULESET\"] without synchronization (and unnecessarily wraps _verify_run at line 463, which already loads ruleset[\"id\"] explicitly). Concurrent in-process calls to verify.verify() for v1 and v2 pack records race on CMA_RULESET, potentially recomputing under the wrong ruleset and leaving the environment variable mutated.",
+      "repro": "In one Python process with CMA_RULESET unset, invoke `verify.verify(v1_pack_ev, case_folder=f1)` and `verify.verify(v2_pack_ev, case_folder=f2)` concurrently on two threads: Thread 2 sets `os.environ[\"CMA_RULESET\"] = \"v2\"` after Thread 1 sets `\"v1\"`, causing Thread 1's `overrides.case_figures()` to read `v2` (false mismatches) and Thread 2's finally block to restore `\"v1\"` permanently."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/verify.py",
+      "line": 248,
+      "criterion": "R44",
+      "claim": "v0 record comparison checks only `(\"value\", \"evidence\")` on M1-M16 and omits `\"unit\"`, unlike v1 METRIC_FIELDS, BUCKET_FIELDS, and monthly cells, even though v0 Metric records always carry `unit` (tests/test_previous_release.py:107).",
+      "repro": "Take a v0 evidence record (no `schema_version`), change M2's `unit` from `\"GBP\"` to `\"pct\"`, and call `verify.verify(v0, base=...)` -> returns `mismatches == []`."
+    },
+    {
+      "severity": "minor",
+      "file": null,
+      "line": null,
+      "criterion": null,
+      "claim": "Unproven benchmark and stale test counts in claim.json: Claim #8 cites an ad-hoc `python -c` timing measurement (1.64 s cold process on the 390-line example) that no configured runner tier executed, and Claims #2, #4, #5, #6, #9 quote stale test counts (53 contracts, 70 in test_verify.py, 2966 total) instead of the runner's actual 55 contracts, 72 in test_verify.py, and 2972 total passed.",
+      "repro": "Compare claim.json against specified-3.log:2777-2848,2983, contracts-4.log:1061-1115, and invariants-5.log:1061-1077; all named tests ran and passed (2 more in test_verify.py and 6 more overall), while the timing command in Claim #8 is absent from all runner logs."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "antigravity",
+    "model": "gemini"
+  }
+}
+```
