@@ -138,6 +138,12 @@ def _queue_entry(account: str, e: QueueEntry, lines: dict[str, Transaction],
             "pairs_with": list(e.pairs_with)}
 
 
+def _pair_groups(account: str, groups: list[list[tuple[str, str]]]) -> list[list[str]]:
+    """The groups of a possible own-account transfer (R9) as one account's queue reads them:
+    its own lines by their ids, the other accounts' by their case ids (account:line)."""
+    return [[line if a == account else metrics.case_line_id(a, line) for a, line in g] for g in groups]
+
+
 def case_thresholds(config: firm.FirmConfig | None = None) -> ind.Thresholds:
     """The firm's thresholds file when the case root has one (firm.yaml can name another),
     or the packaged, illustrative one (R14). A malformed file is refused naming its line, and
@@ -317,7 +323,8 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
             for a in both.missing)}
     if rules is not None and accounts:
         out["policy_check"] = {"shown": True, "label": policy.ILLUSTRATIVE_LABEL}
-    queues = [(a, f.statement, ind.judgement_queue(f.statement, raised[a])) for a, f in figures.items()]
+    queues = [(a, f.statement, ind.judgement_queue(f.statement, raised[a], _pair_groups(a, f.possible_pairs)))
+              for a, f in figures.items()]
     lines = {a: {t.id: t for t in f.statement.transactions} for a, f in figures.items()}
     kinds = {a: {i.id: i.kind for i in raised[a]} for a in figures}
     out["queue"] = [_queue_entry(a, e, lines[a], kinds[a]) for a, e in ind.case_judgement_queue(queues)]

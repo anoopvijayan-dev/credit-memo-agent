@@ -52,7 +52,15 @@ from typing import Any
 
 from . import case as caselog
 from . import store
-from .categorise import _MONEY_IN_ONLY, LineOverride, active_ruleset, categorise, classify_lines
+from .categorise import (
+    _MONEY_IN_ONLY,
+    PAIRING,
+    LineOverride,
+    active_ruleset,
+    categorise,
+    classify_lines,
+    pair_own_accounts,
+)
 from .metrics import ReconciliationError
 from .models import CREDIT_BUCKET, Category, Metric, MonthRow, Statement, Transaction
 
@@ -307,6 +315,9 @@ class CaseFigures:
     closes: Any = None              # a case's combined figures: the combined end-of-day balance (R41)
     bare: Statement | None = None   # categorised with no override, when any is applied: only compared with
     missing: list[str] = field(default_factory=list)  # the case's accounts with no statement file (R41)
+    # R9: each debit an own-account pairing could not settle, with every candidate credit, as
+    # (account, line id), debit first; the same list on every account of the case
+    possible_pairs: list[list[tuple[str, str]]] = field(default_factory=list)
 
 
 class CaseNotReconciled(ReconciliationError):
@@ -324,9 +335,13 @@ class CaseNotReconciled(ReconciliationError):
 
 
 def _figures(statement: Statement, sha: str, profile: dict[str, Any], applied: dict[str, LineOverride]):
+    _categorise(statement, sha, profile, applied)
+    return _compute(statement, profile)
+
+
+def _compute(statement: Statement, profile: dict[str, Any]):
     from . import metrics
 
-    _categorise(statement, sha, profile, applied)
     return (metrics.compute(statement, profile["vat_stagger"], profile["proposed_monthly_repayment"]),
             metrics.monthly_summary(statement))
 
@@ -342,9 +357,9 @@ def _bare_figures(statement: Statement, sha: str, profile: dict[str, Any]):
     return got
 
 
-def _bare_key(sha: str, profile: dict[str, Any]) -> tuple:
+def _bare_key(sha: str, profile: dict[str, Any], pairs: tuple = ()) -> tuple:
     ruleset = active_ruleset()
-    return (sha, ruleset.id, ruleset.sha256, _profile_key(profile))
+    return (sha, ruleset.id, ruleset.sha256, _profile_key(profile), pairs)
 
 
 def _rests_on(a, b, lines: set[str]) -> bool:
@@ -353,7 +368,11 @@ def _rests_on(a, b, lines: set[str]) -> bool:
 
 def case_figures(folder: Path) -> dict[str, CaseFigures]:
     """Every account's figures, recomputed from its statement, the profile and the whole
-    override log; stale overrides listed and not applied (R17, R19)."""
+    override log; stale overrides listed and not applied (R17, R19). In a case of more than
+    one account, every account is categorised first and then a debit in one account is
+    paired with the single credit of the same amount in another, within the configured days,
+    both becoming own-account transfers, before any account's figures are computed; a debit
+    with more than one candidate stays unpaired and is listed with its candidates (R8, R9)."""
     folder = Path(folder)
     entries = caselog.for_case(folder).entries()
     profile = store.load_profile(folder)
@@ -363,30 +382,47 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
     out: dict[str, CaseFigures] = {}
     failed: list[ReconciliationError] = []
     missing = [a for a in accounts if statements[a] is None]
-    for account in accounts:
-        loaded = statements[account]
-        if loaded is None:
-            continue
-        statement, sha = loaded
+    loaded = {a: v for a, v in statements.items() if v is not None}
+    several = len(accounts) > 1
+    any_applied = any(state.applied.get(a) for a in loaded)
+    bares: dict[str, Statement] = {}
+    for account, (statement, sha) in loaded.items():
         applied = state.applied.get(account, {})
-        bare = _copy(statement) if applied else None  # as read, before it is categorised
+        if applied or (several and any_applied):  # as read, before it is categorised
+            bares[account] = _copy(statement)
+        _categorise(statement, sha, profile, applied)
+    groups: list[list[tuple[str, str]]] = []
+    if several:  # R8, R9: across the accounts, once each is categorised
+        groups = pair_own_accounts({a: v[0] for a, v in loaded.items()},
+                                   overridden={a: state.applied.get(a, {}).keys() for a in loaded})
+        if any_applied:
+            for account, bare in bares.items():
+                _categorise(bare, loaded[account][1], profile, {})
+            pair_own_accounts(bares)
+    for account, (statement, sha) in loaded.items():
+        applied = state.applied.get(account, {})
+        pairs = _pairs(statement) if several else ()
         try:
-            metrics, monthly = _figures(statement, sha, profile, applied)
+            metrics, monthly = _compute(statement, profile)
         except ReconciliationError as e:  # R3: every failing account is named, with its lines
             e.account, e.statement = account, statement
             failed.append(e)
             continue
-        if not applied:  # these are the figures with no override: kept, so the first save on
-            _BARE.put(_bare_key(sha, profile), (metrics, monthly))  # this case need not redo them (R52)
+        if not applied and not (several and any_applied):  # the figures with no override: kept, so
+            _BARE.put(_bare_key(sha, profile, pairs), (metrics, monthly))  # the first save need not redo them (R52)
         lines = set(applied)
         marked: set[str] = set()
         cells: set[tuple[str, str]] = set()
-        base_statement = None
-        if applied and len(accounts) > 1:  # only the case's combined figures compare with it (R41, R52)
-            _categorise(base_statement := _copy(bare), sha, profile, {})
-        if applied:
+        base_statement = bares.get(account) if several else None  # only the combined figures compare with it
+        if account in bares:
             try:
-                base_metrics, base_monthly = _bare_figures(bare, sha, profile)
+                bare = bares[account]
+                if several:
+                    key = _bare_key(sha, profile, _pairs(bare))
+                    base_metrics, base_monthly = _BARE.get(key) or _compute(_copy(bare), profile)
+                    _BARE.put(key, (base_metrics, base_monthly))
+                else:
+                    base_metrics, base_monthly = _bare_figures(bare, sha, profile)
             except ReconciliationError:
                 # The figures as overridden reconcile; only the comparison without overrides
                 # does not (an override may be what puts a line right). The comparison only
@@ -409,10 +445,15 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
                                    {k: v.ref for k, v in applied.items()},
                                    [s for s in state.stale if s.account == account], marked, cells,
                                    profile["vat_stagger"], profile["proposed_monthly_repayment"],
-                                   bare=base_statement, missing=missing)
+                                   bare=base_statement, missing=missing, possible_pairs=groups)
     if failed:  # R3: no figures for any account of the case
         raise CaseNotReconciled(failed)
     return out
+
+
+def _pairs(statement: Statement) -> tuple[tuple[str, str], ...]:
+    """The lines of `statement` an own-account pairing settled, with the other half each names."""
+    return tuple((t.id, t.rule_id) for t in statement.transactions if (t.rule_id or "").startswith(PAIRING + ":"))
 
 
 COMBINED = "*"  # the key of a case's combined figures: never an account key (store.ACCOUNT_KEY)

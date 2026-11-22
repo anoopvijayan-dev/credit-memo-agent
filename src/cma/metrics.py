@@ -78,6 +78,7 @@ BUCKET_METRICS: dict[Bucket, tuple[str, str, str]] = {
 # Left out of the denominator M16 and M26 share: borrowing, money that only undoes a
 # payment, and the applicant's own money moving between its accounts.
 PROFILE_OWN_ACCOUNT = "profile:own_account"  # the rule a case profile's own-account name records (R6)
+PAIRED = "pairing:"  # the rule an own-account pairing between a case's accounts records (R8)
 NOT_IN_SHARE = {Category.LOAN_DRAWDOWN, Category.RETURNED_DD, Category.OWN_ACCOUNT_TRANSFER}
 
 
@@ -467,7 +468,8 @@ def _closes_balance_figures(closes: CaseCloses, pos: dict[str, int]):
 def compute_case(statements: dict[str, Statement], vat_stagger: int | None = None, proposed_repayment=None
                  ) -> tuple[Statement, CaseCloses, list[Metric], list[MonthRow]]:
     """The figures of a case of more than one account (R41), each account's statement already
-    categorised: line ids prefixed with the account key, flow figures across every account
+    categorised and its own-account pairs settled (overrides.case_figures,
+    categorise.pair_own_accounts): line ids prefixed with the account key, flow figures across every account
     (own-account transfers, from the profile or a pairing, out of trading receipts as for one
     account), and balance figures on the combined end-of-day balance over the days every
     account covers, n/a with the reason when they share none."""
@@ -546,16 +548,17 @@ def operating_cash(txns: list[Transaction], by_id: dict[str, Transaction]) -> Op
     # lift cover; it shows in M16 instead. A returned DD that matches no debit is left out
     # too, for the same reason.
 
-    # A line the case profile names as one of the applicant's other accounts is the
-    # applicant's own money moving, not operating cash, in either direction (R6): it is never
-    # an operating line, and never sent or sent back in the round trip below. A move to or
+    # A line the case profile names as one of the applicant's other accounts, or that an
+    # own-account pairing between a case's accounts settled (R8), is the applicant's own money
+    # moving, not operating cash, in either direction (R6): it is never an operating line, and never sent or sent back in the round trip below. A move to or
     # from an own pot that the built-in table recognises keeps the treatment v1 gives the same
     # line, so M1 to M16 do not move under v2 (R10, P7); and with no case profile no line is
     # named, so M9 is the previous release's (R54).
     # A returned DD that undoes such a line is the same money coming back, so it is named too.
     def own_account_named(t: Transaction) -> bool:
         u = by_id.get(t.reverses, t) if t.reverses else t
-        return u.category == Category.OWN_ACCOUNT_TRANSFER and u.rule_id == PROFILE_OWN_ACCOUNT
+        return u.category == Category.OWN_ACCOUNT_TRANSFER and (
+            u.rule_id == PROFILE_OWN_ACCOUNT or (u.rule_id or "").startswith(PAIRED))
 
     def operating_line(t: Transaction) -> bool:
         if _eff(t, by_id) in FINANCING or own_account_named(t):

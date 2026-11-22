@@ -350,3 +350,92 @@ def test_combined_buckets_reconcile_to_money_in(home, tmp_path):
     parts = sum(round(m[i].value * 100) for i in ("M2", "M19", "M20", "M21", "M22", "M23", "M24", "M25"))
     assert parts == round(m["M17"].value * 100)
     assert set(m["M18"].evidence) <= set(m["M2"].evidence)
+
+
+# --- own-account pairing across the case's accounts (R8, R9, R41) -------------------------
+
+# A move from main to savings that neither the rule table nor the profile names: the debit
+# and the credit are only an own-account transfer because they pair, £100.00 out of main and
+# £100.00 into savings a day later.
+PAIR_MAIN = ("id,date,description,amount,balance\n"
+             "M1,2026-01-05,CARD SETTLEMENT STRIPE,500.00,1500.00\n"
+             "M2,2026-01-06,FPS TO 12345678,-100.00,1400.00\n"
+             "M3,2026-01-20,CARD SETTLEMENT STRIPE,100.00,1500.00\n")
+PAIR_SAVINGS = ("id,date,description,amount,balance\n"
+                "S1,2026-01-05,CARD SETTLEMENT STRIPE,50.00,50.00\n"
+                "S2,2026-01-07,FPS FROM 87654321,100.00,150.00\n"
+                "S3,2026-01-25,CARD SETTLEMENT STRIPE,10.00,160.00\n")
+# A third account with a credit of the same amount within the days: two candidates.
+PAIR_RESERVE = ("id,date,description,amount,balance\n"
+                "R1,2026-01-05,CARD SETTLEMENT STRIPE,20.00,20.00\n"
+                "R2,2026-01-06,FPS FROM 12345678,100.00,120.00\n")
+
+
+@pytest.mark.invariants
+def test_p11_unnamed_transfer_between_accounts_is_paired_and_left_out_of_combined_flows(home, tmp_path):
+    _, folder = _case(tmp_path, ("main", PAIR_MAIN), ("savings", PAIR_SAVINGS))
+    figures = overrides.case_figures(folder)
+    both = overrides.combined_figures(figures)
+    lines = {t.id: t for t in both.statement.transactions}
+    debit, credit = lines["main:M2"], lines["savings:S2"]
+    assert debit.category == credit.category == metrics.Category.OWN_ACCOUNT_TRANSFER
+    assert debit.rule_id == "pairing:savings:S2" and credit.rule_id == "pairing:main:M2"
+    m = _by_id(both)
+    # Money in counts the credit in full (R1), but in own-account transfers in, not unexplained.
+    assert m["M19"].value == 100.00 and m["M19"].evidence == ["savings:S2"]
+    assert m["M25"].value == 0.0 and "savings:S2" not in m["M25"].evidence
+    # Trading receipts, and the money in that is not a share's (M16, M26), leave the pair out.
+    assert m["M2"].value == 660.00 and "savings:S2" not in m["M2"].evidence
+    assert "savings:S2" not in m["M26"].evidence and "savings:S2" not in m["M16"].evidence
+    # Money in less own-account transfers in is the money from outside the accounts (P11).
+    assert round(m["M17"].value - m["M19"].value, 2) == 660.00
+    # Operating cash flow leaves both halves of the pair out, as for a profile's own account (R6).
+    assert "main:M2" not in m["M9"].evidence and "savings:S2" not in m["M9"].evidence
+    # Each account's own figures carry the pairing too.
+    assert _by_id(figures["savings"])["M19"].evidence == ["S2"]
+    # A paired line is settled: it is not in the judgement queue.
+    queue = summary.case_summary(folder, "t33")["queue"]
+    assert not [e for e in queue if e["line"]["id"] in ("M2", "S2")]
+
+
+@pytest.mark.invariants
+def test_p11_two_equal_candidates_leave_the_debit_unpaired_and_listed(home, tmp_path):
+    _, folder = _case(tmp_path, ("main", PAIR_MAIN), ("savings", PAIR_SAVINGS), ("reserve", PAIR_RESERVE))
+    figures = overrides.case_figures(folder)
+    both = overrides.combined_figures(figures)
+    lines = {t.id: t for t in both.statement.transactions}
+    assert lines["main:M2"].category != metrics.Category.OWN_ACCOUNT_TRANSFER
+    assert lines["savings:S2"].category == lines["reserve:R2"].category == metrics.Category.OTHER
+    m = _by_id(both)
+    assert {"savings:S2", "reserve:R2"} <= set(m["M25"].evidence)
+    assert m["M19"].value == 0.0
+    # R9: the debit and every candidate are listed as a possible own-account transfer.
+    queue = summary.case_summary(folder, "t33")["queue"]
+    listed = {(e["account"], e["line"]["id"]): e for e in queue
+              if "possible_own_account_transfer" in e["reasons"]}
+    assert set(listed) == {("main", "M2"), ("savings", "S2"), ("reserve", "R2")}
+    assert set(listed[("main", "M2")]["pairs_with"]) == {"savings:S2", "reserve:R2"}
+    assert set(listed[("savings", "S2")]["pairs_with"]) == {"main:M2", "reserve:R2"}
+
+
+@pytest.mark.contracts
+def test_override_on_a_paired_line_wins_and_unpairs_it(home, tmp_path):
+    _, folder = _case(tmp_path, ("main", PAIR_MAIN), ("savings", PAIR_SAVINGS))
+    overrides.add_override(folder, "S2", "revenue_transfer", reason="a customer", name="A Person", account="savings")
+    figures = overrides.case_figures(folder)
+    s2 = {t.id: t for t in figures["savings"].statement.transactions}["S2"]
+    m2 = {t.id: t for t in figures["main"].statement.transactions}["M2"]
+    assert s2.category == metrics.Category.REVENUE_TRANSFER and s2.rule_id.startswith("override:")
+    assert m2.category != metrics.Category.OWN_ACCOUNT_TRANSFER  # its only candidate was overridden
+    # main has no override of its own, but its figures moved because of savings' one (R17).
+    assert "M9" in figures["main"].marked
+
+
+@pytest.mark.contracts
+def test_lines_outside_the_days_or_in_one_account_do_not_pair(home, tmp_path):
+    far = PAIR_SAVINGS.replace("2026-01-07,FPS FROM", "2026-01-15,FPS FROM")
+    _, folder = _case(tmp_path, ("main", PAIR_MAIN), ("savings", far))
+    both = overrides.combined_figures(overrides.case_figures(folder))
+    lines = {t.id: t for t in both.statement.transactions}
+    assert lines["savings:S2"].category == metrics.Category.OTHER
+    assert lines["main:M2"].category != metrics.Category.OWN_ACCOUNT_TRANSFER
