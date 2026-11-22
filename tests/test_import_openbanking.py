@@ -588,3 +588,44 @@ def test_a_mixed_first_day_then_one_balanced_line_a_day_always_imports(tmp_path,
         r = openbanking.convert(src, tmp_path / f"o{s}.csv")
         assert r.closing_balance == bal / 100
         _kept_balances(tmp_path / f"o{s}.csv", lines)
+
+
+def _timestamped(n, cluster, p_first, p_rest, seed, drop=False):
+    """A timestamped export: the first `cluster` lines booked at one moment (a mix of lines with
+    and without a balance), every later line at a moment of its own, shuffled."""
+    import random
+
+    rng = random.Random(seed)
+    bal, lines = 100_000, []
+    for i in range(n):
+        a = rng.randint(-20000, 30000) or 1
+        bal += a
+        when = ("2026-04-01T09:00:00+00:00" if i < cluster
+                else f"2026-04-02T{i // 60:02d}:{i % 60:02d}:00+00:00")
+        balance = f"{bal / 100:.2f}" if rng.random() < (p_first if i < cluster else p_rest) else None
+        lines.append(_txn(f"S{i}", f"{abs(a) / 100:.2f}", "Credit" if a > 0 else "Debit", when, balance=balance))
+    if drop:  # a line missing between the first and last line with a balance
+        withb = [k for k, t in enumerate(lines) if "Balance" in t]
+        del lines[(withb[0] + withb[-1]) // 2]
+    rng.shuffle(lines)
+    return lines
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("cluster, p_first, p_rest", [(5, 0.5, 1.0), (20, 0.5, 0.5), (20, 0.2, 0.8), (8, 1.0, 0.3)])
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_timestamped_exports_start_from_the_balance_their_later_single_lines_need(tmp_path, cluster, p_first, p_rest,
+                                                                                   seed):
+    """verify-26x: later moments of one line each pin where the first moment's walk must start.
+    A wrong start is not taken because a later single line seems to fit: valid files import,
+    and a missing line is refused."""
+    lines = _timestamped(150, cluster, p_first, p_rest, seed)
+    if not any("Balance" in t for t in lines):
+        pytest.skip("no line carries a balance")
+    src = _write(tmp_path, lines)
+    r, out = _convert(tmp_path, src)
+    assert r.rows == 150
+    _kept_balances(out, lines)
+    broken = _write(tmp_path, _timestamped(150, cluster, p_first, p_rest, seed, drop=True), name="broken.json")
+    with pytest.raises(openbanking.OpenBankingImportError, match="balance"):
+        openbanking.convert(broken, tmp_path / "broken.csv")
