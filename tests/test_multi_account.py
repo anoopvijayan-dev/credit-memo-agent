@@ -317,3 +317,36 @@ def test_combined_lines_need_the_token(home, tmp_path):
             assert r.status == 403 and "main:M2" not in body
     finally:
         srv.close()
+
+
+@pytest.mark.contracts
+def test_override_on_combined_key_is_refused(home, tmp_path):
+    # "*" names the case's combined figures, never an account: an override against it is refused
+    # and records nothing (R17, R41).
+    _, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
+    before = caselog.for_case(folder).entries()
+    with pytest.raises(store.CaseStoreError, match="no account"):
+        overrides.add_override(folder, "main:M1", "other", reason="x", name="Pat", account=overrides.COMBINED)
+    assert caselog.for_case(folder).entries() == before
+
+
+@pytest.mark.contracts
+def test_refused_combined_import_leaves_no_input_file(home, tmp_path):
+    big = 6_000_000_000_000
+    a = f"id,date,description,amount,balance\nA1,2026-01-05,CARD SETTLEMENT STRIPE,{big}.00,{big}.00\n"
+    _, folder = _case(tmp_path, ("main", a))
+    inputs = sorted(p.name for p in (folder / store.INPUTS).iterdir())
+    src = tmp_path / "b.csv"
+    src.write_text(a.replace("A1", "B1").replace("2026-01-05", "2026-02-05"), encoding="utf-8")
+    with pytest.raises(store.CaseStoreError, match="R41"):
+        store.import_file(folder, src, "csv", account="second")
+    assert sorted(p.name for p in (folder / store.INPUTS).iterdir()) == inputs
+
+
+@pytest.mark.contracts
+def test_combined_buckets_reconcile_to_money_in(home, tmp_path):
+    _, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
+    m = _by_id(overrides.combined_figures(overrides.case_figures(folder)))
+    parts = sum(round(m[i].value * 100) for i in ("M2", "M19", "M20", "M21", "M22", "M23", "M24", "M25"))
+    assert parts == round(m["M17"].value * 100)
+    assert set(m["M18"].evidence) <= set(m["M2"].evidence)
