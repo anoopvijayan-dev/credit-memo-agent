@@ -1323,7 +1323,7 @@ def classify(
         return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(candidates)
     if kinds:
         return kinds[0]
-    for rule in firm_rules:
+    for rule in _firm_rules_for(ruleset, desc, t.amount, firm_rules):
         if rule_matches(rule, desc, t.amount):
             return rule.category, f"firm:{rule.id}"
     for rule in ruleset.unprotected:
@@ -1350,6 +1350,24 @@ def _v1_protected(rule: Rule, desc: str, amount: float) -> bool:
     if rule.id == "non_trading_in":
         return _V1_PROTECTED_IN.search(desc) is not None
     return rule.id in _V1_PROTECTED
+
+
+def _firm_rules_for(ruleset: Ruleset, desc: str, amount: float, firm_rules: Sequence[Rule]) -> Sequence[Rule]:
+    """The firm rules that may apply to a line: none when a protected built-in pattern matches
+    it, wherever in the line and whatever else the line holds (R21, P16). A firm rule never
+    reclassifies a director, capital, shareholder, lender, HMRC or returned-payment line, nor
+    any other protected verdict's; only a per-line override can. Under v2 those are the rules
+    the table marks protected; v1 marks none, so its protected wording is _v1_protected's. A
+    payment-method cue gives no verdict, so it protects nothing. The line then takes what it
+    would take with no firm rule at all."""
+    if not firm_rules:
+        return ()
+    if ruleset.frozen:
+        if any(_v1_protected(r, desc, amount) for r in ruleset.rules):
+            return ()
+    elif any(r.category is not None and rule_matches(r, desc, amount) for r in ruleset.protected):
+        return ()
+    return firm_rules
 
 
 def _profile_matches(t: Transaction, desc: str, profile: ProfileNames | None) -> list[tuple[Category, str]]:
@@ -1388,7 +1406,7 @@ def _classify_credit(t: Transaction, desc: str, ruleset: Ruleset, profile: Profi
         return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(candidates)
     if kinds:
         return kinds[0]
-    for rule in firm_rules:
+    for rule in _firm_rules_for(ruleset, desc, t.amount, firm_rules):
         if rule_matches(rule, desc, t.amount):
             return rule.category, f"firm:{rule.id}"
     if verdict is not None:
