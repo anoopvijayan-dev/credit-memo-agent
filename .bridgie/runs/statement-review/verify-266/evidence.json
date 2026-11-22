@@ -1,0 +1,91 @@
+{
+  "task": "T35",
+  "criteria": [
+    {
+      "id": "R47",
+      "tier": "adversarial",
+      "check": "synth.generate with two_accounts builds the reserve account (src/cma/synth.py:494-532) and now case_truth (synth.py:382-422) gives ground truth for every case line, bucket, cash deposit, indicator and own-account pair; synth.to_case (synth.py:686-714) and `cma generate --case` (cli.py:84-90) make the two-account demo case. The move() penny bump (synth.py:503-512) only acts under two_accounts, so featureless statements stay byte-identical (the to_json pop of 'case' at synth.py:156-163). Runner: invariants-5 and specified-3 logs show every tests/test_synth_case.py test PASSED, plus the byte-identical tests in the full suite (2810 passed).",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P11",
+      "tier": "adversarial",
+      "check": "_p11_pairs (tests/test_synth_case.py:68-86) checks one debit and one credit of equal size in different accounts, each naming the other, no line in two pairs, against categorise.pair_own_accounts (src/cma/categorise.py:1471-1520). M17-M19 == outside_money_in, which is worked out from the generator's moves, not from the system's categories (test_p11_outside_money_is_the_credits_of_no_move). I traced the clash cases by hand: reserve credits are only the +1000 mirrors and 3-9 interest, and no main debit falls in 3-9 (fees 18-42, item fee 15). move() checks `before`, which holds every main event including returned-DD re-presentations (synth.py:299-308). All of the following PASSED in invariants-5.log: the 9 archetype/profile runs, the 12 feature-set/seed/month runs, the 48 seeded runs and the £1,000 fuel-card clash regression.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P17",
+      "tier": "adversarial",
+      "check": "_assert_p17 (tests/test_synth_case.py:47-65) compares every case line's category, M17, every bucket's value and evidence (M2 and BUCKET_METRICS), M18's value and evidence, and each account's indicators (as summary.py:299 raises them, per account) with truth.case. Run on generated two-account cases at the default config. All PASSED in the runner's invariants log. The evals (behavioural-6) report 9/9 featured cases matching truth.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-266/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-266/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-266/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-266/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-266/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-266/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-266/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/synth.py",
+      "line": 509,
+      "criterion": "P11",
+      "claim": "The case truth's own-account pairs assume firm.DEFAULT_PAIRING_DAYS (3). The case that `cma generate --case` makes is paired with CMA_HOME's firm.yaml own_account_pairing_days (overrides.py:400, valid range 0-31, firm.py:281). Under a non-default setting the truth written to *.truth.json ('case'.own_account_pairs, category_by_id, buckets, outside_money_in) no longer matches the case the same command made. The truth file does not record the pairing days it assumed, and the command gives no warning.",
+      "repro": "Write own_account_pairing_days: 31 to firm.yaml under CMA_HOME, then run `cma generate --archetype cafe --profile good --feature all --case --out /tmp/x`. The -1000 moves fall on the 19th of each month, about 30-31 days apart, so each reserve +1000 credit is a candidate for the neighbouring months' move debits too. pair_own_accounts (categorise.py:1506-1518) pairs none of them and lists them in the judgement queue, while truth['case']['own_account_pairs'] still lists every move. A smaller window, such as 7, already lets a ~£1,000 supplier DD (LANTERN ENERGY 807-1092, ROADLINE FUEL CARD 833-1127) 4-7 days from a move break a pair the truth claims. Fix: generate with the firm's pairing days, or record the days in the truth and warn or refuse when they differ."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
