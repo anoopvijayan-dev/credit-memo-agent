@@ -367,6 +367,18 @@ def _figure(value: Any, what: str) -> None:
         raise VerifyRefused(f"the record's {what} is not a figure with a text id")
 
 
+def _account_keys(keys: Any, what: str) -> None:
+    """An account key names a file in the case's statements folder, so only a key the case
+    store itself accepts is read: a hand-edited key such as ../../x would reach a file outside
+    the case."""
+    from .store import ACCOUNT_KEY
+
+    for key in keys:
+        if not ACCOUNT_KEY.fullmatch(key):
+            raise VerifyRefused(f"the record's {what} names an account key that is not one the case store "
+                                "accepts (lowercase letters, digits, _ and -)")
+
+
 def _check_inputs(inputs: dict[str, Any]) -> None:
     """A pack's recorded inputs: the statements by account, the override log's position and
     the pairing window, each of the kind the pack writes, so none is read as something else
@@ -375,6 +387,7 @@ def _check_inputs(inputs: dict[str, Any]) -> None:
     if not isinstance(statements, dict) or not all(isinstance(k, str) and isinstance(v, str)
                                                    for k, v in statements.items()):
         raise VerifyRefused("the record's inputs.statements is not an object of statement hashes by account")
+    _account_keys(statements, "inputs.statements")
     log = inputs.get("override_log")
     if not isinstance(log, dict) or not _count(log.get("position")):
         raise VerifyRefused("the record's inputs.override_log has no position that is a whole number of "
@@ -396,6 +409,7 @@ def _check_shape(record: dict[str, Any]) -> None:
         raise VerifyRefused("the record's statement is not an object")
     if "accounts" in record:
         _list_of_objects(record["accounts"], "accounts", "account", required=True)
+        _account_keys([acct["account"] for acct in record["accounts"]], "accounts")
         for acct in record["accounts"]:
             a = acct["account"]
             _list_of_objects(acct.get("metrics"), f"account {a} metrics", "id")

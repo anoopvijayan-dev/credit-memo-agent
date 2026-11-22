@@ -451,3 +451,24 @@ def test_a_bucket_moved_out_of_its_place_is_a_mismatch(home, tmp_path):
     _case_id, folder, ev = _signed(tmp_path)
     where = [m.where for m in verify.verify(_moved_total(ev), case_folder=folder).mismatches]
     assert "account main: bucket total" in where
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("where", ["inputs", "accounts"])
+def test_an_account_key_that_leaves_the_case_folder_is_refused_and_nothing_outside_is_read(home, tmp_path,
+                                                                                          where):
+    """A hand-edited record whose account key is a path (../../../x) is refused before any file
+    it names is read: verify reads only statements the case store itself could have written."""
+    import hashlib
+    import shutil
+
+    _case_id, folder, ev = _signed(tmp_path)
+    outside = folder.parent.parent / "x.csv"
+    shutil.copy(folder / store.STATEMENTS / "main.csv", outside)
+    key = "../../../x"
+    if where == "inputs":
+        ev["inputs"]["statements"] = {key: hashlib.sha256(outside.read_bytes()).hexdigest()}
+    else:
+        ev["accounts"][0]["account"] = key
+    with pytest.raises(verify.VerifyRefused, match="account key"):
+        verify.verify(ev, case_folder=folder)
