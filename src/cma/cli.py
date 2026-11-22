@@ -653,6 +653,40 @@ def case_import(
         console.print(f"{r.repeated} transaction{'s' if r.repeated != 1 else ''} repeated across pages kept once")
 
 
+@app.command("pseudonymise")
+def pseudonymise_cmd(
+    file: Path = typer.Argument(..., help="The bank file to make a pseudonymised copy of. Read, never changed."),
+    fmt: str = typer.Option(..., "--format", help="csv, monzo, openbanking, truelayer or bank-csv:PROFILE, as for "
+                                                  "`cma case import`."),
+    out: Path = typer.Option(..., "--out", help="A new folder for the copy; an existing one must be empty."),
+    profile_case: str | None = typer.Option(None, "--profile", metavar="CASE",
+                                            help="A case whose profile is tokenised the same way."),
+    opening_balance: str | None = typer.Option(None, help="Monzo or bank CSV only, as for `cma case import`."),
+    statement_balance: str | None = typer.Option(None, help="Open Banking or TrueLayer only, as for `cma case import`."),
+    at: str | None = typer.Option(None, "--at", help="Open Banking or TrueLayer only, with --statement-balance."),
+    thresholds: Path | None = typer.Option(None, help="Indicator thresholds YAML (R14); defaults to the packaged one."),
+):
+    """Write a copy of a statement, and of a case's profile, with personal and business names
+    and account numbers replaced by consistent tokens; institutions and every id, date, amount
+    and balance are kept, and the copy gives the same figures (R46, P10). The copy is
+    pseudonymised personal data, not anonymous data."""
+    from . import pseudonymise as ps
+    from . import store
+
+    with _case_errors():
+        profile = store.load_profile(store.case_folder(profile_case)) if profile_case else None
+    try:
+        th = load_thresholds(thresholds)
+        result, written = ps.pseudonymise_file(file, fmt, out, profile=profile, opening_balance=opening_balance,
+                                               statement_balance=statement_balance, at=at, thresholds=th)
+    except (ps.PseudonymiseError, ThresholdsError) as e:
+        console.print(f"[red]Refused.[/red] {escape(str(e))}")
+        raise typer.Exit(code=2) from None
+    console.print(f"wrote {', '.join(p.name for p in written)} in {out}: {result.words_replaced} word(s) and "
+                  f"{result.names_replaced} profile name(s) replaced by tokens")
+    console.print(escape(result.label))
+
+
 @case_app.command("override")
 def case_override(
     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),

@@ -166,6 +166,15 @@ cma case check private/cma/cases/<id>
 # operating-system user. A purge stopped part-way is finished by running it again.
 cma case purge <id>
 
+# Write a pseudonymised copy of a statement (any --format `cma case import` takes) and,
+# with --profile, of a case's profile into a new folder: personal and business names and
+# account numbers become consistent tokens (the profile's names become the tokens their
+# occurrences in the descriptions become); recognised institutions and every id, date,
+# amount and balance are kept. The copy is checked to give the same figures, buckets,
+# monthly cells and indicators under v1 and v2, or nothing is written. It is labelled as
+# pseudonymised personal data, not anonymous data; the token mapping is never written.
+cma pseudonymise private/statement.csv --format csv --out private/pseudo --profile <id>
+
 # Choose the categorisation table (src/cma/rules/<id>.yaml; default v2). v1 is the
 # original table, frozen; v2 adds real UK acquirers, gateways, marketplaces, delivery
 # platforms, lenders and merchant cash advance providers, own pots and savings, cash
