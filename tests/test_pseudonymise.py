@@ -220,3 +220,55 @@ def test_cli_monzo_export_goes_through_its_importer(tmp_path):
     golden = (Path(__file__).parent / "golden" / "monzo" / "business_statement.golden").read_bytes()
     assert [(r["id"], r["date"], r["amount"], r["balance"]) for r in _rows(golden)] == \
            [(r["id"], r["date"], r["amount"], r["balance"]) for r in _rows(copy)]
+
+
+@pytest.mark.contracts
+def test_a_failure_part_way_through_writing_leaves_no_partial_copy(tmp_path, monkeypatch):
+    result = ps.pseudonymise_statement(_statement([("2026-01-02", "FPS CREDIT JANE DOE", 1_000)]),
+                                       _profile(directors=["JANE DOE"]))
+    real_fdopen, calls = ps.os.fdopen, []
+
+    def failing_fdopen(fd, *a, **kw):
+        calls.append(fd)
+        if len(calls) == 2:
+            ps.os.close(fd)
+            raise OSError(28, "No space left on device")
+        return real_fdopen(fd, *a, **kw)
+
+    monkeypatch.setattr(ps.os, "fdopen", failing_fdopen)
+    out = tmp_path / "out"
+    with pytest.raises(OSError):
+        ps.write(result, out, source_format="csv")
+    assert not out.exists()
+    assert list(tmp_path.iterdir()) == []  # the staging folder is removed too
+    monkeypatch.setattr(ps.os, "fdopen", real_fdopen)
+    written = ps.write(result, out, source_format="csv")  # the next run starts clean
+    assert sorted(p.name for p in written) == sorted(p.name for p in out.iterdir())
+
+
+@pytest.mark.contracts
+def test_the_copy_is_deterministic_owner_only_and_holds_no_token_mapping(tmp_path):
+    prof = _profile(directors=["JANE DOE"], own_accounts=["ACME HOLDINGS"])
+    data = _statement([("2026-01-02", "FPS CREDIT JANE DOE", 1_000),
+                       ("2026-01-03", "FPS DEBIT ACME HOLDINGS 12345678", -500)])
+    a, b = ps.pseudonymise_statement(data, prof), ps.pseudonymise_statement(data, prof)
+    assert a.statement == b.statement and a.profile == b.profile
+    out = tmp_path / "out"
+    ps.write(a, out, source_format="csv")
+    assert (out.stat().st_mode & 0o777) == 0o700
+    for p in out.iterdir():
+        assert (p.stat().st_mode & 0o777) == 0o600
+        text = p.read_text()
+        for secret in ("JANE", "DOE", "ACME", "12345678"):
+            assert secret not in text, (p.name, secret)
+
+
+@pytest.mark.contracts
+def test_a_refusal_names_lines_and_figures_never_description_text(monkeypatch):
+    data = _statement([("2026-01-02", "FPS CREDIT JANE DOE SECRETWORD", 1_000)])
+    monkeypatch.setattr(ps, "differs", lambda *a, **k: "figure M2 under v2")
+    with pytest.raises(ps.PseudonymiseError) as e:
+        ps.pseudonymise_statement(data, _profile(directors=["JANE DOE"]))
+    assert "M2" in str(e.value) and "nothing was written" in str(e.value)
+    for secret in ("JANE", "SECRETWORD"):
+        assert secret not in str(e.value)

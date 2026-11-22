@@ -38,6 +38,7 @@ import io
 import json
 import os
 import re
+import shutil
 import tempfile
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -403,12 +404,29 @@ def _converted(src: Path, fmt: str, *, opening_balance: str | None, statement_ba
 
 def write(result: Pseudonymised, out: Path, *, source_format: str) -> list[Path]:
     """Write the copy into a new folder `out`, readable by its owner only: the statement, the
-    profile when there is one, the label and a manifest. Nothing is overwritten."""
+    profile when there is one, the label and a manifest. Nothing is overwritten.
+
+    The files are written into a staging folder beside `out` and the folder is renamed into
+    place, so a failure part-way (a full disk, an I/O error) leaves no partial copy at `out`:
+    the staging folder is removed, and the next run starts clean."""
     out = Path(out)
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
         raise PseudonymiseError(f"{out} already exists and is not an empty folder; nothing was written")
-    out.mkdir(parents=True, exist_ok=True)
-    os.chmod(out, 0o700)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix=f".{out.name}.", suffix=".part", dir=out.parent))
+    try:
+        os.chmod(stage, 0o700)
+        names = _write_files(result, stage, source_format=source_format)
+        if out.exists():
+            out.rmdir()  # empty, checked above
+        os.rename(stage, out)
+    except BaseException:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+    return [out / n for n in names]
+
+
+def _write_files(result: Pseudonymised, out: Path, *, source_format: str) -> list[str]:
     files: dict[str, bytes] = {STATEMENT_FILE: result.statement, LABEL_FILE: (result.label + "\n").encode()}
     if result.profile is not None:
         body = yaml.safe_dump(result.profile, sort_keys=False, allow_unicode=True)
@@ -425,7 +443,7 @@ def write(result: Pseudonymised, out: Path, *, source_format: str) -> list[Path]
         fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "wb") as f:
             f.write(data)
-        written.append(p)
+        written.append(name)
     return written
 
 
