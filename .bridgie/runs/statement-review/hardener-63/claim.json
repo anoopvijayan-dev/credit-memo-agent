@@ -1,0 +1,80 @@
+{
+  "task": "T29",
+  "claims": [
+    {
+      "text": "Failure modes (gap found and fixed): the importer's search for the order of lines booked at the same moment was recursive. A group of about 1,000 or more such lines, which a date-only export gives when a whole day is at midnight, raised RecursionError past the importer contract instead of being refused by line. The search could also refuse valid files: it scanned every remaining line at each step, so 300 to 500 same-moment lines written in reverse order ran past the 100,000-step cap. It is now an iterative depth-first search that looks candidates up by each line's balance before it, tries chain heads first when no balance is known yet, and keeps the step cap. Valid groups are ordered in about one step per line, and a group that no order chains is refused, never a crash.",
+      "proof_cmd": "python /tmp/claude-0/sp/probe2.py <dir> (before: 1500 forward -> RecursionError; 500 reversed -> refused) then pytest tests/test_import_openbanking.py -k 'large_group' -q",
+      "proof_output": "before fix: '1500 False -> RecursionError maximum recursion depth exceeded', '500 True -> OpenBankingImportError ... no order ...', '300 True -> OpenBankingImportError ...'; after fix: '1500 False ok 1500', '500 True ok 500', '300 True ok 300'; tests/test_import_openbanking.py: 47 passed (4 new contracts tests: 1500 forward, 1500 reversed, 500 reversed, 1500 with a break refused)"
+    },
+    {
+      "text": "Full regression: the whole suite, ruff and compileall pass on the final code.",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider; ruff check src tests; python -m compileall -q src",
+      "proof_output": "2491 passed in 286.16s (0:04:46); All checks passed!; compiled"
+    },
+    {
+      "text": "Idempotency: importing the same Open Banking file again leaves the case unchanged (R39, keyed by file hash), and a transaction a paged export repeats is kept once only when it matches in every field. A repeated id with different content is refused, and a repeated pending transaction is counted once.",
+      "proof_cmd": "pytest tests/test_import_openbanking.py -k 'cma_case_import_openbanking_keeps or repeated or pending_transaction_a_page_repeats' -q",
+      "proof_output": "passed within the 47 passed run; the second import prints 'already imported'; the golden file gives repeated == 1; a differing repeat names both lines"
+    },
+    {
+      "text": "Partial failure: conversion stages the raw file and the converted statement in a TemporaryDirectory inside the case folder (store.py:576). The statement and the log entry are written only after the converter and the statement loader accept the file, under _recorded, which undoes the statement on failure. Every refusal test asserts that no statement is left.",
+      "proof_cmd": "grep -n 'TemporaryDirectory\\|_write_private(raw' src/cma/store.py; pytest tests/test_import_openbanking.py -k 'refus' -q",
+      "proof_output": "576: with tempfile.TemporaryDirectory(dir=folder) as work; 592: _write_private(raw, data); each refusal asserts that statement.csv does not exist, and the case-import refusal asserts that statements/main.csv does not exist"
+    },
+    {
+      "text": "External calls and timeouts: not applicable. The importer reads one local file and makes no network or other external call (stdlib json, bisect and re only).",
+      "proof_cmd": "grep -n '^import\\|^from' src/cma/importers/openbanking.py",
+      "proof_output": "bisect, json, json.decoder, json.scanner, re, dataclasses, datetime, decimal, pathlib, ..metrics, .contract; no network module"
+    },
+    {
+      "text": "Security, input at the boundary: JSON is parsed with exact decimals, NaN and Infinity are refused, and so is a key given twice. Deep nesting is refused as 'not JSON' rather than crashing. A TransactionId that starts with a formula character or a space, holds a control character or runs past 210 characters is refused, and descriptions go through the contract's CSV formula neutralisation. Refusals name lines, never cell values.",
+      "proof_cmd": "python /tmp/claude-0/sp/probe.py <dir> (deep nesting case); pytest tests/test_import_openbanking.py -q (the SENTINEL assertion in _refused)",
+      "proof_output": "deep -> OpenBankingImportError line 1: not JSON; every refusal test asserts that SENTINEL is not in the message"
+    },
+    {
+      "text": "Security, authz on new entry points: the only new entry point is the --format openbanking value of the existing `cma case import`, plus its --statement-balance and --at options. It runs under the same local owner-only case root and the case_folder id check as the csv and monzo formats. No server endpoint or MCP tool was added.",
+      "proof_cmd": "grep -n openbanking src/cma/mcp_server.py src/cma/graph.py; grep -n 'FORMATS = ' src/cma/store.py",
+      "proof_output": "no match in mcp_server.py or graph.py; FORMATS = (\"csv\", \"monzo\", \"openbanking\")"
+    },
+    {
+      "text": "Security, secrets and dependencies: no secrets are added, and there is no new dependency (pyproject.toml is unchanged since the base).",
+      "proof_cmd": "git diff a5897d9 --stat -- pyproject.toml",
+      "proof_output": "(empty)"
+    },
+    {
+      "text": "Performance: 10,000 transactions convert in about 0.7 s, and 3,000 lines at one moment in about 0.2 s. Line lookup by offset uses bisect, and the same-moment search is bounded by ORDER_STEPS. There are no queries, endpoints or pagination.",
+      "proof_cmd": "python /tmp/claude-0/sp/probe.py <dir>",
+      "proof_output": "10k 10000 0.72 s; same 3000 0.19"
+    },
+    {
+      "text": "Data and migrations: the change is additive. FORMATS gains openbanking, the Imported dataclass gains pending and repeated with defaults of 0, and the import log entry gains pending and repeated only for openbanking. Nothing is backfilled, and older csv and monzo entries read as before.",
+      "proof_cmd": "pytest -q (full suite)",
+      "proof_output": "2491 passed"
+    },
+    {
+      "text": "Observability: each import writes one case-log entry with format, the hashes, lines, period, pending and repeated, and the CLI prints the pending and repeated counts. The test reads those entry fields back.",
+      "proof_cmd": "pytest tests/test_import_openbanking.py -k cma_case_import_openbanking_keeps -q",
+      "proof_output": "passed; it asserts entry.data['format']=='openbanking' and (pending, repeated)==(1, 1), and that the CLI output says 'left out 1 pending transaction'"
+    },
+    {
+      "text": "Alerting and dashboards: not applicable. The design ships no remote alerting by design; the tool refuses with a non-zero exit, and `cma case import` exits 2 on any refusal.",
+      "proof_cmd": "pytest tests/test_import_openbanking.py -k case_import_refus -q",
+      "proof_output": "passed; it asserts exit_code == 2"
+    },
+    {
+      "text": "Operability and rollback: the new format runs only when --format openbanking is passed, so it needs no flag. Rollback is to stop using the format or reinstall the previous wheel; case folders it wrote stay readable, since the statement is the ordinary five-column CSV. There are no config or secret changes to deploy.",
+      "proof_cmd": "git show a92cec2 --stat",
+      "proof_output": "importer, store, cli, README, goldens and tests only; no config or migration files"
+    },
+    {
+      "text": "Docs: the README documents `cma case import --format openbanking` with and without --statement-balance/--at, and the CLI help text covers both options.",
+      "proof_cmd": "git show a92cec2 -- README.md | grep openbanking",
+      "proof_output": "cma case import <id> private/transactions.json --format openbanking --account current (and the --statement-balance 1389.75 --at 2026-04-03 form)"
+    }
+  ],
+  "files_changed": [
+    "src/cma/importers/openbanking.py",
+    "tests/test_import_openbanking.py"
+  ],
+  "notes": "Gaps for the owner, not changed (they need design or are outside this seat's scope): (1) Changelog: the repo has no CHANGELOG file, so no release-note line was written; the design's Consumer trace and Interfaces were not updated with the Open Banking contract (the importer contract section already describes it). (2) When lines booked at the same moment can chain in more than one order, the order chosen is the first one found (chain heads first, then file order). A different valid order gives different intermediate balances, though the same closing balance; no requirement says which order to pick. (3) The ordering search still gives up after ORDER_STEPS (100,000) on pathological groups with many balance-less lines or several valid branches, and refuses the file. (4) The probe scripts live in the scratchpad (/tmp/claude-0/sp), not under tests/; the new regression tests cover the same cases."
+}
