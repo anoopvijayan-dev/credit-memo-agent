@@ -1,0 +1,66 @@
+{
+  "task": "T37",
+  "claims": [
+    {
+      "text": "Failure modes / concurrency (verify-268 major): promotions from two cases sharing firm_rules.yaml take turns on firm_rules.yaml.lock; both rules are kept, and an undo never removes another case's recorded rule.",
+      "proof_cmd": "python -m pytest -q tests/test_firm_rule_promotion.py -k 'two_cases_promoting_at_once or put_back_never_removes'",
+      "proof_output": "passed (part of 30 passed in tests/test_firm_rule_promotion.py)"
+    },
+    {
+      "text": "The firm rules lock is an flock and excludes another process, not only another thread (new hardening test).",
+      "proof_cmd": "python -m pytest -q tests/test_firm_rule_promotion.py -k keeps_out_another_process",
+      "proof_output": "passed: subprocess probe prints 'held' while the promotion holds the lock and 'took' after release"
+    },
+    {
+      "text": "Failure mode: a promotion that cannot take the firm rules lock within LOCK_WAIT is refused and writes neither the rules file nor the case log (new hardening test).",
+      "proof_cmd": "python -m pytest -q tests/test_firm_rule_promotion.py -k cannot_take_the_firm_rules_lock",
+      "proof_output": "passed: CaseStoreError 'another case is saving a firm rule'; rules file absent; case log length unchanged"
+    },
+    {
+      "text": "Who can call it: /api/promote refuses a request without the token, with a wrong token, from another Origin, or as a GET; nothing is saved.",
+      "proof_cmd": "python -m pytest -q tests/test_firm_rule_promotion.py -k without_the_token_or_from_another_origin",
+      "proof_output": "passed: 403, 403, 403, 405; no rules file; case log unchanged"
+    },
+    {
+      "text": "Idempotency: resending the same confirmed promotion saves one rule and one case log entry.",
+      "proof_cmd": "python -m pytest -q tests/test_firm_rule_promotion.py -k resending_the_same_confirmed",
+      "proof_output": "passed: second POST 400/409; one rule acme_trust; one firm_rule_promotion entry"
+    },
+    {
+      "text": "Rollback of a refused save: when the case log refuses the promotion, the firm rules file is put back as it was.",
+      "proof_cmd": "python -m pytest -q tests/test_firm_rule_promotion.py -k the_case_log_does_not_record",
+      "proof_output": "passed: LogConflict raised; rules file absent"
+    },
+    {
+      "text": "A stale preview saves nothing: a changed count, a changed digest at the same count, or a stale case log position is refused.",
+      "proof_cmd": "python -m pytest -q tests/test_firm_rule_promotion.py -k 'no_longer_counts or same_count_but_another_outcome or stale_position or without_the_preview_digest'",
+      "proof_output": "4 passed"
+    },
+    {
+      "text": "Input validated at the boundary: the pattern is a name, never a regex; a malformed firm rules file refuses the preview and save and is left untouched.",
+      "proof_cmd": "python -m pytest -q tests/test_firm_rule_promotion.py -k 'never_a_regular_expression or malformed_firm_rules_file'",
+      "proof_output": "5 passed"
+    },
+    {
+      "text": "Personal data: the case log entry carries neither the pattern nor the reason; the rules file is owner-only (mode & 0o077 == 0); case text in the preview page is escaped.",
+      "proof_cmd": "python -m pytest -q tests/test_firm_rule_promotion.py -k 'saves_the_rule_logs_it or readable_by_its_owner_only or escapes_case_text'",
+      "proof_output": "3 passed"
+    },
+    {
+      "text": "Whole suite and lint pass with the hardening tests in place.",
+      "proof_cmd": "ruff check src tests && python -m pytest -q",
+      "proof_output": "All checks passed!; 2889 passed in 356.64s"
+    }
+  ],
+  "files_changed": [
+    "tests/test_firm_rule_promotion.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "verify-268 major: firm_rules.yaml is shared by every case but promote() locked only the open case; two concurrent promotions could both pass the byte comparison and the second write dropped the first case's rule (src/cma/promotion.py:303).",
+      "disposition": "not_reproduced",
+      "evidence": "At 02733f2 promote() holds _firm_rules_held(firm_rules_path) around read, compare, write and case-log append/undo. The two thread tests pass, and the new subprocess test shows another process cannot take the lock while it is held. Both rules are present afterwards, B's case log records the sha of the file holding both, and A's undo leaves B's rule."
+    }
+  ],
+  "notes": "Gaps for the owner: (1) The Windows lock path is not exercised; CI runs Linux only (Rollout step 3 covers it). (2) The lock's path is worked out from firm.load() before the lock is taken, and _firm_rules_now() reloads firm.yaml inside it. If firm.yaml's firm_rules path changed in that moment, the lock would sit beside the wrong file. Edge case; a design call, not changed here. (3) Performance: preview/promote categorise the case twice (with and without the rule) and promote holds the firm-wide lock while doing so. No test times this against R52's 2 s at 10,000 lines. (4) Observability: the case log's firm_rule_promotion entry is the proof a promotion ran. Nothing records or alerts on a promotion refused for the lock timeout, and there is no remote alerting by design. (5) Docs: the README does not yet mention firm_rules.yaml.lock beside the firm rules file (it holds no data, like the case lock files). Lines not applicable: migrations (no stored schema change; firm_rules.yaml keeps its format, and the lock file is new and ignored by older packages); new dependencies (none); feature flag (a new opt-in workspace action)."
+}

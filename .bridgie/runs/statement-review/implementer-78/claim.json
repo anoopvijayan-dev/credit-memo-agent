@@ -1,0 +1,43 @@
+{
+  "task": "T37",
+  "claims": [
+    {
+      "text": "R20: two cases promoting at once take turns on a firm-level lock (firm_rules.yaml.lock beside the rules file, promotion._firm_rules_held). The lock is held from reading the file until the case log records the promotion or the undo puts the file back, so both rules are kept and the second case's log records the hash of the file that holds both. An undo never removes another case's recorded rule. The preview works out the whole case with the rule in place, so a rule that undoes an own-account pairing is reported as setting the paired line, and the debit partner it changes without matching is listed (Preview.changed, shown on the preview page and included in the digest).",
+      "proof_cmd": "python -m pytest -q tests/test_firm_rule_promotion.py",
+      "proof_output": "28 passed in 7.52s"
+    },
+    {
+      "text": "The four new tests fail against the previous commit's promotion.py and review/promote.py (two concurrency tests: B did not wait for A; pairing test: B2.applies False, why='an own-account pairing settles this line'), and pass with the change.",
+      "proof_cmd": "swap in git show HEAD~1:src/cma/promotion.py and HEAD~1:src/cma/review/promote.py, then python -m pytest -q tests/test_firm_rule_promotion.py -k \"two_cases or put_back or whole_case\"",
+      "proof_output": "3 failed, 24 deselected in 2.00s (with the new code: all pass)"
+    },
+    {
+      "text": "Lint, compile, the full suite, the invariants tier and the evals all pass (the full suite ran before the last workspace-render test was added; that file was re-run after adding it, 28 passed).",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q -rs; python -m pytest -q -m invariants; python evals/run_evals.py",
+      "proof_output": "All checks passed! / 2886 passed in 351.32s / 1111 passed, 1776 deselected in 155.02s / 9/9 featured cases match truth"
+    }
+  ],
+  "files_changed": [
+    "src/cma/promotion.py",
+    "src/cma/review/promote.py",
+    "tests/test_firm_rule_promotion.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major src/cma/promotion.py:303 — firm_rules.yaml is shared by every case but promote() locks only the open case; two concurrent promotions can both pass the byte comparison and the second write drops the first case's rule while both logs record a promotion.",
+      "disposition": "reproduced",
+      "evidence": "Reproduced by test_two_cases_promoting_at_once_take_turns_and_keep_both_rules: case A is paused in store._restorer, between the comparison and the write, while case B promotes. On the old code B did not wait. Fix: promote() now runs inside promotion._firm_rules_held(path). That is an exclusive lock on firm_rules.yaml.lock, taken with caselog._try_exclusive as the purge ledger takes its lock, waiting up to LOCK_WAIT seconds. It is taken before store._recorded, so the read, the write, the log append and any undo all happen under it. In the test, B waits, both rule ids end up in firm_rules.for_case(), and B's log entry records the sha of the file that holds both. If B confirms with its digest, it is refused as stale (PreviewChanged), because the digest names the rules file it was shown; nothing is lost either way."
+    },
+    {
+      "finding": "minor src/cma/promotion.py:308 — the undo restores the bytes from before this case's write, so if another case writes in between and this case's log append fails, the other case's recorded rule is deleted.",
+      "disposition": "reproduced",
+      "evidence": "Same lock fix: the undo runs inside store._recorded, which now runs inside _firm_rules_held, so no other promotion can write between this case's write and its undo. Proved by test_a_promotion_put_back_never_removes_another_cases_recorded_rule: A's CaseLog.append is paused and then raises LogConflict while B promotes. B waits until A has put the file back, then saves; the file holds only j_bloggs and B's log records it. The test failed on the old code because B did not wait."
+    },
+    {
+      "finding": "minor src/cma/promotion.py:214 — the preview's applies/why comes from per-line classify() and misses effects across the whole statement such as own-account pairing; a paired credit shown as kept by the pairing is set by the rule once saved, and its debit partner, not in the preview, changes category.",
+      "disposition": "reproduced",
+      "evidence": "Reproduced by test_the_preview_reads_the_whole_case_so_a_pairing_the_rule_unmakes_is_shown. Case: account a has debit A2 -100; account b has credit B2 FPS CREDIT ACME TRUST +100, paired with A2; override B3 to returned_dd; promote ACME TRUST. On the old code B2.applies was False with why 'pairing'. Fix: _build now runs _categorised(folder, entries, rules=existing+candidate). That categorises every account with the candidate rule and the case's overrides, then re-runs pairing, and applies is read from that result (rule_id == firm:<id>). Lines the pattern does not match but whose category changes are collected in Preview.changed, included in the digest, returned by /api/promote and shown in the preview page as an escaped table. The test asserts B2 applies, changed == [(a, A2)], and that after saving, B2 is firm:acme_trust and A2 has the category the preview gave. test_the_preview_page_lists_the_lines_the_rule_changes_without_matching checks the page renders it escaped."
+    }
+  ],
+  "notes": "Root cause of the third finding: categorise runs firm rules before pairing, and _pairable excludes RETURNED_DD. A firm rule can therefore stop a pairing, although design C1 ranks pairing above firm rules. Changing that order belongs to the categoriser and pairing tasks (T03/T05, R8), not T37, so this change does not touch it. Instead the preview now reports truthfully what the save will do, including the partner it moves. The owner may want the categoriser to pair before firm rules apply. The firm-rules lock file (firm_rules.yaml.lock) holds no data and sits next to the rules file under the case root; the only writer of firm_rules.yaml is promotion.promote (grep of src). Committed as 02733f2."
+}
