@@ -204,6 +204,9 @@ def sync_folder(path: PurePath, *, home: Path | None = None,
     info file; a symlink is followed, since the files land where it points. This is a
     warning, not a lock: a folder synced under a name no client uses is not seen."""
     env = dict(os.environ) if env is None else env
+    # Windows keeps variable names in upper case (ONEDRIVECOMMERCIAL), so names are matched
+    # whatever their case (Antigravity re-review of T14).
+    env = {k.upper(): v for k, v in env.items()}
     home = Path.home() if home is None else home
     paths = [path]
     if isinstance(path, Path):
@@ -211,9 +214,15 @@ def sync_folder(path: PurePath, *, home: Path | None = None,
             resolved = path.resolve()
             if resolved != path:
                 paths.append(resolved)
-    roots = [("OneDrive", PurePath(env[v])) for v in ONEDRIVE_VARS
-             if env.get(v) and PurePath(env[v]).is_absolute()]
+    roots = [("OneDrive", PurePath(env[v.upper()])) for v in ONEDRIVE_VARS
+             if env.get(v.upper()) and PurePath(env[v.upper()]).is_absolute()]
     roots += [("Dropbox", r) for r in _dropbox_roots(home, env) if r.is_absolute()]
+    # A sync root reached through a symlink is matched where it points too, as `path` is.
+    for client, root in list(roots):
+        with suppress(OSError, RuntimeError):
+            real = Path(root).resolve()
+            if real != Path(root):
+                roots.append((client, real))
     for p in paths:
         for client, root in roots:
             if _within(p, root):
