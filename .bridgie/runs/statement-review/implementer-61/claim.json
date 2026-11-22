@@ -1,0 +1,39 @@
+{
+  "task": "T27",
+  "claims": [
+    {
+      "text": "R42/R43 end to end for a torn sign-off entry: the signed_off append fails after its whole line is on disk (the head record's staging hits ENOSPC), leaving a torn entry after the recorded pack_written. `cma case sign` then exits 3, names the torn entry and points to `cma case repair`. The workspace answers 409 with first_bad and the same remedy. `cma case repair` (interactive, typed name, confirmation; declining changes nothing) calls CaseLog.drop_torn_entry and logs who confirmed the drop. The next `cma case sign` then records the pack's own sign-off without rewriting the pack, and the log verifies intact.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_signoff.py -k \"torn or folder_sync\"",
+      "proof_output": "3 passed, 38 deselected in 2.65s"
+    },
+    {
+      "text": "A torn pack_written entry: the pack folder is removed (no pack without its entry), `cma case repair` drops the entry, and sign-off then writes the pack once (test_r42_a_pack_write_entry_left_torn_removes_the_pack_and_signs_off_after_repair).",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_signoff.py -k \"torn or folder_sync\"",
+      "proof_output": "3 passed, 38 deselected in 2.65s"
+    },
+    {
+      "text": "If fsync of the packs folder fails after the rename, packs/<snapshot> is removed, so no pack exists without its log entry, and the next sign-off writes the pack (test_r42_a_failed_folder_sync_after_the_rename_leaves_no_unrecorded_pack).",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_signoff.py -k \"torn or folder_sync\"",
+      "proof_output": "3 passed, 38 deselected in 2.65s"
+    },
+    {
+      "text": "The whole suite, ruff and compileall all pass.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q",
+      "proof_output": "All checks passed!\n2413 passed in 280.69s (0:04:40)"
+    }
+  ],
+  "files_changed": ["src/cma/cli.py", "src/cma/pack.py", "src/cma/review/signoff.py", "tests/test_signoff.py"],
+  "dispositions": [
+    {
+      "finding": "major R42 src/cma/pack.py:687: a signed_off append that fails after part of its line is written leaves a torn entry; every later sign_off fails at require_intact, and no CLI or workspace path calls CaseLog.drop_torn_entry, so the snapshot can never be signed off.",
+      "disposition": "reproduced",
+      "evidence": "Reproduced by making the head record's staging raise OSError(ENOSPC) only during the signed_off append. The result was SaveNotRecorded with a torn entry, and `cma case sign` then exited 3. Fix: a new `cma case repair CASE` command (src/cma/cli.py), interactive with a typed name and confirmation. It is production code's first caller of CaseLog.drop_torn_entry, which logs a torn_entry_dropped entry naming who confirmed. The CLI broken-log refusal, `cma case check` and the workspace's 409 refusal now name this remedy when the entry is torn. After the repair, sign_off takes its existing _complete path and records the pack's own sign-off. Proven by test_r42_r43_a_sign_off_entry_left_torn_is_repaired_with_confirmation_and_then_recorded, and for a torn pack_written by test_r42_a_pack_write_entry_left_torn_removes_the_pack_and_signs_off_after_repair."
+    },
+    {
+      "finding": "minor R42 src/cma/pack.py:604: _sync_dir(packs) runs after os.rename and outside the cleanup, so a failed folder fsync leaves packs/<snapshot> with no pack_written entry.",
+      "disposition": "reproduced",
+      "evidence": "Reproduced by patching pack._sync_dir to raise EIO for the packs folder: the folder stayed. Fix: _write_pack now removes the renamed target if that sync fails, then re-raises. Proven by test_r42_a_failed_folder_sync_after_the_rename_leaves_no_unrecorded_pack."
+    }
+  ],
+  "notes": "R42's repair is 'the next holder's repair, which a person confirmed'. `cma case repair` is that confirmation step. It is CLI-only: the workspace refusal names the command but has no drop button, so a page cannot drop log entries. The repair is a general case-log command, not tied to sign-off. It refuses with exit 2 when the log is intact, with exit 3 when the log is broken in a way that is not a torn entry, and with exit 4 while another writer holds the case. The torn-entry tests simulate a full disk at the head record's staging write, after the whole line is on disk. A short write cut partway through a line reaches the same SaveNotRecorded and torn-tail state through case.py:1227-1236."
+}
