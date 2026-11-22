@@ -389,3 +389,27 @@ def test_the_evidence_reads_the_thresholds_the_run_kept_not_the_file_as_it_is_no
     assert run_thresholds({"thresholds_path": str(firm), "thresholds_text": kept}).sha256 == t.sha256
     old = run_thresholds({"statement_path": "x.csv"})
     assert old.sha256 == load_thresholds().sha256 and old.source == "cma/thresholds/indicators.yaml"
+
+
+# --- exact comparisons with long thresholds (Antigravity re-review of T04) ---------------------
+
+
+@pytest.mark.contracts
+def test_a_cash_heavy_share_with_more_digits_than_a_decimal_holds_is_compared_exactly(tmp_path):
+    # 49.999999999999999999999999999% is below 50%, so cash of exactly half the month's trading
+    # receipts is above it; a 28-digit Decimal product rounded it to 50% and missed it.
+    t = _thresholds(tmp_path, cash_heavy_month__share_above_pct="49.999999999999999999999999999")
+    s = _statement([("L1", date(2026, 1, 2), "CASH PAID IN", 100.00),
+                    ("L2", date(2026, 1, 3), "STRIPE PAYOUT", 100.00)])
+    assert [i.evidence for i in _of("cash_heavy_month", raise_indicators(s, t))] == [["L1"]]
+
+
+@pytest.mark.contracts
+def test_a_round_trip_tolerance_with_more_digits_than_a_decimal_holds_is_compared_exactly(tmp_path):
+    # 9.9999999999999999999999999999% is below 10%, so a deposit 10% short of the withdrawal is
+    # outside it; a 28-digit Decimal product rounded it to 10% and flagged it.
+    t = _thresholds(tmp_path, cash_round_trip__tolerance_pct="9.9999999999999999999999999999")
+    s = _statement([("L0", date(2026, 1, 1), "STRIPE PAYOUT", 5000.00),
+                    ("W1", date(2026, 1, 2), "CASH WITHDRAWAL", -100.00),
+                    ("D1", date(2026, 1, 3), "CASH PAID IN", 90.00)])
+    assert _of("cash_round_trip", raise_indicators(s, t)) == []
