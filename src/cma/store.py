@@ -337,7 +337,21 @@ def _restorer(path: Path, mode: int = FILE_MODE):
 
 
 class _Loader(firm._UniqueKeyLoader):
-    """safe_load with a key given twice refused (firm.yaml's rule)."""
+    """safe_load with a key given twice refused (firm.yaml's rule), and a YAML number with a
+    decimal point read as the decimal typed, never a binary float that rounds it: 1500.001 is
+    refused as fractional pence rather than read as 1500.0 (Antigravity re-review of T13)."""
+
+
+def _decimal_scalar(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> Any:
+    try:
+        return Decimal(node.value)
+    except InvalidOperation:  # .inf, .nan and the like: let the float rules refuse them
+        return loader.construct_yaml_float(node)
+
+
+_Loader.add_constructor("tag:yaml.org,2002:float", _decimal_scalar)
+
+_GROUPED = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?")  # 1,500.50: commas only between thousands
 
 
 def _name(value: Any, where: str) -> str:
@@ -356,13 +370,22 @@ def _repayment(value: Any) -> str:
     where = "proposed_monthly_repayment"
     if isinstance(value, bool):
         raise CaseStoreError(f"{where} must be an amount in pounds, such as 1500.00")
+    if isinstance(value, Decimal):
+        value = str(value)  # YAML's 1500.50, read as typed (_Loader)
     if isinstance(value, float):
-        value = repr(value)  # YAML read 1500.50 as a float; its shortest form is the text typed
+        value = repr(value)
     if isinstance(value, int):
         value = str(value)
     if not isinstance(value, str):
         raise CaseStoreError(f"{where} must be an amount in pounds, such as 1500.00")
-    text = value.strip().replace(",", "").removeprefix("£")
+    text = value.strip().removeprefix("£")
+    if "," in text:
+        # A comma only groups thousands: 1500,50 is a decimal comma, never £150,050 (Antigravity
+        # re-review of T13).
+        if not _GROUPED.fullmatch(text):
+            raise CaseStoreError(f"{where} must be an amount in pounds, such as 1500.00 or 1,500.00; a comma "
+                                 "may only separate thousands")
+        text = text.replace(",", "")
     try:
         amount = Decimal(text)
     except InvalidOperation:
