@@ -35,6 +35,9 @@ cma generate --archetype cafe --profile stretched --out examples
 # two_accounts also writes the reserve account as cafe_stretched_reserve.csv.
 # Without --feature the statement and truth are byte-identical to earlier releases.
 cma generate --archetype cafe --profile stretched --out /tmp/cma-demo --feature all
+# --case also makes one demo case in CMA_HOME holding both accounts and the case profile;
+# the truth's "case" then holds that case's truth, the own-account pairs included.
+cma generate --archetype cafe --profile stretched --out /tmp/cma-demo --feature all --case
 
 # Run the memo graph. It stops, asks your name, and asks you to approve.
 # --vat-stagger is the HMRC stagger group from the VAT certificate (the examples use 3).
