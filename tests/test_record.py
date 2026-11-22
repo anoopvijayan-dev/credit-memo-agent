@@ -353,3 +353,26 @@ def test_r48_a_demo_case_shows_the_banner_and_stamp_in_the_workspace_memo_and_re
         assert html.index(banner) < html.index('id="sign-off"')  # the stamp is the record's first section
     ev = json.loads((s.pack / "evidence.json").read_text(encoding="utf-8"))
     assert ev["demo"] is demo
+
+
+# --- Partial failure: a record that cannot be rendered writes no pack and records nothing --
+
+
+@pytest.mark.contracts
+def test_r26_r42_a_record_that_fails_to_render_writes_no_pack_and_records_nothing(home, tmp_path, monkeypatch):
+    case_id, folder = _case(tmp_path)
+    p = pack.build_preview(folder, case_id)
+    before = [e.event for e in caselog.for_case(folder).entries()]
+
+    def broken(*_a, **_k):
+        raise RuntimeError("render failed")
+
+    monkeypatch.setattr(record, "render", broken)
+    with pytest.raises(RuntimeError):
+        pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    packs = folder / "packs"
+    assert not packs.exists() or not any(packs.iterdir())  # no pack, no .part- folder left
+    assert [e.event for e in caselog.for_case(folder).entries()] == before
+    monkeypatch.undo()
+    s = pack.sign_off(folder, case_id, p.snapshot, "Ann")  # the same preview then signs off
+    assert (s.pack / "record.html").is_file()
