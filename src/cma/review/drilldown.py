@@ -84,8 +84,17 @@ def lines_behind(folder: Path, case_id: str, *, account: str | None = None, figu
     f = figures.get(account)
     if f is None:
         raise DrillError("no such account in this case")
-    statement, by_line = f.statement, f.statement.by_id()
     out["account"] = account
+    out.update(detail(f, figure=figure, month=month, cell=cell))
+    return out
+
+
+def detail(f, *, figure: str | None = None, month: str | None = None, cell: str | None = None) -> dict[str, Any]:
+    """The lines behind one figure or one monthly cell of one account's figures
+    (overrides.CaseFigures), with their total, or the inputs and method, by the figure's kind
+    (R16). The workspace's drill-down and the pack's record (R26) both show this."""
+    statement, by_line = f.statement, f.statement.by_id()
+    out: dict[str, Any] = {}
     if figure is not None:
         m = next((x for x in f.metrics if x.id == figure), None)
         if m is None:
@@ -139,7 +148,21 @@ def render(d: dict[str, Any], token: str) -> str:
     if d["state"] != "shown":
         return back + summary.render({"business_name": None, "label": None, "profile": None, **d,
                                       "accounts": []})
-    head = (f'<section id="drilldown"><h2>{_e(d["id"])}: {_e(d["name"])}</h2>'
+    position = d.get("position")
+    here = "/lines?" + urlencode({"account": d["account"], **d["target"]})  # where a form comes back to
+
+    def form(x):
+        return override_form(token, d["account"], x, position, here)
+
+    return back + detail_html(d, form if position is not None else None)
+
+
+def detail_html(d: dict[str, Any], form=None, section_id: str = "drilldown", back: str = "") -> str:
+    """One figure's or cell's lines as an HTML section: the value, its method, the lines' total
+    or the inputs by kind, and the lines (R16); every case text escaped (R34). `form`, given a
+    line, gives the cell that changes its category, as the workspace offers it; the pack's
+    record offers none. `back` is HTML placed at the end of the section."""
+    head = (f'<section class="lines-behind" id="{_e(section_id)}"><h2>{_e(d["id"])}: {_e(d["name"])}</h2>'
             f'<p class="figure-value">Account {_e(d["account"])}: <strong>{_e(d["display"])}</strong>'
             + (' <span class="overridden">rests on an override</span>' if d["overridden"] else "")
             + f'</p><p class="method">{_e(d["method"])}</p>')
@@ -161,21 +184,15 @@ def render(d: dict[str, Any], token: str) -> str:
                        f'<td>{_e(c["line"])}</td></tr>' for c in d["closes"])
         head += ('<h3>End-of-day closes read</h3><table class="closes"><thead><tr><th>Day</th>'
                  f'<th class="num">Close</th><th>Set by line</th></tr></thead><tbody>{rows}</tbody></table>')
-    position = d.get("position")
-    here = "/lines?" + urlencode({"account": d["account"], **d["target"]})  # where a form comes back to
-
-    def form(x):
-        return f'<td>{override_form(token, d["account"], x, position, here)}</td>' if position is not None else ""
-
     rows = "".join(
         f'<tr><td>{_e(x["id"])}</td><td>{_e(x["date"])}</td><td>{_e(x["description"])}</td>'
         f'<td class="num">{_e(x["amount_display"])}</td><td class="num">{_e(x["balance_display"])}</td>'
         f'<td>{_e(x["category"])}</td><td>{_e(x["rule"])}'
         + (' <span class="overridden">override</span>' if x["overridden"] else "")
         + (' <span class="in-part">counted in part</span>' if x["counted_in_part"] else "")
-        + f'</td>{form(x)}</tr>' for x in d["lines"])
-    change = "<th>Change category</th>" if position is not None else ""
+        + "</td>" + (f"<td>{form(x)}</td>" if form else "") + "</tr>" for x in d["lines"])
+    change = "<th>Change category</th>" if form else ""
     table = ('<h3>Lines</h3><table class="lines"><thead><tr><th>Line</th><th>Date</th><th>Description</th>'
              '<th class="num">Amount</th><th class="num">Balance</th><th>Category</th><th>Set by</th>'
-             f'{change}</tr></thead><tbody>{rows}</tbody></table></section>')
-    return back + head + table
+             f'{change}</tr></thead><tbody>{rows}</tbody></table>{back}</section>')
+    return head + table
