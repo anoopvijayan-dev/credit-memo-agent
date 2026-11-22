@@ -591,12 +591,12 @@
         "T05",
         "T13"
       ],
-      "status": "verify",
+      "status": "failed",
       "attempts": 1,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T33",
-      "evidence": null,
-      "escalation": null
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-261/evidence.json",
+      "escalation": "attempt 1 of 3 fail: R41 not_proven (Prefixed ids: metrics.case_line_id/case_statement (src/cma/metrics.py:381-401), unique because ACCOUNT_KEY holds no colon; shown via overrides.combined_figures (src/cma/overrides.py:414-437) and summary/drilldown 'All accounts'. Flow figures across accounts: compute() on the merged statement (metrics.py compute_case). Balance figures on combined end-of-day balance over shared days: case_closes (metrics.py:418-433), _closes_balance_figures (:436-465), _month_balance_cells (:941-973); n/a with reason when no overlap (NO_SHARED_DAYS) and per month (NO_SHARED_DAYS_IN_MONTH); n/a when no float carries a combined balance to the penny. Combined import limit: store._case_flows_at_limit (src/cma/store.py:756-777) called inside the held save at store.py:677-683 before any write, naming account and money in/out. All 11 tests in tests/test_multi_account.py PASSED in specified-3.log:1571-1581. Not proven: 'after removing paired own-account transfers': no own-account pairing (R8) exists in src (it is T34), so the combined flows count both sides of an inter-account transfer that the profile or wording does not decide; nothing in this diff removes pairs.); major: combined_figures marks a figure or monthly cell as resting on an override only when an overridden line is still in its evidence ({m.id for m in metrics_ if lines & set(m.evidence)}), while per-account case_figures also compares with the no-override figures (_rests_on, overrides.py:345-347, 389-395). An override that moves a line out of a figure changes that combined figure's value but leaves it unmarked in the workspace's 'All accounts' section, so the underwriter sees a changed trading-receipts figure with no 'rests on an override' flag (R17 broken on the new combined view). at src/cma/overrides.py:434; reviewer verdict fail"
     },
     {
       "id": "T34",

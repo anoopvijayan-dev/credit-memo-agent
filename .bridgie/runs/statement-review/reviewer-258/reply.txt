@@ -1,0 +1,63 @@
+I found one major defect, so the verdict is **fail**. The review is based on reading the repository and the runner's logs; all 11 new tests in `tests/test_multi_account.py` show as PASSED in `specified-3.log`.
+
+**Major: overrides are not marked on the combined figures.** `combined_figures` (`src/cma/overrides.py:434-435`) marks a figure or monthly cell as "rests on an override" only when the overridden line is still among its lines. The per-account path also compares against the figures with no override (`_rests_on`, `overrides.py:345-347` and `:389-395`), so it catches a figure the override moved a line out of. The combined path skips that comparison. In the test's own setup (override savings line S2 to "other"), combined M2 drops to £610.00, but M2 is not marked and neither is January's trading-receipts cell. The same figures for the savings account alone are marked. The workspace's "All accounts" section therefore shows a changed trading-receipts figure with no sign that an override changed it. `test_override_marks_combined_figures` only checks M25, which still holds the line, so it doesn't catch this.
+
+**R41 itself is `not_proven`.** Everything else R41 asks for is in the code and tested:
+- account-prefixed line ids;
+- flow figures across accounts;
+- balance figures on the combined close over shared days;
+- n/a with the reason when there's no overlap;
+- the import refusal at the combined limit, which names the account and the flow and leaves the case unchanged.
+
+The gap is "after removing paired own-account transfers". Pairing is T34's job (R8/R9) and isn't built, so the combined figures count both sides of a transfer between the case's accounts unless the profile or the wording happens to decide it.
+
+**Minor findings:**
+- **Missing statement files are dropped silently.** An account whose statement file is missing disappears from "All accounts", and the page still says the figures are across every account. An unreadable file is also skipped by the import limit check.
+- **Probe claims aren't proven.** The 403s without a token, the timing on 10,000 lines, the refusal of `*` and `a:b` as account keys, and re-import idempotency come from a scratchpad probe the runner didn't run.
+
+```json
+{
+  "task": "T33",
+  "criteria": [
+    {
+      "id": "R41",
+      "tier": "adversarial",
+      "check": "Prefixed ids: metrics.case_line_id/case_statement (src/cma/metrics.py:381-401), unique because ACCOUNT_KEY holds no colon; shown via overrides.combined_figures (src/cma/overrides.py:414-437) and summary/drilldown 'All accounts'. Flow figures across accounts: compute() on the merged statement (metrics.py compute_case). Balance figures on combined end-of-day balance over shared days: case_closes (metrics.py:418-433), _closes_balance_figures (:436-465), _month_balance_cells (:941-973); n/a with reason when no overlap (NO_SHARED_DAYS) and per month (NO_SHARED_DAYS_IN_MONTH); n/a when no float carries a combined balance to the penny. Combined import limit: store._case_flows_at_limit (src/cma/store.py:756-777) called inside the held save at store.py:677-683 before any write, naming account and money in/out. All 11 tests in tests/test_multi_account.py PASSED in specified-3.log:1571-1581. Not proven: 'after removing paired own-account transfers': no own-account pairing (R8) exists in src (it is T34), so the combined flows count both sides of an inter-account transfer that the profile or wording does not decide; nothing in this diff removes pairs.",
+      "result": "not_proven",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-258/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/overrides.py",
+      "line": 434,
+      "criterion": "R41",
+      "claim": "combined_figures marks a figure or monthly cell as resting on an override only when an overridden line is still in its evidence ({m.id for m in metrics_ if lines & set(m.evidence)}), while per-account case_figures also compares with the no-override figures (_rests_on, overrides.py:345-347, 389-395). An override that moves a line out of a figure changes that combined figure's value but leaves it unmarked in the workspace's 'All accounts' section, so the underwriter sees a changed trading-receipts figure with no 'rests on an override' flag (R17 broken on the new combined view).",
+      "repro": "Setup of tests/test_multi_account.py::test_override_marks_combined_figures: case main=MAIN, savings=SAVINGS; overrides.add_override(folder, 'S2', 'other', reason='not trading', name='Pat', account='savings'); both = overrides.combined_figures(overrides.case_figures(folder)). Combined M2 is 610.00, down from 660.00, but 'M2' not in both.marked and ('2026-01','trading_receipts') not in both.marked_cells, whereas 'M2' in overrides.case_figures(folder)['savings'].marked. The existing test asserts only M25."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/store.py",
+      "line": 774,
+      "criterion": "R41",
+      "claim": "An existing account whose statement cannot be read is skipped by the combined limit check, and an account whose statements/<key>.csv is missing is silently dropped by case_figures (overrides._load returns None, then continue), so the 'All accounts' section, captioned 'Across every account of the case' (COMBINED_BASIS), omits that account without saying so.",
+      "repro": "Three-account case main/savings/third; delete statements/third.csv; open the workspace: the 'All accounts' section shows figures over main and savings only, with no note that third is missing; with a third file that load_csv refuses, a fourth import is checked against the limit without third's amounts."
+    },
+    {
+      "severity": "minor",
+      "file": null,
+      "line": null,
+      "criterion": "R41",
+      "claim": "These claims come from a scratchpad probe that the runner did not run, so they are unproven: the 403 for /lines?account=* without a token or with a wrong one, the refusal of '*' and 'a:b' as account keys, re-import idempotency in a two-account case, and 0.29 s to combine 10,000 lines.",
+      "repro": "No runner tier ran scratchpad/probe.py; grep of specified-3.log shows no test for these. A committed test marked @pytest.mark.contracts (token gate on /lines?account=*, account='*' refused) would prove them."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "claude-opus-5-5"
+  }
+}
+```
