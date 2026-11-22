@@ -60,7 +60,9 @@ LEDGER_WAIT = 10.0  # seconds a purge waits for another to finish writing the le
 PROFILE = "case.yaml"
 INPUTS = "inputs"
 STATEMENTS = "statements"
-FORMATS = ("csv", "monzo", "openbanking", "truelayer")
+FORMATS = ("csv", "monzo", "openbanking", "truelayer", "bank-csv")
+# A bank CSV names its profile after a colon (bank-csv:lloyds), or takes --mapping FILE (R38).
+BANK_CSV = "bank-csv"
 # Formats that rebuild the balance as an OBIE file does, and so take --statement-balance and --at.
 BALANCE_FORMATS = ("openbanking", "truelayer")
 # The provider's own categories, beside statements/<account>.csv: untrusted hints, by line id,
@@ -546,20 +548,44 @@ class Imported:
 
 def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
                 opening_balance: str | None = None, statement_balance: str | None = None,
-                at: str | None = None) -> Imported:
+                at: str | None = None, mapping: Path | None = None) -> Imported:
     """Import a bank file into a case: the original into inputs/ by its hash, the converted
     statement into statements/<account>.csv, checked by the statement loader, and one log
     entry (R42). The same file imported again leaves the case unchanged (R39)."""
-    from .importers import contract, monzo, openbanking, truelayer
+    from .importers import bankcsv, contract, monzo, openbanking, truelayer
 
     folder = Path(folder)
-    if fmt not in FORMATS:
-        raise CaseStoreError(f"unknown format {fmt!r}; use one of {', '.join(FORMATS)}")
+    base, colon, bank_profile = fmt.partition(":") if isinstance(fmt, str) else (fmt, "", "")
+    if base not in FORMATS or (colon and base != BANK_CSV):
+        raise CaseStoreError(f"unknown format {fmt!r}; use one of {', '.join(FORMATS)} or {BANK_CSV}:PROFILE")
     if fmt not in BALANCE_FORMATS and (statement_balance is not None or at is not None):
         raise CaseStoreError("--statement-balance and --at are for an Open Banking or TrueLayer file")
     if fmt in BALANCE_FORMATS and opening_balance is not None:
-        raise CaseStoreError("--opening-balance is for a Monzo export; for an Open Banking or TrueLayer file "
-                             "pass --statement-balance AMOUNT --at DATE")
+        raise CaseStoreError("--opening-balance is for a Monzo export or a bank CSV; for an Open Banking or "
+                             "TrueLayer file pass --statement-balance AMOUNT --at DATE")
+    bank_mapping: dict[str, Any] | None = None
+    mapping_sha: str | None = None
+    if mapping is not None and base != BANK_CSV:
+        raise CaseStoreError("--mapping is for a bank CSV (--format bank-csv)")
+    if base == BANK_CSV:
+        try:
+            if bank_profile and mapping is not None:
+                raise CaseStoreError("--mapping is for --format bank-csv without a profile; a named profile is "
+                                     "its own mapping")
+            if bank_profile:
+                bank_mapping = bankcsv.profile(bank_profile)
+            elif mapping is None:
+                raise CaseStoreError("--format bank-csv needs a column mapping: pass --mapping FILE or name a "
+                                     f"profile, one of {', '.join(f'{BANK_CSV}:{n}' for n in bankcsv.profile_names())}")
+            else:
+                mapping = Path(mapping)
+                if not mapping.is_file():
+                    raise CaseStoreError(f"no mapping file at {mapping}")
+                mapping_data = mapping.read_bytes()  # read once; hashed and used from these bytes
+                mapping_sha = hashlib.sha256(mapping_data).hexdigest()
+                bank_mapping = bankcsv.parse_mapping(mapping_data, mapping.name)
+        except contract.ImportRefused as e:
+            raise CaseStoreError(str(e)) from None
     if not isinstance(account, str) or not ACCOUNT_KEY.fullmatch(account):
         raise CaseStoreError("an account key is lowercase letters, digits, _ and -, starting with a "
                              "letter or digit, at most 32 characters")
@@ -595,6 +621,16 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
             except contract.ImportRefused as e:  # by line, never a cell's value (T28)
                 raise CaseStoreError(f"import refused: {str(e).replace(str(raw), src.name)}") from None
             out = converted.read_bytes()
+        elif base == BANK_CSV:
+            raw = work / "export.csv"
+            converted = work / "statement.csv"
+            _write_private(raw, data)
+            _write_private(converted, b"")
+            try:
+                bankcsv.convert(raw, converted, mapping=bank_mapping, opening_balance=opening_balance)
+            except contract.ImportRefused as e:  # by line, never a cell's value (T28)
+                raise CaseStoreError(f"import refused: {str(e).replace(str(raw), src.name)}") from None
+            out = converted.read_bytes()
         elif fmt in BALANCE_FORMATS:
             raw = work / "export.json"
             converted = work / "statement.csv"
@@ -624,7 +660,8 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
         entry = {"account": account, "format": fmt, "input_sha256": sha,
                  "statement_sha256": hashlib.sha256(out).hexdigest(), "lines": len(stmt.transactions),
                  "start": stmt.start.isoformat(), "end": stmt.end.isoformat(),
-                 **(counted if fmt in BALANCE_FORMATS else {})}
+                 **(counted if fmt in BALANCE_FORMATS else {}),
+                 **({"mapping_sha256": mapping_sha} if mapping_sha is not None else {})}
         with _recorded(folder, "import") as save:
             if any(_imported(e, sha) for e in save.entries):
                 return Imported(account, sha, 0, "", "", already=True)  # R39: nothing changes
