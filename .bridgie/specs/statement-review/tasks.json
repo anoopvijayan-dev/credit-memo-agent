@@ -685,12 +685,12 @@
       "depends_on": [
         "T26"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "verify",
+      "attempts": 2,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
-      "escalation": null
+      "branch": "bridgie-task/statement-review/T38",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-270/evidence.json",
+      "escalation": "attempt 1 of 3 fail: R44 fail (Checked src/cma/verify.py (_verify_run:185-222, _verify_pack:228-290, _compare:103-125, _compare_months:128-155, _check_shape:305-334), src/cma/overrides.py:371-419, and src/cma/cli.py:936-987 against R44 and runner logs (contracts-4.log:1068-1090, invariants-5.log:1070-1085). Failed due to 3 major defects: unrecorded accounts imported after sign-off pollute pack recomputation, bool/number type confusion hides tampered values, and malformed record shapes crash with unhandled exceptions or wrong override slicing.); P13 fail (Checked src/cma/verify.py:_verify_pack (lines 228-290) and src/cma/overrides.py:385-414 against P13 and invariants-5.log:1070-1085. While existing tests pass when no new account is added after sign-off, importing another account into the case after sign-off leaves all recorded inputs intact yet causes verify() to run pair_own_accounts against the unrecorded account and report mismatches on the signed pack.); major: _verify_pack recomputes via overrides.case_figures(folder, ...) over every account currently in the case log instead of restricting to inputs['statements']. Importing a second account into a case after a 1-account pack was signed off causes pair_own_accounts to mutate the signed account's categories/figures and appends Mismatch('account <new>', 'not recorded', 'recomputed'), failing verification (exit 1) on an untampered signed pack whose recorded inputs are all unchanged. at src/cma/verify.py:265; major: _compare (line 118) and _compare_months (lines 142, 148) compare recorded and recomputed values with plain Python !=, where True == 1.0, False == 0.0, 0 == False, and 1 == True. Tampering numeric figures or monthly cells with booleans, or part_month with 0/1, silently passes verification with zero mismatches. at src/cma/verify.py:118; major: _check_shape misses multiple malformed evidence record shapes, refuting claim #1 and causing unhandled exceptions (traceback, exit 1) or silent wrong override slicing instead of VerifyRefused (exit 2): (1) {'accounts': None} crashes with TypeError at verify.py:318; (2) non-dict monthly cells (e.g. 'money_in': 500.0 or '500.00') crash with TypeError/AttributeError at verify.py:147-148; (3) non-dict inputs.statements or inputs.override_log crashes with AttributeError at verify.py:247/261, non-int inputs.own_account_pairing_days crashes with TypeError in pair_own_accounts, and bool/negative/non-int inputs.override_log.position (True, False, -1, None) silently slices records[:1]/records[:0]/records[:-1] or applies post-sign-off overrides at overrides.py:388-392; (4) malformed money_in.total/cash_within_trading (e.g. {'id': ['M17']} or 'bad') crashes with TypeError at verify.py:113 or reports a mismatch (exit 1). at src/cma/verify.py:318; reviewer verdict fail"
     },
     {
       "id": "T39",

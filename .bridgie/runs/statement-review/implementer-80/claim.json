@@ -1,0 +1,63 @@
+{
+  "task": "T38",
+  "claims": [
+    {
+      "text": "P13: an account imported into the case after sign-off is no longer among the recorded inputs. verify recomputes only the accounts the pack recorded (inputs.statements), through the new accounts= parameter of overrides.case_figures. So the new account neither pairs with the signed one nor shows up as 'not recorded'. Before the fix this test failed with 22 mismatches, the first being 'account main: figure M2 value' 1050.95 vs 550.35.",
+      "proof_cmd": "python -m pytest tests/test_verify.py -v -k imported_after_sign_off",
+      "proof_output": "tests/test_verify.py::test_p13_an_account_imported_after_sign_off_is_not_among_the_recorded_inputs PASSED"
+    },
+    {
+      "text": "R44: recorded and recomputed values are compared as JSON values (_same), so a boolean is never equal to a number. M7 and M13 set to true/false, and a monthly cell value set to a boolean, are reported as mismatches. A part_month given as 0/1 is refused.",
+      "proof_cmd": "python -m pytest tests/test_verify.py -v -k boolean",
+      "proof_output": "tests/test_verify.py::test_a_boolean_in_place_of_a_number_is_a_mismatch_and_a_flag_given_as_a_number_is_refused PASSED"
+    },
+    {
+      "text": "R44: malformed record shapes now raise VerifyRefused (exit 2) instead of a traceback or wrong override slicing. Cases covered: accounts None; non-object monthly cells; inputs.statements or inputs.override_log that are not objects; an override_log position that is negative, a boolean, None or missing; own_account_pairing_days given as a string, a boolean or a negative number; money_in.total or cash_within_trading that is not a figure with a text id; duplicate metric ids, months, accounts or bucket ids; a run record whose statement sha256 is missing or empty. Total money in (M17) and M18 are compared in their own places, so moving M17 into the buckets is a mismatch.",
+      "proof_cmd": "python -m pytest tests/test_verify.py -q -m contracts",
+      "proof_output": "51 passed, 17 deselected in 5.20s"
+    },
+    {
+      "text": "The P13 and P3 invariants in test_verify.py still pass, including the 12 generated two-account packs.",
+      "proof_cmd": "python -m pytest tests/test_verify.py -q -m invariants",
+      "proof_output": "17 passed, 51 deselected in 7.00s"
+    },
+    {
+      "text": "Lint and compile are clean, and the full suite passes.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && echo COMPILED && python -m pytest -q -x 2>&1 | tail -3",
+      "proof_output": "All checks passed!\nCOMPILED\n2964 passed in 373.69s (0:06:13)"
+    }
+  ],
+  "files_changed": [
+    "src/cma/verify.py",
+    "src/cma/overrides.py",
+    "tests/test_verify.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major P13 src/cma/verify.py:265 — _verify_pack recomputes over every account currently in the case log instead of inputs['statements']; an account imported after sign-off pairs with the signed one and fails verification.",
+      "disposition": "reproduced",
+      "evidence": "Reproduced by test_p13_an_account_imported_after_sign_off_is_not_among_the_recorded_inputs, which failed on the old code with 22 mismatches. Fix: overrides.case_figures takes accounts=, and _verify_pack passes inputs['statements']. The test now passes with no mismatches and 28 figures checked."
+    },
+    {
+      "finding": "major R44 src/cma/verify.py:118 — _compare/_compare_months use plain != so True==1.0, False==0.0, 0==False hide tampered figures, cells and part_month.",
+      "disposition": "reproduced",
+      "evidence": "Comparisons now go through _same, which compares JSON values and treats a boolean as equal only to a boolean. part_month must be a boolean, or the record is refused. Test: test_a_boolean_in_place_of_a_number_is_a_mismatch_and_a_flag_given_as_a_number_is_refused."
+    },
+    {
+      "finding": "major R44 src/cma/verify.py:318 — _check_shape misses malformed shapes: accounts None; non-dict monthly cells; non-dict inputs.statements/override_log; non-int pairing days; bool/negative/None position; malformed money_in.total/cash_within_trading.",
+      "disposition": "reproduced",
+      "evidence": "_check_shape now covers each of these. It requires accounts to be a list. _months checks part_month, start, end and each cell's type. _figure checks money_in.total and cash_within_trading. _check_inputs requires statements to be an object of text hashes, position to be a whole number of records (not a boolean), and own_account_pairing_days to be a whole number. _verify_pack passes those values straight through, never None. Tests: the parametrised test_a_malformed_run_record_is_refused_never_raised and test_a_malformed_pack_record_is_refused_never_raised_or_misread, which cover every repro the finding gives."
+    },
+    {
+      "finding": "minor R44 src/cma/verify.py:200 — _verify_run skips the statement hash check when statement.sha256 is null, empty or absent.",
+      "disposition": "reproduced",
+      "evidence": "A run record (v0 or v1) with no text sha256 is now refused. Both releases' evidence records write one. Tested by the _no_sha and empty-sha cases of test_a_malformed_run_record_is_refused_never_raised."
+    },
+    {
+      "finding": "minor R44 src/cma/verify.py:108 — duplicate metric/bucket/month/account entries, or M17 moved from money_in.total into buckets, verify with zero mismatches.",
+      "disposition": "reproduced",
+      "evidence": "_list_of_objects now refuses a key given more than once, which covers metrics, months, accounts and buckets (the duplicate cases in the malformed-record tests). _compare_money_in compares total and cash_within_trading each in its own place, so moving M17 into the buckets gives 'account main: bucket total' (test_a_bucket_moved_out_of_its_place_is_a_mismatch)."
+    }
+  ],
+  "notes": "verify is stricter now: a malformed record is refused (exit 2) rather than reported as a mismatch (exit 1). In particular, a part_month given as 0/1 is refused, not reported as a mismatch. I did not re-run the evals or the dual_run tier on their own; both are inside the full pytest run only where they are pytest tests. The committed example and the generated two-account packs still verify with no mismatch."
+}

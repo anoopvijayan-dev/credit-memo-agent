@@ -246,6 +246,21 @@ def _stored_state_problem(values: dict) -> str | None:
     return None
 
 
+def _place_new(part: Path, path: Path) -> None:
+    """Move a finished staging file to `path` only if nothing is there: a hard link fails when
+    `path` exists, so a memo or evidence written by another run in the meantime is never
+    replaced (FileExistsError). Where hard links are not supported, the file is moved in place
+    after a last check that `path` is free."""
+    try:
+        os.link(part, path)
+    except FileExistsError:
+        raise
+    except OSError:
+        if path.exists():
+            raise FileExistsError(str(path)) from None
+        os.replace(part, path)
+
+
 def _refuse_to_overwrite(out: Path | None) -> None:
     """Never replace an earlier memo or its evidence: the pair is the audit record."""
     if out is None:
@@ -373,16 +388,29 @@ def _review(graph, cfg, state, reviewer, yes, out, lock: Path | None = None):
         # and moved into place, evidence first: a failure while making them writes nothing,
         # and no memo is left without its evidence (T04 review 27).
         record = json.dumps(evidence_record({**final, "ruleset": ruleset}), indent=2, default=str)
+        placed: list[Path] = []
         for path, text in ((evidence, record), (target, final["final_memo"])):
             # A staging file with a name of its own, never an existing sibling (T04 review 28).
             fd, part = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".part")
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(text)
-                os.replace(part, path)
+                _place_new(Path(part), path)
+                placed.append(path)
+            except FileExistsError:
+                # Another run wrote this memo or evidence since this one checked (_refuse_to_overwrite):
+                # the earlier pair is the audit record, so nothing of this run's is left in its place.
+                for p in placed:
+                    p.unlink(missing_ok=True)
+                console.print(f"[red]Refusing to overwrite {path}, written while this run was open. "
+                              "Choose another --out; nothing was written.[/red]")
+                raise typer.Exit(code=2) from None
             except BaseException:
-                Path(part).unlink(missing_ok=True)
+                for p in placed:
+                    p.unlink(missing_ok=True)
                 raise
+            finally:
+                Path(part).unlink(missing_ok=True)
         console.print(f"wrote {target} and {evidence}")
     if not approved:
         console.rule("Not approved")

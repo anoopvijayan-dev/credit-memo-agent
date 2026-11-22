@@ -1,0 +1,27 @@
+{
+  "task": "T38",
+  "claims": [
+    {"text": "P13 (invariants): a signed pack's evidence.json verified against its case reproduces every figure (28), bucket and monthly cell with no mismatch; an override added after sign-off is not among the recorded inputs (override log read up to the recorded position); a changed figure, bucket or cell is reported by where it is. P3 (invariants): overrides applied one at a time equal a fresh computation, and verifying twice gives the same result.",
+     "proof_cmd": "python -m pytest -p no:cacheprovider tests/test_verify.py -m invariants -v",
+     "proof_output": "test_p13_signed_pack_evidence_reproduces_every_figure_bucket_and_cell PASSED; test_p13_later_overrides_do_not_change_what_a_signed_pack_verifies_against PASSED; test_p13_a_changed_figure_bucket_or_cell_is_reported PASSED; test_p3_figures_twice_and_overrides_one_at_a_time_equal_a_fresh_computation PASSED (4 passed, 13 deselected)"},
+    {"text": "R44/R45 and v0 (contracts): `cma run` records are recomputed from the statement file they hashed (refused if the file changed), under the recorded ruleset whatever CMA_RULESET says; a record from another ruleset (unknown id, or installed table's sha differs) is refused before anything is computed, naming the record's package version, ruleset id and sha (and the installed sha); CLI exits 2 then, 1 on a mismatch, 0 with none; a record with no schema_version is checked for M1-M16 only under v1 and says so; a pack whose case profile/statement/firm rules changed is refused naming the input; a pack verified against another case is refused; the committed example verifies with no mismatch.",
+     "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_verify.py -m contracts",
+     "proof_output": "13 passed, 4 deselected in 5.30s"},
+    {"text": "Full suite passes, including test_pack_evidence (run evidence now carries package_version, additive per R53) and test_v2_default (committed example).",
+     "proof_cmd": "python -m pytest -q -p no:cacheprovider",
+     "proof_output": "2913 passed in 371.03s (0:06:11)"},
+    {"text": "Lint, compile and offline evals pass.",
+     "proof_cmd": "ruff check src tests && python -m compileall -q src && echo compile-ok && python evals/run_evals.py | tail -1",
+     "proof_output": "All checks passed!\ncompile-ok\n9/9 featured cases match truth (features: acquirers, director, cash, lenders, two_accounts)"}
+  ],
+  "files_changed": [
+    "src/cma/verify.py",
+    "src/cma/cli.py",
+    "src/cma/overrides.py",
+    "src/cma/graph.py",
+    "examples/cafe_stretched.memo.evidence.json",
+    "tests/test_verify.py",
+    "tests/test_pack_evidence.py"
+  ],
+  "notes": "New C8 module src/cma/verify.py with `cma verify EVIDENCE [--case CASE] [--statement PATH]` (exit 0 none / 1 mismatch / 2 refused). Pack records: the figure-relevant recorded inputs (statements, profile, firm rules) must still be in the case or verify refuses naming them; the override log is replayed only to its recorded position via a new optional `override_position` on overrides.case_figures (default unchanged); pairing days from the recorded inputs. Run records: the statement path is tried as recorded, then beside the evidence file. The recorded ruleset is set via CMA_RULESET only for the recomputation and restored after. `cma run`'s evidence record gains `package_version` (additive, R53) so R45's refusal can name it; the committed example's evidence gained the same key, and test_pack_evidence's exact key set was extended by that one key. Records without package_version are named as 'an unrecorded package version'. Compared per figure: value, unit, evidence, evidence_note (v0: value and evidence of M1-M16); buckets: M17, M2, M19-M25, M18 value/unit/evidence; monthly cells: every field of each of the six cells plus part_month/start/end. Indicators and line categories are not compared (not asked by R44). Commit ba17dcd on the task branch."
+}

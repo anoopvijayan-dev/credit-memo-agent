@@ -1,0 +1,45 @@
+I've built `cma verify` (T38) and committed it as `ba17dcd`. It recomputes every figure, bucket and monthly cell an evidence record holds from the inputs it recorded, and prints each mismatch or "no mismatch". All 2913 tests pass, ruff and compileall are clean, and the offline evals match truth on 9/9 cases.
+
+- **Exit codes:** 0 when nothing differs, 1 when something does, 2 when the record can't be verified.
+- **Signed pack records:**
+  - Verify first checks that the case still holds the pack's statements, profile and firm rules. If any of these changed, it refuses and names which one.
+  - It reads the override log only up to the position the pack recorded, so an override added after sign-off doesn't produce a false mismatch. For this, `overrides.case_figures` got an optional `override_position` argument; leaving it out behaves as before.
+  - It finds the case from the id in the record, or from `--case`. It refuses a record checked against a different case.
+- **`cma run` records:** verify reads the statement file the record names, also looking for it next to the evidence file, or takes one from `--statement`. It refuses if the file's bytes aren't the ones the record hashed.
+- **Another ruleset (R45):** verify refuses before computing anything if the ruleset id is unknown or the installed table hashes differently. The refusal names the record's package version, ruleset id and hash, plus the installed hash. A record made under v1 is checked under v1, whatever `CMA_RULESET` is set to.
+- **v0 records (no `schema_version`):** only M1 to M16 are compared, under v1, and the output says that's all it can check.
+- **Not compared:** indicators and each line's category. R44 doesn't ask for them; adding them would be simple.
+
+One change outside verify: `cma run`'s evidence record now carries `package_version`, so the R45 refusal can name the version for those records too. It's a new field, which R53 allows. I added the same field to the committed example's evidence, and widened the exact key set in `test_pack_evidence` by that one key. A record written before this change shows up in the refusal as "an unrecorded package version".
+
+The claim is in `.bridgie/runs/statement-review/implementer-79/claim.json`.
+
+```json
+{
+  "task": "T38",
+  "claims": [
+    {"text": "P13 (invariants): a signed pack's evidence.json verified against its case reproduces every figure (28), bucket and monthly cell with no mismatch; an override added after sign-off is not among the recorded inputs (override log read up to the recorded position); a changed figure, bucket or cell is reported by where it is. P3 (invariants): overrides applied one at a time equal a fresh computation, and verifying twice gives the same result.",
+     "proof_cmd": "python -m pytest -p no:cacheprovider tests/test_verify.py -m invariants -v",
+     "proof_output": "test_p13_signed_pack_evidence_reproduces_every_figure_bucket_and_cell PASSED; test_p13_later_overrides_do_not_change_what_a_signed_pack_verifies_against PASSED; test_p13_a_changed_figure_bucket_or_cell_is_reported PASSED; test_p3_figures_twice_and_overrides_one_at_a_time_equal_a_fresh_computation PASSED (4 passed, 13 deselected)"},
+    {"text": "R44/R45 and v0 (contracts): `cma run` records are recomputed from the statement file they hashed (refused if the file changed), under the recorded ruleset whatever CMA_RULESET says; a record from another ruleset (unknown id, or installed table's sha differs) is refused before anything is computed, naming the record's package version, ruleset id and sha (and the installed sha); CLI exits 2 then, 1 on a mismatch, 0 with none; a record with no schema_version is checked for M1-M16 only under v1 and says so; a pack whose case profile/statement/firm rules changed is refused naming the input; a pack verified against another case is refused; the committed example verifies with no mismatch.",
+     "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_verify.py -m contracts",
+     "proof_output": "13 passed, 4 deselected in 5.30s"},
+    {"text": "Full suite passes, including test_pack_evidence (run evidence now carries package_version, additive per R53) and test_v2_default (committed example).",
+     "proof_cmd": "python -m pytest -q -p no:cacheprovider",
+     "proof_output": "2913 passed in 371.03s (0:06:11)"},
+    {"text": "Lint, compile and offline evals pass.",
+     "proof_cmd": "ruff check src tests && python -m compileall -q src && echo compile-ok && python evals/run_evals.py | tail -1",
+     "proof_output": "All checks passed!\ncompile-ok\n9/9 featured cases match truth (features: acquirers, director, cash, lenders, two_accounts)"}
+  ],
+  "files_changed": [
+    "src/cma/verify.py",
+    "src/cma/cli.py",
+    "src/cma/overrides.py",
+    "src/cma/graph.py",
+    "examples/cafe_stretched.memo.evidence.json",
+    "tests/test_verify.py",
+    "tests/test_pack_evidence.py"
+  ],
+  "notes": "New C8 module src/cma/verify.py with `cma verify EVIDENCE [--case CASE] [--statement PATH]` (exit 0 none / 1 mismatch / 2 refused). Pack records: the figure-relevant recorded inputs (statements, profile, firm rules) must still be in the case or verify refuses naming them; the override log is replayed only to its recorded position via a new optional `override_position` on overrides.case_figures (default unchanged); pairing days from the recorded inputs. Run records: the statement path is tried as recorded, then beside the evidence file. The recorded ruleset is set via CMA_RULESET only for the recomputation and restored after. `cma run`'s evidence record gains `package_version` (additive, R53) so R45's refusal can name it; the committed example's evidence gained the same key, and test_pack_evidence's exact key set was extended by that one key. Records without package_version are named as 'an unrecorded package version'. Compared per figure: value, unit, evidence, evidence_note (v0: value and evidence of M1-M16); buckets: M17, M2, M19-M25, M18 value/unit/evidence; monthly cells: every field of each of the six cells plus part_month/start/end. Indicators and line categories are not compared (not asked by R44). Commit ba17dcd on the task branch."
+}
+```
