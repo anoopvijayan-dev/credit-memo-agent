@@ -305,6 +305,8 @@ class CaseFigures:
     vat_stagger: int | None = None          # the profile's, as these figures were computed with
     proposed_repayment: Any = None
     closes: Any = None              # a case's combined figures: the combined end-of-day balance (R41)
+    bare: Statement | None = None   # categorised with no override, when any is applied: only compared with
+    missing: list[str] = field(default_factory=list)  # the case's accounts with no statement file (R41)
 
 
 class CaseNotReconciled(ReconciliationError):
@@ -360,6 +362,7 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
     state = _decide(_read_records(folder, entries), statements)
     out: dict[str, CaseFigures] = {}
     failed: list[ReconciliationError] = []
+    missing = [a for a in accounts if statements[a] is None]
     for account in accounts:
         loaded = statements[account]
         if loaded is None:
@@ -379,6 +382,7 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
         marked: set[str] = set()
         cells: set[tuple[str, str]] = set()
         if applied:
+            _categorise(base_statement := _copy(bare), sha, profile, {})  # for the case's combined figures
             try:
                 base_metrics, base_monthly = _bare_figures(bare, sha, profile)
             except ReconciliationError:
@@ -402,7 +406,8 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
         out[account] = CaseFigures(account, sha, statement, metrics, monthly,
                                    {k: v.ref for k, v in applied.items()},
                                    [s for s in state.stale if s.account == account], marked, cells,
-                                   profile["vat_stagger"], profile["proposed_monthly_repayment"])
+                                   profile["vat_stagger"], profile["proposed_monthly_repayment"],
+                                   bare=base_statement if applied else None, missing=missing)
     if failed:  # R3: no figures for any account of the case
         raise CaseNotReconciled(failed)
     return out
@@ -418,7 +423,9 @@ def combined_figures(figures: dict[str, CaseFigures]) -> CaseFigures | None:
     the combined end-of-day balance over the days every account covers, n/a with the reason
     when those days do not exist. None for a case of one account, whose figures are its
     account's. A figure or cell is marked as resting on an override when an overridden line is
-    among its lines. The figures layer does every sum (metrics.compute_case)."""
+    among its lines, or when it differs from the same figure with no override applied, as for
+    one account (R17). An account of the case with no statement file is left out and named in
+    `missing`. The figures layer does every sum (metrics.compute_case)."""
     from . import metrics
 
     if len(figures) < 2:
@@ -428,12 +435,25 @@ def combined_figures(figures: dict[str, CaseFigures]) -> CaseFigures | None:
         {a: f.statement for a, f in figures.items()}, first.vat_stagger, first.proposed_repayment)
     overridden = {metrics.case_line_id(a, line): r for a, f in figures.items() for line, r in f.overridden.items()}
     lines = set(overridden)
+    marked = {m.id for m in metrics_ if lines & set(m.evidence)}
+    cells = {(r.month, cell) for r in monthly for cell in CELLS if lines & set(getattr(r, cell).evidence)}
+    if any(f.bare is not None for f in figures.values()):
+        try:
+            _, _, base_metrics, base_monthly = metrics.compute_case(
+                {a: f.bare if f.bare is not None else f.statement for a, f in figures.items()},
+                first.vat_stagger, first.proposed_repayment)
+        except ReconciliationError:  # as for one account: an override may be what puts a line right
+            base_metrics, base_monthly = None, None
+        if base_metrics is not None:
+            marked = {m.id for m, b in zip(metrics_, base_metrics, strict=True) if _rests_on(m, b, lines)}
+            base_rows = {r.month: r for r in base_monthly}
+            cells = {(row.month, cell) for row in monthly for cell in CELLS
+                     if row.month not in base_rows
+                     or _rests_on(getattr(row, cell), getattr(base_rows[row.month], cell), lines)}
     return CaseFigures(
         COMBINED, "+".join(f.statement_sha256 for f in figures.values()), statement, metrics_, monthly, overridden,
-        [s for f in figures.values() for s in f.stale],
-        {m.id for m in metrics_ if lines & set(m.evidence)},
-        {(r.month, cell) for r in monthly for cell in CELLS if lines & set(getattr(r, cell).evidence)},
-        first.vat_stagger, first.proposed_repayment, closes)
+        [s for f in figures.values() for s in f.stale], marked, cells,
+        first.vat_stagger, first.proposed_repayment, closes, missing=list(first.missing))
 
 
 def stale_overrides(folder: Path) -> list[Stale]:

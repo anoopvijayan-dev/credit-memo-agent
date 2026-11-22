@@ -310,7 +310,11 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
             raise
         out.update(refused)
         return out
-    out["combined"] = None if both is None else {**_account(both, []), "basis": COMBINED_BASIS}
+    out["combined"] = None if both is None else {
+        **_account(both, []), "missing": list(both.missing),
+        "basis": COMBINED_BASIS + "".join(
+            f" Account {a} has no statement file in the case folder, so it is left out of these figures."
+            for a in both.missing)}
     if rules is not None and accounts:
         out["policy_check"] = {"shown": True, "label": policy.ILLUSTRATIVE_LABEL}
     queues = [(a, f.statement, ind.judgement_queue(f.statement, raised[a])) for a, f in figures.items()]

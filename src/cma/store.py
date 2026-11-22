@@ -770,8 +770,11 @@ def _case_flows_at_limit(folder: Path, entries, new) -> list[str]:
         path = folder / STATEMENTS / f"{account}.csv"
         try:
             old = ingest.load_csv(path, account_name=account, data=path.read_bytes())
-        except (OSError, ingest.StatementError):
-            continue  # a statement that cannot be read is refused when the case's figures are computed
+        except (OSError, ingest.StatementError) as e:  # no account is left out of the limit
+            raise CaseStoreError(
+                f"account {account}'s statement in this case cannot be read, so the money in and money out "
+                "of the case's accounts together cannot be checked against £10,000,000,000,000; "
+                "nothing was added (R41)") from e
         amounts += [metrics.pence(t) for t in old.transactions]
         others += 1
     return metrics.flows_at_limit(amounts) if others else []

@@ -235,3 +235,85 @@ def test_import_refused_naming_both_flows(home, tmp_path):
     src.write_text(a.replace("A1", "B1").replace("A2", "B2").replace("2026-01-0", "2026-02-0"), encoding="utf-8")
     with pytest.raises(store.CaseStoreError, match="money in and money out"):
         store.import_file(folder, src, "csv", account="second")
+
+
+@pytest.mark.contracts
+def test_override_moving_a_line_out_marks_combined_figures(home, tmp_path):
+    # S2 (a £50 card settlement) moved to unexplained: combined M2 falls from 660.00 to 610.00,
+    # though S2 is no longer among its lines, so M2 and January's trading-receipts cell rest on
+    # the override, as each account's figures say (R17, R41).
+    _, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
+    overrides.add_override(folder, "S2", "other", reason="not trading", name="Pat", account="savings")
+    figures = overrides.case_figures(folder)
+    both = overrides.combined_figures(figures)
+    assert _by_id(both)["M2"].value == 610.00 and "savings:S2" not in _by_id(both)["M2"].evidence
+    assert "M2" in figures["savings"].marked
+    assert "M2" in both.marked and "M25" in both.marked
+    assert ("2026-01", "trading_receipts") in both.marked_cells
+    # A figure the override leaves as it was, and whose lines hold no overridden line, is not marked.
+    assert "M8" not in both.marked and ("2026-01", "money_out") not in both.marked_cells
+
+
+@pytest.mark.contracts
+def test_combined_figures_say_which_account_is_left_out(home, tmp_path):
+    case_id, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS), ("third", LATER))
+    (folder / store.STATEMENTS / "third.csv").unlink()
+    figures = overrides.case_figures(folder)
+    both = overrides.combined_figures(figures)
+    assert set(figures) == {"main", "savings"} and both.missing == ["third"]
+    s = summary.case_summary(folder, case_id)
+    assert s["combined"]["missing"] == ["third"]
+    assert "third" in s["combined"]["basis"] and "left out" in s["combined"]["basis"]
+    assert "left out" in summary.render(s)
+
+
+@pytest.mark.contracts
+def test_import_refused_when_an_account_cannot_be_read_for_the_limit(home, tmp_path):
+    _, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
+    (folder / store.STATEMENTS / "savings.csv").write_text("not,a,statement\n", encoding="utf-8")
+    before = len(caselog.for_case(folder).entries())
+    src = tmp_path / "third.csv"
+    src.write_text(LATER, encoding="utf-8")
+    with pytest.raises(store.CaseStoreError) as e:
+        store.import_file(folder, src, "csv", account="third")
+    assert "account savings" in str(e.value) and "R41" in str(e.value)
+    assert len(caselog.for_case(folder).entries()) == before
+    assert not (folder / store.STATEMENTS / "third.csv").exists()
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("key", ["*", "a:b"])
+def test_combined_key_and_colon_are_never_account_keys(home, tmp_path, key):
+    _, folder = _case(tmp_path, ("main", MAIN))
+    src = tmp_path / "x.csv"
+    src.write_text(SAVINGS, encoding="utf-8")
+    with pytest.raises(store.CaseStoreError, match="account key"):
+        store.import_file(folder, src, "csv", account=key)
+
+
+@pytest.mark.contracts
+def test_reimport_in_two_account_case_changes_nothing(home, tmp_path):
+    _, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
+    head = caselog.for_case(folder).entries()
+    src = tmp_path / "again.csv"
+    src.write_text(SAVINGS, encoding="utf-8")
+    got = store.import_file(folder, src, "csv", account="savings")
+    assert got.already and caselog.for_case(folder).entries() == head
+
+
+@pytest.mark.contracts
+def test_combined_lines_need_the_token(home, tmp_path):
+    case_id, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
+    srv = rs.start(folder, case_id, port=0)
+    srv.serve_in_thread()
+    try:
+        path = "/lines?" + urlencode({"account": "*", "figure": "M5"})
+        for headers in ({}, {"X-CMA-Token": srv.token[:-1] + ("x" if srv.token[-1] != "x" else "y")}):
+            conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=10)
+            conn.request("GET", path, headers={"Host": f"127.0.0.1:{srv.port}", **headers})
+            r = conn.getresponse()
+            body = r.read().decode("utf-8")
+            conn.close()
+            assert r.status == 403 and "main:M2" not in body
+    finally:
+        srv.close()
