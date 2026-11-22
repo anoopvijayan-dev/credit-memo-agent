@@ -248,3 +248,35 @@ def test_installed_ruleset_check_names_the_installed_hash(tmp_path, monkeypatch)
     with pytest.raises(verify.VerifyRefused) as e:
         verify.verify(ev, base=path.parent)
     assert load_ruleset("v2").sha256 in str(e.value)
+
+
+# --- the boundary: a malformed record is refused, never raised or called a mismatch ----------
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("change", [
+    {"metrics": [1, 2]}, {"metrics": "x"}, {"monthly_summary": ["x"]}, {"vat_stagger": "zz"},
+    {"vat_stagger": True}, {"ruleset": {"id": ["v2"], "sha256": "x"}}, {"statement": "s.csv"},
+    {"inputs": [], "accounts": [], "case": "abc"}, {"accounts": [{"account": "main", "metrics": [3]}], "case": "abc"},
+])
+def test_cli_verify_malformed_record_is_refused_with_exit_2(tmp_path, change):
+    ev = {**json.loads(EXAMPLE.read_text()), **change}
+    path = tmp_path / "ev.json"
+    path.write_text(json.dumps(ev))
+    r = CliRunner().invoke(app, ["verify", str(path)])
+    assert r.exit_code == 2, r.output
+    assert r.exception is None or isinstance(r.exception, SystemExit)
+    assert "Refused." in r.output
+
+
+@pytest.mark.contracts
+def test_verify_writes_nothing_in_the_case_folder(home, tmp_path):
+    _case_id, folder, ev = _signed(tmp_path)
+
+    def snapshot():
+        return {p.relative_to(folder): p.read_bytes() for p in sorted(folder.rglob("*")) if p.is_file()}
+
+    before = snapshot()
+    verify.verify(ev, case_folder=folder)
+    verify.verify(ev, case_folder=folder)
+    assert snapshot() == before

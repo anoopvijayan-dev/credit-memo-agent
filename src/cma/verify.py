@@ -290,6 +290,50 @@ def _verify_pack(record: dict[str, Any], folder: Path | None) -> VerifyResult:
     return VerifyResult("pack", "full", ruleset, checked, out)
 
 
+# --- the record's shape ----------------------------------------------------------------------------
+
+
+def _list_of_objects(value: Any, what: str, key: str | None = None) -> None:
+    if value is None:
+        return
+    if not isinstance(value, list) or not all(isinstance(v, dict) for v in value):
+        raise VerifyRefused(f"the record's {what} is not a list of objects")
+    if key is not None and not all(isinstance(v.get(key), str) for v in value):
+        raise VerifyRefused(f"an entry of the record's {what} has no {key}")
+
+
+def _check_shape(record: dict[str, Any]) -> None:
+    """Refuse, naming the field, a record whose fields are not of the kinds an evidence record
+    writes, so a hand-edited or truncated record is refused (exit 2), never reported as a
+    mismatch or raised as an error."""
+    _list_of_objects(record.get("metrics"), "metrics", "id")
+    _list_of_objects(record.get("monthly_summary"), "monthly summary", "month")
+    vat = record.get("vat_stagger")
+    if vat is not None and (isinstance(vat, bool) or vat not in (1, 2, 3)):
+        raise VerifyRefused("the record's vat_stagger is not 1, 2 or 3")
+    if "statement" in record and not isinstance(record["statement"], dict):
+        raise VerifyRefused("the record's statement is not an object")
+    if "accounts" in record:
+        _list_of_objects(record["accounts"], "accounts", "account")
+        for acct in record["accounts"]:
+            _list_of_objects(acct.get("metrics"), f"account {acct['account']} metrics", "id")
+            _list_of_objects(acct.get("monthly_summary"), f"account {acct['account']} monthly summary", "month")
+            money_in = acct.get("money_in")
+            if money_in is not None and not isinstance(money_in, dict):
+                raise VerifyRefused(f"the record's account {acct['account']} money_in is not an object")
+            if isinstance(money_in, dict):
+                _list_of_objects(money_in.get("buckets"), f"account {acct['account']} buckets", "id")
+    for name in ("ruleset", "inputs"):
+        if name in record and not isinstance(record[name], dict):
+            raise VerifyRefused(f"the record's {name} is not an object")
+    for ruleset in (record.get("ruleset"), (record.get("inputs") or {}).get("ruleset")):
+        if ruleset is not None and (not isinstance(ruleset, dict)
+                                    or not isinstance(ruleset.get("id"), (str, type(None)))):
+            raise VerifyRefused("the record's ruleset is not an object with a text id")
+    if not isinstance(record.get("statement", {}).get("sha256", ""), (str, type(None))):
+        raise VerifyRefused("the record's statement sha256 is not text")
+
+
 # --- the entry point -----------------------------------------------------------------------------
 
 
@@ -302,6 +346,7 @@ def verify(record: dict[str, Any], *, case_folder: Path | None = None, base: Pat
     path the record names; it is still checked against the recorded hash."""
     if not isinstance(record, dict):
         raise VerifyRefused("an evidence record is a JSON object")
+    _check_shape(record)
     v0 = "schema_version" not in record
     is_pack = isinstance(record.get("accounts"), list) and "case" in record
     if v0:
