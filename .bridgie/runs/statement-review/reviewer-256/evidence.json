@@ -1,0 +1,36 @@
+{
+  "task": "T30",
+  "criteria": [
+    {
+      "id": "R37",
+      "tier": "adversarial",
+      "check": "Same checks as R36: src/cma/importers/truelayer.py:177-237 keeps only settled/booked results (pending counted and left out, other status refused, :207-217), refuses non-GBP amounts and running balances (:93-95, :110-111), keeps transaction_id as the line id (:117-127, :229), refuses a repeated id with different content (:219-224), and hands every booked line to the shared openbanking.finish (openbanking.py:649-760), which applies the flow limit, same-moment ordering by the balance chain, opening balance from running balances or --statement-balance/--at, and contract.walk refusing a chain that breaks anywhere. The duplicate-key and NaN refusals come from the shared scanner via openbanking._pages. Hints: _hint (truelayer.py:156-172) builds untrusted text, convert returns it in ImportResult.hints, store.import_file writes statements/<account>.hints.json inside the logged save with undo (store.py:608-655), and overrides._load sets Transaction.provider_hint after parsing and memoising (overrides.py:239-246). grep confirms provider_hint is read nowhere else in src (models.py:95 is the field definition), so no categoriser, figure, indicator, evidence, pack or prompt code reads it. Proof the runner produced: contracts-4.log and specified-3.log each show all 45 tests in tests/test_import_truelayer.py PASSED. These include test_running_balance_golden, test_statement_balance_golden[4 params], test_the_provider_categories_change_no_byte_of_the_statement, test_figures_are_unchanged_when_the_hints_change[4 hint sets, including a comparison with the same statement imported as plain CSV], test_a_broken_chain_is_refused_naming_the_line, the GBP, pending and repeat tests, and the case-import, R39, rollback and 0600 tests.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-256/contracts-4.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/truelayer.py",
+      "line": 220,
+      "criterion": "R37",
+      "claim": "A provider category can refuse the import. The repeat check compares whole transaction objects (first[tid][1] == t), so two pages that repeat a transaction with only a different transaction_category or transaction_classification are refused as 'transaction id repeated ... with different content'. This contradicts _hint's docstring (:157-158), which says a hint 'never refuses the file, whatever it holds'. An untrusted hint decides whether the statement, and so any figure, exists. OBIE refuses any differing repeat in the same way, so this is consistent with R36, but the hint fields could be left out of the comparison.",
+      "repro": "Take tests/golden/truelayer/running_balance.json. In the second page, change tl-003's transaction_category from PURCHASE to SHOPPING, then run truelayer.convert. It raises TrueLayerImportError 'line N: transaction id repeated from line M with different content', although no field that reaches the statement differs."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/truelayer.py",
+      "line": 80,
+      "criterion": "R37",
+      "claim": "The amount check is stricter than OBIE's. _pence requires SIGNED_AMOUNT (at most two decimal places) before text_pence. OBIE's _money (openbanking.py:203) accepts any plain decimal that text_pence reads as whole pence. So a whole-pence JSON number with a trailing zero, such as -12.400, is refused by the TrueLayer importer and accepted by the OBIE one: not exactly 'the same checks'.",
+      "repro": "Set a result's amount to the JSON number -12.400 (transaction_type DEBIT, running_balance consistent) and run truelayer.convert. It is refused with 'the amount is missing or not a plain amount in whole pence'. An OBIE Amount of 12.400 with CreditDebitIndicator Debit is accepted as -1240 pence."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

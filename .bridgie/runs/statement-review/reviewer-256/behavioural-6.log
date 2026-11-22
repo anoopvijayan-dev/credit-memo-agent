@@ -1,0 +1,24 @@
+case                   policy  grounded  rate   redrafts truth              s
+cafe/good              pass    True      1.0    0        ok               1.6
+cafe/stretched         refer   True      1.0    0        ok              0.11
+cafe/poor              fail    True      1.0    0        ok              0.11
+trades/good            refer   True      1.0    0        ok              0.07
+trades/stretched       refer   True      1.0    0        ok              0.08
+trades/poor            fail    True      1.0    0        ok              0.11
+ecommerce/good         refer   True      1.0    0        ok               0.1
+ecommerce/stretched    refer   True      1.0    0        ok              0.07
+ecommerce/poor         fail    True      1.0    0        ok              0.08
+
+9/9 memos fully grounded; model = fake; ruleset = v2
+
+case (v2, case profile)          lines indicators truth
+cafe/good+features                 551          5 ok
+cafe/stretched+features            555          9 ok
+cafe/poor+features                 564         11 ok
+trades/good+features               364          4 ok
+trades/stretched+features          374          5 ok
+trades/poor+features               385          8 ok
+ecommerce/good+features            394          4 ok
+ecommerce/stretched+features       398          5 ok
+ecommerce/poor+features            407          8 ok
+9/9 featured cases match truth (features: acquirers, director, cash, lenders, two_accounts)
