@@ -1,0 +1,59 @@
+I've built `cma pseudonymise` and committed it as 766e408 on the T39 branch. The copy it writes gives exactly the same figures as the original, under both rule tables. The full suite passes (2997 tests), and ruff and compileall are clean.
+
+**What it does:** `cma pseudonymise FILE --format F --out DIR [--profile CASE]` runs the file through the importer for its format and writes a copy into a new folder that only its owner can read:
+- the statement, with names and account numbers replaced by consistent tokens;
+- the case profile, tokenised the same way;
+- a label file and a manifest, both saying it is pseudonymised personal data, not anonymous data.
+
+The token mapping is never written. Every id, date, amount and balance is kept exactly. It refuses to write into a folder that already has files in it.
+
+**How it keeps the figures the same (P10):**
+- **Kept as written:** anything the v1 or v2 rule tables recognise, such as STRIPE, IWOCA, HMRC, UNPAID DD and invoice references. So are the gambling operators and the bank wording the counterparty matching relies on (FPS, BACS, DD).
+- **Profile names:** directors, shareholders, own accounts and the business name are found in the descriptions the same way the categoriser finds them. Each becomes one token, in the profile and in every description that contains it. A director's name inside an own-account name still matches both.
+- **Everything else:** each distinct word gets its own token, so lines that named the same payer still group together.
+- **Check before writing:** the copy is categorised and its figures computed under both tables, then compared line by line, figure by figure, month by month and indicator by indicator. Any difference refuses the copy and nothing is written.
+
+Tests marked `invariants` cover every synthetic business type and risk level, with and without the extra features, plus hand-built edge cases. Tests marked `contracts` cover the command itself, including a Monzo export.
+
+**Limits:**
+- **Firm rules and overrides:** P10 is checked without them. A firm rule's pattern can name a payer the copy has replaced, so it may no longer match.
+- **Names that look like an institution:** a profile name that holds recognised wording, such as a director called IWOCA, is left as it is. The manifest counts how many were kept.
+- **One file at a time:** the command takes one statement, so there is no check across a case's several accounts.
+- **Upper case:** descriptions in the copy are upper-cased.
+
+I added a short entry for the command to the README.
+
+```json
+{
+  "task": "T39",
+  "claims": [
+    {
+      "text": "P10: for every synthetic archetype x risk profile, plain and with every feature (director, own accounts, cash, lenders, acquirers), the pseudonymised statement and profile give identical per-line categories/rules/reversals, figures M1-M28 (buckets included), monthly cells and indicators under both v1 and v2; plus hand-built cases (director inside an own-account name, two spellings, ambiguous both-kinds credit, round trips, returned DD, gambling, a profile name holding lender wording).",
+      "proof_cmd": "python -m pytest tests/test_pseudonymise.py -q -m invariants -k p10",
+      "proof_output": "22 passed, 3 deselected in 13.12s"
+    },
+    {
+      "text": "R46 CLI: `cma pseudonymise FILE --format F --out DIR [--profile CASE]` converts through the format's importer (csv, monzo, openbanking, truelayer, bank-csv:PROFILE), writes statement.csv, case.yaml (tokenised profile), PSEUDONYMISED.txt and pseudonymised.json into a new owner-only folder, labels every output as pseudonymised personal data, not anonymous data, never writes the token mapping, keeps every id/date/amount/balance, refuses to overwrite, and writes nothing for a refused statement.",
+      "proof_cmd": "python -m pytest tests/test_pseudonymise.py -q -m contracts",
+      "proof_output": "3 passed, 22 deselected in 5.41s"
+    },
+    {
+      "text": "Full suite passes with the change.",
+      "proof_cmd": "python -m pytest -q -x -p no:cacheprovider",
+      "proof_output": "2997 passed in 388.51s (0:06:28)"
+    },
+    {
+      "text": "Lint and compile are clean.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src",
+      "proof_output": "All checks passed!"
+    }
+  ],
+  "files_changed": [
+    "src/cma/pseudonymise.py",
+    "src/cma/cli.py",
+    "tests/test_pseudonymise.py",
+    "README.md"
+  ],
+  "notes": "Committed as 766e408 on bridgie-task/statement-review/T39. How the copy keeps P10: every span the v1 or v2 rules match (their patterns, and their unless/requires exceptions), the gambling operators, invoice references and the bank wording the counterparty normaliser strips (RAIL_PREFIX, OUTGOING_TRANSFER, trailing DD) are kept as they are. Case-profile names (directors, shareholders, own accounts, business name) are found with the categoriser's own name pattern. Each region they cover is replaced by the tokens of exactly the names found there, so a director inside an own-account name still matches both. A second spelling of one region gets a variant token, so counterparties group as they did before. Every other word becomes one token per distinct word: 8 letters for a word of letters, digits for a word with a digit, so counterparty() strips digit words as before. A profile name that overlaps recognised wording (a director called IWOCA) is kept unpseudonymised, and the manifest counts such names. Before anything is written, the copy is categorised and computed under v1 and v2 and compared with the original line by line, figure by figure, month by month and indicator by indicator. Any difference refuses it, naming only the figure or line id, and nothing is written. Scope limits: P10 is checked without firm rules or overrides, since a firm rule's regex may name a counterparty that the copy tokenises. P10 is checked one statement at a time, since `cma pseudonymise` takes one file. Descriptions in the copy are in the categoriser's folded form (NFC, upper case). The profile label becomes 'PSEUDONYMISED <token>'. Two profile names that differ only by separators share a token, as the categoriser already treats them as one name."
+}
+```

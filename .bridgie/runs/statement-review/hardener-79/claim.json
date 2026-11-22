@@ -1,0 +1,60 @@
+{
+  "task": "T39",
+  "claims": [
+    {
+      "text": "P10 (invariants): the pseudonymised statement and profile give the same line categories, rules, reversal links, figures (buckets included), monthly cells and indicators as the original under v1 and v2, across every synthetic archetype and risk profile, with and without every feature; every id, date, amount and balance is kept; names and account numbers become consistent tokens while institutions are kept",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider -m \"invariants or contracts\" tests/test_pseudonymise.py",
+      "proof_output": "28 passed in 13.82s"
+    },
+    {
+      "text": "Failure modes / partial failure: the copy is written into a staging folder beside --out and renamed into place, so a failure partway leaves no partial copy and the staging folder is removed. A test injects ENOSPC on the second file and checks that --out and the staging folder are both absent and that the next run succeeds",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_pseudonymise.py -k partial",
+      "proof_output": "test_a_failure_part_way_through_writing_leaves_no_partial_copy passed (part of 28 passed)"
+    },
+    {
+      "text": "Idempotency: output is deterministic (same bytes and profile on a repeat run), and a second run refuses to overwrite an existing non-empty --out with exit 2. No external calls are made, so there are no timeouts or retries",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_pseudonymise.py -k \"deterministic or labelled\"; PYTHONPATH=src python scratchpad/perf.py 6",
+      "proof_output": "both tests passed; '281 lines 2.89 s deterministic: True'"
+    },
+    {
+      "text": "Security / PII: the output folder is 0700 and each file is 0600; none of the written files contains the original names or account numbers; the token mapping is never written; a refusal names lines and figures, never description text; input passes through the importer contract and the loader, and descriptions are formula-neutralised. No new dependency is added (shutil and tempfile are standard library)",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_pseudonymise.py -k \"owner_only or refusal_names\"",
+      "proof_output": "2 passed (part of 28 passed)"
+    },
+    {
+      "text": "Labelling (R46): the CLI prints, and the output carries, the 'pseudonymised personal data, not anonymous data' label in PSEUDONYMISED.txt, in the case.yaml header and in the manifest (anonymous: false)",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_pseudonymise.py -k labelled",
+      "proof_output": "test_cli_writes_a_labelled_copy_and_a_tokenised_profile passed"
+    },
+    {
+      "text": "Regression: the full suite, ruff on src and tests, and compileall all pass",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider -x; ruff check src tests; python -m compileall -q src",
+      "proof_output": "3000 passed in 383.66s; All checks passed!; compile-ok"
+    },
+    {
+      "text": "Performance: no queries, no list endpoints; output size equals the input statement. Measured at about 5 ms per line",
+      "proof_cmd": "PYTHONPATH=src python scratchpad/perf.py 24",
+      "proof_output": "1092 lines 5.05 s deterministic: True"
+    },
+    {
+      "text": "Data / migration: not applicable. No stored format, case folder or committed fixture changes; the command is additive and only writes a new folder the user names. Rollback is removing the command",
+      "proof_cmd": "git diff --stat b564529..HEAD -- src examples",
+      "proof_output": "only src/cma/cli.py (new command) and src/cma/pseudonymise.py (new module) change under src; examples untouched"
+    },
+    {
+      "text": "Observability: the CLI prints the files written and how many words and profile names were replaced, the manifest records the same counts, and refusals exit 2. No case-log entry or alert, since this is not a case operation (gap noted)",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_pseudonymise.py -k cli",
+      "proof_output": "2 passed (cli tests assert exit 0, the output line and the label)"
+    },
+    {
+      "text": "Docs: the README documents the command, what it keeps, the personal-data label and that the mapping is never written",
+      "proof_cmd": "grep -n 'cma pseudonymise' README.md",
+      "proof_output": "README.md:176: cma pseudonymise private/statement.csv --format csv --out private/pseudo --profile <id>"
+    }
+  ],
+  "files_changed": [
+    "src/cma/pseudonymise.py",
+    "tests/test_pseudonymise.py"
+  ],
+  "notes": "Gaps for the owner. (1) Security/PII: --out can point inside the repository at a folder git does not ignore, so pseudonymised personal data could be committed. R31 refuses this for the case root but this command does not check it; whether R31 covers pseudonymise output is a design decision, so it is not coded here. (2) Performance: about 5 ms per line (281 lines in 2.9 s, 1092 in 5.1 s), so about a minute at 10,000 lines. No target is set for this command (R52 covers the workspace recompute). (3) Observability/operability: no case-log entry, alert or runbook. The command is a local one-off that refuses by exit code, matching the design's 'refuse, don't alert'. (4) Changelog: the repository has no changelog file; the README entry is the user-facing note. ruff check . reports 14 errors, all in other seats' run folders under .bridgie/runs, none in src or tests."
+}
