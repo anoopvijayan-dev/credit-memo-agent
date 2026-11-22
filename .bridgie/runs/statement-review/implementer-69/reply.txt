@@ -1,0 +1,42 @@
+I built T33 and committed it as 2f00972. A case with more than one account now gets its figures worked out across all its accounts, shown in the workspace as "All accounts". The 11 new tests pass, and the full suite passed (2,673) before my last docstring-only edit. After that edit I reran ruff, compileall and the related contract tests, but not the full suite.
+
+- **Line ids:** in the all-accounts figures, each line's id is its account key, a colon and its own id, for example `savings:S1`. Each account's own figures still use plain ids.
+- **Flow figures** (total money in, trading receipts, the money-in buckets, monthly money in and out) count every account's lines. Credits that the case profile names as own-account transfers stay out of trading receipts.
+- **Balance figures** (lowest balance M5, days overdrawn M6, average end-of-day balance M27, and the monthly balance and overdrawn-day cells) read the combined end-of-day balance on the days every account covers. Each one lists the line in each account that set that day's balance.
+- **No overlap:** when the accounts share no day, the balance figures show n/a with the reason. A month with no shared day is n/a on its own, while the other months are still worked out.
+- **Workspace:** the page shows an "All accounts" section first, and you can click through to the lines behind each figure. A change-category form there records the change against the line's real account and its own id.
+- **Import limit:** an import that would bring the case's combined money in or money out to £10,000,000,000,000 or more is refused. The message names the account and which flow would reach the limit, and the case is left unchanged.
+
+**Design choice to check:** I kept each account's own figures exactly as before and added the all-accounts figures beside them, rather than replacing them. That left overrides, the pack and the per-account policy check untouched.
+
+**Not done here:**
+- Indicators, the judgement queue and the policy check are still worked out per account only, not on the all-accounts figures.
+- The pack and its HTML record don't include the all-accounts section yet.
+- Matching transfers between the case's own accounts is the next task (T34). Once that marks them as own-account transfers, the all-accounts figures will leave them out of trading receipts, as they already do for transfers the profile names.
+
+```json
+{
+  "task": "T33",
+  "claims": [
+    {
+      "text": "Two-account fixtures with and without overlap (contracts): in a case of more than one account, the combined figures prefix every line id with its account key (unique across the case); flow figures (M17, M2, money-in buckets, monthly money in/out) count both accounts; M5, M6, M27 and the monthly balance and overdrawn-day cells read the combined end-of-day balance over the days every account covers, citing each account's setting line; with no shared day they are n/a with the reason; a month with no shared day is n/a while others are read; a one-account case has no combined figures; profile own-account transfers stay out of trading receipts across accounts; an override marks combined figures; the workspace API and page show 'All accounts', and its drill-down lists prefixed lines with override forms naming the line's own account and id; an import that would bring the case's combined money in or money out to the limit is refused naming the account and which flow, leaving the case log and statements unchanged (R41).",
+      "proof_cmd": "python -m pytest -q tests/test_multi_account.py -m contracts",
+      "proof_output": "11 passed in 9.54s"
+    },
+    {
+      "text": "Full suite passes with the change, and ruff is clean.",
+      "proof_cmd": "ruff check src tests && python -m pytest -q",
+      "proof_output": "All checks passed!\n2673 passed in 333.39s (0:05:33)"
+    }
+  ],
+  "files_changed": [
+    "src/cma/metrics.py",
+    "src/cma/overrides.py",
+    "src/cma/review/drilldown.py",
+    "src/cma/review/summary.py",
+    "src/cma/store.py",
+    "tests/test_multi_account.py"
+  ],
+  "notes": "Design choice: each account keeps its own figures (unprefixed ids, per-account indicators, policy check, overrides keyed by account and line, pack sections) unchanged; the case's figures across all accounts are added as overrides.combined_figures() (key '*', which no account key can be) and computed in the figures layer by metrics.compute_case (case_statement + case_closes, with compute()/monthly_summary() taking optional combined closes). The workspace summary carries them as 'combined' and renders an 'All accounts' section first; /lines?account=* drills into them. Line ids in the combined view are '<account>:<id>'. Not done here, as outside this task's title: indicators, the judgement queue and the policy check on the combined figures, and the pack/record carrying the combined section. Own-account pairing (R8) is T34; once it categorises pairs as own_account_transfer, the combined flow figures leave them out of trading receipts as they already do for profile-named own accounts. The R41 import limit counts each account's lines in full (before any pairing), as R41 says. The last summary.py docstring edit was made after the full-suite run; ruff, compileall and the targeted contract tests were rerun after it."
+}
+```

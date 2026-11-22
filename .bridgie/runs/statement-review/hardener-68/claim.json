@@ -1,0 +1,67 @@
+{
+  "task": "T33",
+  "claims": [
+    {
+      "text": "Tests: the new two-account fixtures (overlapping, not overlapping, a month with no shared day, one account, an own-account transfer across accounts, an override, the workspace and drill-down, the combined import limit naming each flow) pass, and so does the full suite, with no regressions.",
+      "proof_cmd": "python -m pytest tests/test_multi_account.py -q; python -m pytest -q -x",
+      "proof_output": "11 passed in 3.08s; 2673 passed in 344.26s (0:05:44)"
+    },
+    {
+      "text": "Lint and compile are clean.",
+      "proof_cmd": "ruff check src tests; python -m compileall -q src",
+      "proof_output": "All checks passed!; compile-ok"
+    },
+    {
+      "text": "Security / authz on the new entry point: the combined drill-down (/lines?account=*) goes through the same Host, Origin and token gate as every workspace route (server.py:145 before dispatch at :162). Without a token, or with the wrong one, it is refused.",
+      "proof_cmd": "PYTHONPATH=src python scratchpad/probe.py (GET /lines?account=*&figure=M5 with no token and with X-CMA-Token: wrong)",
+      "proof_output": "no/bad token status 403\nno/bad token status 403"
+    },
+    {
+      "text": "Input validation at the boundary: the COMBINED key '*' and the id separator ':' can never be an account key. ACCOUNT_KEY is [a-z0-9][a-z0-9_-]{0,31}, so 'account:line' ids are unique and '*' cannot shadow a real account.",
+      "proof_cmd": "probe: store.import_file(..., account='*') and account='a:b'",
+      "proof_output": "refused '*' CaseStoreError\nrefused 'a:b' CaseStoreError"
+    },
+    {
+      "text": "Idempotency: importing a file already in a two-account case returns already=True before the combined-limit check and writes no case-log entry (R39). The combined figures are computed on read from stored statements and overrides, so recomputing is pure.",
+      "proof_cmd": "probe: re-import savings CSV into the main+savings case, compare case-log entry count",
+      "proof_output": "reimport already True entries unchanged True"
+    },
+    {
+      "text": "Partial failure: an import refused at the combined limit leaves the case as it was. No log entry, no statement file, the account set unchanged, and the refusal is raised inside the _recorded save before any write.",
+      "proof_cmd": "pytest tests/test_multi_account.py::test_import_refused_at_combined_limit",
+      "proof_output": "passed (asserts entry count unchanged, statements/second.csv absent, case_figures keys == {'main'})"
+    },
+    {
+      "text": "Performance: combining two accounts of 5,000 lines each (10,000 lines, overlapping periods) takes 0.29 s, inside the 2-second recompute target at 10,000 lines (R52). case_closes is O(shared days x accounts). There are no queries, so no N+1 or index concerns.",
+      "proof_cmd": "probe: overrides.combined_figures(case_figures(folder)) on a 5,000+5,000-line case, timed",
+      "proof_output": "combined 10,000 lines s 0.29 lines 10000"
+    },
+    {
+      "text": "Data/migration: additive only. No stored data, log format or evidence key changes. The combined figures are derived on read, and a one-account case gets combined=None and renders as before. Reversible by reverting the commit, with no repair.",
+      "proof_cmd": "pytest tests/test_multi_account.py::test_one_account_has_no_combined_figures tests/test_multi_account.py::test_one_account_workspace_has_no_combined; git diff --stat HEAD~1",
+      "proof_output": "both passed; 6 files changed, 543 insertions(+), 46 deletions(-) (no schema, log or fixture files)"
+    },
+    {
+      "text": "PII: combined ids carry only the account key and the line id, and the workspace shows the same lines it already showed per account. No new personal data leaves the case folder. Secrets: none added. Dependencies: none added (stdlib only).",
+      "proof_cmd": "git diff HEAD~1 -- pyproject.toml | wc -l; grep -n '^import\\|^from' tests/test_multi_account.py",
+      "proof_output": "0 (no dependency change); imports are stdlib, pytest and cma only"
+    },
+    {
+      "text": "Failure modes: balance figures are n/a with the reason when the accounts share no day, and month balance cells are n/a in a month with no shared day while flow figures are still combined (design's R41 failure-mode row).",
+      "proof_cmd": "pytest tests/test_multi_account.py::test_two_accounts_not_overlapping_balance_figures_na tests/test_multi_account.py::test_month_with_no_shared_day_is_na_others_read",
+      "proof_output": "2 passed"
+    },
+    {
+      "text": "External calls, timeouts, retries, dead letters: not applicable. The change makes no network or external call; it reads local case files under the existing case lock.",
+      "proof_cmd": "git diff HEAD~1 | grep -iE 'requests|http|socket|urlopen' | grep '^+' | grep -v test_ | wc -l",
+      "proof_output": "0"
+    },
+    {
+      "text": "Operability/flag: no feature flag. The combined view is additive, read-only and only appears for a case of two or more accounts (Tier 2). The rollback path is reverting the commit, with nothing stored to repair. No config or secret changes for deploy.",
+      "proof_cmd": "grep -n 'combined' src/cma/review/summary.py | head -3",
+      "proof_output": "summary 'combined' is None unless overrides.combined_figures returns figures (len(figures) >= 2)"
+    }
+  ],
+  "files_changed": [],
+  "notes": "No code changed by the hardener. Gaps that need the owner:\n1. Combined-limit under-count: store._case_flows_at_limit (src/cma/store.py:774) skips an existing account's statement that cannot be read, so the combined money in/out limit check at import can under-count. The comment relies on the later figures refusal. Refusing the import instead is a design choice.\n2. Pack and evidence: the pack and evidence JSON (C6, R26/R22) do not yet carry the combined figures, so sign-off of a multi-account case covers per-account figures only. Needs design: which figures the memo fields map to for a multi-account case.\n3. Observability: no log line or report count proves the combined view ran, and none counts combined-limit refusals; no alert path, which is local-only by design. Suggest a case-log/report count when cma report (R50) lands.\n4. Docs: README has no R41 line and no changelog entry; the design's Tier 2 status is unchanged.\nProbe script is at the session scratchpad (probe.py), not in the repo."
+}
