@@ -618,8 +618,21 @@ def add_override(folder: Path, line: str, category: str, *, reason: str, name: s
         profile = store.load_profile(folder)
         # The line's category now, with the overrides in force: categorised only, never the
         # figures, so a case that does not reconcile can still take the override that puts a
-        # line right (R3, R17).
-        _categorise(loaded[0], loaded[1], profile, state.applied.get(account, {}))
+        # line right (R3, R17). In a case of more than one account the own-account pairs are
+        # settled first, as case_figures settles them: a paired line is an own-account transfer
+        # now, so moving it back to what the table gave it is a change, not a no-op
+        # (Antigravity re-review of T16).
+        present = {a: v for a, v in statements.items() if v is not None}
+        if len(accounts) > 1:
+            for a, (st, sha) in present.items():
+                _categorise(st, sha, profile, state.applied.get(a, {}))
+            from . import firm
+
+            pair_own_accounts({a: v[0] for a, v in present.items()},
+                              overridden={a: state.applied.get(a, {}).keys() for a in present},
+                              days=firm.load().own_account_pairing_days)
+        else:
+            _categorise(loaded[0], loaded[1], profile, state.applied.get(account, {}))
         t = next((t for t in loaded[0].transactions if t.id == line), None)
         if t is None:
             raise store.CaseStoreError(f"no line {line} in account {account}")
