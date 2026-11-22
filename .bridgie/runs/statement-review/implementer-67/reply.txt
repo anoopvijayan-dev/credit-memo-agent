@@ -1,0 +1,79 @@
+I've built the TrueLayer importer (T30, commit `d03a1d9`), and all 2,605 tests pass, along with ruff on `src tests evals` and the compile check.
+
+**What changed:**
+- **Same checks as the Open Banking importer.** I moved the second half of the Open Banking importer into a shared function, `openbanking.finish`, and the new TrueLayer importer (`src/cma/importers/truelayer.py`) calls it. Both importers now run the same code for:
+  - the £10,000,000,000,000 limit;
+  - putting lines oldest first, including lines booked at the same moment;
+  - the opening balance, from the running balances or from `--statement-balance` and `--at`;
+  - refusing the file if the balance chain breaks anywhere.
+
+  The TrueLayer side reads the file's own fields: it keeps the provider's `transaction_id`, accepts GBP only, checks that the amount's sign matches `transaction_type`, and keeps a transaction once when a page repeats it.
+- **`cma case import --format truelayer`** now works. `--statement-balance` and `--at` are accepted for this format too, and the CLI help and README say so.
+- **Provider categories are hints only.** TrueLayer's `transaction_category` and `transaction_classification` never touch the statement file. They go into `statements/<account>.hints.json`, and are attached to `Transaction.provider_hint` only after the statement has been read and its figures cached by the statement's bytes. Nothing that computes a figure reads them.
+
+**Tests (`tests/test_import_truelayer.py`, 42 tests):**
+- **Golden files:** two hand-written exports in `tests/golden/truelayer/`, one with running balances and one with a statement balance. I checked the expected statements against the balances by hand.
+- **Figures unchanged when hints change:** metrics, monthly cells, line categories, indicators and the judgement queue come out identical across five cases:
+  - no hints;
+  - four different hint sets, including formula, script and prompt-injection text;
+  - an unreadable hints file;
+  - the same statement imported as a plain CSV.
+- **Refusals:** each one names the line and quotes nothing from the file. The Open Banking tests still pass after the refactor.
+
+**Decisions for you:**
+- **Pending transactions.** TrueLayer's transactions endpoint returns settled transactions only and has no status field. To meet R36's "booked only", I chose this rule:
+  - a transaction with `"status": "pending"` is left out and counted;
+  - one with no status, or with settled or booked, is kept;
+  - any other status refuses the file.
+- **One account per file.** TrueLayer transactions don't carry an account id, so the Open Banking check that refuses a file holding two accounts has no equivalent here.
+- **Hints in the record.** The import's case-log entry records a hash of the hints file. The sign-off snapshot doesn't include it, since no figure depends on the hints.
+
+`ruff check .` on the whole repository reports 14 errors, all in other seats' files under `.bridgie/runs/`. None are in this change.
+
+```json
+{
+  "task": "T30",
+  "claims": [
+    {
+      "text": "R37: `cma case import --format truelayer` converts a TrueLayer Data API transactions export (one response, an array of pages, or pages one after another) through the same checks as the OBIE importer: the shared tail openbanking.finish (limit on flows, oldest-first order with same-moment lines ordered so the balance chain holds, opening balance from the running balances or --statement-balance/--at, a walk that refuses a broken chain anywhere, statement written through the contract). Golden files in tests/golden/truelayer/ match byte for byte, the provider's transaction_id is kept as the line id, pending lines are left out and counted, a page's repeat is kept once.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_import_truelayer.py",
+      "proof_output": "42 passed in 3.00s"
+    },
+    {
+      "text": "Refusals as for OBIE: no balance anywhere (says to pass --statement-balance AMOUNT --at DATE), a broken running-balance chain naming the line, a non-GBP amount or balance refusing the account, a repeated id with different content naming both lines, malformed fields (id, amount not in whole pence, sign disagreeing with transaction_type, timestamp, unknown status, amount at the £10,000,000,000,000 limit) naming the transaction's line; no refusal quotes a cell and nothing is written.",
+      "proof_cmd": "python -m pytest -q tests/test_import_truelayer.py -k 'refused or malformed or not_in_gbp or broken'",
+      "proof_output": "24 passed, 18 deselected in 2.21s"
+    },
+    {
+      "text": "Provider categories (transaction_category, transaction_classification) are kept only as untrusted hints: they change no byte of the statement, are written by the case store to statements/<account>.hints.json, and are read onto Transaction.provider_hint after the statement is parsed and memoised by its bytes. Metrics, monthly cells, line categories and rule ids, indicators and the judgement queue are identical with no hints, with four different hint sets (including formula, script and prompt-injection text), with an unreadable hints file, and for the same statement imported as plain CSV.",
+      "proof_cmd": "python -m pytest -q tests/test_import_truelayer.py -k 'hints or categories'",
+      "proof_output": "7 passed, 35 deselected in 2.91s"
+    },
+    {
+      "text": "The OBIE importer's behaviour is unchanged by moving its tail into openbanking.finish.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_import_truelayer.py tests/test_import_openbanking.py",
+      "proof_output": "161 passed in 32.00s"
+    },
+    {
+      "text": "Full suite, lint and compile pass.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q -x -p no:cacheprovider",
+      "proof_output": "All checks passed! / 2605 passed in 337.64s (0:05:37)"
+    }
+  ],
+  "files_changed": [
+    "src/cma/importers/truelayer.py",
+    "src/cma/importers/openbanking.py",
+    "src/cma/store.py",
+    "src/cma/overrides.py",
+    "src/cma/cli.py",
+    "tests/test_import_truelayer.py",
+    "tests/golden/truelayer/running_balance.json",
+    "tests/golden/truelayer/running_balance.statement.golden",
+    "tests/golden/truelayer/statement_balance.json",
+    "tests/golden/truelayer/statement_balance.statement.golden",
+    ".gitattributes",
+    "README.md"
+  ],
+  "notes": "Committed as d03a1d9. TrueLayer's /transactions endpoint returns settled transactions only, and its results carry no status field; to honour R36's 'keep only booked', a result with an optional `status` of pending is left out and counted, settled/booked (or no status) is kept, anything else refused. This is a reading, since TrueLayer's pending endpoint results cannot otherwise be told apart. TrueLayer results carry no account id, so OBIE's one-account-per-file check has no equivalent. The golden files were written by hand; the generated statements were checked by hand against the running balances. Hints are recorded in the import's log entry as hints_sha256; the snapshot does not include them since no figure reads them. `ruff check .` reports 14 errors, all in files under .bridgie/runs/ from other seats, none in this change."
+}
+```

@@ -1,0 +1,13 @@
+ .gitattributes                                     |   2 +
+ README.md                                          |   4 +
+ src/cma/cli.py                                     |   9 +-
+ src/cma/importers/openbanking.py                   |  11 +
+ src/cma/importers/truelayer.py                     | 237 ++++++++++++++
+ src/cma/overrides.py                               |  10 +-
+ src/cma/store.py                                   |  53 +++-
+ tests/golden/truelayer/running_balance.json        |  93 ++++++
+ .../truelayer/running_balance.statement.golden     |   6 +
+ tests/golden/truelayer/statement_balance.json      |  33 ++
+ .../truelayer/statement_balance.statement.golden   |   4 +
+ tests/test_import_truelayer.py                     | 348 +++++++++++++++++++++
+ 12 files changed, 794 insertions(+), 16 deletions(-)
