@@ -297,7 +297,7 @@ def test_snapshot_changes_with_each_input_r22_names(home, tmp_path, monkeypatch)
     base = pack.build_preview(folder, case_id)
     assert set(base.inputs) == {"statements", "ruleset", "firm_rules_sha256", "profile_sha256", "override_log",
                                 "thresholds_sha256", "memo_field_map_sha256", "policy_sha256",
-                                "show_policy_verdict", "package_version"}
+                                "show_policy_verdict", "own_account_pairing_days", "package_version"}
     assert _snapshot(folder, case_id) == base.snapshot  # nothing changed, same hash
     seen = {base.snapshot}
 

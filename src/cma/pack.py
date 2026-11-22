@@ -367,6 +367,7 @@ def snapshot_inputs(folder: Path, entries, figures: dict[str, overrides.CaseFigu
         "memo_field_map_sha256": field_map.sha256,
         "policy_sha256": policy_sha256,
         "show_policy_verdict": bool(config.show_policy_verdict),
+        "own_account_pairing_days": config.own_account_pairing_days,
         "package_version": __version__,
     }
 
@@ -381,7 +382,7 @@ def _build(folder: Path, case_id: str, entries) -> Preview:
     config = firm.load()
     field_map = load_field_map(config)
     profile = store.load_profile(folder)
-    every = overrides.case_figures(folder)  # R3: refused when the buckets do not reconcile
+    every = overrides.case_figures(folder, pairing_days=config.own_account_pairing_days)  # R3: refused when the buckets do not reconcile
     figures = {a: f for a, f in every.items() if f.statement.transactions}
     if not figures:
         raise PreviewError("no statement has been imported into this case yet; nothing to preview")
@@ -455,6 +456,7 @@ INPUT_TITLES = {
     "memo_field_map_sha256": "the memo field map",
     "policy_sha256": "the policy file",
     "show_policy_verdict": "the show_policy_verdict setting",
+    "own_account_pairing_days": "the own-account pairing days",
     "package_version": "the package version",
 }
 
