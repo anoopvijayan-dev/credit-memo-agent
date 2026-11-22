@@ -77,6 +77,10 @@ cma case import <id> private/transactions.json --format openbanking --statement-
 # on each day's last line always imports. When only some lines at one moment carry a balance,
 # finding the order is a search: it is found in nearly every case, and otherwise the file is
 # refused saying the search limit was reached (never that the chain is broken).
+# A TrueLayer Data API transactions export gets the same checks, its running_balance read
+# as the per-line balance. TrueLayer's own categories are kept beside the statement only as
+# untrusted hints (statements/<account>.hints.json); no figure, rule or indicator reads them.
+cma case import <id> private/truelayer.json --format truelayer --account current
 
 # Correct one line's category (only the category; one valid for the line's direction),
 # with a reason and your typed name. The override goes to overrides.jsonl and the case
