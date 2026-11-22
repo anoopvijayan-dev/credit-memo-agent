@@ -933,6 +933,45 @@ def case_check(folder: Path = typer.Argument(..., help="The case folder (cases/<
     console.print(f"case log intact: {check.head.position} entries, head {check.head.hash[:12]}")
 
 
+def _yes_no(value) -> str:
+    return "not known" if value is None else ("yes" if value else "no")
+
+
+@app.command("report")
+def report_cases(
+    as_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
+):
+    """Summarise every case under the case root (R50): the judgement queue's lines, the
+    lines each indicator flagged, overrides by old and new category, the unexplained share
+    of money in, whether every figure was traced and whether the case was signed off. It
+    holds no applicant name, description or amount, and no time from the case log. Exit 1
+    when any case has a figure not traced, figures that do not reconcile, or cannot be read."""
+    from . import report
+
+    rows = report.report()
+    if as_json:
+        console.print_json(json.dumps(rows))
+    elif not rows:
+        console.print("no cases")
+    for r in [] if as_json else rows:
+        say = lambda text: console.print(text, markup=False, highlight=False, soft_wrap=True)  # noqa: E731
+        states = {"not_reconciled": "not reconciled", "refused": "could not be read", "empty": "no statement yet"}
+        say(f"case {r['case']}: {states.get(r['state'], 'figures shown')}, {r['accounts']} account(s)")
+        reasons = ", ".join(f"{k} {n}" for k, n in r["queue_by_reason"].items())
+        say(f"  judgement queue: {r['queue_lines']} lines" + (f" ({reasons})" if reasons else ""))
+        flagged = ", ".join(f"{k} {n}" for k, n in r["indicator_lines"].items()) or "none"
+        say(f"  lines flagged per indicator: {flagged}")
+        moved = ", ".join(f"{o['old']} -> {o['new']} {o['count']}" for o in r["overrides"]) or "none"
+        say(f"  overrides applied: {moved}" + (f"; {r['stale_overrides']} stale" if r["stale_overrides"] else ""))
+        say(f"  unexplained share of money in: {r['unexplained_share'] or 'n/a'}")
+        traced = _yes_no(r["traced"]) + (f" (untraced: {', '.join(r['untraced'])})" if r["untraced"] else "")
+        say(f"  every figure traced: {traced}")
+        say(f"  reconciled: {_yes_no(r['reconciled'])}")
+        say(f"  signed off: {_yes_no(r['signed_off'])}")
+    if any(report.failing(r) for r in rows):
+        raise typer.Exit(code=1)
+
+
 @app.command("review")
 def review_workspace(
     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
