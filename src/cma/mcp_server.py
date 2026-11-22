@@ -205,6 +205,31 @@ def compute_metrics(path: str, vat_stagger: int | None = None) -> list[dict]:
     return [m.model_dump() for m in metrics.compute(s, vat_stagger=vat_stagger)]
 
 
+# The money-in breakdown (R1): total money in, the eight buckets that add up to it, and the
+# cash inside trading receipts, which is part of M2 and not a bucket of its own.
+_BUCKET_IDS = ("M2", "M19", "M20", "M21", "M22", "M23", "M24", "M25")
+
+
+@server.tool()
+def money_in_buckets(path: str, vat_stagger: int | None = None) -> dict:
+    """Read only. Categorise a statement and return total money in (M17), the money-in
+    buckets that add up to it to the penny (trading receipts M2, own-account transfers in
+    M19, director and shareholder funding M20, lending drawdowns M21, refunds and returned
+    payments M22, HMRC repayments M23, other explained M24, unexplained M25) and the cash
+    deposits within trading receipts (M18, part of M2, not added again). Each comes with the
+    ids of the lines behind it, never their descriptions. A statement whose buckets do not
+    reconcile is refused (ValueError)."""
+    s = categorise.categorise(_statement(path))
+    by_id = {m.id: m for m in metrics.compute(s, vat_stagger=vat_stagger)}
+
+    def row(mid: str) -> dict:
+        m = by_id[mid]
+        return {"id": m.id, "name": m.name, "value": m.value, "unit": m.unit, "evidence": list(m.evidence)}
+
+    return {"total_money_in": row("M17"), "buckets": [row(i) for i in _BUCKET_IDS],
+            "cash_deposits_within_trading_receipts": row("M18")}
+
+
 @server.tool()
 def check_policy(path: str, policy_path: str | None = None, vat_stagger: int | None = None) -> dict:
     """Run the lending policy against a statement and return pass/refer/fail per rule."""

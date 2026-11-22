@@ -7,9 +7,9 @@ or debt service. The model never overrides a rule match.
 
 The rule table is data, not code: src/cma/rules/<id>.yaml, validated on load like the
 policy (a key repeated in a mapping is refused), with an id and the SHA-256 of the
-file's bytes. CMA_RULESET chooses the table (default v1). v1 is the table as it was
-when it lived here, frozen: its hash is pinned in FROZEN_SHA256 and any other bytes are
-refused, so CMA_RULESET=v1 always reproduces those categories. v2 adds the maintained
+file's bytes. CMA_RULESET chooses the table (default v2; v1 is the rollback). v1 is the
+table as it was when it lived here, frozen: its hash is pinned in FROZEN_SHA256 and any
+other bytes are refused, so CMA_RULESET=v1 always reproduces those categories. v2 adds the maintained
 lists of R4 (acquirers, gateways, marketplaces, delivery platforms, lenders and merchant
 cash advance providers, own pots and savings, cash paid in, cash-withdrawal wording,
 HMRC, refunds, explained non-trading money in). The matching passes below (reversals,
@@ -89,7 +89,7 @@ INVOICE_REF = re.compile(r"\bINV(?:OICE)?\s*[-#:]?\s*\d+")
 
 RULESET_ENV = "CMA_RULESET"
 RULESETS = ("v1", "v2")
-DEFAULT_RULESET = "v1"
+DEFAULT_RULESET = "v2"
 DIRECTIONS = ("in", "out", "any")
 TABLE_KEYS = {"id", "frozen", "rules", "category_order"}
 RULE_KEYS = {"id", "direction", "category"}  # required, plus a pattern or names

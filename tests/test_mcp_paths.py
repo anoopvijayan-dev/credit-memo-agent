@@ -38,6 +38,15 @@ def test_refuses_other_paths(data, path):
         mcp_server.statement_summary(path)
 
 
+@pytest.mark.parametrize("path", ["../outside.csv", "/etc/passwd", "cafe.truth.json", "missing.csv"])
+def test_money_in_buckets_reads_only_inside_the_data_dir(data, path):
+    # T11: the read-only buckets tool goes through the same path check as every tool.
+    (data / "outside.csv").write_text("x")
+    with pytest.raises(ValueError):
+        mcp_server.money_in_buckets(path)
+    assert mcp_server.money_in_buckets("cafe.csv")["total_money_in"]["id"] == "M17"
+
+
 def test_policy_path_is_checked_too(data):
     with pytest.raises(ValueError):
         mcp_server.check_policy("cafe.csv", policy_path="/etc/hosts")

@@ -1,0 +1,89 @@
+# The memo field map (R26, R27): the fields of the credit memo the pack's sections follow,
+# in this order. By default, the 13 fields the underwriter listed in the reply of 2026-11-16.
+# A firm can replace this file with its own memo_fields.yaml at the case root (or the path
+# firm.yaml names).
+#
+# Fields per entry:
+#   id        a short key: lower-case letters and _
+#   title     the field's name, as the section heading
+#   figures   the figure ids the field shows (M1 to M28); none means the field is left
+#             empty and marked for the underwriter (R27)
+#   template  one or more sentences; {Mn} is replaced by the figure as the memo quotes it,
+#             followed by its id ("£55,000 [M2]"), and {period_start} / {period_end} by the
+#             statement's first and last dates. Every figure listed is used, and nothing else.
+# Write no numbers in a template: the grounding guard reads every number in the pack's
+# text, and a number that is not a figure with its id stops the pack (R28).
+# The recommendation, credit history and key risks are judgement fields: they never map a
+# figure, whatever the policy check shows (R24).
+
+name: reply_2026_11_16
+fields:
+  - id: business_details
+    title: Business details
+
+  - id: loan_request
+    title: Loan request
+
+  - id: trading_history
+    title: Trading history
+    figures: [M1, M4]
+    template: >-
+      The statements run from {period_start} to {period_end}, covering {M1} months. Revenue
+      moved {M4}, comparing the latest quarter with the earliest.
+
+  - id: monthly_turnover
+    title: Monthly turnover and credits
+    figures: [M2, M18, M3, M17, M25, M26]
+    template: >-
+      Total revenue was {M2}, including cash deposits of {M18}, and averaged {M3} a month.
+      Total money in was {M17}, of which {M25} is unexplained, {M26} of money in.
+
+  - id: balances
+    title: Average and minimum balances
+    figures: [M27, M5, M6]
+    template: >-
+      The average end-of-day balance was {M27} and the lowest balance {M5}. The account
+      closed overdrawn on {M6} days.
+
+  - id: existing_commitments
+    title: Existing commitments
+    figures: [M8, M21]
+    template: >-
+      Loan and merchant cash advance repayments totalled {M8}, and lending drawdowns paid in
+      totalled {M21}.
+
+  - id: returned_direct_debits
+    title: Returned direct debits
+    figures: [M7]
+    template: >-
+      Returned direct debits in the period: {M7}.
+
+  - id: vat_and_hmrc
+    title: VAT and HMRC
+    figures: [M12, M13, M14, M23]
+    template: >-
+      VAT paid was {M12}, with {M13} late or missed VAT payments. PAYE paid was {M14}, and
+      HMRC repayments received were {M23}.
+
+  - id: director_loans_and_transfers
+    title: Director loans and transfers between the business's accounts
+    figures: [M20, M11, M19]
+    template: >-
+      Director and shareholder funding paid in was {M20}, and owner drawings were {M11}.
+      Own-account transfers in were {M19}.
+
+  - id: credit_history
+    title: Credit history
+
+  - id: affordability
+    title: Affordability
+    figures: [M9, M10, M28]
+    template: >-
+      Net operating cash flow was {M9}, giving debt service cover after owner drawings of
+      {M10}. Including the proposed facility, debt service cover is {M28}.
+
+  - id: key_risks
+    title: Key risks
+
+  - id: recommendation
+    title: Recommendation

@@ -2,7 +2,7 @@
 The statements cover 12 [M1] months. Total revenue over the period was £313,135 [M2], averaging £26,112 [M3] a month.
 
 ## Revenue
-Revenue moved 10.8% [M4], comparing the latest quarter with the earliest. The largest single payer accounted for n/a [M15] of transfer revenue. Unclassified money in was 2.5% [M16] of inflows.
+Revenue moved 10.8% [M4], comparing the latest quarter with the earliest. The largest single payer accounted for n/a [M15] of transfer revenue. Money in that is not trading receipts was 2.5% [M16] of inflows.
 
 ## Cash position
 The lowest balance reached was -£19,760 [M5], and the account closed overdrawn on 165 [M6] days. Net operating cash flow was £54,192 [M9].
@@ -15,13 +15,13 @@ Policy outcome: refer. The case needs an analyst decision before any offer: R3 (
 
 
 ---
-APPROVED by A. Analyst (automated, no interactive review) at 2026-11-21 09:08 UTC. Notes: Approved by script (--yes); the draft was not reviewed interactively.
+APPROVED by A. Analyst (automated, no interactive review) at 2026-11-21 22:21 UTC. Notes: Approved by script (--yes); the draft was not reviewed interactively.
 Grounding check: passed (17 numbers checked, 0 unmatched, 0 missing citations).
 
 ## Appendix: the figures behind this memo
 
 Statement: cafe_stretched.csv, 389 transactions, 2025-10-01 to 2026-09-30, sha256 796b4519fc7a592e
-Model: fake:offline-template. Policy: uk_sme_default, sha256 334ca78d52759938, overall refer. VAT stagger: 3.
+Model: fake:offline-template. Policy: uk_sme_default, sha256 d6dd697fa7881563, overall refer. VAT stagger: 3.
 Evidence: every transaction id behind each figure is in the .evidence.json file written beside this memo.
 
 | id | metric | value | method | lines |
@@ -45,13 +45,13 @@ Evidence: every transaction id behind each figure is in the .evidence.json file 
 | M17 | Total money in | £321,325.13 | Every credit in the period; the money-in buckets (M2, M19-M25) add up to it. | 263 |
 | M18 | Cash deposits within trading receipts | £0.00 | Cash paid in at a counter or machine. Part of M2, not added to it again. | 0 |
 | M19 | Own-account transfers in | £0.00 | Credits moved in from the applicant's own pots, savings or accounts. | 0 |
-| M20 | Director and shareholder funding | £0.00 | Credits from directors or shareholders, and capital introduced. | 0 |
+| M20 | Director and shareholder funding | £8,000.00 | Credits from directors or shareholders, and capital introduced. | 1 |
 | M21 | Lending drawdowns | £0.00 | Loans and merchant cash advances paid in. | 0 |
 | M22 | Refunds and returned payments in | £189.91 | Refunds, reversals and direct debits returned unpaid. | 1 |
 | M23 | HMRC repayments | £0.00 | Credits from HMRC. | 0 |
 | M24 | Other explained money in | £0.00 | Grants, insurance claims, interest and cashback. | 0 |
-| M25 | Unexplained money in | £8,000.00 | Credits no rule, firm rule or override explains, and credits whose wording is ambiguous. | 1 |
-| M26 | Unexplained share of money in | 2.5% | Unexplained money in (M25) as a share of money in less lending drawdowns, returned direct debits and own-account transfers, the denominator M16 uses. | 262 |
+| M25 | Unexplained money in | £0.00 | Credits no rule, firm rule or override explains, and credits whose wording is ambiguous. | 0 |
+| M26 | Unexplained share of money in | 0.0% | Unexplained money in (M25) as a share of money in less lending drawdowns, returned direct debits and own-account transfers, the denominator M16 uses. | 262 |
 | M27 | Average end-of-day balance | £2,570.75 | The closing balance of every calendar day in the period, carried over days with no transactions, averaged over those days. | 287 |
 | M28 | Debt service cover including the proposed facility | n/a | No proposed monthly repayment was given: it comes from the case profile, and this statement has none, so cover including the proposed facility cannot be computed. | 0 |
 
@@ -65,4 +65,4 @@ Evidence: every transaction id behind each figure is in the .evidence.json file 
 | R6 | Revenue trend no worse than -15% | M4 | >= -15.0% | pass | Revenue trend is 10.8%; rule requires >= -15. |
 | R7 | Top customer below 60% of transfer revenue | M15 | < 60.0% | pass | Top customer share of transfer revenue cannot be computed (No customer transfers: revenue is card or gateway settled, which hides who the customers are.); policy says pass when missing. |
 | R8 | Positive net operating cash flow over the period | M9 | > £0 | pass | Net operating cash flow is £54,192; rule requires > 0. |
-| R9 | No more than 20% of money in left unexplained | M16 | <= 20.0% | pass | Non-trading money in (share) is 2.5%; rule requires <= 20. |
+| R9 | No more than 20% of money in that is not trading receipts | M16 | <= 20.0% | pass | Non-trading money in (share) is 2.5%; rule requires <= 20. |

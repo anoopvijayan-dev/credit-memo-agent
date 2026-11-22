@@ -62,7 +62,7 @@ class FakeLLM:
 The statements cover {q('M1')} months. Total revenue over the period was {q('M2')}, averaging {q('M3')} a month.
 
 ## Revenue
-Revenue moved {q('M4')}, comparing the latest quarter with the earliest. The largest single payer accounted for {q('M15')} of transfer revenue. Unclassified money in was {q('M16')} of inflows.
+Revenue moved {q('M4')}, comparing the latest quarter with the earliest. The largest single payer accounted for {q('M15')} of transfer revenue. Money in that is not trading receipts was {q('M16')} of inflows.
 
 ## Cash position
 The lowest balance reached was {q('M5')}, and the account closed overdrawn on {q('M6')} days. Net operating cash flow was {q('M9')}.
