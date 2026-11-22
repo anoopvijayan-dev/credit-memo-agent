@@ -13,6 +13,7 @@ import csv
 import hashlib
 import io
 import json
+import re
 from datetime import date
 
 import pytest
@@ -175,6 +176,7 @@ def test_pack_evidence_records_the_policy_check_hidden(home, tmp_path):
 # --- monthly.csv ---------------------------------------------------------------------------
 
 HOSTILE = ["=HYPERLINK(1)", "+SUM(A1)", "-2+3", "@cmd", "=1"]
+SPACED = ["TXN 001", "TXN 002", "L3", "TXN  4", "L 5"]  # ids may hold spaces
 
 
 def _hostile_statement(ids):
@@ -194,7 +196,7 @@ def _csv_rows(s):
 
 
 @pytest.mark.invariants
-@pytest.mark.parametrize("ids", [HOSTILE, ["L1", "L2", "L3", "L4", "L5"]])
+@pytest.mark.parametrize("ids", [HOSTILE, SPACED, ["L1", "L2", "L3", "L4", "L5"]])
 def test_p8_monthly_csv_text_cells_never_begin_with_a_formula_character(home, tmp_path, ids):
     src = tmp_path / "s.csv"
     src.write_text(_hostile_statement(ids), encoding="utf-8")
@@ -205,15 +207,14 @@ def test_p8_monthly_csv_text_cells_never_begin_with_a_formula_character(home, tm
     values = {f"{c}" for c in pack.MONTHLY_CELLS}
     for row in rows:
         for col, cell in row.items():
-            if col in values:  # a number, never text
-                assert cell == "" or float(cell) == float(cell)
+            if col in values:  # a number, never text: money to the penny, days whole
+                assert cell == "" or re.fullmatch(r"-?\d+(\.\d\d)?", cell), (col, cell)
                 continue
             assert not cell.startswith(FORMULA_START), (col, cell)
     # every line id is there, neutralised where it needed to be
-    seen = {x.lstrip("'") for row in rows for c in pack.MONTHLY_CELLS for x in row[f"{c}_lines"].split()}
-    assert set(ids) <= seen
-    if ids is HOSTILE:
-        assert any(row["money_in_lines"].startswith("'=") for row in rows)
+    seen = {x for row in rows for c in pack.MONTHLY_CELLS for x in json.loads(row[f"{c}_lines"])}
+    assert set(ids) <= seen  # each id exactly, spaces and formula characters kept
+    assert all(row[f"{c}_lines"].startswith("[") for row in rows for c in pack.MONTHLY_CELLS)
 
 
 def test_monthly_csv_is_the_monthly_summary_to_the_penny(home, tmp_path):
@@ -232,7 +233,7 @@ def test_monthly_csv_is_the_monthly_summary_to_the_penny(home, tmp_path):
         assert r["part_month"] == ("yes" if m["part_month"] else "no")
         for c in pack.MONTHLY_CELLS:
             cell = m[c]
-            assert r[f"{c}_lines"].split() == cell["evidence"]
+            assert json.loads(r[f"{c}_lines"]) == cell["evidence"]
             assert r[f"{c}_note"] == (cell["note"] or "")
             if cell["value"] is None:
                 assert r[c] == ""

@@ -666,17 +666,19 @@ def _cell_value(c) -> str:
     if c.unit == "GBP":
         from decimal import Decimal
 
-        return f"{Decimal(repr(c.value)).quantize(Decimal('0.01'))}"
+        d = Decimal(repr(c.value)).quantize(Decimal("0.01"))
+        return f"{abs(d) if d == 0 else d}"  # never '-0.00', which reads as an overdraft
     return str(int(c.value))
 
 
 def monthly_csv(p: Preview) -> bytes:
     """The monthly summary of every account as CSV (R11, R26): one row per account and calendar
-    month, each cell's value with its note and the ids of the lines behind it (space
-    separated; the evidence JSON lists them). Every text cell, the line ids among them, has a
-    leading formula character (=, +, -, @, a tab or a carriage return) neutralised with an
-    apostrophe, so no spreadsheet reads one as a formula (R34, P8). The value columns are
-    numbers, never text."""
+    month, each cell's value with its note and the ids of the lines behind it, as a JSON list
+    (a line id may hold spaces, so a list read back is the ids exactly, as the evidence JSON
+    lists them; it begins with '[', never a formula character). Every text cell has a leading
+    formula character (=, +, -, @, a tab or a carriage return) neutralised with an apostrophe,
+    so no spreadsheet reads one as a formula (R34, P8). The value columns are numbers, never
+    text."""
     import csv
     import io
 
@@ -691,7 +693,8 @@ def monthly_csv(p: Preview) -> bytes:
                    r.start.isoformat(), r.end.isoformat()]
             for key in MONTHLY_CELLS:
                 c = getattr(r, key)
-                row += [_cell_value(c), neutralise_formula(c.note or ""), neutralise_formula(" ".join(c.evidence))]
+                ids = json.dumps(list(c.evidence), ensure_ascii=False, separators=(",", ":"))
+                row += [_cell_value(c), neutralise_formula(c.note or ""), neutralise_formula(ids)]
             w.writerow(row)
     return buf.getvalue().encode("utf-8")
 
