@@ -227,3 +227,33 @@ def test_generate_cli_case_in_a_sync_folder_warns_on_stderr_first(home, tmp_path
                                                  "--out", str(tmp_path), "--feature", "all", "--case"])
     assert r.exit_code == 0, r.output
     assert "Warning:" in r.stderr and "OneDrive" in r.stderr
+
+
+@pytest.mark.invariants
+def test_a_move_whose_round_amount_another_line_has_within_the_days_still_pairs(home, tmp_path):
+    # trades stretched over 36 months has a fuel card direct debit of £1,000.00 three days
+    # after a £1,000 move to the reserve account: at the round amount the reserve's credit
+    # would have two candidates and pair with neither (R9). The generator moves a penny more.
+    truth, _, _, figures, both = _case(tmp_path, "trades", "stretched", features=("lenders", "two_accounts"),
+                                       seed=5490, months=36)
+    lines = {t.id: t for t in both.statement.transactions}
+    assert lines["main:T00088"].amount == -1000.0 and lines["main:T00088"].description == "ROADLINE FUEL CARD DD"
+    assert lines["main:T00085"].amount == -1000.01 and lines["reserve:T00010"].amount == 1000.01
+    _assert_p17(truth, figures, both)
+    assert sorted(map(list, _p11_pairs(both))) == truth.case["own_account_pairs"]
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("seed", range(48))
+def test_p17_and_p11_on_seeded_feature_sets_and_lengths(home, tmp_path, seed):
+    # Any archetype and profile, any feature set with the second account, 1 to 36 months: the
+    # pairing finds exactly the generator's moves, and every figure is the case truth.
+    import random
+
+    rng = random.Random(seed)
+    archetype, profile = CASES[seed % len(CASES)]
+    features = tuple(f for f in synth.FEATURES if f == "two_accounts" or rng.random() < 0.5)
+    truth, _, _, figures, both = _case(tmp_path, archetype, profile, features=features, seed=9000 + seed,
+                                       months=rng.choice([1, 2, 3, 6, 12, 18, 24, 36]))
+    _assert_p17(truth, figures, both)
+    assert sorted(map(list, _p11_pairs(both))) == truth.case["own_account_pairs"]

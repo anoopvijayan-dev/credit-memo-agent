@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 
+from .firm import DEFAULT_PAIRING_DAYS
 from .models import CREDIT_BUCKET, Category
 
 DEFAULT_END = date(2026, 9, 30)
@@ -496,14 +497,29 @@ def _feature_events(events: list, truth: Truth, a: dict, p: dict, starts: list[d
         reserve = _reserve_name(a["account_name"])
         profile["own_accounts"] += [reserve, a["account_name"]]
         mirror: list[tuple[date, str, float, Category]] = []
+        before = list(events)  # the business account's lines that are no move
+
+        def move(d: date, amt: float) -> float:
+            # A move's amount, as the business account's line has it: raised a penny at a time
+            # while another line of the business account has the same amount within the default
+            # pairing days, so its other half has one candidate and the pair is the truth (R8,
+            # R9, P11). A clash is rare, so almost every move keeps its round amount.
+            pence = round(amt * 100)
+            step = 1 if pence > 0 else -1
+            while any(round(e[2] * 100) == pence and abs((e[0] - d).days) <= DEFAULT_PAIRING_DAYS for e in before):
+                pence += step
+            return pence / 100
+
         for i, s in enumerate(starts):
             d = s + timedelta(days=19)
-            events.append((d, f"FPS TO {reserve}", -1000.0, Category.OWN_ACCOUNT_TRANSFER))
-            mirror.append((d, f"FPS CREDIT {a['account_name']}", 1000.0, Category.OWN_ACCOUNT_TRANSFER))
+            amt = move(d, -1000.0)
+            events.append((d, f"FPS TO {reserve}", amt, Category.OWN_ACCOUNT_TRANSFER))
+            mirror.append((d, f"FPS CREDIT {a['account_name']}", -amt, Category.OWN_ACCOUNT_TRANSFER))
             if i % 3 == 2:
                 d = s + timedelta(days=5)
-                events.append((d, f"FPS CREDIT {reserve}", 2500.0, Category.OWN_ACCOUNT_TRANSFER))
-                mirror.append((d, f"FPS TO {a['account_name']}", -2500.0, Category.OWN_ACCOUNT_TRANSFER))
+                amt = move(d, 2500.0)
+                events.append((d, f"FPS CREDIT {reserve}", amt, Category.OWN_ACCOUNT_TRANSFER))
+                mirror.append((d, f"FPS TO {a['account_name']}", -amt, Category.OWN_ACCOUNT_TRANSFER))
             mirror.append((s + timedelta(days=26), "GROSS INTEREST", round(frng.uniform(3, 9), 2),
                            Category.OTHER_EXPLAINED_IN))
         mirror.sort(key=lambda e: (e[0], e[2] < 0, e[1]))
