@@ -271,3 +271,18 @@ def test_p16_no_protected_line_changes_category_through_any_firm_rule(table):
                     elif with_firm[1].startswith("firm:"):
                         applied += 1
     assert checked > 200 and applied > 50, (checked, applied)
+
+
+@pytest.mark.contracts
+def test_cli_refuses_a_malformed_firm_rules_file_naming_its_line_without_a_traceback(home, tmp_path):
+    from typer.testing import CliRunner
+
+    from cma.cli import app
+
+    folder = _case(tmp_path)
+    (home / "firm_rules.yaml").write_text("rules:\n  - id: x\n")
+    got = CliRunner().invoke(app, ["case", "figures", folder.name], terminal_width=400)
+    assert got.exit_code == 2, got.output
+    assert "Refused." in got.output and "line 2" in got.output and "missing pattern" in got.output
+    assert "Traceback" not in got.output
+    assert got.exception is None or isinstance(got.exception, SystemExit)

@@ -515,7 +515,7 @@ def _case_errors():
     except (case.CaseLocked, case.LogConflict) as e:
         console.print(f"[red]Not recorded.[/red] {escape(str(e))}")
         raise typer.Exit(code=4) from None
-    except FirmConfigError as e:
+    except (FirmConfigError, RulesetError) as e:  # a malformed firm.yaml or firm_rules.yaml (R20, R21)
         console.print(f"[red]Refused.[/red] {escape(str(e))}")
         raise typer.Exit(code=2) from None
     except OSError as e:
