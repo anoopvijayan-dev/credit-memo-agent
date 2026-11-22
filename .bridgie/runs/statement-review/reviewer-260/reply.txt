@@ -1,0 +1,28 @@
+**Verdict: `not_proven`.** I couldn't save `evidence.json` to the run directory because the write was denied, so the full record is in the block at the end of this reply.
+
+R41 is met except for one clause. The combined flow figures are supposed to be computed "after removing paired own-account transfers", and nothing in the code pairs own-account transfers. A search of `src/cma` finds no pairing code (R8). This can't be fixed inside T33 as the tasks are split: R8 belongs to T34, and T34 depends on T33 (`tasks.json:609-611`). The owner needs to decide one of two things:
+- **Move the clause:** the pairing part of R41 is delivered and judged with T34.
+- **Reorder:** T34 is done before T33, or the two are merged.
+
+Until then, a transfer between the case's accounts that neither the rule table nor the profile names is counted on both sides of the combined figures. That inflates combined money in and money out, which is the "counted twice" concern in the underwriter's reply. The producer confirmed this.
+
+Every other part of R41 checked out against the code, and all 21 tests in `tests/test_multi_account.py` passed in the runner's logs:
+- **Line ids:** each line in a multi-account case gets its account key as a prefix. Account keys can't contain `:` or `*`, so the ids can't collide.
+- **Flow figures:** computed across all accounts from each account's categorised lines.
+- **Balance figures:** read from the combined end-of-day balance over the days every account covers, and n/a with the reason when the accounts' dates don't overlap, overall or within a month.
+- **Workspace:** shows an "All accounts" section, and the drill-down for the combined figures works.
+- **Import limit:** checked while the case is held and before anything is written. Each account has only one import entry, so no account is counted twice towards the limit.
+
+```json
+{
+  "task": "T33",
+  "criteria": [
+    {"id": "R41", "tier": "adversarial", "check": "Prefixed ids: metrics.case_line_id/case_statement (src/cma/metrics.py:382-404); account keys refuse ':' and '*' (test_combined_key_and_colon_are_never_account_keys PASSED in specified-3.log). Flows across accounts: compute_case (metrics.py:468-477) runs compute() on the merged statement. Combined closes over shared days: case_closes (metrics.py:418-433), _closes_balance_figures (:436-465), _month_balance_cells (:941-973); n/a with NO_SHARED_DAYS / NO_SHARED_DAYS_IN_MONTH. Workspace: summary.case_summary 'combined' and the 'All accounts' section, drilldown account '*'. Combined import limit: store._case_flows_at_limit (store.py:756-780) inside the held save (store.py:677-683) before any write; one import entry per account (store.py:671-673), so no account is counted twice. All 21 tests in tests/test_multi_account.py PASSED (specified-3.log, contracts-4.log). NOT met: 'compute flow figures across all the case's accounts after removing paired own-account transfers'. A grep over src/cma finds no R8 pairing; R8 is T34 (tasks.json:602-611), which depends on T33, so this clause cannot be met by this task as decomposed.", "result": "not_proven", "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-260/specified-3.log"}
+  ],
+  "findings": [
+    {"severity": "major", "file": "src/cma/metrics.py", "line": 468, "criterion": "R41", "claim": "R41 requires combined flow figures 'after removing paired own-account transfers'. compute_case computes combined flows from each account's categorised lines and does no own-account pairing; R8 is implemented nowhere in src (only the per-account possible-transfer listing in indicators.py:417). An inter-account transfer that neither the rule table nor the profile names is counted on both sides of the combined figures, inflating combined money in and money out, which is the reply's 'counted twice' concern. The producer acknowledges this (disposition 'reproduced'). tasks.json:609-611 makes T34 (R8) depend on T33, so the clause sits in a dependency cycle that needs an owner scope decision: move the pairing clause to T34, or reorder or merge T33 and T34.", "repro": "A two-account case with main: 'M1,2026-01-05,FPS TO 12345678,-100.00,...' and savings: 'S1,2026-01-05,FPS FROM 87654321,100.00,...', and no own_accounts in the profile. overrides.combined_figures(overrides.case_figures(folder)): combined M17 includes savings:S1 (as unexplained, M25) and main:M1 stays in money out; no pairing classifies either as an own-account transfer.", "disposition": null}
+  ],
+  "verdict": "not_proven",
+  "verifier": {"seat": "reviewer", "adapter": "claude-code", "model": "claude-opus-5-5"}
+}
+```

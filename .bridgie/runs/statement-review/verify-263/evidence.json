@@ -1,0 +1,78 @@
+{
+  "task": "T33",
+  "criteria": [
+    {
+      "id": "R41",
+      "tier": "adversarial",
+      "check": "Prefixed ids: metrics.case_line_id/case_statement (src/cma/metrics.py:382-404); account keys refuse ':' and '*' (test_combined_key_and_colon_are_never_account_keys PASSED in specified-3.log). Flows across accounts: compute_case (metrics.py:468-477) runs compute() on the merged statement. Combined closes over shared days: case_closes (metrics.py:418-433), _closes_balance_figures (:436-465), _month_balance_cells (:941-973); n/a with NO_SHARED_DAYS / NO_SHARED_DAYS_IN_MONTH. Workspace: summary.case_summary 'combined' and the 'All accounts' section, drilldown account '*'. Combined import limit: store._case_flows_at_limit (store.py:756-780) inside the held save (store.py:677-683) before any write; one import entry per account (store.py:671-673), so no account is counted twice. All 21 tests in tests/test_multi_account.py PASSED (specified-3.log, contracts-4.log). NOT met: 'compute flow figures across all the case's accounts after removing paired own-account transfers'. A grep over src/cma finds no R8 pairing; R8 is T34 (tasks.json:602-611), which depends on T33, so this clause cannot be met by this task as decomposed.",
+      "result": "not_proven",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-260/specified-3.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-263/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-263/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-263/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-263/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-263/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-263/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-263/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/metrics.py",
+      "line": 468,
+      "criterion": "R41",
+      "claim": "R41 requires combined flow figures 'after removing paired own-account transfers'. compute_case computes combined flows from each account's categorised lines and does no own-account pairing; R8 is implemented nowhere in src (only the per-account possible-transfer listing in indicators.py:417). An inter-account transfer that neither the rule table nor the profile names is counted on both sides of the combined figures, inflating combined money in and money out, which is the reply's 'counted twice' concern. The producer acknowledges this (disposition 'reproduced'). tasks.json:609-611 makes T34 (R8) depend on T33, so the clause sits in a dependency cycle that needs an owner scope decision: move the pairing clause to T34, or reorder or merge T33 and T34.",
+      "repro": "A two-account case with main: 'M1,2026-01-05,FPS TO 12345678,-100.00,...' and savings: 'S1,2026-01-05,FPS FROM 87654321,100.00,...', and no own_accounts in the profile. overrides.combined_figures(overrides.case_figures(folder)): combined M17 includes savings:S1 (as unexplained, M25) and main:M1 stays in money out; no pairing classifies either as an own-account transfer.",
+      "disposition": null
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
