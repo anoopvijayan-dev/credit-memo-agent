@@ -859,9 +859,12 @@ def _append_ledger(root: Path, line: dict[str, str]) -> None:
                 raise OSError(errno.EBUSY, "the purge ledger is in use by another purge")
             time.sleep(0.05)
         try:
-            if _ledger_records(root, line["case"]):
+            # Read through the handle that holds the lock: on Windows the lock is mandatory, so
+            # another handle of this process could not read the ledger (Antigravity re-review
+            # of T15: every purge after the first would fail there).
+            if _records(_read_fd(fd), line["case"]):
                 return  # another purge of this case recorded it while this one finished
-            os.write(fd, data)  # one short write in append mode: lines from two purges never mix
+            caselog._write_all(fd, data)  # append mode; a short write is continued, never left torn
             os.fsync(fd)
         finally:
             with suppress(OSError):
@@ -877,6 +880,10 @@ def purge_target(case_id: str, root: Path | None = None) -> Path:
         raise CaseStoreError("a case id is 16 lowercase hex characters, as `cma case new` prints it")
     root = ensure_root(root)
     for folder in (root / CASES / case_id, root / CASES / f"{PURGING}{case_id}"):
+        if folder.is_symlink():
+            # A purge deletes what is inside the folder: through a symlink that would be files
+            # outside the case store (Antigravity re-review of T15).
+            raise CaseStoreError(f"{folder} is a symlink, not a case folder; nothing was purged")
         if (folder / PROFILE).is_file() or (folder.name.startswith(PURGING) and folder.is_dir()):
             return folder
     raise CaseStoreError(f"no case {case_id} under {root}")
@@ -935,11 +942,14 @@ def _take_out_of_use(folder: Path, gone: Path, wait: float | None) -> None:
     log = caselog.for_case(folder)
     if not (folder / PROFILE).is_file():
         raise FileNotFoundError(str(folder))
-    # Lock files are made only for a case that lacks them; a folder that vanished since is
-    # then never recreated (the writer raises FileNotFoundError).
-    create = not (log.gate_path.exists() and log.lock_path.exists())
+    # Lock files are made only for a case that lacks them, and only inside the folder as it
+    # is: never with the folder itself, so a folder another purge moved away since is not
+    # recreated (FileNotFoundError; Antigravity re-review of T15).
+    for lock in (log.gate_path, log.lock_path):  # the gate first, as the writer makes them
+        if not lock.exists():
+            os.close(os.open(lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600))
     moved = False
-    with log.writer(wait=wait, create=create):
+    with log.writer(wait=wait, create=False):
         if not (folder / PROFILE).is_file():
             raise FileNotFoundError(str(folder))
         try:
@@ -960,12 +970,24 @@ def _unlink_writable(path: Path) -> None:
         path.unlink()
 
 
+def _read_fd(fd: int) -> str:
+    os.lseek(fd, 0, os.SEEK_SET)
+    chunks = []
+    while chunk := os.read(fd, 1 << 16):
+        chunks.append(chunk)
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+
 def _ledger_records(root: Path, case_id: str) -> bool:
     """Whether the purge ledger already holds a line for `case_id`."""
     try:
         text = (root / PURGE_LEDGER).read_text(encoding="utf-8")
     except FileNotFoundError:
         return False
+    return _records(text, case_id)
+
+
+def _records(text: str, case_id: str) -> bool:
     for line in text.splitlines():
         with suppress(ValueError):
             if json.loads(line).get("case") == case_id:
