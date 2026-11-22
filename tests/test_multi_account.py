@@ -439,3 +439,33 @@ def test_lines_outside_the_days_or_in_one_account_do_not_pair(home, tmp_path):
     lines = {t.id: t for t in both.statement.transactions}
     assert lines["savings:S2"].category == metrics.Category.OTHER
     assert lines["main:M2"].category != metrics.Category.OWN_ACCOUNT_TRANSFER
+
+
+@pytest.mark.contracts
+def test_pairing_does_not_depend_on_the_order_accounts_were_imported(home, tmp_path):
+    # The same three accounts imported in two orders give the same categories and rules (R8, R9).
+    def lines(order):
+        _, folder = _case(tmp_path, *order)
+        both = overrides.combined_figures(overrides.case_figures(folder))
+        return {t.id: (t.category, t.rule_id) for t in both.statement.transactions}
+
+    a = ("main", PAIR_MAIN)
+    b = ("savings", PAIR_SAVINGS)
+    c = ("reserve", PAIR_RESERVE.replace("R2,2026-01-06,FPS FROM 12345678,100.00", "R2,2026-01-06,FPS FROM 1,99.00")
+         .replace("120.00", "119.00"))
+    first, second = lines([a, b, c]), lines([c, b, a])
+    assert first == second
+    assert first["main:M2"][1] == "pairing:savings:S2"
+
+
+@pytest.mark.contracts
+def test_a_protected_credit_is_never_paired(home, tmp_path):
+    # A lending drawdown of the same amount as a move out of another account, a day later, keeps
+    # its protected verdict and is not taken out of lending drawdowns by a pairing (C1's precedence).
+    loan = PAIR_SAVINGS.replace("FPS FROM 87654321", "IWOCA LTD LOAN")
+    _, folder = _case(tmp_path, ("main", PAIR_MAIN), ("savings", loan))
+    both = overrides.combined_figures(overrides.case_figures(folder))
+    lines = {t.id: t for t in both.statement.transactions}
+    assert lines["savings:S2"].category == metrics.Category.LOAN_DRAWDOWN
+    assert not (lines["main:M2"].rule_id or "").startswith("pairing:")
+    assert _by_id(both)["M21"].evidence == ["savings:S2"]
