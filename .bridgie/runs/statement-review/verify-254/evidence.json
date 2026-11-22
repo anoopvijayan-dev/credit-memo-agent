@@ -1,0 +1,91 @@
+{
+  "task": "T25",
+  "criteria": [
+    {
+      "id": "R29",
+      "tier": "adversarial",
+      "check": "The pack evidence records egress destination 'offline' and offline_lock from the firm config, using the same 'anything but explicit False is the lock' rule as firm._refuse (src/cma/pack.py:646, src/cma/firm.py:98). test_pack_evidence_v1_names_every_input_the_sign_off_and_offline_egress asserts it and PASSED in contracts-4.log.",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "R53",
+      "tier": "adversarial",
+      "check": "Compared the old _evidence with the new one in git diff 9593869..HEAD: every previous top-level and per-account key is kept. The only changes add fields: statement, period, format, input_sha256, vat_stagger, money_in, thresholds, indicators, judgement_queue, lines[].reverses, overrides, the hashes, memo, model, and policy_check.hidden/policy. schema_version is still EVIDENCE_SCHEMA_VERSION (src/cma/models.py:73). graph.py is untouched, and test_cma_run_evidence_keeps_todays_keys pins cma run's exact key set and PASSED in contracts-4.log. Packs signed before this change (two files) still complete, because _complete checks the hashes in the case log, not PACK_FILES (src/cma/pack.py:834-841).",
+      "result": "pass",
+      "artifact": "contracts-4.log"
+    },
+    {
+      "id": "P8",
+      "tier": "adversarial",
+      "check": "monthly_csv neutralises the account, month, note and line-id cells (src/cma/pack.py:691-697). Account keys cannot begin with a formula character (src/cma/store.py:64, [a-z0-9] first). Line-id cells are JSON lists that begin with '['. The header and the yes/no and ISO date columns are fixed text. Value columns are numbers formatted to the penny, with -0.00 written as 0.00. A negative balance such as -46.55 begins with '-', but it is a numeric cell, which I read as outside P8's 'text cell'. test_p8_monthly_csv_text_cells_never_begin_with_a_formula_character ran 3 times with hostile ids such as =HYPERLINK(1) and PASSED in invariants-5.log.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-254/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-254/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-254/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-254/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-254/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-254/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-254/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/pack.py",
+      "line": 800,
+      "criterion": "R29",
+      "claim": "sign_off reads firm.yaml a second time (firm.load()) to record egress.offline_lock, while show_policy_verdict and the snapshot come from the reading _build took. One sign-off can therefore record two different readings of firm.yaml, and the offline flag in the evidence may not be the one from the reading that decided the pack.",
+      "repro": "Patch firm.load so the second call returns offline_lock: false while the first (inside _build) returns the default. Sign off a case: evidence.egress.offline_lock is false although the preview's reading had the lock on. Passing the config _build read into _evidence would fix it."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
