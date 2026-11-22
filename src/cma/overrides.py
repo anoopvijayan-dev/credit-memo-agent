@@ -51,7 +51,7 @@ from pathlib import Path
 from typing import Any
 
 from . import case as caselog
-from . import store
+from . import firm_rules, store
 from .categorise import (
     _MONEY_IN_ONLY,
     PAIRING,
@@ -206,21 +206,23 @@ class _Memo:
 
 
 _PARSED = _Memo(8)  # (account, statement sha) -> the statement as load_csv parsed it, never categorised
-_BARE = _Memo(8)    # (statement sha, ruleset, profile) -> figures with no overrides
-_CLASSES = _Memo(8)  # (statement sha, ruleset, profile) -> each line's category with no override
+_BARE = _Memo(8)    # (statement sha, ruleset, profile, pairs, firm rules) -> figures with no overrides
+_CLASSES = _Memo(8)  # (statement sha, ruleset, profile, firm rules) -> each line's category with no override
 
 
 def _categorise(statement: Statement, sha: str, profile: dict[str, Any], applied: dict[str, LineOverride]) -> None:
     """categorise() with the overrides in force; the lines with none take the categories
     kept for this statement, rule table and profile, which classify would give them again."""
     ruleset = active_ruleset()
-    key = (sha, ruleset.id, ruleset.sha256, _profile_key(profile))
+    rules = firm_rules.for_case()  # the firm's rules as the file stands now (R20, R21)
+    key = (sha, ruleset.id, ruleset.sha256, _profile_key(profile), rules.sha256)
     names = store.profile_names(profile)
     classes = _CLASSES.get(key)
     if classes is None or len(classes) != len(statement.transactions):
-        classes = classify_lines(statement, ruleset, profile=names)
+        classes = classify_lines(statement, ruleset, profile=names, firm_rules=rules.rules)
         _CLASSES.put(key, classes)
-    categorise(statement, ruleset, overrides=applied, profile=names, unoverridden=classes)
+    categorise(statement, ruleset, overrides=applied, profile=names, firm_rules=rules.rules,
+               unoverridden=classes)
 
 
 def _profile_key(profile: dict[str, Any]) -> str:
@@ -359,7 +361,7 @@ def _bare_figures(statement: Statement, sha: str, profile: dict[str, Any]):
 
 def _bare_key(sha: str, profile: dict[str, Any], pairs: tuple = ()) -> tuple:
     ruleset = active_ruleset()
-    return (sha, ruleset.id, ruleset.sha256, _profile_key(profile), pairs)
+    return (sha, ruleset.id, ruleset.sha256, _profile_key(profile), pairs, firm_rules.for_case().sha256)
 
 
 def _rests_on(a, b, lines: set[str]) -> bool:
