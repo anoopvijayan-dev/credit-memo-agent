@@ -1,0 +1,35 @@
+I checked T25 against the checklists without changing any code. The implementer's commit `aee8283` already contained the change, and all the proof below was run against it.
+
+**Results:**
+- **T25 tests:** the two T25 test files pass (53 tests).
+- **P8 test:** passes. No text cell in monthly.csv starts with a formula character, even when line ids are hostile (such as `=HYPERLINK(1)`).
+- **Full suite and checks:** 2425 passed, and the contracts tier passed 800. Ruff and compileall are clean.
+- **Evidence keys:** `cma run`'s evidence keeps exactly today's keys, including the policy keys. The pack carries those same keys for each account, in the same shapes.
+- **Once-only pack and crash safety:** the existing sign-off tests now expect the third file, monthly.csv, and still pass. A second sign-off is refused and never overwrites the pack. A crash leaves no partial pack. The case-log entries are written after the folder rename, and they record monthly.csv's hash.
+
+**Not applicable:**
+- **Performance:** there are no queries, and the CSV is one row per account per month.
+- **Timeouts and retries:** writing the pack makes no external call.
+- **Feature flag:** sign-off is already a command and packs are never changed after writing, so rollback is a reinstall.
+
+**Decisions for the owner (also in `notes`):**
+1. **Logging and alerts:** there is no alert, which matches the local-first design of refusing with an exit code. There is also no log line counting monthly.csv rows.
+2. **Negative balances:** average and lowest balance cells can be negative, for example `-46.55`. These number cells are not given the apostrophe, because P8 covers text cells and spreadsheets read them as numbers. Please confirm that reading of R34/P8.
+3. **Hidden policy check:** when the check is hidden, the evidence records no label. Please confirm the label is only wanted when the check is shown.
+4. **Typed names and reasons:** the evidence carries the names and override reasons the underwriter types. The design lists both, and they stay inside the case folder, which only its owner can read.
+
+```json
+{
+  "task": "T25",
+  "claims": [
+    {"text": "Contracts: `cma run`'s evidence record keeps exactly today's top-level keys and today's policy keys (R53, additive only), and the pack's evidence carries those statement keys per account in the same shapes with the policy key unchanged.", "proof_cmd": "python -m pytest tests/test_pack_evidence.py tests/test_signoff.py -q", "proof_output": "53 passed in 10.95s"},
+    {"text": "P8: monthly.csv text cells (account, month, notes, line ids) never begin with = + - @ tab or CR, including with hostile line ids such as =HYPERLINK(1); value columns are numbers. Test is marked invariants and named p8.", "proof_cmd": "python -m pytest -q -m invariants -k p8", "proof_output": "30 passed, 2395 deselected in 20.76s"},
+    {"text": "Idempotency and partial failure (failure-modes checklist): the pack, now three files, is written once; a second sign-off is refused and never overwrites; a crash leftover is removed and no partial pack is visible; log entries follow the folder rename and a refused entry removes the pack. Existing sign-off tests were updated to expect monthly.csv and pass.", "proof_cmd": "python -m pytest -q tests/test_signoff.py -k \"second or twice or once or leftover or stopped\"", "proof_output": "6 passed, 40 deselected in 4.05s"},
+    {"text": "Data/PII (data checklist): evidence holds ids, figures, hashes, overrides and the sign-off, no line description (asserted in test_pack_evidence_v1_names_every_input_the_sign_off_and_offline_egress); monthly.csv's hash is recorded in the signed_off case-log entry (R42). No migration: evidence v1 is additive; nothing to backfill.", "proof_cmd": "python -m pytest tests/test_pack_evidence.py -q", "proof_output": "included in: 53 passed in 10.95s"},
+    {"text": "Security checklist: no new entry point (sign_off and its callers already existed); no new dependency (csv, io, decimal are stdlib); lint clean.", "proof_cmd": "ruff check src tests && python -m compileall -q src && echo compile-ok", "proof_output": "All checks passed!\ncompile-ok"},
+    {"text": "No regression across the full suite and the contracts tier.", "proof_cmd": "python -m pytest -q && python -m pytest -q -m contracts", "proof_output": "2425 passed in 279.80s (0:04:39)\n800 passed, 1625 deselected in 132.80s (0:02:12)"}
+  ],
+  "files_changed": [],
+  "notes": "I changed nothing. The implementer's commit aee8283 already holds the change, and every claim above was produced against it. Checklist lines I am treating as not applicable: performance (no queries; the CSV is one row per month per account); timeouts and retries (the pack write makes no external call); feature flag (sign-off is a new command and pack files are immutable; rollback is a reinstall). Gaps for the owner: (1) Observability and alerting: no alert, which matches the local-first design (refusal plus exit code); there is still no log line that counts monthly.csv rows. (2) Average and lowest balance cells can be negative, e.g. -46.55. They are left as bare numbers starting with '-', not neutralised, because P8 covers text cells and spreadsheets read them as numbers. Confirm that this reading of R34/P8 is acceptable. (3) The hidden policy_check omits the label; the design lists the label alongside 'shown or hidden', so confirm the label is only wanted when the check is shown. (4) Evidence carries override reasons and names typed by the underwriter. The design lists both, and they stay inside the owner-only case folder."
+}
+```

@@ -1,0 +1,43 @@
+T25 is built and the full suite passes (2,425 tests). At sign-off the pack now writes `monthly.csv` alongside `memo.md` and the fuller `evidence.json`. Nothing is committed.
+
+**evidence.json (v1)** now also records:
+- **Accounts:** for each account, its import format, the input file's hash, its period, line count and money-in buckets with their lines.
+- **Overrides:** every override with its status, and the override log position.
+- **Hashes:** firm rules, thresholds and profile, at the top level.
+- **Policy check:** when hidden, `shown: false`, `hidden: true` and the policy hash. When shown, the label, policy name and hash as before.
+
+**Today's keys:** `cma run`'s evidence record still has exactly its 17 keys, and its `policy` key is unchanged. Each pack account carries the same per-statement keys in the same shapes. A test checks that, for the same statement, `cma run` and the pack give the same values, the policy result included.
+
+**monthly.csv:** one row per account and month. Each cell has its value to the penny (days as whole numbers, empty when n/a), its note and the ids of its lines. Every text cell has a leading `=`, `+`, `-`, `@`, tab or carriage return neutralised with an apostrophe (P8). The test uses line ids like `=HYPERLINK(1)` and `+SUM(A1)`. The file's hash is recorded in the pack-write and sign-off entries.
+
+Three choices the verifier may question:
+- **Numbers aren't neutralised.** The value columns are numbers, not text cells, so a negative balance is written as `-12.34` with no apostrophe. Adding one would make the spreadsheet treat it as text.
+- **Not every `cma run` key is at the pack's top level.** A pack can hold several accounts, so the per-statement keys sit under each account. `redrafts` and `review` don't appear at all: a pack has no redrafts, and its review is the `sign_off` key.
+- **Line ids are space-separated in the CSV.** An id can itself contain a space; `evidence.json` lists them exactly.
+
+Changes are in `src/cma/pack.py`, with new tests in `tests/test_pack_evidence.py`. Three existing tests in `tests/test_signoff.py` now expect `monthly.csv` in the pack.
+
+```json
+{
+  "task": "T25",
+  "claims": [
+    {"text": "At sign-off the pack writes evidence.json v1 with the case id, each account's import format, input and statement hashes, period and line count, the ruleset, firm rules, thresholds and profile hashes, the override log and every override (seq, line, old and new category, reason, name, OS user, UTC time, status), the money-in buckets with their lines, the monthly summary, the indicators and judgement queue, the policy check shown (label, policy name, hash) or hidden (shown false, hidden true, hash), the snapshot, the sign-off, egress offline and the package version.",
+     "proof_cmd": "python -m pytest -q tests/test_pack_evidence.py -k 'names_every_input or hidden'",
+     "proof_output": "2 passed"},
+    {"text": "Today's keys are unchanged (contracts): `cma run`'s evidence record still has exactly its 17 keys, and its policy key has the same four keys; the pack's evidence carries today's per-statement keys (statement, vat_stagger, lines, metrics, monthly_summary, thresholds, indicators, judgement_queue, policy, guard) for each account, with the same shapes and, for the same statement, the same values, policy key included.",
+     "proof_cmd": "python -m pytest -q tests/test_pack_evidence.py -k 'todays_keys'",
+     "proof_output": "2 passed"},
+    {"text": "monthly.csv is written into the pack beside memo.md and evidence.json, hashed in the pack-write and sign-off entries; it holds one row per account and month with each cell's value to the penny (days whole, empty when n/a), its note and its line ids. P8: no text cell begins with =, +, -, @, a tab or a carriage return, with line ids such as =HYPERLINK(1), +SUM(A1), -2+3 and @cmd neutralised by a leading apostrophe.",
+     "proof_cmd": "python -m pytest -q tests/test_pack_evidence.py -k 'p8 or to_the_penny'",
+     "proof_output": "3 passed"},
+    {"text": "The marker tiers pass: contracts over the new and sign-off tests, invariants including the new p8 tests, and dual_run.",
+     "proof_cmd": "python -m pytest -q -m contracts tests/test_pack_evidence.py tests/test_signoff.py; python -m pytest -q -m invariants -k p8; python -m pytest -q -m dual_run",
+     "proof_output": "53 passed in 9.65s; 30 passed, 2395 deselected in 20.57s; 84 passed, 2341 deselected in 26.24s"},
+    {"text": "ruff, compileall and the full suite pass.",
+     "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q -x",
+     "proof_output": "All checks passed!; 2425 passed in 273.57s (0:04:33)"}
+  ],
+  "files_changed": ["src/cma/pack.py", "tests/test_pack_evidence.py", "tests/test_signoff.py"],
+  "notes": "Readings. (1) 'today's keys unchanged' is read as R53 for cma run's evidence record (frozen key list and policy keys) and, for the pack, as each account carrying today's per-statement keys in the same shapes; a pack is per case and can hold several accounts, so those keys sit under accounts[]. At the top level the pack carries schema_version, model (null: no model drafts a pack), egress, ruleset and memo; cma run's redrafts and review keys are not given at the pack's top level, since a pack has no redraft and its review is the sign_off key. (2) monthly.csv value columns (money to the penny, days) are numbers, not text cells, so a negative balance is written -12.34 as a number and not neutralised; every other cell (account, month, notes, line ids) is neutralised as R34 and P8 say. Line ids are joined by a space in the CSV; ids may contain spaces, and evidence.json carries them as lists. (3) The three existing sign-off tests that listed the pack's files now list monthly.csv too. Nothing was committed."
+}
+```

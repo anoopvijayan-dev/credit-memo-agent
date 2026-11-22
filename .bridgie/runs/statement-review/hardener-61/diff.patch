@@ -1,0 +1,542 @@
+diff --git a/src/cma/pack.py b/src/cma/pack.py
+index 6cf28bd..3227508 100644
+--- a/src/cma/pack.py
++++ b/src/cma/pack.py
+@@ -21,7 +21,7 @@
+   map, the packaged policy's hash, the show_policy_verdict setting and the package version.
+ 
+ `cma case sign` and the workspace's sign-off form (sign_off, below) sign off the figures of
+-one such preview, bound to its snapshot, and write memo.md and evidence.json once to
++one such preview, bound to its snapshot, and write memo.md, evidence.json (v1) and monthly.csv once to
+ packs/<snapshot>, appending the pack write and the sign-off to the case log after the rename
+ (R22, R23, R24, R26, R28, R42, R43).
+ 
+@@ -250,6 +250,7 @@ class AccountPreview:
+     policy_lines: list[str]
+     guard: GuardResult | None = None
+     figures: overrides.CaseFigures | None = None  # what the figures were computed from, for the pack
++    indicators: list = field(default_factory=list)  # the indicators raised on these figures (R14)
+ 
+ 
+ @dataclass
+@@ -264,6 +265,7 @@ class Preview:
+     text: str = ""
+     position: int | None = None  # the case log position of the preview's entry
+     fields: list[dict[str, Any]] = field(default_factory=list)
++    thresholds: Any = None  # the indicator thresholds the preview read (indicators.Thresholds)
+ 
+     @property
+     def grounded(self) -> bool:
+@@ -371,6 +373,7 @@ def snapshot_inputs(folder: Path, entries, figures: dict[str, overrides.CaseFigu
+ 
+ 
+ def _build(folder: Path, case_id: str, entries) -> Preview:
++    from . import indicators as ind
+     from .review.summary import case_thresholds
+ 
+     config = firm.load()
+@@ -391,12 +394,14 @@ def _build(folder: Path, case_id: str, entries) -> Preview:
+         accounts.append(AccountPreview(
+             a, f.statement_sha256, start, end, f.metrics, result,
+             {mf.id: field_sentence(mf, f.metrics, start, end) for mf in field_map.fields if mf.figures},
+-            [rule_sentence(r, by_id) for r in result.rules] if result else [], figures=f))
++            [rule_sentence(r, by_id) for r in result.rules] if result else [], figures=f,
++            indicators=ind.raise_indicators(f.statement, thresholds)))
+         if result:
+             accounts[-1].policy_lines.insert(0, f"Overall outcome: {result.overall.value}.")
+     inputs = snapshot_inputs(folder, entries, every, profile, config, field_map, thresholds.sha256,
+                              rules["_sha256"])
+-    p = Preview(case_id, bool(profile.get("demo")), field_map, accounts, shown, inputs, snapshot_hash(inputs))
++    p = Preview(case_id, bool(profile.get("demo")), field_map, accounts, shown, inputs, snapshot_hash(inputs),
++                thresholds=thresholds)
+     for a in accounts:  # R28, P14: each account's text against its own figures and policy result
+         a.guard = guard.check(guard_text(p, a.account), a.metrics, a.policy)
+     p.text = _text(p)
+@@ -428,14 +433,14 @@ def build_preview(folder: Path, case_id: str) -> Preview:
+ #    is refused naming what changed (R23); reconciliation runs again (R3) and the text is
+ #    checked by the guard again (R28);
+ # 4. a pack already written for the snapshot is never overwritten (R26);
+-# 5. memo.md and evidence.json are made in full in packs/.part-<random>, synced, and the
++# 5. memo.md, evidence.json and monthly.csv are made in full in packs/.part-<random>, synced, and the
+ #    folder is renamed to packs/<snapshot>; only then are the pack write and the sign-off
+ #    appended to the case log (R42). If the log refuses the pack write, the folder is
+ #    removed again, so the log and the folder agree.
+ 
+ PACKS = "packs"
+ PART = ".part-"  # a pack folder being written; never a pack
+-PACK_FILES = ("memo.md", "evidence.json")
++PACK_FILES = ("memo.md", "evidence.json", "monthly.csv")
+ PACK_EVENT, SIGN_EVENT = "pack_written", "signed_off"
+ MAX_NAME = 200
+ SIGN_WORDING = ("Sign off the figures: you confirm these figures and their lines were checked. This does not "
+@@ -538,38 +543,105 @@ def _remove_leftovers(packs: Path) -> None:
+             shutil.rmtree(child, ignore_errors=True)
+ 
+ 
+-def _evidence(p: Preview, signoff: dict[str, Any], config: firm.FirmConfig) -> dict[str, Any]:
+-    """The pack's evidence: ids, figures, hashes and the sign-off; no description."""
++def _imports(entries) -> dict[str, dict[str, Any]]:
++    """Each account's import as the case log recorded it: its source format and file hashes."""
++    out: dict[str, dict[str, Any]] = {}
++    for e in entries:
++        if e.event == "import" and isinstance(e.data.get("account"), str):
++            out[e.data["account"]] = e.data
++    return out
++
++
++def _overrides(folder: Path) -> list[dict[str, Any]]:
++    """Every override in the case's override log, with what it is now (R17, R19): ids,
++    categories, the reason and who made it, never a line's description."""
++    return [{"seq": o.seq, "account": o.account, "line": o.line, "old_category": o.old, "new_category": o.new,
++             "reason": o.reason, "name": o.name, "os_user": o.os_user, "at": o.at,
++             "statement_sha256": o.statement_sha256, "status": status}
++            for o, status in overrides.listing(folder)]
++
++
++def _money_in(metrics: list[Metric]) -> dict[str, Any]:
++    """Total money in (M17), the eight buckets that add up to it and the cash inside trading
++    receipts (M18), each with the ids of the lines behind it (R1, R55). The figures layer
++    computed them; this only picks them out."""
++    from .metrics import BUCKET_METRICS
++
++    by_id = {m.id: m for m in metrics}
++    ids = ["M2", *(fid for fid, _, _ in BUCKET_METRICS.values())]
++
++    def one(mid: str) -> dict[str, Any] | None:
++        m = by_id.get(mid)
++        return None if m is None else {"id": m.id, "name": m.name, "value": m.value, "unit": m.unit,
++                                       "evidence": list(m.evidence)}
++
++    return {"total": one("M17"), "buckets": [one(i) for i in ids if i in by_id], "cash_within_trading": one("M18")}
++
++
++def _evidence(p: Preview, signoff: dict[str, Any], config: firm.FirmConfig, entries=(),
++              folder: Path | None = None) -> dict[str, Any]:
++    """The pack's evidence JSON v1 (R26, R29, R53, R56): ids, figures, hashes and the sign-off;
++    no description. Each account carries the keys `cma run`'s evidence record gives its one
++    statement (statement, lines, metrics, monthly_summary, thresholds, indicators,
++    judgement_queue, policy, guard, vat_stagger) in the same shapes, `policy` unchanged; the
++    rest is added beside them."""
+     from . import __version__
++    from . import indicators as ind
+     from .models import EVIDENCE_SCHEMA_VERSION
+ 
+     rules = policy.load_policy()
++    imports = _imports(entries)
++    t = p.thresholds
++    thresholds = ({"source": t.source, "sha256": t.sha256,
++                   "illustrative": [f"{a}.{b}" for a, b in t.fields() if t.illustrative(a, b)]}
++                  if t is not None else None)
+     accounts = []
+     for a in p.accounts:
+         f = a.figures
+-        lines = [{"id": t.id, "category": t.category.value if t.category else None, "rule_id": t.rule_id}
+-                 for t in f.statement.transactions] if f else []
++        txns = f.statement.transactions if f else []
++        lines = [{"id": t.id, "category": t.category.value if t.category else None, "rule_id": t.rule_id,
++                  "reverses": t.reverses} for t in txns]
++        imp = imports.get(a.account, {})
+         accounts.append({
+             "account": a.account, "statement_sha256": a.statement_sha256, "start": a.start, "end": a.end,
++            "format": imp.get("format"), "input_sha256": imp.get("input_sha256"),
++            "period": {"start": a.start, "end": a.end},
++            "statement": {"path": f"{store.STATEMENTS}/{a.account}.csv", "sha256": a.statement_sha256, "start": a.start, "end": a.end,
++                          "transactions": len(lines)},
+             "transactions": len(lines), "lines": lines, "overridden": dict(f.overridden) if f else {},
++            "vat_stagger": f.vat_stagger if f else None,
+             "metrics": [m.model_dump(mode="json") for m in a.metrics],
++            "money_in": _money_in(a.metrics),
+             "monthly_summary": [r.model_dump(mode="json") for r in f.monthly] if f else [],
++            "thresholds": thresholds,
++            "indicators": [i.model_dump(mode="json") for i in a.indicators],
++            "judgement_queue": ([e.model_dump(mode="json") for e in ind.judgement_queue(f.statement, a.indicators)]
++                                if f else []),
+             "policy": a.policy.evidence_dump(mode="json") if a.policy else None,
+             "guard": {**a.guard.model_dump(mode="json"), "grounded": _grounded(a.guard)} if a.guard else None,
+         })
++    inputs = p.inputs
+     return {
+         "schema_version": EVIDENCE_SCHEMA_VERSION,
+         "case": p.case,
+         "snapshot": p.snapshot,
+-        "inputs": p.inputs,
+-        "ruleset": p.inputs["ruleset"],
++        "inputs": inputs,
++        "ruleset": inputs["ruleset"],
++        "firm_rules_sha256": inputs.get("firm_rules_sha256"),
++        "thresholds_sha256": inputs.get("thresholds_sha256"),
++        "profile_sha256": inputs.get("profile_sha256"),
++        "override_log": inputs.get("override_log"),
++        "overrides": _overrides(folder) if folder is not None else [],
+         "demo": p.demo,
++        "model": None,  # no model drafts a pack: its text comes from the field map and the figures
++        "memo": p.text,
+         "memo_field_map": {"name": p.field_map.name, "sha256": p.field_map.sha256},
+         "memo_fields": p.fields,
+         "accounts": accounts,
+         "policy_check": ({"shown": True, "label": policy.ILLUSTRATIVE_LABEL, "policy": rules.get("name"),
+-                          "policy_sha256": p.inputs["policy_sha256"]} if p.policy_shown
+-                         else {"shown": False, "policy_sha256": p.inputs["policy_sha256"]}),
++                          "policy_sha256": inputs["policy_sha256"]} if p.policy_shown
++                         else {"shown": False, "hidden": True, "policy": rules.get("name"),
++                               "policy_sha256": inputs["policy_sha256"]}),
+         "grounded": p.grounded,
+         "egress": {"destination": "offline", "offline_lock": config.offline_lock is not False,
+                    "recorded": "the pack is written from the figures layer; no model is asked"},
+@@ -578,6 +650,52 @@ def _evidence(p: Preview, signoff: dict[str, Any], config: firm.FirmConfig) -> d
+     }
+ 
+ 
++# --- the monthly summary as CSV ----------------------------------------------------------
++
++MONTHLY_CELLS = ("money_in", "money_out", "trading_receipts", "average_balance", "lowest_balance",
++                 "days_overdrawn")
++MONTHLY_COLUMNS = ("account", "month", "part_month", "start", "end",
++                   *(f"{c}{suffix}" for c in MONTHLY_CELLS for suffix in ("", "_note", "_lines")))
++
++
++def _cell_value(c) -> str:
++    """A cell's value as a number a spreadsheet reads: money to the penny (R2), days whole;
++    empty when the cell is n/a (its note says why). The figures layer computed it."""
++    if c.value is None:
++        return ""
++    if c.unit == "GBP":
++        from decimal import Decimal
++
++        return f"{Decimal(repr(c.value)).quantize(Decimal('0.01'))}"
++    return str(int(c.value))
++
++
++def monthly_csv(p: Preview) -> bytes:
++    """The monthly summary of every account as CSV (R11, R26): one row per account and calendar
++    month, each cell's value with its note and the ids of the lines behind it (space
++    separated; the evidence JSON lists them). Every text cell, the line ids among them, has a
++    leading formula character (=, +, -, @, a tab or a carriage return) neutralised with an
++    apostrophe, so no spreadsheet reads one as a formula (R34, P8). The value columns are
++    numbers, never text."""
++    import csv
++    import io
++
++    from .importers.contract import neutralise_formula
++
++    buf = io.StringIO(newline="")
++    w = csv.writer(buf, lineterminator="\r\n")
++    w.writerow(MONTHLY_COLUMNS)
++    for a in p.accounts:
++        for r in (a.figures.monthly if a.figures else []):
++            row = [neutralise_formula(a.account), neutralise_formula(r.month), "yes" if r.part_month else "no",
++                   r.start.isoformat(), r.end.isoformat()]
++            for key in MONTHLY_CELLS:
++                c = getattr(r, key)
++                row += [_cell_value(c), neutralise_formula(c.note or ""), neutralise_formula(" ".join(c.evidence))]
++            w.writerow(row)
++    return buf.getvalue().encode("utf-8")
++
++
+ def _write_pack(packs: Path, snapshot: str, files: dict[str, bytes]) -> Path:
+     """Make every file of the pack in a folder of its own, sync it, and rename the folder to
+     packs/<snapshot>: a reader sees no pack or the whole pack, never part of one."""
+@@ -676,8 +794,10 @@ def sign_off(folder: Path, case_id: str, snapshot: str, name: str) -> Signed:
+                                             if entries[n - 1].event == EVENT
+                                             and entries[n - 1].data.get("snapshot") == snapshot),
+                    "wording": SIGN_WORDING}
+-        evidence = json.dumps(_evidence(p, signoff, firm.load()), indent=2, sort_keys=True, ensure_ascii=False)
+-        files = {"memo.md": p.text.encode("utf-8"), "evidence.json": (evidence + "\n").encode("utf-8")}
++        evidence = json.dumps(_evidence(p, signoff, firm.load(), entries, folder), indent=2, sort_keys=True,
++                              ensure_ascii=False)
++        files = {"memo.md": p.text.encode("utf-8"), "evidence.json": (evidence + "\n").encode("utf-8"),
++                 "monthly.csv": monthly_csv(p)}
+         shas = {k: hashlib.sha256(v).hexdigest() for k, v in files.items()}
+         _remove_leftovers(packs)  # only once the sign-off is taken, so a refusal changes nothing
+         target = _write_pack(packs, snapshot, files)
+diff --git a/tests/test_pack_evidence.py b/tests/test_pack_evidence.py
+new file mode 100644
+index 0000000..eaed61c
+--- /dev/null
++++ b/tests/test_pack_evidence.py
+@@ -0,0 +1,245 @@
++"""T25: the pack's evidence JSON v1 and monthly.csv, written at sign-off (C6; R26, R29, R53,
++R56, R34, P8).
++
++evidence.json keeps every key `cma run`'s evidence record has today, in the same shapes and
++with its policy key unchanged, for each account of the case, and adds the case id, the
++accounts' import format and file hashes, the ruleset, firm-rules, thresholds and profile
++hashes, the overrides, the money-in buckets, the policy check shown or hidden (with the label
++and the policy hash), the snapshot, the sign-off, egress offline and the package version.
++monthly.csv holds the monthly summary, and none of its text cells begins with a formula
++character (P8)."""
++
++import csv
++import hashlib
++import io
++import json
++from datetime import date
++
++import pytest
++from typer.testing import CliRunner
++
++from cma import case as caselog
++from cma import overrides, pack, policy, store, synth
++from cma.cli import app
++from cma.importers.contract import FORMULA_START
++from cma.models import EVIDENCE_SCHEMA_VERSION
++
++pytestmark = pytest.mark.contracts
++
++# The keys `cma run`'s evidence record has before this change (graph.evidence_record), and
++# those of its policy key. R53: new evidence fields are additive; none of these goes.
++TODAY_KEYS = {"schema_version", "statement", "model", "egress", "vat_stagger", "ruleset", "lines", "metrics",
++              "monthly_summary", "thresholds", "indicators", "judgement_queue", "policy", "guard", "redrafts",
++              "review", "memo"}
++POLICY_KEYS = {"overall", "policy_name", "policy_sha256", "rules"}
++# The keys of today's record that describe its one statement; a pack carries them per account.
++STATEMENT_KEYS = {"statement", "vat_stagger", "lines", "metrics", "monthly_summary", "thresholds", "indicators",
++                  "judgement_queue", "policy", "guard"}
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    return root
++
++
++def _synth_statement(tmp_path):
++    rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
++    path, _ = synth.write(rows, truth, tmp_path / "synth")
++    return path
++
++
++def _case(path):
++    case_id = store.new_case(label="t25")
++    folder = store.case_folder(case_id)
++    store.import_file(folder, path, "csv")
++    return case_id, folder
++
++
++def _sign(case_id, folder):
++    p = pack.build_preview(folder, case_id)
++    s = pack.sign_off(folder, case_id, p.snapshot, "Ann Smith")
++    return p, s, json.loads((s.pack / "evidence.json").read_text(encoding="utf-8"))
++
++
++def _keys(items):
++    return [sorted(x) for x in items]
++
++
++def test_cma_run_evidence_keeps_todays_keys(tmp_path, monkeypatch):
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    (tmp_path / "synth").mkdir()
++    out = tmp_path / "memo.md"
++    r = CliRunner().invoke(app, ["run", str(_synth_statement(tmp_path)), "--yes", "--reviewer", "A",
++                                 "--out", str(out)])
++    assert r.exit_code == 0, r.output
++    record = json.loads((tmp_path / "memo.evidence.json").read_text())
++    assert set(record) == TODAY_KEYS
++    assert set(record["policy"]) == POLICY_KEYS
++    assert record["schema_version"] == EVIDENCE_SCHEMA_VERSION
++
++
++def test_pack_evidence_carries_todays_keys_per_account_in_the_same_shapes(home, tmp_path, monkeypatch):
++    (tmp_path / "synth").mkdir()
++    path = _synth_statement(tmp_path)
++    out = tmp_path / "memo.md"
++    r = CliRunner().invoke(app, ["run", str(path), "--yes", "--reviewer", "A", "--out", str(out)])
++    assert r.exit_code == 0, r.output
++    run = json.loads((tmp_path / "memo.evidence.json").read_text())
++
++    case_id, folder = _case(path)
++    _, _, ev = _sign(case_id, folder)
++    assert ev["schema_version"] == EVIDENCE_SCHEMA_VERSION
++    assert {"schema_version", "model", "egress", "ruleset", "memo"} <= set(ev)
++    (acct,) = ev["accounts"]
++    assert set(acct) >= STATEMENT_KEYS
++    # The same shapes as today's record, and the policy key unchanged.
++    assert set(acct["statement"]) == set(run["statement"])
++    assert acct["statement"]["sha256"] == run["statement"]["sha256"]
++    assert acct["statement"]["transactions"] == run["statement"]["transactions"]
++    assert set(acct["policy"]) == POLICY_KEYS and acct["policy"] == run["policy"]
++    assert acct["metrics"] == json.loads(json.dumps(run["metrics"]))
++    assert _keys(acct["lines"]) == _keys(run["lines"]) and acct["lines"] == run["lines"]
++    assert acct["monthly_summary"] == run["monthly_summary"]
++    assert set(acct["thresholds"]) == set(run["thresholds"]) and acct["thresholds"] == run["thresholds"]
++    assert acct["indicators"] == run["indicators"]
++    assert acct["judgement_queue"] == run["judgement_queue"]
++    assert set(acct["guard"]) == set(run["guard"])
++    assert set(ev["egress"]) >= {"destination", "offline_lock", "recorded"}
++    assert ev["ruleset"] == run["ruleset"]
++
++
++def test_pack_evidence_v1_names_every_input_the_sign_off_and_offline_egress(home, tmp_path):
++    from cma import __version__
++
++    (tmp_path / "synth").mkdir()
++    case_id, folder = _case(_synth_statement(tmp_path))
++    line = overrides.case_figures(folder)["main"].statement.transactions[0]
++    target = next(c for c in overrides.valid_categories(line) if c != line.category)
++    overrides.add_override(folder, line.id, target.value, reason="checked the invoice", name="Ann")
++    p, s, ev = _sign(case_id, folder)
++    assert ev["case"] == case_id and ev["snapshot"] == p.snapshot
++    (acct,) = ev["accounts"]
++    imported = next(e.data for e in caselog.for_case(folder).entries() if e.event == "import")
++    assert acct["account"] == "main" and acct["format"] == "csv"
++    assert acct["input_sha256"] == imported["input_sha256"]
++    assert acct["statement_sha256"] == imported["statement_sha256"]
++    assert acct["period"] == {"start": imported["start"], "end": imported["end"]}
++    assert acct["transactions"] == imported["lines"] == len(acct["lines"])
++    assert ev["ruleset"] == p.inputs["ruleset"] and set(ev["ruleset"]) >= {"id", "sha256"}
++    for key in ("firm_rules_sha256", "thresholds_sha256", "profile_sha256"):
++        assert key in ev and ev[key] == p.inputs[key]
++    assert ev["thresholds_sha256"] == acct["thresholds"]["sha256"]
++    (o,) = ev["overrides"]
++    assert o == {"seq": 1, "account": "main", "line": line.id, "old_category": line.category.value,
++                 "new_category": target.value, "reason": "checked the invoice", "name": "Ann",
++                 "os_user": store._os_user(), "at": o["at"], "statement_sha256": acct["statement_sha256"],
++                 "status": "applied"}
++    assert acct["overridden"] == {line.id: overrides.ref(1)}
++    # the money-in buckets, from the figures layer, with their lines (R1)
++    by_id = {m["id"]: m for m in acct["metrics"]}
++    mi = acct["money_in"]
++    assert mi["total"]["id"] == "M17" and mi["total"]["value"] == by_id["M17"]["value"]
++    assert [b["id"] for b in mi["buckets"]] == ["M2", "M19", "M20", "M21", "M22", "M23", "M24", "M25"]
++    assert all(b["evidence"] == by_id[b["id"]]["evidence"] for b in mi["buckets"])
++    assert mi["cash_within_trading"]["id"] == "M18"
++    assert acct["monthly_summary"] and acct["indicators"] is not None
++    # the policy check, shown, with its label and hash (R25)
++    pc = ev["policy_check"]
++    assert pc["shown"] is True and pc["label"] == policy.ILLUSTRATIVE_LABEL
++    assert pc["policy_sha256"] == p.inputs["policy_sha256"] and acct["policy"]["overall"]
++    so = ev["sign_off"]
++    assert so["name"] == "Ann Smith" and so["snapshot"] == p.snapshot and so["at"] == s.at
++    assert ev["egress"]["destination"] == "offline" and ev["egress"]["offline_lock"] is True
++    assert ev["package_version"] == __version__
++    assert ev["memo"] == p.text and ev["model"] is None
++    # ids, never a description (R30, R34)
++    text = (s.pack / "evidence.json").read_text(encoding="utf-8")
++    assert all(t.description not in text for t in overrides.case_figures(folder)["main"].statement.transactions
++               if len(t.description) > 12)
++
++
++def test_pack_evidence_records_the_policy_check_hidden(home, tmp_path):
++    (tmp_path / "synth").mkdir()
++    case_id, folder = _case(_synth_statement(tmp_path))
++    (home / "firm.yaml").write_text("show_policy_verdict: false\n", encoding="utf-8")
++    p, _, ev = _sign(case_id, folder)
++    pc = ev["policy_check"]
++    assert pc["shown"] is False and pc["hidden"] is True and "label" not in pc
++    assert pc["policy_sha256"] == p.inputs["policy_sha256"]
++    assert all(a["policy"] is None for a in ev["accounts"])  # R56: no outcome, no rule result
++
++
++# --- monthly.csv ---------------------------------------------------------------------------
++
++HOSTILE = ["=HYPERLINK(1)", "+SUM(A1)", "-2+3", "@cmd", "=1"]
++
++
++def _hostile_statement(ids):
++    rows = ["id,date,description,amount,balance"]
++    bal = 0
++    for n, (lid, day, amt) in enumerate(zip(ids, ("2026-01-05", "2026-01-20", "2026-02-03", "2026-02-10",
++                                                   "2026-03-01"), (12345, -5000, 8000, -20000, 1), strict=True)):
++        bal += amt
++        desc = ["=CMD()", "+FPS CREDIT", "-CARD SETTLEMENT STRIPE", "@CASH PAID IN", "\tTAB"][n]
++        rows.append(f"{lid},{day},\"{desc}\",{amt / 100:.2f},{bal / 100:.2f}")
++    return "\n".join(rows) + "\n"
++
++
++def _csv_rows(s):
++    data = (s.pack / "monthly.csv").read_bytes().decode("utf-8")
++    return list(csv.DictReader(io.StringIO(data, newline="")))
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("ids", [HOSTILE, ["L1", "L2", "L3", "L4", "L5"]])
++def test_p8_monthly_csv_text_cells_never_begin_with_a_formula_character(home, tmp_path, ids):
++    src = tmp_path / "s.csv"
++    src.write_text(_hostile_statement(ids), encoding="utf-8")
++    case_id, folder = _case(src)
++    _p, s, _ev = _sign(case_id, folder)
++    rows = _csv_rows(s)
++    assert list(rows[0]) == list(pack.MONTHLY_COLUMNS)
++    values = {f"{c}" for c in pack.MONTHLY_CELLS}
++    for row in rows:
++        for col, cell in row.items():
++            if col in values:  # a number, never text
++                assert cell == "" or float(cell) == float(cell)
++                continue
++            assert not cell.startswith(FORMULA_START), (col, cell)
++    # every line id is there, neutralised where it needed to be
++    seen = {x.lstrip("'") for row in rows for c in pack.MONTHLY_CELLS for x in row[f"{c}_lines"].split()}
++    assert set(ids) <= seen
++    if ids is HOSTILE:
++        assert any(row["money_in_lines"].startswith("'=") for row in rows)
++
++
++def test_monthly_csv_is_the_monthly_summary_to_the_penny(home, tmp_path):
++    src = tmp_path / "s.csv"
++    src.write_text(_hostile_statement(["L1", "L2", "L3", "L4", "L5"]), encoding="utf-8")
++    case_id, folder = _case(src)
++    _p, s, ev = _sign(case_id, folder)
++    rows = _csv_rows(s)
++    (acct,) = ev["accounts"]
++    months = acct["monthly_summary"]
++    assert [r["month"] for r in rows] == [m["month"] for m in months]
++    assert all(r["account"] == "main" for r in rows)
++    jan = rows[0]
++    assert jan["money_in"] == "123.45" and jan["money_out"] == "50.00"
++    for r, m in zip(rows, months, strict=True):
++        assert r["part_month"] == ("yes" if m["part_month"] else "no")
++        for c in pack.MONTHLY_CELLS:
++            cell = m[c]
++            assert r[f"{c}_lines"].split() == cell["evidence"]
++            assert r[f"{c}_note"] == (cell["note"] or "")
++            if cell["value"] is None:
++                assert r[c] == ""
++            elif cell["unit"] == "GBP":
++                assert r[c] == f"{cell['value']:.2f}"
++            else:
++                assert int(r[c]) == cell["value"]
++    # recorded as part of the pack, by hash (R42)
++    signed = caselog.for_case(folder).entries()[-1].data
++    assert signed["files"]["monthly.csv"] == hashlib.sha256((s.pack / "monthly.csv").read_bytes()).hexdigest()
+diff --git a/tests/test_signoff.py b/tests/test_signoff.py
+index fd59a86..d0295c8 100644
+--- a/tests/test_signoff.py
++++ b/tests/test_signoff.py
+@@ -72,7 +72,7 @@ def test_sign_off_writes_memo_and_evidence_once_bound_to_the_snapshot(home, tmp_
+     p = pack.build_preview(folder, case_id)
+     s = pack.sign_off(folder, case_id, p.snapshot, "  Ann   Smith ")
+     target = folder / "packs" / p.snapshot
+-    assert s.pack == target and sorted(os.listdir(target)) == ["evidence.json", "memo.md"]
++    assert s.pack == target and sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv"]
+     assert (target / "memo.md").read_text(encoding="utf-8") == p.text  # from the signed preview
+     ev = json.loads((target / "evidence.json").read_text(encoding="utf-8"))
+     assert ev["snapshot"] == p.snapshot and ev["inputs"] == p.inputs and ev["case"] == case_id
+@@ -254,7 +254,7 @@ def test_r42_entries_are_logged_after_the_rename_and_a_refused_entry_removes_the
+     real = caselog.CaseLog.append
+ 
+     def watched(self, event, data, *, expected):
+-        seen.append((event, target.is_dir() and sorted(os.listdir(target)) == ["evidence.json", "memo.md"]))
++        seen.append((event, target.is_dir() and sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv"]))
+         return real(self, event, data, expected=expected)
+ 
+     monkeypatch.setattr(caselog.CaseLog, "append", watched)
+@@ -503,7 +503,7 @@ def test_r26_a_pack_the_tool_stopped_before_recording_is_refused_as_unrecorded_n
+         with pytest.raises(_Died):
+             pack.sign_off(folder, case_id, p.snapshot, "Ann")
+     target = folder / "packs" / p.snapshot
+-    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md"]
++    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv"]
+     assert pack.PACK_EVENT not in _events(folder) and pack.SIGN_EVENT not in _events(folder)
+     events = _events(folder)
+     for snapshot in (p.snapshot, pack.build_preview(folder, case_id).snapshot):  # the same preview, or a new one
+@@ -511,7 +511,7 @@ def test_r26_a_pack_the_tool_stopped_before_recording_is_refused_as_unrecorded_n
+             pack.sign_off(folder, case_id, snapshot, "Ann")
+         msg = str(e.value)
+         assert "records no pack written" in msg and "move that folder aside" in msg and "already signed off" not in msg
+-    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md"]  # never removed or replaced
++    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv"]  # never removed or replaced
+     assert _events(folder)[: len(events)] == events and pack.SIGN_EVENT not in _events(folder)
+     os.rename(target, folder / "aside")
+     signed = pack.sign_off(folder, case_id, p.snapshot, "Ann")
