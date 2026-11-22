@@ -1,0 +1,59 @@
+{
+  "task": "T24",
+  "claims": [
+    {
+      "text": "P14 (the escalation's major): an account key holding digits or number words ('2', '12', 'hsbc-1', 'acct2x', 'one', 'half', '2026', '1-2', all valid under store.ACCOUNT_KEY) no longer makes the preview ungrounded. The guard reads each account's text with the tool-written 'Account {key}' labels blanked to spaces of equal length; every other character is read. The test passes with the policy check shown and hidden.",
+      "proof_cmd": "python -m pytest -q tests/test_preview.py -k account_keys_holding_digits",
+      "proof_output": "8 passed (inside the 51 passed of tests/test_preview.py)"
+    },
+    {
+      "text": "The P14 test catches the defect: with the pre-fix label (never blanked) patched in, all 8 key cases fail.",
+      "proof_cmd": "PYTHONPATH=<scratchpad> python -m pytest -q -p oldlabel_plugin tests/test_preview.py -k account_keys_holding_digits  # plugin monkeypatches pack._label to f'Account {key}'",
+      "proof_output": "8 failed, 43 deselected"
+    },
+    {
+      "text": "P14 on the memo text in general: synthetic archetypes x profiles (with features, a second account included) with the policy check on and off, a case with overrides, negatives and an n/a figure, all grounded. A literal number in a firm template does fail the guard and is recorded as grounded=false.",
+      "proof_cmd": "python -m pytest -q -m invariants tests/test_preview.py -k 'p14 or p20 or snapshot'",
+      "proof_output": "20 passed, 31 deselected"
+    },
+    {
+      "text": "P20: while show_policy_verdict is on, the policy-check section comes after the memo fields, its first line is the label, every section that shows an outcome holds the label, and the recommendation stays blank. While it is off there is no outcome word, no [Rn] and no policy section, and the log records policy_check=hidden.",
+      "proof_cmd": "python -m pytest -q tests/test_preview.py -k p20",
+      "proof_output": "passed (within the 20 invariants above)"
+    },
+    {
+      "text": "R22 snapshot: changing each input on its own changes the hash. The inputs are the statement (a new one and changed bytes), ruleset, firm rules, profile, override log position, thresholds, memo field map, policy hash, show_policy_verdict and package version. With no change the hash is the same.",
+      "proof_cmd": "python -m pytest -q tests/test_preview.py -k snapshot_changes",
+      "proof_output": "passed (within 25 passed of the write-scope/refusal/validation/snapshot subset)"
+    },
+    {
+      "text": "Data/PII and partial failure: the preview writes no file outside the case log, only one 'preview' entry. That entry holds hashes and counts only, with no description, name or override reason, and the log verifies afterwards. A refused preview (no statement, or a field map firm.yaml names that does not exist) records nothing.",
+      "proof_cmd": "python -m pytest -q tests/test_preview.py -k 'nothing_but or refused or not_there'",
+      "proof_output": "passed (within 25 passed of the subset)"
+    },
+    {
+      "text": "Security: the field map is validated at the boundary. A malformed map is refused, naming the problem, and a template cannot reach attributes, indexes, positional slots or conversions through str.format. Judgement fields (recommendation, credit history, key risks) cannot map a figure, whether named by id or by title (R24). The new code adds no new dependency and no secret.",
+      "proof_cmd": "python -m pytest -q tests/test_preview.py -k 'malformed or template_cannot'",
+      "proof_output": "passed (within 25 passed of the subset)"
+    },
+    {
+      "text": "No regressions: lint, compile and the full suite and marker tiers pass.",
+      "proof_cmd": "ruff check src tests; python -m compileall -q src; python -m pytest -q; python -m pytest -q -m invariants; python -m pytest -q -m contracts",
+      "proof_output": "All checks passed!; compile-ok; 2371 passed; 976 passed, 1395 deselected; 747 passed, 1624 deselected"
+    },
+    {
+      "text": "Docs: README documents `cma case preview`, covering what it prints, that it writes only a case-log entry, and exit 1 when the text fails the guard.",
+      "proof_cmd": "grep -n 'case preview' README.md",
+      "proof_output": "103:cma case preview <id>"
+    }
+  ],
+  "files_changed": [],
+  "dispositions": [
+    {
+      "finding": "attempt 1 P14 major: a multi-account case whose account key holds digits (e.g. '2', 'hsbc-1') puts a bare untagged number into the text via 'Account {key}: ' and '### Account {key}', so the guard flags it and the preview is ungrounded (src/cma/pack.py:292).",
+      "disposition": "reproduced",
+      "evidence": "With pack._label patched to the pre-fix f'Account {key}', test_p14_..._account_keys_holding_digits_or_number_words fails for all 8 keys. At HEAD 0ceaeb1 (guard_text blanks the label) the same 8 pass, and _assert_grounded checks that the guard's copy differs from the held text only at the account labels."
+    }
+  ],
+  "notes": "No code changed in this seat: 0ceaeb1 already holds the fix, and this seat verified it. Gaps for the owner, outside this task's scope: (1) Idempotency: each `cma case preview` appends a new preview entry, even for an identical snapshot. This is intended as an audit record, but a sign-off (T27) should bind to the latest preview's snapshot, not to 'a preview exists'. (2) A firm memo_fields.yaml whose field titles hold digits (e.g. 'Q3 trading') fails the guard, because titles are read. That matches R28's refusal of literal numbers, but the field-map validator does not warn at load. A design choice: refuse digits in titles, or blank titles in the guard copy. (3) Observability/operability: no remote alerting by design. The signals are exit 1 for an ungrounded preview and the case-log entry with grounded/policy_check. No runbook or changelog line was written. Performance was not measured: one case_figures call per preview, in a hot path only R52 times (T22). (4) Authz: the command relies on the case root's owner-only permissions (R31), as every other `cma case` command does. There is no separate check."
+}
