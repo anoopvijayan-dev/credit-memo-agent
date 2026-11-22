@@ -287,20 +287,21 @@ def raise_indicators(statement: Statement, thresholds: Thresholds | None = None)
 
     # A calendar month whose cash is above a share of its trading receipts.
     share = t_.value("cash_heavy_month", "share_above_pct")
+    share_exact = Fraction(share)  # exact: a Decimal product rounds to 28 digits (R2)
     by_month: dict[tuple[int, int], list[Transaction]] = defaultdict(list)
     for t in trading:
         by_month[(t.date.year, t.date.month)].append(t)
     for (y, m), ts in sorted(by_month.items()):
         month_cash = [t for t in ts if t.category == Category.CASH_DEPOSIT]
         c, tr = sum(amt[t.id] for t in month_cash), sum(amt[t.id] for t in ts)
-        if c > 0 and c * 100 > share * tr:
+        if c > 0 and c * 100 > share_exact * tr:
             fire("cash_heavy_month", [("cash_heavy_month", "share_above_pct")], month_cash,
                  f"In {y:04d}-{m:02d} cash deposits of {_money(c)} are above {share}% of the month's "
                  f"trading receipts of {_money(tr)}.")
 
     # Cash paid in within a window after a similar cash withdrawal.
     days = t_.value("cash_round_trip", "within_days")
-    tol = t_.value("cash_round_trip", "tolerance_pct")
+    tol = Fraction(t_.value("cash_round_trip", "tolerance_pct"))  # exact, as above (R2)
     # Withdrawals in (day, position) order, so each deposit's window is found by bisection
     # rather than by reading every withdrawal (R52: 10,000 lines recompute in about 2 seconds).
     withdrawals = sorted((t for t in txns if _is_withdrawal(t, amt[t.id])),

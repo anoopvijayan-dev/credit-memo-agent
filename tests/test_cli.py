@@ -570,3 +570,27 @@ def test_the_review_lock_is_one_lock_through_a_symlink(tmp_path):
         order.append("second acquired")
     t.join()
     assert order == ["first released", "second acquired"]
+
+
+@pytest.mark.parametrize("first", ["memo", "evidence"])
+def test_a_memo_written_by_another_run_while_this_one_was_open_is_never_replaced(tmp_path, monkeypatch, first):
+    # Antigravity re-review of T04: the check that --out is free runs before the review, the
+    # write after it; another run (or a person) can write the memo or its evidence in between.
+    from cma import cli
+
+    csv = _statement(tmp_path)
+    out = tmp_path / "memo.md"
+    theirs = out if first == "memo" else cli._evidence_path(out)
+    real = cli.evidence_record
+
+    def meanwhile(state):
+        theirs.write_text("written by another run", encoding="utf-8")
+        return real(state)
+
+    monkeypatch.setattr(cli, "evidence_record", meanwhile)
+    r = runner.invoke(app, ["run", str(csv), "--yes", "--reviewer", "A", "--out", str(out)])
+    assert r.exit_code == 2 and "Refusing to overwrite" in r.output, r.output
+    assert theirs.read_text(encoding="utf-8") == "written by another run"
+    other = cli._evidence_path(out) if first == "memo" else out
+    assert not other.exists()  # nothing of this run's is left beside the other run's file
+    assert not [p for p in tmp_path.iterdir() if p.name.endswith(".part")]
