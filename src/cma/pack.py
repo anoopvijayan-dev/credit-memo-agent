@@ -21,7 +21,8 @@
   map, the packaged policy's hash, the show_policy_verdict setting and the package version.
 
 `cma case sign` and the workspace's sign-off form (sign_off, below) sign off the figures of
-one such preview, bound to its snapshot, and write memo.md, evidence.json (v1) and monthly.csv once to
+one such preview, bound to its snapshot, and write memo.md, record.html (the self-contained
+offline record: record.py), evidence.json (v1) and monthly.csv once to
 packs/<snapshot>, appending the pack write and the sign-off to the case log after the rename
 (R22, R23, R24, R26, R28, R42, R43).
 
@@ -433,14 +434,14 @@ def build_preview(folder: Path, case_id: str) -> Preview:
 #    is refused naming what changed (R23); reconciliation runs again (R3) and the text is
 #    checked by the guard again (R28);
 # 4. a pack already written for the snapshot is never overwritten (R26);
-# 5. memo.md, evidence.json and monthly.csv are made in full in packs/.part-<random>, synced, and the
-#    folder is renamed to packs/<snapshot>; only then are the pack write and the sign-off
-#    appended to the case log (R42). If the log refuses the pack write, the folder is
+# 5. memo.md, record.html, evidence.json and monthly.csv are made in full in
+#    packs/.part-<random>, synced, and the folder is renamed to packs/<snapshot>; only then
+#    are the pack write and the sign-off appended to the case log (R42). If the log refuses the pack write, the folder is
 #    removed again, so the log and the folder agree.
 
 PACKS = "packs"
 PART = ".part-"  # a pack folder being written; never a pack
-PACK_FILES = ("memo.md", "evidence.json", "monthly.csv")
+PACK_FILES = ("memo.md", "record.html", "evidence.json", "monthly.csv")
 PACK_EVENT, SIGN_EVENT = "pack_written", "signed_off"
 MAX_NAME = 200
 SIGN_WORDING = ("Sign off the figures: you confirm these figures and their lines were checked. This does not "
@@ -799,8 +800,10 @@ def sign_off(folder: Path, case_id: str, snapshot: str, name: str) -> Signed:
                    "wording": SIGN_WORDING}
         evidence = json.dumps(_evidence(p, signoff, firm.load(), entries, folder), indent=2, sort_keys=True,
                               ensure_ascii=False)
-        files = {"memo.md": p.text.encode("utf-8"), "evidence.json": (evidence + "\n").encode("utf-8"),
-                 "monthly.csv": monthly_csv(p)}
+        from . import record
+
+        files = {"memo.md": p.text.encode("utf-8"), "record.html": record.render(p, signoff).encode("utf-8"),
+                 "evidence.json": (evidence + "\n").encode("utf-8"), "monthly.csv": monthly_csv(p)}
         shas = {k: hashlib.sha256(v).hexdigest() for k, v in files.items()}
         _remove_leftovers(packs)  # only once the sign-off is taken, so a refusal changes nothing
         target = _write_pack(packs, snapshot, files)
