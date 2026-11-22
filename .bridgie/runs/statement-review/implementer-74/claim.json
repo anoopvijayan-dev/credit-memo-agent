@@ -1,0 +1,35 @@
+{
+  "task": "T34",
+  "claims": [
+    {
+      "text": "P11 holds on generated multi-account cases (2 or 3 accounts, fixed seeds): each own-account pair is one debit and one credit of equal amount in different accounts within the configured days, each naming the other, no line in two pairs, and M17 less M19 equals the generator's credits from outside the accounts; a debit with two candidate credits is unpaired and it and every candidate are in the workspace judgement queue as possible_own_account_transfer with each other listed (R8, R9).",
+      "proof_cmd": "python -m pytest -q -m invariants -k p11",
+      "proof_output": "22 passed, 2697 deselected in 7.83s"
+    },
+    {
+      "text": "Pairing uses the configured number of days: firm.yaml's own_account_pairing_days (default 3, whole number 0-31, malformed values refused naming the key); changing it changes which lines pair and what the queue lists; the preview snapshot binds it, and a change is named as 'the own-account pairing days' (R8, R22, R23).",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_own_account_pairing.py",
+      "proof_output": "10 passed, 20 deselected in 4.81s"
+    },
+    {
+      "text": "Full suite passes, including the two existing tests updated for the new snapshot input (test_preview expected-key set; test_signoff stub accepting the pairing_days keyword).",
+      "proof_cmd": "python -m pytest -q -p no:cacheprovider",
+      "proof_output": "2719 passed in 331.26s (0:05:31)"
+    },
+    {
+      "text": "Lint and compile are clean.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src && echo compile-ok",
+      "proof_output": "All checks passed!\ncompile-ok"
+    }
+  ],
+  "files_changed": [
+    "src/cma/categorise.py",
+    "src/cma/firm.py",
+    "src/cma/overrides.py",
+    "src/cma/pack.py",
+    "tests/test_own_account_pairing.py",
+    "tests/test_preview.py",
+    "tests/test_signoff.py"
+  ],
+  "notes": "Committed as 2a2d2a2 on the T34 branch. The pairing itself (pair_own_accounts, R9 groups, queue listing) came from T33; T34 makes the days configurable (firm.yaml own_account_pairing_days, default 3 = the previous PAIRING_DAYS) and reads them in case_figures, passes them explicitly from pack._build so the preview's figures and snapshot use one reading, and adds the P11/R8/R9 tests. The snapshot gains an additive input key own_account_pairing_days, so an existing preview-key test was extended; this is a new snapshot input rather than a shared-contract change, since R22's snapshot already binds the inputs figures depend on (thresholds, firm config). An earlier interrupted attempt (implementer-73, empty reply) had left the uncommitted firm/overrides/pack changes and the test file in the worktree; I reviewed, completed and verified them."
+}
