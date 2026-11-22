@@ -1,0 +1,38 @@
+{
+  "task": "T33",
+  "criteria": [
+    {
+      "id": "R41",
+      "tier": "adversarial",
+      "check": "Prefixed ids: metrics.case_line_id/case_statement (src/cma/metrics.py:381-404); account keys refuse ':' and '*' (test_combined_key_and_colon_are_never_account_keys PASSED, specified-3.log). Flow figures after removing paired own-account transfers: overrides.case_figures categorises every account, then calls categorise.pair_own_accounts (src/cma/overrides.py:396) before any figure is computed. pair_own_accounts (src/cma/categorise.py:1471-1521) pairs a debit with the single same-amount credit in another account within PAIRING_DAYS, leaves a debit with several candidates (or a contested credit) unpaired and returns it as an R9 group, and _pairable (:1456-1468) keeps overrides and protected verdicts out. Paired lines become OWN_ACCOUNT_TRANSFER, so they leave M2, the M16/M26 denominators and M9 (own_account_named at metrics.py:558-561 accepts the pairing: rule). compute_case (metrics.py:468-479) then computes on the merged statement. Balance figures: case_closes (metrics.py:419-434) over max(first day)..min(last day), _closes_balance_figures (:437-465) and _month_balance_cells (:944-976); n/a with NO_SHARED_DAYS or NO_SHARED_DAYS_IN_MONTH, and n/a when no float carries the pence. Workspace: summary.case_summary 'combined' (summary.py:312-323), the 'All accounts' section (:591), drilldown account '*' (drilldown.py:85). Combined import limit: store._case_flows_at_limit (store.py:756-780), called inside the held save at store.py:677 before any write. Tests: test_p11_unnamed_transfer_between_accounts_is_paired_and_left_out_of_combined_flows and test_p11_two_equal_candidates_leave_the_debit_unpaired_and_listed PASSED in specified-3.log and invariants-5.log. Overlap/no-overlap, workspace, limit, override and order-independence tests PASSED in specified-3.log and contracts-4.log.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-261/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 1452,
+      "criterion": "R41",
+      "claim": "R41's removal of paired own-account transfers rests on R8's pairing 'within the configured number of days'. The window is a module constant, PAIRING_DAYS = 3, and nothing reads it from firm.yaml, the thresholds file or the profile. A firm cannot set it, and the snapshot does not pin it.",
+      "repro": "grep -rn PAIRING_DAYS src: the only uses are the definition and the default argument of pair_own_accounts. overrides.case_figures (src/cma/overrides.py:396) passes no days. A main-to-savings move four days apart (PAIR_SAVINGS with S2 on 2026-01-10) stays unpaired and unexplained whatever the firm configures.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": null,
+      "line": null,
+      "criterion": "R41",
+      "claim": "The performance claim (R52 on a 10,000-line two-account case: 1.2 s warm, 1.67 s summary, 2.79 s cold) comes from a scratchpad probe that the runner did not run. The existing R52 tests use one-account cases, so the claim is not proven for multi-account cases.",
+      "repro": "grep r52 in specified-3.log: only tests/test_workspace_overrides.py::test_r52_* ran, on one-account _big cases. No runner tier ran the claim's probe.py.",
+      "disposition": null
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

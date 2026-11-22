@@ -1,0 +1,59 @@
+**T33 passes on R41.** The gap that blocked the last review, the missing own-account pairing, is now built, and every clause of R41 maps to code. The tests that prove it ran and passed in the runner's logs.
+
+- **Pairing:** `overrides.case_figures` categorises every account and then runs `categorise.pair_own_accounts` before any figure is computed (`src/cma/overrides.py:396`). A debit pairs with the only credit of the same amount in another account within the day window.
+  - A debit with more than one candidate stays unpaired and goes to the judgement queue with every candidate (R9).
+  - Overridden lines and protected verdicts are never paired (`src/cma/categorise.py:1456-1468`).
+- **Combined flows:** paired lines become own-account transfers. They stay out of trading receipts (M2), out of the M16/M26 denominators and out of operating cash flow (M9). M9 recognises the pairing at `src/cma/metrics.py:558-561`.
+- **Combined balances:** read over the days every account covers (`src/cma/metrics.py:419-465`, `:944-976`). They show n/a with the reason when the accounts share no day, or when a combined balance can't be reported to the penny.
+- **Workspace:** an "All accounts" section, and drill-downs under account `*`.
+- **Import limit:** checked while the case is held and before anything is written (`src/cma/store.py:677`, `:756-780`).
+- **Tests:** both pairing tests (`test_p11_…`) passed in the full-suite and invariants logs. The overlap, no-overlap, workspace, limit, override and import-order tests passed in the full-suite and contracts logs.
+
+I ran the lane attacks: re-import, a refused import leaving files behind, the token check on the new `/lines?account=*` endpoint, overrides against `*`, and dependence on import order. None found a defect.
+
+Two minor findings:
+1. **The pairing window can't be configured.** R8 says "within the configured number of days", but the window is a code constant, `PAIRING_DAYS = 3`. Nothing reads it from firm configuration and the snapshot doesn't record it.
+2. **The performance claim isn't proven.** The two-account 10,000-line timings come from a scratchpad probe the runner didn't run. The existing R52 tests only cover one-account cases.
+
+I couldn't write `evidence.json` to the run directory: the write was refused because this session runs in don't-ask mode. The block below is the evidence record, as the output contract allows.
+
+```json
+{
+  "task": "T33",
+  "criteria": [
+    {
+      "id": "R41",
+      "tier": "adversarial",
+      "check": "Prefixed ids: metrics.case_line_id/case_statement (src/cma/metrics.py:381-404); account keys refuse ':' and '*' (test_combined_key_and_colon_are_never_account_keys PASSED, specified-3.log). Flow figures after removing paired own-account transfers: overrides.case_figures categorises every account, then calls categorise.pair_own_accounts (src/cma/overrides.py:396) before any figure is computed. pair_own_accounts (src/cma/categorise.py:1471-1521) pairs a debit with the single same-amount credit in another account within PAIRING_DAYS, leaves a debit with several candidates (or a contested credit) unpaired and returns it as an R9 group, and _pairable (:1456-1468) keeps overrides and protected verdicts out. Paired lines become OWN_ACCOUNT_TRANSFER, so they leave M2, the M16/M26 denominators and M9 (own_account_named at metrics.py:558-561 accepts the pairing: rule). compute_case (metrics.py:468-479) then computes on the merged statement. Balance figures: case_closes (metrics.py:419-434) over max(first day)..min(last day), _closes_balance_figures (:437-465) and _month_balance_cells (:944-976); n/a with NO_SHARED_DAYS or NO_SHARED_DAYS_IN_MONTH, and n/a when no float carries the pence. Workspace: summary.case_summary 'combined' (summary.py:312-323), the 'All accounts' section (:591), drilldown account '*' (drilldown.py:85). Combined import limit: store._case_flows_at_limit (store.py:756-780), called inside the held save at store.py:677 before any write. Tests: test_p11_unnamed_transfer_between_accounts_is_paired_and_left_out_of_combined_flows and test_p11_two_equal_candidates_leave_the_debit_unpaired_and_listed PASSED in specified-3.log and invariants-5.log. Overlap/no-overlap, workspace, limit, override and order-independence tests PASSED in specified-3.log and contracts-4.log.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-261/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 1452,
+      "criterion": "R41",
+      "claim": "R41's removal of paired own-account transfers rests on R8's pairing 'within the configured number of days'. The window is a module constant, PAIRING_DAYS = 3, and nothing reads it from firm.yaml, the thresholds file or the profile. A firm cannot set it, and the snapshot does not pin it.",
+      "repro": "grep -rn PAIRING_DAYS src: the only uses are the definition and the default argument of pair_own_accounts. overrides.case_figures (src/cma/overrides.py:396) passes no days. A main-to-savings move four days apart (PAIR_SAVINGS with S2 on 2026-01-10) stays unpaired and unexplained whatever the firm configures.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": null,
+      "line": null,
+      "criterion": "R41",
+      "claim": "The performance claim (R52 on a 10,000-line two-account case: 1.2 s warm, 1.67 s summary, 2.79 s cold) comes from a scratchpad probe that the runner did not run. The existing R52 tests use one-account cases, so the claim is not proven for multi-account cases.",
+      "repro": "grep r52 in specified-3.log: only tests/test_workspace_overrides.py::test_r52_* ran, on one-account _big cases. No runner tier ran the claim's probe.py.",
+      "disposition": null
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "claude-opus-5-5"
+  }
+}
+```
