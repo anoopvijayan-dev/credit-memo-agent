@@ -414,3 +414,34 @@ def test_cli_case_preview_ungrounded_and_refused(home, tmp_path):
     (home / "memo_fields.yaml").write_text("fields: [\n", encoding="utf-8")
     r = CliRunner().invoke(app, ["case", "preview", case_id])
     assert r.exit_code == 2 and "not valid YAML" in r.output
+
+
+@pytest.mark.invariants
+def test_p14_holds_for_random_numeric_account_keys_several_at_once(home, tmp_path):
+    """Keys drawn at random from what store.ACCOUNT_KEY allows, made only of digits, '-' and
+    '_' (the shapes a guard could take for a number), up to the 32-character limit, several
+    accounts in one case: the preview stays grounded and names each account."""
+    import random
+
+    rng = random.Random(24)
+    keys = {"9" * 32, "0", "1-0", "10_000", "3-1-2"}
+    while len(keys) < 9:
+        n = rng.randint(1, 32)
+        keys.add(rng.choice("0123456789") + "".join(rng.choice("0123456789-_") for _ in range(n - 1)))
+    keys = sorted(keys)
+    assert all(store.ACCOUNT_KEY.fullmatch(k) for k in keys)
+    for start in range(0, len(keys), 3):
+        group = keys[start:start + 3]
+        root = tmp_path / f"g{start}"
+        root.mkdir()
+        # A statement of its own for each account: the same lines twice are one account (P9, R40).
+        bodies = [("id,date,description,amount,balance\n"
+                   f"S1,2026-01-03,CARD SETTLEMENT SUMUP,{900 + 7 * i}.00,{900 + 7 * i}.00\n"
+                   f"S2,2026-01-20,IWOCA LOAN REPAYMENT,-{120 + 3 * i}.00,{780 + 4 * i}.00\n")
+                  for i in range(len(group))]
+        case_id, folder = _case(root, accounts=(("main", STATEMENT), *zip(group, bodies, strict=True)))
+        assert len(pack.build_preview(folder, case_id).accounts) == len(group) + 1
+        p = pack.build_preview(folder, case_id)
+        _assert_grounded(p)
+        for k in group:
+            assert f"Account {k}: " in p.text and f"### Account {k}\n" in p.text
