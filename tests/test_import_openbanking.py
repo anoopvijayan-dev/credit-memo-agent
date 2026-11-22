@@ -415,3 +415,18 @@ def test_a_pending_transaction_booked_on_another_page_is_not_counted_as_left_out
                  [_txn("X", "5.00", balance="106.00", when="2026-05-01T11:00:00+00:00")])
     r, _ = _convert(tmp_path, src)
     assert (r.rows, r.pending) == (2, 0)
+
+
+@pytest.mark.contracts
+@pytest.mark.xfail(strict=True, reason="T29 gap for the owner: when same-moment lines with no balance have "
+                   "distinct amounts and a balanced line needs a particular subset of them before it, ordering "
+                   "is subset-sum; the search passes ORDER_STEPS from 16 such lines and refuses a valid file")
+def test_distinct_loose_amounts_whose_subset_a_balanced_line_needs_are_ordered(tmp_path):
+    when = "2026-05-02T00:00:00+00:00"
+    pence = [2 ** i for i in range(16)]
+    target = sum(pence[::2])  # the loose lines that must come before A
+    loose = [_txn(f"L{i}", f"{p / 100:.2f}", when=when) for i, p in enumerate(pence)]
+    src = _write(tmp_path, [_txn("E0", "0.01", when="2026-05-01T00:00:00+00:00", balance="0.01"), *loose,
+                            _txn("A", "0.01", when=when, balance=f"{(target + 2) / 100:.2f}")])
+    r, _ = _convert(tmp_path, src)
+    assert r.rows == 18
