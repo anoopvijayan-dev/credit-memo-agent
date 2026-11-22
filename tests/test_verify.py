@@ -7,6 +7,7 @@ mismatch, or that there is none. A record made with a ruleset other than the one
 refused, naming the package version and ruleset that made it. A record with no schema_version
 (v0, the previous release's) is checked for M1 to M16 only, and verify says so."""
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -472,3 +473,58 @@ def test_an_account_key_that_leaves_the_case_folder_is_refused_and_nothing_outsi
         ev["accounts"][0]["account"] = key
     with pytest.raises(verify.VerifyRefused, match="account key"):
         verify.verify(ev, case_folder=folder)
+
+
+# --- any corrupted record is reported or refused, never raised (T38 pass) -------------------
+
+_JUNK = [None, True, False, 0, 1, -1, 1.5, "", "x", "../../etc", [], [1], {}, {"id": 1}, {"id": "M2"}, 10**30,
+         "0" * 70]
+
+
+def _paths(o, p=()):
+    yield p
+    if isinstance(o, dict):
+        for k, v in o.items():
+            yield from _paths(v, (*p, k))
+    elif isinstance(o, list):
+        for i, v in enumerate(o[:3]):
+            yield from _paths(v, (*p, i))
+
+
+def _corrupt(record, rng):
+    import copy
+
+    paths = [p for p in _paths(record) if p]
+    bad = copy.deepcopy(record)
+    for _ in range(rng.randint(1, 3)):
+        p, o = rng.choice(paths), bad
+        try:
+            for k in p[:-1]:
+                o = o[k]
+            o[p[-1]] = copy.deepcopy(rng.choice(_JUNK))
+        except (TypeError, KeyError, IndexError):
+            pass  # an earlier change replaced this path's parent
+    return bad
+
+
+@pytest.mark.contracts
+def test_a_corrupted_pack_record_is_reported_or_refused_never_raised(home, tmp_path):
+    import random
+
+    _case_id, folder, ev = _signed(tmp_path)
+    rng = random.Random(38)
+    for _ in range(800):
+        with contextlib.suppress(verify.VerifyRefused):  # refused is fine; any other error fails
+            verify.verify(_corrupt(ev, rng), case_folder=folder)
+
+
+@pytest.mark.contracts
+def test_a_corrupted_run_record_is_reported_or_refused_never_raised(tmp_path, monkeypatch):
+    import random
+
+    path = _run_record(tmp_path, monkeypatch)
+    ev = json.loads(path.read_text(encoding="utf-8"))
+    rng = random.Random(83)
+    for _ in range(800):
+        with contextlib.suppress(verify.VerifyRefused):  # refused is fine; any other error fails
+            verify.verify(_corrupt(ev, rng), base=path.parent)
