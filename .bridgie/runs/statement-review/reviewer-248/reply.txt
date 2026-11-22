@@ -1,0 +1,43 @@
+**Verdict: fail.** T27 does what it should in normal use, but one partial failure can leave a case's figures permanently unsignable. I couldn't write the evidence file into the run directory because file writes were denied in this mode, so it is in the block below instead.
+
+All 34 tests in `tests/test_signoff.py` passed in the runner's full-suite log (`specified-3.log`) and its contracts log (`contracts-4.log`). The full suite passed as well (2406 tests).
+
+**What works:**
+- **Typed name and binding:** a sign-off needs a typed name and records it with the OS user and UTC time, bound to the preview's snapshot. The snapshot covers every input R22 lists.
+- **Stale preview:** refused, naming what changed, with nothing written or logged.
+- **Broken log:** refused naming the first bad entry. The command line exits 3 and the workspace answers 409.
+- **Reconciliation and guard:** a sign-off is refused when the figures don't reconcile or the text fails the grounding guard.
+- **Wording:** it says "signing off the figures" throughout, never approving the loan.
+- **Pack write:** the pack goes to a temporary folder and is renamed into place, and the log entries come after the rename.
+
+**Major finding (R42), `src/cma/pack.py:689`:**
+- **The defect:** the sign-off is logged as two separate entries, `pack_written` then `signed_off`. If the first is recorded and the second fails (full disk, refused lock check), the case is stuck.
+- **What it leaves:** the pack's `evidence.json` holds a sign-off the case log never recorded.
+- **No recovery:** the check at `pack.py:651` refuses every retry for that snapshot. A new preview of the same inputs gives the same snapshot, and moving the pack folder aside doesn't help because the refusal comes from the log entry. Those figures can never be signed off.
+- **Not new to you:** the producer flagged this gap in their own notes but didn't fix it.
+
+**Minor findings:**
+- **Workspace errors (`src/cma/review/signoff.py:32`):** a bad policy, thresholds, ruleset or firm config comes back from the workspace as a generic 500 "could not be saved". `cma case sign` gives a named refusal for the same cases.
+- **Refusals still delete files (`src/cma/pack.py:643`):** leftover `.part-*` folders are removed before the refusal checks. So a refused sign-off still changes the case folder, though its message says "nothing was written".
+
+```json
+{
+  "task": "T27",
+  "criteria": [
+    {"id": "R3", "tier": "adversarial", "check": "sign_off rebuilds the preview via _build -> overrides.case_figures (src/cma/pack.py:381), which raises ReconciliationError; CLI maps it to exit 2 (src/cma/cli.py case_sign), workspace to 409 (src/cma/review/signoff.py:33). test_r3_reconciliation_failure_is_refused PASSED in specified-3.log and contracts-4.log.", "result": "pass", "artifact": "specified-3.log"},
+    {"id": "R22", "tier": "adversarial", "check": "_signer requires a typed name; the signoff dict records name, store._os_user(), overrides._now() (UTC, ...Z) and the snapshot, written to evidence.json and the signed_off entry (pack.py:676-690); snapshot_inputs (pack.py:338-357) covers statements, ruleset, firm rules, profile, override log position, thresholds, field map, policy hash, show_policy_verdict, package version. test_sign_off_writes_memo_and_evidence_once_bound_to_the_snapshot and test_r22_a_sign_off_needs_a_typed_name PASSED.", "result": "pass", "artifact": "specified-3.log"},
+    {"id": "R23", "tier": "adversarial", "check": "p.snapshot != snapshot -> SignOffRefused with changed_inputs naming statements by account, the override log, and each INPUT_TITLES key (pack.py:666-671); nothing written or logged. test_r23_stale_snapshot_is_refused_naming_what_changed[6 cases] and the workspace/CLI stale tests PASSED.", "result": "pass", "artifact": "specified-3.log"},
+    {"id": "R24", "tier": "adversarial", "check": "SIGN_WORDING, the CLI prompt and confirm, and the workspace button say 'sign off the figures' and 'does not approve the loan'; parse_field_map refuses a figure mapped to a judgement field, so the memo leaves those fields to the underwriter. test_cli_case_sign_is_interactive_and_worded_as_signing_off_figures and test_workspace_preview_page_offers_the_sign_off_form_and_escapes_the_text PASSED.", "result": "pass", "artifact": "specified-3.log"},
+    {"id": "R28", "tier": "adversarial", "check": "sign_off refuses when not p.grounded after the rebuild (pack.py:672-674); the workspace preview omits the sign form when not grounded. test_r28_guard_failure_is_refused PASSED.", "result": "pass", "artifact": "specified-3.log"},
+    {"id": "R42", "tier": "adversarial", "check": "pack_written and signed_off are appended after os.rename in _write_pack (pack.py:680-690), each through the hash-chained CaseLog.append with an expected position; Tier 1 event kinds asserted by test_r42_every_tier1_event_kind_is_in_the_case_log PASSED. However, a failure of the second append leaves a recorded pack write, a pack whose evidence.json carries a sign-off, no signed_off entry, and every retry refused (finding 1).", "result": "fail", "artifact": "specified-3.log"},
+    {"id": "R43", "tier": "adversarial", "check": "sign_off holds log.writer() and calls log.require_intact() first (pack.py:637-640), raising CaseLogBroken with first_bad; CLI exit 3 via _case_errors, workspace 409 with first_bad. test_r43_broken_log_is_refused_naming_the_first_bad_entry, test_r43_incomplete_last_entry_is_refused and test_workspace_sign_off_on_a_broken_log_names_the_first_bad_entry PASSED.", "result": "pass", "artifact": "specified-3.log"}
+  ],
+  "findings": [
+    {"severity": "major", "file": "src/cma/pack.py", "line": 689, "criterion": "R42", "claim": "The sign-off is recorded in two separate appends. If the pack_written append is recorded and the signed_off append then fails (SaveNotRecorded from a full disk, a refused lock re-check, LogConflict), the pack stays in packs/<snapshot> with an evidence.json that carries a sign_off the case log never recorded, and the check at pack.py:651 refuses every retry for that snapshot ('no second sign-off is taken'). The snapshot is a hash of the inputs, so a fresh preview gives the same snapshot and is refused too. The case cannot be signed off at those figures, and moving the folder aside does not help because the refusal comes from the log entry. The producer notes this gap but did not fix it.", "repro": "Build a preview; monkeypatch caselog.CaseLog.append to call the real append for 'pack_written' and to raise caselog.SaveNotRecorded for 'signed_off'; call pack.sign_off(folder, case, snap, 'Ann') -> SaveNotRecorded, packs/<snap>/evidence.json holds sign_off.name 'Ann', the log ends with pack_written. Restore append and call sign_off again (or after pack.build_preview) -> SignOffRefused 'its sign-off was not recorded ... no second sign-off is taken'. Moving packs/<snap> aside gives the same refusal."},
+    {"severity": "minor", "file": "src/cma/review/signoff.py", "line": 32, "criterion": "R22", "claim": "_refusal does not map PolicyError, ThresholdsError, RulesetError, AmountError, StatementError or FirmConfigError. In the workspace these reach server._write's bare except and come back as a generic 500 'The change could not be saved.', while cma case sign gives the named refusal (cli.py case_sign).", "repro": "Write an invalid firm.yaml or thresholds file after a preview, then POST /api/sign {snapshot, name} -> 500 {'error': 'The change could not be saved.'}. cma case sign on the same case prints 'Refused. <reason>' with exit 2."},
+    {"severity": "minor", "file": "src/cma/pack.py", "line": 643, "criterion": "R23", "claim": "_remove_leftovers deletes packs/.part-* folders before the stale-snapshot, missing-preview, already-signed and guard checks. A sign-off that is refused still changes the case folder, even though every refusal says 'nothing was written'.", "repro": "Create packs/.part-x/memo.md, make the preview stale with an override, then call pack.sign_off -> SignOffRefused naming the override log, and packs/.part-x is gone."}
+  ],
+  "verdict": "fail",
+  "verifier": {"seat": "reviewer", "adapter": "claude-code", "model": "claude-opus-5-5"}
+}
+```

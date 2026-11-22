@@ -416,12 +416,12 @@
         "T22",
         "T21"
       ],
-      "status": "verify",
+      "status": "failed",
       "attempts": 1,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T27",
-      "evidence": null,
-      "escalation": null
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-251/evidence.json",
+      "escalation": "attempt 1 of 3 fail: R42 fail (pack_written and signed_off are appended after os.rename in _write_pack (pack.py:680-690), each through the hash-chained CaseLog.append with an expected position; Tier 1 event kinds asserted by test_r42_every_tier1_event_kind_is_in_the_case_log PASSED. However, a failure of the second append leaves a recorded pack write, a pack whose evidence.json carries a sign-off, no signed_off entry, and every retry refused (finding 1).); major: The sign-off is recorded in two separate appends. If the pack_written append is recorded and the signed_off append then fails (SaveNotRecorded from a full disk, a refused lock re-check, LogConflict), the pack stays in packs/<snapshot> with an evidence.json that carries a sign_off the case log never recorded, and the check at pack.py:651 refuses every retry for that snapshot ('no second sign-off is taken'). The snapshot is a hash of the inputs, so a fresh preview gives the same snapshot and is refused too. The case cannot be signed off at those figures, and moving the folder aside does not help because the refusal comes from the log entry. The producer notes this gap but did not fix it. at src/cma/pack.py:689; reviewer verdict fail"
     },
     {
       "id": "T25",
