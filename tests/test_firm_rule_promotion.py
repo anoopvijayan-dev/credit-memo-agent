@@ -241,7 +241,8 @@ def test_the_page_shows_the_promote_form_and_the_preview_escaped(home, tmp_path,
     case_id, _, seq = _overridden(tmp_path)
     srv = serve(case_id)
     status, raw = _request(srv, "GET", f"/?token={srv.token}")
-    assert status == 200, raw and b'id="promote-overrides"' in raw and b'class="promote"' in raw
+    assert status == 200, raw
+    assert b'id="promote-overrides"' in raw and b'class="promote"' in raw
     status, raw = _request(srv, "POST", f"/promote?token={srv.token}",
                            {"seq": seq, "pattern": "ACME TRUST", "direction": "in"}, kind=rs.FORM)
     assert status == 200
@@ -275,3 +276,104 @@ def test_confirming_the_page_preview_saves_the_rule_and_a_stale_page_is_refused(
     status, raw = _request(srv, "POST", f"/promote?token={srv.token}", {**form, "expected": n}, kind=rs.FORM)
     assert status == 200 and b'id="promoted"' in raw
     assert [r.id for r in firm_rules.for_case().rules] == ["acme_trust"]
+
+
+# --- hardening (T37) ---------------------------------------------------------------------
+
+
+def _request_raw(srv, method, path, body, headers):
+    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
+    try:
+        data = json.dumps(body).encode()
+        conn.request(method, path, body=data, headers={"Content-Type": "application/json", **headers})
+        r = conn.getresponse()
+        return r.status, r.read()
+    finally:
+        conn.close()
+
+
+def test_a_promotion_without_the_token_or_from_another_origin_is_refused(home, tmp_path, serve):
+    case_id, folder, seq = _overridden(tmp_path)
+    srv = serve(case_id)
+    n = len(case.for_case(folder).entries())
+    body = {"seq": seq, "pattern": "ACME TRUST", "direction": "in", "id": "acme_trust", "shown": 3,
+            "expected": n, "confirm": "1", "name": "Pat", "reason": "r"}
+    host = {"Host": f"127.0.0.1:{srv.port}"}
+    status, _ = _request_raw(srv, "POST", "/api/promote", body, host)
+    assert status == 403
+    status, _ = _request_raw(srv, "POST", "/api/promote", body, {**host, "X-CMA-Token": "wrong"})
+    assert status == 403
+    status, _ = _request_raw(srv, "POST", "/api/promote", body,
+                             {**host, "X-CMA-Token": srv.token, "Origin": "http://evil.example"})
+    assert status == 403
+    status, _ = _request_raw(srv, "GET", f"/api/promote?token={srv.token}", body, host)
+    assert status == 405
+    assert not _rules_path().exists()
+    assert len(case.for_case(folder).entries()) == n
+
+
+def test_resending_the_same_confirmed_promotion_saves_one_rule(home, tmp_path, serve):
+    case_id, folder, seq = _overridden(tmp_path)
+    srv = serve(case_id)
+    n = len(case.for_case(folder).entries())
+    form = {"seq": seq, "pattern": "ACME TRUST", "direction": "in", "id": "acme_trust", "shown": 3,
+            "expected": n, "confirm": "1", "name": "Pat Jones", "reason": "trust distributions"}
+    status, _ = _request(srv, "POST", "/api/promote", form)
+    assert status == 200
+    status, raw = _request(srv, "POST", "/api/promote", form)  # a double submit, or a retry
+    assert status in (400, 409), raw
+    assert [r.id for r in firm_rules.for_case().rules] == ["acme_trust"]
+    assert [e.event for e in case.for_case(folder).entries()].count(promotion.EVENT) == 1
+
+
+def test_the_firm_rules_file_is_written_readable_by_its_owner_only(home, tmp_path):
+    import os
+    import stat
+
+    _, folder, seq = _overridden(tmp_path)
+    n = len(case.for_case(folder).entries())
+    promotion.promote(folder, {"seq": seq, "pattern": "ACME TRUST", "name": "Pat", "reason": "r"},
+                      shown=3, expected=n)
+    mode = stat.S_IMODE(os.stat(_rules_path()).st_mode)
+    assert mode & 0o077 == 0, oct(mode)
+
+
+def test_a_rules_file_changed_since_the_preview_is_read_as_it_now_stands(home, tmp_path):
+    """Another case promoted a rule after this preview: saving builds on the file as it is,
+    keeps the other rule and takes an id of its own."""
+    _, folder, seq = _overridden(tmp_path)
+    n = len(case.for_case(folder).entries())
+    promotion.preview(folder, {"seq": seq, "pattern": "ACME TRUST"})
+    path = _rules_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump({"rules": [{
+        "id": "acme_trust", "pattern": "SOMEONE ELSE", "direction": "in", "category": "other_explained_in",
+        "by": "Sam", "at": "2026-11-20T10:00:00Z", "reason": "other case"}]}), encoding="utf-8")
+    r = promotion.promote(folder, {"seq": seq, "pattern": "ACME TRUST", "name": "Pat", "reason": "r"},
+                          shown=3, expected=n)
+    assert r.rule["id"] == "acme_trust_2"
+    assert [x.id for x in firm_rules.for_case().rules] == ["acme_trust", "acme_trust_2"]
+
+
+def test_a_malformed_firm_rules_file_refuses_the_preview_and_is_left_as_it_was(home, tmp_path):
+    _, folder, seq = _overridden(tmp_path)
+    path = _rules_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("rules: [ {id: x}\n", encoding="utf-8")
+    before = path.read_bytes()
+    with pytest.raises(firm_rules.FirmRulesError):
+        promotion.preview(folder, {"seq": seq, "pattern": "ACME TRUST"})
+    n = len(case.for_case(folder).entries())
+    with pytest.raises(firm_rules.FirmRulesError):
+        promotion.promote(folder, {"seq": seq, "pattern": "ACME TRUST", "name": "Pat", "reason": "r"},
+                          shown=3, expected=n)
+    assert path.read_bytes() == before and len(case.for_case(folder).entries()) == n
+
+
+@pytest.mark.parametrize("pattern", ["ACME (TRUST", "ACME.*", "ACME|STRIPE", "(?i)acme"])
+def test_a_pattern_is_a_name_never_a_regular_expression(home, tmp_path, pattern):
+    _, folder, seq = _overridden(tmp_path)
+    p = promotion.preview(folder, {"seq": seq, "pattern": pattern})
+    # STRIPE (L5) never matches through an alternation, nor every line through .*
+    assert "L5" not in [m.line.id for m in p.lines]
+    assert p.count < 6
