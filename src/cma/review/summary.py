@@ -265,6 +265,22 @@ def stale_list(folder: Path, figures: dict[str, overrides.CaseFigures] | None) -
     return out
 
 
+def _promotable(figures: dict[str, overrides.CaseFigures],
+                lines: dict[str, dict[str, Transaction]]) -> list[dict[str, Any]]:
+    """The overrides the case applies, each of which the underwriter may promote to a firm
+    rule (R20), with the direction of its line."""
+    out = []
+    for account, f in figures.items():
+        for line, ref in f.overridden.items():
+            t = lines[account].get(line)
+            if t is None or not ref.startswith("override:"):
+                continue
+            out.append({"seq": int(ref.split(":", 1)[1]), "account": account, "line": line,
+                        "category": t.category.value if t.category else None,
+                        "direction": "in" if t.amount > 0 else "out"})
+    return sorted(out, key=lambda o: o["seq"])
+
+
 def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
     """The case as the workspace shows it, computed afresh from its files."""
     folder = Path(folder)
@@ -272,7 +288,7 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
                            "state": "shown", "accounts": [], "queue": [], "thresholds": None,
                            "reconciliation": None, "refusal": None, "position": None, "stale": [],
                            "policy_check": {"shown": False}, "recommendation": None,  # left blank (R24)
-                           "demo": False, "combined": None}
+                           "demo": False, "combined": None, "promotable": []}
     # The case log position the page is built at, read before anything else, so a save made
     # from this page is refused as a conflict once anything was recorded after it (R17).
     out["position"] = log_position(folder)
@@ -328,6 +344,7 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
     lines = {a: {t.id: t for t in f.statement.transactions} for a, f in figures.items()}
     kinds = {a: {i.id: i.kind for i in raised[a]} for a in figures}
     out["queue"] = [_queue_entry(a, e, lines[a], kinds[a]) for a, e in ind.case_judgement_queue(queues)]
+    out["promotable"] = _promotable(figures, lines)  # R20
     if not out["accounts"]:
         out["state"] = "empty"
     return out
@@ -577,6 +594,10 @@ def render(summary: dict[str, Any], token: str | None = None) -> str:
     head += stale_html(summary.get("stale") or [], token, summary.get("position"))  # R19
     if summary["state"] == "shown":
         head += _queue_html(summary.get("queue") or [], token, summary.get("position"))  # listed first (R15)
+    if summary["state"] == "shown":
+        from .promote import promotable_html
+
+        head += promotable_html(summary.get("promotable") or [], token, summary.get("position"))  # R20
     head += _profile_html(summary.get("profile"))
     state = summary["state"]
     if state == "not_reconciled":

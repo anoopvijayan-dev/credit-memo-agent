@@ -18,9 +18,10 @@ renders what the figures layer computed; it computes no money. Its request log i
 Refusals say only that the request was refused, never what the case holds.
 
 Every page and data path is GET only. The override form and the stale overrides' forms (R17,
-R19; edit.py), and the preview and sign-off forms (R22, R26; signoff.py) are the only writes:
-POST to /override, /stale, /preview and /sign from the page, or to /api/override, /api/stale,
-/api/preview and /api/sign for data, each with the token and the workspace's own Origin,
+R19; edit.py), the preview and sign-off forms (R22, R26; signoff.py) and the firm-rule
+promotion form (R20; promote.py) are the only writes: POST to /override, /stale, /preview,
+/sign and /promote from the page, or to /api/override, /api/stale, /api/preview, /api/sign
+and /api/promote for data, each with the token and the workspace's own Origin,
 a body of at most MAX_BODY bytes with its Content-Length (never chunked), and a form or JSON
 content type.
 """
@@ -63,8 +64,10 @@ REFUSED = b"Refused: this workspace answers only the URL it printed when it star
 WRITES = {"/override": ("override", "page"), "/stale": ("stale", "page"),
           "/api/override": ("override", "data"), "/api/stale": ("stale", "data"),
           "/preview": ("preview", "page"), "/sign": ("sign", "page"),
-          "/api/preview": ("preview", "data"), "/api/sign": ("sign", "data")}
-PACK_WRITES = frozenset({"preview", "sign"})  # answered with a page of their own, never a redirect
+          "/api/preview": ("preview", "data"), "/api/sign": ("sign", "data"),
+          "/promote": ("promote", "page"), "/api/promote": ("promote", "data")}
+PACK_WRITES = frozenset({"preview", "sign"})
+PAGE_WRITES = PACK_WRITES | {"promote"}  # answered with a page of their own, never a redirect
 MAX_BODY = 16 * 1024  # bytes: a form or JSON body is far smaller
 FORM = "application/x-www-form-urlencoded"
 
@@ -231,8 +234,8 @@ class _Handler(BaseHTTPRequestHandler):
             status, reply = 500, {"error": "The change could not be saved."}
         if shape == "data":
             self._send(status, json.dumps(reply, ensure_ascii=False).encode("utf-8"), "application/json")
-        elif kind in PACK_WRITES:
-            self._send(status, self.server.pack_html(kind, status, reply), "text/html; charset=utf-8")
+        elif kind in PAGE_WRITES:
+            self._send(status, self.server.pack_html(kind, status, reply, fields), "text/html; charset=utf-8")
         elif status == 200:
             self.send_response(303)
             for key, value in SECURITY_HEADERS.items():
@@ -355,16 +358,21 @@ class ReviewServer:
     def _save(self, kind: str, fields: dict, recompute: bool = True) -> tuple[int, dict]:
         """One write from the workspace: its status and reply, the recomputed case included for
         a data path (R17, R52); a page form is sent back to the page, which is built afresh."""
-        from . import edit, signoff
+        from . import edit, promote, signoff
 
+        if kind == "promote":
+            return promote.answer(self.folder, self.case_id, fields)
         if kind in PACK_WRITES:
             return signoff.answer(self.folder, self.case_id, kind, fields)
         return edit.answer(self.folder, self.case_id, kind, fields, recompute=recompute)
 
-    def _pack_html(self, kind: str, status: int, reply: dict) -> bytes:
-        from . import signoff
+    def _pack_html(self, kind: str, status: int, reply: dict, fields: dict | None = None) -> bytes:
+        from . import promote, signoff
 
-        html = signoff.html(kind, status, reply, self.token)
+        if kind == "promote":
+            html = promote.html(status, reply, self.token, fields or {})
+        else:
+            html = signoff.html(kind, status, reply, self.token)
         return self._shell(html)
 
     def _outcome_html(self, status: int, reply: dict) -> bytes:
