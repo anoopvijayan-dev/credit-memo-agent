@@ -476,6 +476,10 @@ def import_monzo(
     console.print("Check the closing balance against your Monzo app before trusting any metric.")
 
 
+TORN_REMEDY = ("An entry that was not finished can be dropped once you confirm it: run `cma case repair` "
+               "on this case, then do this again (R42).")
+
+
 @contextmanager
 def _case_errors():
     """A refusal from the case store or its log, said without a traceback. Exit 2 for a
@@ -490,6 +494,8 @@ def _case_errors():
         raise typer.Exit(code=2) from None
     except case.CaseLogBroken as e:
         console.print(f"[red]Case log broken:[/red] entry {e.first_bad} {escape(e.reason)}. Nothing was changed.")
+        if e.torn:
+            console.print(TORN_REMEDY)
         raise typer.Exit(code=3) from None
     except case.SaveNotConfirmed as e:
         console.print(f"[red]Not confirmed.[/red] {escape(str(e))}")
@@ -707,6 +713,104 @@ def case_preview(case_id: str = typer.Argument(..., metavar="CASE", help="The ca
         raise typer.Exit(code=1)
 
 
+@case_app.command("sign")
+def case_sign(
+    case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
+    snapshot: str | None = typer.Option(
+        None, "--snapshot", help="The snapshot `cma case preview` printed; the latest preview's if not given."),
+):
+    """Sign off the figures of a preview, with your typed name, and write the pack once to
+    packs/<snapshot> (R22, R24, R26). Interactive only: it asks for your name and confirms.
+    Signing off the figures does not approve the loan. Refused, writing nothing, when the case
+    changed since the preview (naming what), when the case log is broken (naming the first bad
+    entry), when the figures do not reconcile or the text fails the grounding guard, or when
+    the snapshot's pack is already written. An entry left unfinished is dropped with `cma case
+    repair` first. Exit 2 refused, 3 broken log, 4 not recorded."""
+    from . import case as caselog
+    from . import pack, store
+
+    with _case_errors():
+        folder = store.case_folder(case_id)
+        if snapshot is None:
+            latest = pack.latest_preview(caselog.for_case(folder).entries())
+            if latest is None:
+                console.print("[red]Refused.[/red] this case has no preview yet: run `cma case preview` "
+                              "first, read it, then sign off its figures.")
+                raise typer.Exit(code=2)
+            snapshot = latest[1]["snapshot"]
+        console.print(f"Preview snapshot {escape(snapshot)}")
+        console.print(pack.SIGN_WORDING)
+        name = typer.prompt("Your name, to sign off the figures")
+        if not typer.confirm(f"Sign off the figures of snapshot {snapshot[:12]} as {name}?", default=False):
+            console.print("Not signed off; nothing was written.")
+            raise typer.Exit(code=1)
+        try:
+            s = pack.sign_off(folder, case_id, snapshot, name)
+        except pack.SignOffRefused as e:
+            console.print(f"[red]Refused.[/red] {escape(str(e))}; nothing was written.")
+            raise typer.Exit(code=2) from None
+        except ReconciliationError as e:  # R3
+            console.print(f"[red]Refused.[/red] {escape(str(e))}; nothing was written.")
+            raise typer.Exit(code=2) from None
+        except (pack.FieldMapError, pack.PreviewError, StatementError, AmountError, RulesetError,
+                ThresholdsError, PolicyError, FirmConfigError) as e:
+            console.print(f"[red]Refused.[/red] {escape(str(e))}; nothing was written.")
+            raise typer.Exit(code=2) from None
+    if s.completed:
+        console.print(f"The pack for snapshot {s.snapshot} was already written; its sign-off by {escape(s.name)} "
+                      f"(operating-system user {escape(s.os_user)}) at {s.at} was not recorded, and is now "
+                      f"recorded as case log entry {s.position}. The pack was not rewritten.", soft_wrap=True)
+        return
+    console.print(f"Figures signed off by {escape(s.name)} (operating-system user {escape(s.os_user)}) "
+                  f"at {s.at}, bound to snapshot {s.snapshot}.", soft_wrap=True)
+    console.print(f"Pack written once to {escape(str(s.pack))}: {', '.join(s.files)}; recorded as case log "
+                  f"entry {s.position}.", soft_wrap=True)
+
+
+@case_app.command("repair")
+def case_repair(case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed.")):
+    """Drop an entry the case log holds past its recorded entries, not finished because the
+    tool, the disk or the power stopped while it was being saved, once you confirm it with
+    your typed name (R42's repair, R43). The drop is itself recorded, with your name, so the
+    log says who confirmed it. Interactive only. Refused, changing nothing, when no entry is
+    torn or when the log is broken before it (that is not a torn save). Exit 2 refused,
+    3 broken log, 4 not recorded or another window is saving."""
+    from . import case as caselog
+    from . import store
+
+    with _case_errors():
+        folder = store.case_folder(case_id)
+        log = caselog.for_case(folder)
+        check = log.verify()
+        if not check.checked or check.in_progress:
+            console.print("[red]Not repaired.[/red] another window or command is saving to this case; "
+                          "nothing was changed. Try again in a moment.")
+            raise typer.Exit(code=4)
+        if check.ok:
+            console.print("[red]Refused.[/red] the case log is intact: nothing is torn, and nothing was changed.")
+            raise typer.Exit(code=2)
+        if not check.torn:
+            raise caselog.CaseLogBroken(log.path, check.first_bad, check.reason, False)
+        console.print(f"Case log entry {check.first_bad} {escape(check.reason)}.")
+        console.print(f"Entries 1 to {check.head.position} are recorded and intact. Dropping entry "
+                      f"{check.first_bad} removes only what was not finished; its save was not recorded.")
+        name = typer.prompt("Your name, to confirm dropping it")
+        if not any(ch.isalnum() for ch in name):  # as a sign-off and an override ask (R17, R22)
+            console.print("[red]Refused.[/red] type your name, with at least one letter or digit; "
+                          "nothing was changed.")
+            raise typer.Exit(code=2)
+        if not typer.confirm(f"Drop the unfinished entry {check.first_bad} as {name}?", default=False):
+            console.print("Not repaired; nothing was changed.")
+            raise typer.Exit(code=1)
+        try:
+            entry = log.drop_torn_entry(expected=check.head.position, by=name)
+        except ValueError as e:
+            console.print(f"[red]Refused.[/red] {escape(str(e))}; nothing was changed.")
+            raise typer.Exit(code=2) from None
+    console.print(f"Dropped the unfinished entry {check.first_bad}; recorded as case log entry {entry.seq}, "
+                  f"confirmed by {escape(name.strip())}. Save or sign off again what it held.", soft_wrap=True)
+
+
 @case_app.command("purge")
 def case_purge(
     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
@@ -753,6 +857,8 @@ def case_check(folder: Path = typer.Argument(..., help="The case folder (cases/<
     if not check.ok:
         console.print(f"[red]Case log broken:[/red] entry {check.first_bad} {check.reason}.")
         console.print("Nothing may be recorded or signed off on this case until it is resolved.")
+        if check.torn:
+            console.print(TORN_REMEDY)
         raise typer.Exit(code=3)
     if check.in_progress:  # R43, D75: being saved is never intact, so not exit 0
         console.print(f"Case log is being saved by another window or command: its "

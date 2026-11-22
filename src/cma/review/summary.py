@@ -529,5 +529,7 @@ def render(summary: dict[str, Any], token: str | None = None) -> str:
                 f'<p>{_e(summary["refusal"])}</p></section>')
     if state == "empty":
         return head + '<section id="empty"><p>No statement has been imported into this case yet.</p></section>'
+    from .signoff import preview_form
+
     return (head + "".join(_account_html(a, token, summary.get("thresholds")) for a in summary["accounts"])
-            + _policy_checks_html(summary) + RECOMMENDATION_HTML)
+            + _policy_checks_html(summary) + RECOMMENDATION_HTML + (preview_form(token) if token else ""))
