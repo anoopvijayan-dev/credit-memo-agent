@@ -1,0 +1,62 @@
+T37 is built and committed as `00152ad` on the task branch. The two acceptance tests pass: the preview count matches the lines found, and a case categorised afterwards applies the rule. Ruff, compileall and the full suite (2870 tests) also pass.
+
+**How promotion works from the workspace:**
+- **Where to start:** the case page lists each override the case applies, with a form to type a counterparty pattern and pick a direction. The direction defaults to the line's own: a credit gives "in", a debit gives "out".
+- **Preview first:** submitting the form only shows a preview and saves nothing. The preview lists every line in the open case the rule would match and how many of them the rule would recategorise. For each line the rule would not change, it says what keeps it:
+  - an override
+  - an own-account pairing
+  - a protected built-in pattern such as HMRC (R21)
+  - ambiguous wording
+  - a profile name
+  - an earlier firm rule
+- **Saving:** confirming adds the rule to the firm rules file with the pattern, direction, category, typed name, UTC time and reason. It also logs a `firm_rule_promotion` entry in the case log.
+- **What the log entry holds:** the rule id, direction, category, which override it came from, the counts shown, who promoted it and when, and the hash of the new rules file. It leaves out the pattern and the reason, because they are text about the applicant's counterparties.
+- **When nothing is saved:** in each of these cases no rule is saved and the rules file is left as it was:
+  - the number of matching lines has changed since the preview
+  - the page is out of date (another save happened since)
+  - the case log refuses the entry
+- **Later cases:** every case reads the rules file as it stands, so the open case and any case categorised afterwards apply the rule.
+
+**Limits:**
+- Saving rewrites the firm rules file from its checked contents, so any comments someone typed into it by hand are lost.
+- The rules file is shared by every case. Two promotions saved from two different cases at the same moment are guarded only by a check just before writing, not by a lock.
+- There is no `cma case promote` command, because the task asks only for the workspace.
+- A pack preview built before a promotion will be refused at sign-off as out of date, because the rules file's hash is part of what is signed. That is the existing sign-off behaviour.
+
+The main code is in `src/cma/promotion.py` and `src/cma/review/promote.py`, with tests in `tests/test_firm_rule_promotion.py`.
+
+```json
+{
+  "task": "T37",
+  "claims": [
+    {
+      "text": "The preview of a promotion lists exactly the lines of the open case the rule's pattern matches in its direction (whole words, separators as on the maintained lists), counts them, says which the rule would set and why not for the rest (override, protected built-in pattern R21, ambiguous, profile name, earlier firm rule), and writes nothing: no firm rules file and no case log entry.",
+      "proof_cmd": "python -m pytest -q tests/test_firm_rule_promotion.py -k preview_counts",
+      "proof_output": "1 passed, 10 deselected"
+    },
+    {
+      "text": "Saving a promotion writes the rule's pattern, direction, category, by (typed name), at (UTC) and reason to the firm rules file, appends a firm_rule_promotion entry to the case log (rule id, direction, category, override, counts, name, OS user, time, rules-file hash; no pattern or reason), and the open case and a case categorised afterwards apply it (rule firm:acme_trust).",
+      "proof_cmd": "python -m pytest -q tests/test_firm_rule_promotion.py -k later_cases_apply",
+      "proof_output": "1 passed, 10 deselected"
+    },
+    {
+      "text": "A promotion whose preview no longer counts the lines shown, one from a stale case log position, or one the case log does not record saves nothing (the rules file is put back or never written); the workspace's /api/promote and /promote preview first, save only on confirm, and escape case text.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_firm_rule_promotion.py",
+      "proof_output": "11 passed in 4.25s"
+    },
+    {
+      "text": "Lint, compile and the full suite pass.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q",
+      "proof_output": "All checks passed!\n2870 passed in 356.26s (0:05:56)"
+    }
+  ],
+  "files_changed": [
+    "src/cma/promotion.py",
+    "src/cma/review/promote.py",
+    "src/cma/review/server.py",
+    "src/cma/review/summary.py",
+    "tests/test_firm_rule_promotion.py"
+  ],
+  "notes": "Production callers: the workspace server routes POST /promote and /api/promote to review/promote.answer, and the case page lists each applied override with a promote form (summary 'promotable', additive key). The first POST without confirm answers the preview. The confirm form carries the preview's line count (shown) and the case log position (expected), and promotion.promote rebuilds the preview while it holds the case and refuses on either mismatch. The direction defaults to the override's line (credit in, debit out). A category the direction cannot give is refused, e.g. other_explained_in for any. The id is given, or made from the pattern and kept unique among the firm's rules. Limits: the firm rules file is rewritten from its validated records with yaml.safe_dump, so hand-written comments in it are not kept. The file is firm-level, not per case, so two promotions from two different cases at the same moment are only guarded by a byte comparison just before the write, not by a lock. There is no CLI promote command; the task asks only for the workspace. A promotion changes firm_rules_sha256, so a pack preview built before it is refused at sign-off as stale (R23, existing behaviour)."
+}
+```
