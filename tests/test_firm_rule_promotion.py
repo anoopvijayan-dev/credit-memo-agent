@@ -599,3 +599,38 @@ def test_the_preview_page_lists_the_lines_the_rule_changes_without_matching(home
     assert status == 200 and [x["id"] for x in reply["preview"]["changed"]] == ["A2"]
     page = promote_page.html(status, reply, "tok", {})
     assert 'class="lines changed"' in page and "FPS TO &lt;b&gt;9&lt;/b&gt;" in page and "<b>9</b>" not in page
+
+
+# --- the firm rules file's lock across processes (hardening, verify-268) -------------------
+
+
+def test_the_firm_rules_lock_keeps_out_another_process_while_a_promotion_holds_it(home, tmp_path):
+    """Two `cma review` processes for two cases share the firm rules file: while one holds its
+    lock, another process cannot take it (flock, not a per-process lock)."""
+    import subprocess
+    import sys
+
+    path = _rules_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    probe = ("import fcntl, os, sys\n"
+             "fd = os.open(sys.argv[1], os.O_RDWR)\n"
+             "try:\n    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n    print('took')\n"
+             "except OSError:\n    print('held')\n")
+    lock = path.with_name(path.name + ".lock")
+    with promotion._firm_rules_held(path):
+        held = subprocess.run([sys.executable, "-c", probe, str(lock)], capture_output=True, text=True, timeout=60)
+    free = subprocess.run([sys.executable, "-c", probe, str(lock)], capture_output=True, text=True, timeout=60)
+    assert held.stdout.strip() == "held" and free.stdout.strip() == "took"
+
+
+def test_a_promotion_that_cannot_take_the_firm_rules_lock_saves_nothing(home, tmp_path, monkeypatch):
+    _, folder, seq = _overridden(tmp_path)
+    n = len(case.for_case(folder).entries())
+    monkeypatch.setattr(promotion, "LOCK_WAIT", 0.2)
+    path = _rules_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with promotion._firm_rules_held(path), \
+            pytest.raises(store.CaseStoreError, match="another case is saving a firm rule"):
+        promotion.promote(folder, {"seq": seq, "pattern": "ACME TRUST", "name": "Pat", "reason": "r"},
+                          shown=3, expected=n)
+    assert not path.exists() and len(case.for_case(folder).entries()) == n
