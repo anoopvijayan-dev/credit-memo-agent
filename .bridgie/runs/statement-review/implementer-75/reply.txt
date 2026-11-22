@@ -1,0 +1,30 @@
+I built T35, committed as 8a7aa78 on `bridgie-task/statement-review/T35`. The full suite passed (2758 tests), ruff is clean and the offline evals exit 0.
+
+**What changed**
+- **Case truth:** `synth.Truth` now has a `case` field, filled only when the feature set includes `two_accounts`. It holds both accounts' lines under their case line ids (`main:T00001`) with each category. It also holds the own-account pairs, debit first, which come from the generator's own moves (matched by day and amount), not from the categoriser. Then the money-in buckets and cash deposits across the case, the money in from outside the applicant's accounts, and each account's indicators.
+- **Unchanged truth files:** a truth file without `two_accounts` gets no `case` key, so earlier truth files stay byte-identical.
+- **Making the case:** `synth.to_case(rows, truth, work)` makes one demo case in the case store. It imports the business account as `main` plus the reserve account, and sets the generated directors, own accounts and VAT stagger. `cma generate ... --case` calls it, and the README shows the new flag.
+- **Tests:** `tests/test_synth_case.py` checks P17 and P11 on these cases through the real case pipeline, for every archetype and profile and for several feature sets, seeds and lengths:
+  - **P17:** every line's category, every bucket with its lines, total money in (M17), the cash deposits (M18) and each account's indicators match the truth.
+  - **P11:** each pair is one debit and one credit of equal amount in different accounts, and no line is in two pairs. The pairs are exactly the generator's moves, and no debit is left with two candidates. Total money in less own-account transfers in (M17 minus M19) equals the money from outside the accounts.
+
+Inside a case, the pairing settles these moves before the profile's own-account names are read. So each line keeps the category the earlier per-account truth gave it, but its recorded rule becomes `pairing:...` instead of `profile:own_account`.
+
+The full-suite run came before two small edits: the README line, and renaming one unused variable in the new test file to satisfy ruff. After those I re-ran ruff and the new tests (both marker tiers), plus the existing synth tests; I did not re-run the full suite.
+
+The claim is at `/home/user/credit-memo-agent/.bridgie/runs/statement-review/implementer-75/claim.json`:
+
+```json
+{
+  "task": "T35",
+  "claims": [
+    {"text": "A generated two-account case imported as one case (synth.to_case) gives, through overrides.case_figures and combined_figures, every line's category under its case line id, every money-in bucket (M2, M19-M25) with its evidence, M17, M18 and every per-account indicator exactly as truth.case says (P17), for every archetype and profile and for several feature sets, seeds and lengths; and the same cases satisfy P11: each pair is one debit and one credit of equal amount in different accounts, each naming the other, no line in two pairs, the pairs equal the generator's moves, every own-account transfer is half of a pair, no debit is left with two candidates, and M17 - M19 equals the generator's money from outside the accounts.", "proof_cmd": "python -m pytest -q -p no:cacheprovider -m invariants tests/test_synth_case.py -k 'p17 or p11'", "proof_output": "31 passed, 3 deselected in 11.06s"},
+    {"text": "Contracts: to_case imports both accounts with the generated profile (directors, own accounts, VAT stagger, demo, label) and the workspace summary shows both accounts, combined figures and no possible own-account transfer; a single-account feature set has no case truth and its truth file has no 'case' key; `cma generate --feature all --case` makes the case and writes the case truth.", "proof_cmd": "python -m pytest -q -p no:cacheprovider -m contracts tests/test_synth_case.py", "proof_output": "3 passed, 31 deselected in 4.33s"},
+    {"text": "The existing synth tests, the byte-identity check of existing archetypes and profiles included, still pass.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_synth_features.py tests/test_synth.py", "proof_output": "54 passed in 8.84s"},
+    {"text": "Full suite passes.", "proof_cmd": "python -m pytest -q -x -p no:cacheprovider", "proof_output": "2758 passed in 337.22s (0:05:37)"},
+    {"text": "Lint and offline evals pass.", "proof_cmd": "ruff check src tests evals; python evals/run_evals.py >/dev/null; echo evals=$?", "proof_output": "All checks passed!\nevals=0"}
+  ],
+  "files_changed": ["src/cma/synth.py", "src/cma/cli.py", "tests/test_synth_case.py", "README.md"],
+  "notes": "Commit 8a7aa78 on bridgie-task/statement-review/T35. synth.Truth gains `case` (set only with two_accounts; left out of the truth file otherwise, so non-featured and single-account truth files are unchanged): accounts, category_by_id by case line id (key:id), own_account_pairs (debit first, worked out from the generator's own moves by day and amount, not from the categoriser), combined buckets and cash deposits, outside_money_in (credits that are half of no move) and per-account indicators. synth.to_case(rows, truth, work) makes one demo case in the store; `cma generate --case` calls it. In the case the generator's moves are settled by the pairing (precedence above the profile name), so categories match T10's per-account truth while rule ids become pairing:...; the full-suite run was taken before the README edit and a one-line test lint fix (unused variable renamed), both re-checked by ruff and the targeted test runs above."
+}
+```

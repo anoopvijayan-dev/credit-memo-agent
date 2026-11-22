@@ -1,0 +1,56 @@
+{
+  "task": "T35",
+  "claims": [
+    {
+      "text": "Failure modes / partial failure: synth.to_case now removes the case it made if the profile update or any import fails after new_case, so no half-imported demo case is left (matching new_case's own 'no half-made case' rule); a second run then makes the case whole. Only the folder this call created is removed.",
+      "proof_cmd": "python -m pytest -q tests/test_synth_case.py -k removes_the_case_it_made",
+      "proof_output": "1 passed (part of: python -m pytest -q tests/test_synth_case.py -> 37 passed in 12.15s)"
+    },
+    {
+      "text": "Failure modes / defined behaviour on failure: `cma generate --case` now goes through _case_errors() like every other case command, so a case-log refusal (CaseLocked, LogConflict, SaveNotConfirmed, CaseLogBroken), a FirmConfigError or an OSError is said without a traceback with the documented exit code. Before, only CaseStoreError was caught.",
+      "proof_cmd": "python -m pytest -q tests/test_synth_case.py -k case_log_refusal_is_said_without_a_traceback",
+      "proof_output": "1 passed: exit 4, 'Not recorded.' in output, no Traceback, no case left under CMA_HOME"
+    },
+    {
+      "text": "Security / boundary (R31, R32): `cma generate --case` makes its case through store.new_case, which refuses a case root inside git and warns before anything is made when the root is in a sync folder. The warning now goes to stderr through the same warn callback `cma case new` uses (to_case gained a warn parameter), instead of a Python warning.",
+      "proof_cmd": "python -m pytest -q tests/test_synth_case.py -k sync_folder_warns_on_stderr_first",
+      "proof_output": "1 passed: exit 0, 'Warning:' and 'OneDrive' on stderr"
+    },
+    {
+      "text": "P17 and P11 on generated two-account cases (R47): the case pipeline gives the case truth (categories, buckets, M17, M18, indicators) and its own-account pairs are one debit and one credit of equal amount in different accounts, no line in two pairs, with M17 - M19 equal to the money from outside the accounts.",
+      "proof_cmd": "python -m pytest -q -m invariants tests/test_synth_case.py",
+      "proof_output": "31 passed, 6 deselected in 11.97s"
+    },
+    {
+      "text": "Contracts: to_case imports both accounts with the generated profile, single-account feature sets have no case truth and no 'case' key in truth JSON, and the CLI --case path works end to end.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_synth_case.py",
+      "proof_output": "6 passed, 31 deselected in 4.86s"
+    },
+    {
+      "text": "Data / migration: additive only. Truth JSON gains 'case' only with two_accounts; statements and truth without features stay byte-identical; no stored format or committed fixture changes.",
+      "proof_cmd": "python -m pytest -q tests -k \"byte_identical or no_feature or without_feature\"",
+      "proof_output": "9 passed, 2752 deselected in 5.73s"
+    },
+    {
+      "text": "No regressions: ruff, compileall, the full suite and the offline evals all pass with the hardening changes.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q -x && python evals/run_evals.py",
+      "proof_output": "All checks passed! / compile-ok / 2761 passed in 343.65s / 9/9 featured cases match truth (features: acquirers, director, cash, lenders, two_accounts)"
+    },
+    {
+      "text": "Not applicable, with reasons: performance (no queries or hot path; generating and importing a two-account case takes about 0.3s per test); new dependencies (none); secrets (none); authz (no new network entry point, only a local CLI flag acting as the case root's owner, the same as `cma case new` and `cma case import`); feature flag (an opt-in flag, off by default; rollback means not passing --case); alerts and dashboards (none exist by design: everything is local, and refusals exit non-zero). Observability: the CLI prints 'made case <id> at <folder>, demo, with N account(s)', and the case log records case_created and each import.",
+      "proof_cmd": "git diff --stat (worktree)",
+      "proof_output": "src/cma/cli.py | 10 ++++------; src/cma/synth.py | 31 ++++++++++++++++++-----------; tests/test_synth_case.py | 51 +++++; 3 files changed, 75 insertions(+), 17 deletions(-)"
+    },
+    {
+      "text": "Docs: README documents `cma generate ... --feature all --case` and what the truth's 'case' holds (from the T35 commit 8a7aa78); the --case option's help text says the same. The design's consumer trace needs no new item: no shared contract changes.",
+      "proof_cmd": "git show 8a7aa78 -- README.md | grep -n -- '--case'",
+      "proof_output": "+cma generate --archetype cafe --profile stretched --out /tmp/cma-demo --feature all --case"
+    }
+  ],
+  "files_changed": [
+    "src/cma/synth.py",
+    "src/cma/cli.py",
+    "tests/test_synth_case.py"
+  ],
+  "notes": "Gaps for the owner, not fixed (would expand scope): (1) Idempotency: each `cma generate --case` run makes a new case with a random id. That is by design (a demo generator, same as `cma case new`), but running it twice leaves two demo cases, and there is no 'reuse an existing case' option. This is not a money or data path for applicants, since cases are marked demo (R48). (2) The hardening changes are left uncommitted in the worktree on top of 8a7aa78, for the pipeline to commit. (3) The sync-folder test stubs store.sync_folder; the real detection is covered by tests/test_sync_folder.py."
+}
