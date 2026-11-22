@@ -1,0 +1,127 @@
+{
+  "task": "T26",
+  "criteria": [
+    {
+      "id": "R25",
+      "tier": "adversarial",
+      "check": "With show_policy_verdict on, record.render (src/cma/record.py:121-124) adds one policy-check section per account via summary._policy_html (src/cma/review/summary.py:420-434). That puts the illustrative label in the same <section class=policy-check> as the overall outcome and every rule row. The memo pre carries the memo's policy section, with ILLUSTRATIVE_LABEL right after POLICY_TITLE (pack.py:316-317). The outcomes come from the signed preview's policy.evaluate result (record.py:69-74), and sign_off rebuilds that preview and checks its snapshot (pack.py:785-790). test_p20_record_with_show_policy_verdict_on (4 params) PASSED in specified-3.log.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R26",
+      "tier": "adversarial",
+      "check": "PACK_FILES now holds record.html (pack.py:444). record.render runs before _remove_leftovers and _write_pack (pack.py:803-809), so the record goes through the once-only folder rename and its sha256 is logged with the pack_written and signed_off entries. The page is self-contained and offline: inline style, no script, CSP default-src 'none', and only fragment hrefs (record.py:126-132). Each metric and each monthly cell gets a lines-behind section built from drilldown.detail (record.py:77-87; drilldown.py:93-131), and the account tables link to them through the href hook (summary.py:335-371). The sign-off section is at record.py:90-95. Tests test_r26_* and test_r22_r24_* PASSED. Minor gap: figures inside the memo text are not linked (finding 1).",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R34",
+      "tier": "adversarial",
+      "check": "Every case text in the record goes through html.escape(quote=True): _e in record.py:54, drilldown.detail_html line cells, summary _line_cells and indicators, the memo pre (record.py:111), and the sign-off name and user (record.py:92-93). Anchor ids come from ACCOUNT_KEY-validated keys plus figure and month ids, and are escaped. The CSV export path is unchanged. test_p8_record_html_* and test_p8_line_ids_and_the_signers_name_* PASSED.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R48",
+      "tier": "adversarial",
+      "check": "Workspace: ReviewServer._shell (server.py:321-326) puts summary.demo_banner(is_demo(folder)) first on every HTML page: the summary, the drill-down, the pack-write pages and the override-outcome pages (server.py:339, 353, 368, 373). Memo: DEMO_STAMP (pack.py:306-307). Record: the demo banner comes first, before the sign-off (record.py:103). evidence.json carries demo (pack.py:636). test_r48_a_demo_case_shows_the_banner_and_stamp_in_the_workspace_memo_and_record[True/False] PASSED.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R56",
+      "tier": "adversarial",
+      "check": "With p.policy_shown false, record.render leaves out the policy-checks section and its nav link (record.py:106-107, 121). It calls summary._account with rules=None, so no policy_check dict is built (summary.py:174). The memo leaves out its policy section (pack.py:316). The evidence records policy_check 'hidden' (pack.py:420). test_p20_record_with_show_policy_verdict_off_holds_no_outcome_or_rule_result (2 params) PASSED: it checks for no outcome word, no rule detail or description, and no rule id.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P8",
+      "tier": "adversarial",
+      "check": "Hostile descriptions (script, attribute breakouts, formula prefixes, </pre></section>), hostile line ids and a hostile signer name appear in record.html only escaped. Checked by test_p8_record_html_holds_description_text_only_escaped[0-2] and test_p8_line_ids_and_the_signers_name_reach_the_record_only_escaped, both marked and PASSED in the invariants and specified logs. The workspace P8 tests still pass after the _shell change.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P20",
+      "tier": "adversarial",
+      "check": "On or default: each policy-check panel holds the label, the memo pre holds the label with its outcomes, no outcome word appears outside those, and the recommendation field is empty (summary.RECOMMENDATION_HTML, record.py:125). Off: no outcome or rule result anywhere in the record, the recommendation field is still empty, and the existing workspace P20 tests pass. These are the test_p20_record_* tests (one and two accounts), all PASSED.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-255/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-255/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-255/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-255/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-255/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-255/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-255/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/record.py",
+      "line": 111,
+      "criterion": "R26",
+      "claim": "The record's memo-ready sections are one escaped <pre> of memo.md. The figures quoted there with their ids (and each rule's metric and the value in its detail) have no click-through to their lines. Only the account tables link, so 'click-through from every figure to its lines' holds for the tables but not for every figure the record shows.",
+      "repro": "Sign off any case, open packs/<snapshot>/record.html, and look in <pre class=\"memo\"> for a figure such as '(M2)': it is plain text with no <a href=\"#lines-main-M2\">. The same figure in the account's Figures table is a link."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/record.py",
+      "line": 77,
+      "criterion": null,
+      "claim": "The performance claim (1.44 s and 10.2 MB at 10,000 lines) comes from a scratchpad script, not a runner tier, so it is unproven. The record repeats every line once per figure and per monthly cell, so its size grows with figures × lines, with no test bounding it.",
+      "repro": "No runner log holds a sign-off timing or record size. Producing one would take a marked test that signs off a 10,000-line case and asserts its time and record.html size."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
