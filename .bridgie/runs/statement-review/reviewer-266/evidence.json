@@ -1,0 +1,43 @@
+{
+  "task": "T37",
+  "criteria": [
+    {
+      "id": "R20",
+      "tier": "adversarial",
+      "check": "Preview: src/cma/promotion.py preview()/_build lists every line rule_matches() accepts in the open case, whether the rule sets it, and the lines it changes without matching. It works out the case with the rule saved as a whole, from fresh copies (overrides._load copies the memoised parse), and writes nothing. Save: promote() holds _firm_rules_held(firm_rules_path), an flock via case._try_exclusive on firm_rules.yaml.lock, and then the case (store._recorded). It re-reads the file, rebuilds the preview, refuses on a changed count or digest, and writes id/pattern/direction/category/by/at/reason via _write_private. The undo and the log append run inside the firm lock, because _recorded exits before the lock. promotion.py is the only writer of the firm rules file (grep firm_rules_path in src). Applied afterwards: overrides._categorise reads firm_rules.for_case() each time and keys _CLASSES on rules.sha256. Workspace: /promote and /api/promote are in server.WRITES and pass the same token and origin checks. verify-268's lost-rule race is closed. These tests ran and passed in specified-3.log and contracts-4.log: test_two_cases_promoting_at_once_take_turns_and_keep_both_rules, test_two_cases_promoting_at_once_both_keep_their_rule[0-5], test_a_promotion_put_back_never_removes_another_cases_recorded_rule, test_the_firm_rules_lock_keeps_out_another_process_while_a_promotion_holds_it, test_promoting_saves_the_rule_logs_it_and_later_cases_apply_it and test_the_preview_counts_every_line_the_rule_matches_and_writes_nothing.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-266/specified-3.log"
+    },
+    {
+      "id": "R42",
+      "tier": "adversarial",
+      "check": "A promotion is appended to the case log as event firm_rule_promotion through store._recorded (log.writer, require_intact, log.append with expected=head.position, hash-chained). The entry carries the rule id, override seq, counts, name, os_user, time and firm_rules_sha256. When the log refuses the entry, the undo puts the rules file back. A not-confirmed save keeps it, consistent with R42's not-confirmed answer. The workspace maps LogConflict, SaveNotConfirmed, SaveNotRecorded, CaseLocked and CaseLogBroken to distinct answers (review/promote.py answer). test_promoting_saves_the_rule_logs_it... checks the entry and require_intact(), and test_a_promotion_the_case_log_does_not_record_puts_the_rules_file_back checks the undo. Both passed in contracts-4.log.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-266/contracts-4.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/promotion.py",
+      "line": 343,
+      "criterion": "R20",
+      "claim": "The lock's path comes from firm.load().firm_rules_path before the lock is taken. _firm_rules_now() then reloads firm.yaml inside the lock and writes whatever path that reading names. If firm.yaml's firm_rules path changes between the two readings, the promotion writes a file whose lock it does not hold. The producer noted this gap but did not close it.",
+      "repro": "Process A: monkeypatch firm.load so that its first call returns root X and its second returns root Y. A takes X/firm_rules.yaml.lock and writes Y/firm_rules.yaml. Process B, which reads Y, takes Y/firm_rules.yaml.lock unopposed and promotes at the same moment. Both pass the now != before comparison (line 304), and the later write drops the other's rule."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/promotion.py",
+      "line": 310,
+      "criterion": "R20",
+      "claim": "The new firm_rules.yaml is in place before the case log records the promotion. Readers outside the lock, such as another case's categorisation, preview or sign-off, can apply the rule during that window and bind its sha. If the append is then refused (SaveNotRecorded, or an OSError at its write or sync), the undo removes the rule, and that other case's snapshot or pack names a firm rules file that no longer exists.",
+      "repro": "In case A, monkeypatch CaseLog.append to block on an Event and then raise SaveNotRecorded. While it blocks, call overrides.case_figures(caseB) in another thread: B's lines take firm:<rid>. Release the Event: A's undo restores the old file, and B's figures were computed under a rules sha that is gone."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

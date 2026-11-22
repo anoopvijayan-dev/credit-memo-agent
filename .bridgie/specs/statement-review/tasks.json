@@ -666,12 +666,12 @@
         "T36",
         "T22"
       ],
-      "status": "verify",
+      "status": "passed",
       "attempts": 2,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T37",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-268/evidence.json",
-      "escalation": "attempt 1 of 3 fail: R20 fail (Preview: src/cma/promotion.py preview()/_build (lines ~176-217) lists every line rule_matches() accepts in the open case, with whether the rule sets it, and writes nothing; the workspace answers it at /promote and /api/promote (src/cma/review/promote.py answer/html). Save: promote() (281-313) holds the case, rebuilds the preview, refuses on a changed count or digest, writes id/pattern/direction/category/by/at/reason to the firm rules file via _write_private. Applied afterwards: overrides._categorise (src/cma/overrides.py:217-224) reads firm_rules.for_case() each time, and its cache keys include the rules file sha. The tests test_promoting_saves_the_rule_logs_it_and_later_cases_apply_it and test_the_preview_counts_every_line_the_rule_matches_and_writes_nothing ran and passed in specified-3.log and contracts-4.log. Fails under concurrent promotions from two cases sharing the firm rules file: one rule can be lost while both case logs record the promotion (finding 1).); major: firm_rules.yaml is shared by every case, but promote() locks only the open case. The byte comparison (now != before) at line 303 comes before the write at 309 with no firm-level lock, so two concurrent promotions from different cases can both pass the comparison, and the second write drops the first case's rule. Both case logs then record a firm_rule_promotion with a firm_rules_sha256 for a file that no longer holds A's rule. R20's 'save ... to the firm rules file' is not met. at src/cma/promotion.py:303; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-269/evidence.json",
+      "escalation": null
     },
     {
       "id": "T38",
