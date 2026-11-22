@@ -280,3 +280,46 @@ def test_verify_writes_nothing_in_the_case_folder(home, tmp_path):
     verify.verify(ev, case_folder=folder)
     verify.verify(ev, case_folder=folder)
     assert snapshot() == before
+
+
+# --- P13 on generated two-account packs (T38 pass) ------------------------------------------
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("seed", range(12))
+def test_p13_generated_two_account_packs_reproduce_exactly(home, tmp_path, seed):
+    """Any signed pack: a generated case of two accounts (own-account pairs across them), some
+    with a firm pairing window other than the default or a firm rule, each with overrides made
+    before the sign-off, verifies with no mismatch."""
+    import random
+    from datetime import date
+
+    from cma import firm, synth
+
+    rng = random.Random(seed)
+    archetype, profile = [(a, p) for a in synth.ARCHETYPES for p in synth.PROFILES][seed % 9]
+    features = tuple(f for f in synth.FEATURES if f == "two_accounts" or rng.random() < 0.5)
+    rows, truth = synth.generate(archetype, profile, seed=300 + seed, months=rng.choice([3, 6, 12]),
+                                 end=date(2026, 9, 30), features=features)
+    home.mkdir(parents=True, exist_ok=True)
+    if seed % 3 == 0:
+        (home / firm.FILE_NAME).write_text("own_account_pairing_days: 5\n", encoding="utf-8")
+    if seed % 4 == 1:
+        (home / "firm_rules.yaml").write_text(
+            "rules:\n  - id: interest\n    pattern: GROSS INTEREST\n    direction: in\n    category: revenue_transfer\n"
+            "    by: X\n    at: '2026-01-01T00:00:00Z'\n    reason: r\n", encoding="utf-8")
+    case_id, folder = synth.to_case(rows, truth, tmp_path / "work")
+    credits = [(a, t) for a, f in overrides.case_figures(folder).items() for t in f.statement.transactions
+               if t.amount > 0]
+    for account, t in rng.sample(credits, min(3, len(credits))):
+        overrides.add_override(folder, t.id, "other_explained_in", reason="r", name="Ann", account=account)
+    p = pack.build_preview(folder, case_id)
+    s = pack.sign_off(folder, case_id, p.snapshot, "Ann Smith")
+    ev = json.loads((s.pack / "evidence.json").read_text(encoding="utf-8"))
+    result = verify.verify(ev, case_folder=folder)
+    assert result.mismatches == [], result.mismatches[:5]
+    assert len(ev["accounts"]) == 2 and result.checked["monthly_cells"] > 0
+    if seed % 3 == 0:
+        # The pairing window the pack recorded is the one verify uses, whatever firm.yaml says now.
+        (home / firm.FILE_NAME).write_text("own_account_pairing_days: 0\n", encoding="utf-8")
+        assert verify.verify(ev, case_folder=folder).mismatches == []
