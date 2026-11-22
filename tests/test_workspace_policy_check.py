@@ -84,7 +84,9 @@ def _get(srv, path):
 def _page(srv) -> str:
     status, body = _get(srv, "/")
     assert status == 200
-    return body.decode("utf-8")
+    # The per-launch token is random text in the page's links: blanked, so that a token which
+    # happens to hold "pass" or "fail" between dashes is never read as an outcome.
+    return body.decode("utf-8").replace(srv.token, "TOKEN")
 
 
 def _api(srv) -> dict:

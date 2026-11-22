@@ -81,6 +81,13 @@ cma case import <id> private/transactions.json --format openbanking --statement-
 # as the per-line balance. TrueLayer's own categories are kept beside the statement only as
 # untrusted hints (statements/<account>.hints.json); no figure, rule or indicator reads them.
 cma case import <id> private/truelayer.json --format truelayer --account current
+# A bank's own CSV download (paid-in and paid-out columns, dates like 03/03/2026 or
+# 3 Mar 2026, newest first) through a named profile (barclays, lloyds, natwest, starling),
+# or through your own column mapping (columns, date_format, order; see
+# src/cma/bank_profiles/profiles.yaml). The statement written passes the same checks as a
+# five-column CSV; without the bank's balance column, pass --opening-balance.
+cma case import <id> private/lloyds.csv --format bank-csv:lloyds --account current
+cma case import <id> private/bank.csv --format bank-csv --mapping private/bank-map.yaml --opening-balance 200.00
 
 # Correct one line's category (only the category; one valid for the line's direction),
 # with a reason and your typed name. The override goes to overrides.jsonl and the case

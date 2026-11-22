@@ -578,12 +578,17 @@ def case_profile(
 def case_import(
     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
     file: Path = typer.Argument(..., help="The bank file. Copied into the case; nothing is uploaded."),
-    fmt: str = typer.Option(..., "--format", help="csv (the five-column statement), monzo (a Monzo export) or "
-                            "openbanking (an OBIE v3.1 transactions file) or truelayer (a TrueLayer Data API "
-                            "transactions export)."),
+    fmt: str = typer.Option(..., "--format", help="csv (the five-column statement), monzo (a Monzo export), "
+                            "openbanking (an OBIE v3.1 transactions file), truelayer (a TrueLayer Data API "
+                            "transactions export), or bank-csv:PROFILE (a bank's CSV download through a named "
+                            "profile: barclays, lloyds, natwest or starling), or bank-csv with --mapping."),
     account: str = typer.Option("main", "--account", help="A short key for the account, such as main or savings."),
     opening_balance: str | None = typer.Option(
-        None, help="Monzo only: the balance just before the first transaction, when the export has no Balance column."),
+        None, help="Monzo or bank CSV only: the balance just before the first transaction, when the export has no "
+                   "balance column."),
+    mapping: Path | None = typer.Option(
+        None, "--mapping", help="bank-csv only: a YAML column mapping (columns, date_format, order) for an export "
+                                "no named profile covers."),
     statement_balance: str | None = typer.Option(
         None, help="Open Banking or TrueLayer only: a balance from the bank's statement, at the end of the date "
                    "--at, when the file has no per-line balances."),
@@ -596,7 +601,7 @@ def case_import(
     with _case_errors():
         folder = store.case_folder(case_id)
         r = store.import_file(folder, file, fmt, account=account, opening_balance=opening_balance,
-                              statement_balance=statement_balance, at=at)
+                              statement_balance=statement_balance, at=at, mapping=mapping)
     if r.already:
         console.print(f"already imported (sha256 {r.input_sha256[:12]}); the case is unchanged")
         return
