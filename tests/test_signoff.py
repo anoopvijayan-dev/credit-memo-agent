@@ -72,7 +72,7 @@ def test_sign_off_writes_memo_and_evidence_once_bound_to_the_snapshot(home, tmp_
     p = pack.build_preview(folder, case_id)
     s = pack.sign_off(folder, case_id, p.snapshot, "  Ann   Smith ")
     target = folder / "packs" / p.snapshot
-    assert s.pack == target and sorted(os.listdir(target)) == ["evidence.json", "memo.md"]
+    assert s.pack == target and sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv"]
     assert (target / "memo.md").read_text(encoding="utf-8") == p.text  # from the signed preview
     ev = json.loads((target / "evidence.json").read_text(encoding="utf-8"))
     assert ev["snapshot"] == p.snapshot and ev["inputs"] == p.inputs and ev["case"] == case_id
@@ -254,7 +254,7 @@ def test_r42_entries_are_logged_after_the_rename_and_a_refused_entry_removes_the
     real = caselog.CaseLog.append
 
     def watched(self, event, data, *, expected):
-        seen.append((event, target.is_dir() and sorted(os.listdir(target)) == ["evidence.json", "memo.md"]))
+        seen.append((event, target.is_dir() and sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv"]))
         return real(self, event, data, expected=expected)
 
     monkeypatch.setattr(caselog.CaseLog, "append", watched)
@@ -503,7 +503,7 @@ def test_r26_a_pack_the_tool_stopped_before_recording_is_refused_as_unrecorded_n
         with pytest.raises(_Died):
             pack.sign_off(folder, case_id, p.snapshot, "Ann")
     target = folder / "packs" / p.snapshot
-    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md"]
+    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv"]
     assert pack.PACK_EVENT not in _events(folder) and pack.SIGN_EVENT not in _events(folder)
     events = _events(folder)
     for snapshot in (p.snapshot, pack.build_preview(folder, case_id).snapshot):  # the same preview, or a new one
@@ -511,7 +511,7 @@ def test_r26_a_pack_the_tool_stopped_before_recording_is_refused_as_unrecorded_n
             pack.sign_off(folder, case_id, snapshot, "Ann")
         msg = str(e.value)
         assert "records no pack written" in msg and "move that folder aside" in msg and "already signed off" not in msg
-    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md"]  # never removed or replaced
+    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv"]  # never removed or replaced
     assert _events(folder)[: len(events)] == events and pack.SIGN_EVENT not in _events(folder)
     os.rename(target, folder / "aside")
     signed = pack.sign_off(folder, case_id, p.snapshot, "Ann")
