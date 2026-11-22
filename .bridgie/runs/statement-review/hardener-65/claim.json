@@ -1,0 +1,51 @@
+{
+  "task": "T29",
+  "claims": [
+    {
+      "text": "Failure modes / correctness (verify-257 major): a single-line group is checked against the walked balance before it is accepted, so _first_order no longer accepts a wrong start; regression tests fail on the pre-fix code and pass on HEAD",
+      "proof_cmd": "git archive 0b15ac5 src | tar -x -C /tmp/claude-0/s/oldtree; cp tests/test_import_openbanking.py /tmp/claude-0/s/oldtree/; (cd /tmp/claude-0/s/oldtree && PYTHONPATH=src python -m pytest test_import_openbanking.py -q -p no:cacheprovider -k 'single_balanced or pins_the_start'); then in the worktree: sed -n 297,299p src/cma/importers/openbanking.py",
+      "proof_output": "old tree: 2 failed, 95 deselected. HEAD line 297-299: if len(group) == 1: ... return group if before is None or before + x.amount == x.balance else None"
+    },
+    {
+      "text": "Prefer a test: 200 seeded valid exports (mixed first day, then single balanced lines per day) all import with every per-line balance kept; marked contracts",
+      "proof_cmd": "python -m pytest tests/test_import_openbanking.py -q -m contracts",
+      "proof_output": "107 passed in 29.96s"
+    },
+    {
+      "text": "No regression anywhere; lint clean",
+      "proof_cmd": "ruff check tests/test_import_openbanking.py src/cma/importers/openbanking.py; python -m pytest -q -x",
+      "proof_output": "All checks passed! / 2551 passed in 321.93s (0:05:21)"
+    },
+    {
+      "text": "Idempotency: re-importing the same file leaves the case unchanged (R39); a refusal writes no statement (partial failure leaves nothing to repair)",
+      "proof_cmd": "python -m pytest tests/test_import_openbanking.py -q -k 'refusal_names_the_file or golden or malformed or not_an_obie'",
+      "proof_output": "22 passed, 85 deselected (includes 'already imported' re-import assertion and not (statement.csv).exists() on every refusal)"
+    },
+    {
+      "text": "Security / input at boundary: hostile JSON (100k nested brackets) is refused, not crashed; duplicate keys, NaN, formula-start ids are refused; refusals never quote cell values (SENTINEL tests); no new dependency",
+      "proof_cmd": "python -c \"from pathlib import Path; from cma.importers import openbanking as o; ...convert(deep.json)\"; git diff --stat HEAD -- pyproject.toml",
+      "proof_output": "refused: line 1: not JSON; pyproject.toml unchanged"
+    },
+    {
+      "text": "Performance: ordering search bounded (ORDER_STEPS, MEET_LIMIT, START_TRIES, shared budget); generated heavy-mix and 1500-line groups finish under the tests' time asserts",
+      "proof_cmd": "python -m pytest tests/test_import_openbanking.py -q -m contracts",
+      "proof_output": "107 passed in 29.96s (time-bounded tests included)"
+    },
+    {
+      "text": "Observability/docs: the import's case-log entry records format, pending and repeated counts; CLI prints them; README documents --format openbanking and the search-limit refusal",
+      "proof_cmd": "python -m pytest tests/test_import_openbanking.py -q -k keeps_the_golden_statement; grep -n openbanking README.md",
+      "proof_output": "passes (asserts entry.data pending/repeated == (1,1)); README.md:73-74"
+    }
+  ],
+  "files_changed": [
+    "tests/test_import_openbanking.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "verify-257 major: _first_order accepts a wrong starting balance when later balanced groups are single lines (_order returns single-line group unchecked), so a valid file is refused as a broken chain",
+      "disposition": "reproduced",
+      "evidence": "On 0b15ac5's src, test_a_mixed_first_group_followed_by_single_balanced_lines_starts_where_they_say and test_a_later_fully_balanced_group_pins_the_start_past_the_start_search fail (2 failed). On HEAD 8a515e2 (fix f32f8d7, openbanking.py:297-299) both pass, as does the new 200-export test."
+    }
+  ],
+  "notes": "Gaps for the owner: (1) Rollback: there is no flag; a disk-only importer can be turned off by removing 'openbanking' from store.FORMATS, which has not been tried. No alert: the tool is local with no remote alerting, and a refusal exits non-zero by design. (2) A valid export where only some lines at one moment carry a balance can still be refused at the search limit, with a message that says so and that the file may be valid, never that the chain is broken. Removing that limit entirely needs a design decision (subset-sum in general), not code here."
+}

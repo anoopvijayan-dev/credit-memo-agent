@@ -1,0 +1,1617 @@
+diff --git a/.gitattributes b/.gitattributes
+index 310b12c..a5dd610 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -5,3 +5,5 @@ src/cma/rules/*.yaml text eol=lf
+ 
+ # The Monzo golden files are compared byte for byte, CRLF line ends included (T28).
+ tests/golden/monzo/* -text
++# So are the Open Banking golden files (T29).
++tests/golden/openbanking/* -text
+diff --git a/README.md b/README.md
+index b0df630..92af114 100644
+--- a/README.md
++++ b/README.md
+@@ -66,6 +66,17 @@ cma case new --demo --label "Cafe trial"          # prints a random case id
+ cma case profile <id> --director "Jane Doe" --own-account "ACME HOLDINGS" --proposed-repayment 1500
+ cma case import <id> private/statement.csv --format csv
+ cma case import <id> "private/Monzo Data Export.csv" --format monzo --account monzo --opening-balance 123.45
++# An OBIE v3.1 transactions file (one response, an array of pages, or pages one after
++# another): booked GBP lines only, pending ones left out and counted, the bank's
++# TransactionId kept as the line id, a transaction a page repeats kept once. The balance
++# comes from the per-line balances, or from a statement balance at the end of a date.
++cma case import <id> private/transactions.json --format openbanking --account current
++cma case import <id> private/transactions.json --format openbanking --statement-balance 1389.75 --at 2026-04-03
++# Lines booked at the same moment (a date-only export puts a day at midnight) are put in the
++# order their per-line balances chain in. An export with a balance on every line, on none or
++# on each day's last line always imports. When only some lines at one moment carry a balance,
++# finding the order is a search: it is found in nearly every case, and otherwise the file is
++# refused saying the search limit was reached (never that the chain is broken).
+ 
+ # Correct one line's category (only the category; one valid for the line's direction),
+ # with a reason and your typed name. The override goes to overrides.jsonl and the case
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index 38858b9..74dcc3c 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -578,22 +578,33 @@ def case_profile(
+ def case_import(
+     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
+     file: Path = typer.Argument(..., help="The bank file. Copied into the case; nothing is uploaded."),
+-    fmt: str = typer.Option(..., "--format", help="csv (the five-column statement) or monzo (a Monzo export)."),
++    fmt: str = typer.Option(..., "--format", help="csv (the five-column statement), monzo (a Monzo export) or "
++                            "openbanking (an OBIE v3.1 transactions file)."),
+     account: str = typer.Option("main", "--account", help="A short key for the account, such as main or savings."),
+     opening_balance: str | None = typer.Option(
+         None, help="Monzo only: the balance just before the first transaction, when the export has no Balance column."),
++    statement_balance: str | None = typer.Option(
++        None, help="Open Banking only: a balance from the bank's statement, at the end of the date --at, when "
++                   "the file has no per-line balances."),
++    at: str | None = typer.Option(None, "--at", help="Open Banking only: the date (YYYY-MM-DD) --statement-balance "
++                                                     "is the closing balance of."),
+ ):
+     """Import a statement into a case: the original kept by hash, the statement per account (R31, R42)."""
+     from . import store
+ 
+     with _case_errors():
+         folder = store.case_folder(case_id)
+-        r = store.import_file(folder, file, fmt, account=account, opening_balance=opening_balance)
++        r = store.import_file(folder, file, fmt, account=account, opening_balance=opening_balance,
++                              statement_balance=statement_balance, at=at)
+     if r.already:
+         console.print(f"already imported (sha256 {r.input_sha256[:12]}); the case is unchanged")
+         return
+     console.print(f"imported account {r.account}: {r.lines} transactions, {r.start} to {r.end} "
+                   f"(sha256 {r.input_sha256[:12]})")
++    if r.pending:  # R36: pending lines are left out, and counted
++        console.print(f"left out {r.pending} pending transaction{'s' if r.pending != 1 else ''}")
++    if r.repeated:
++        console.print(f"{r.repeated} transaction{'s' if r.repeated != 1 else ''} repeated across pages kept once")
+ 
+ 
+ @case_app.command("override")
+diff --git a/src/cma/importers/openbanking.py b/src/cma/importers/openbanking.py
+new file mode 100644
+index 0000000..1a33062
+--- /dev/null
++++ b/src/cma/importers/openbanking.py
+@@ -0,0 +1,723 @@
++"""Convert a UK Open Banking (OBIE Account and Transaction API v3.1) transactions file into
++the five-column statement format (R36).
++
++The file is what GET /accounts/{AccountId}/transactions returns: one response object
++({"Data": {"Transaction": [...]}, "Links": ..., "Meta": ...}), a JSON array of such
++responses (one per page), or the pages written one after another. Each transaction carries
++TransactionId, Status, CreditDebitIndicator, BookingDateTime, Amount {Amount, Currency},
++optionally Balance {Amount, CreditDebitIndicator, Type}, TransactionInformation,
++TransactionReference, MerchantDetails and the counterparty's DebtorAccount or
++CreditorAccount.
++
++So this module:
++- keeps only booked transactions: a pending one is left out and counted, whatever else it
++  holds; a status that is neither is refused;
++- keeps only GBP: a booked transaction, or a balance, in another currency refuses the
++  account, and nothing is ever converted;
++- keeps the provider's TransactionId as the line id, so every figure traces back to the bank;
++- keeps a transaction that a paged export repeats once, when the repeat is the same in every
++  field, and refuses the file when two transactions share an id but differ;
++- rebuilds the running balance from the per-line balances (the balance after each line, of a
++  booked type), or, when the person supplies one, from a statement balance at the end of a
++  date (--statement-balance AMOUNT --at DATE); every per-line balance the file holds is
++  checked against the walked one, so a chain that breaks anywhere refuses the file;
++- orders lines oldest first by booking date as the bank wrote it, then by the moment booked;
++  transactions booked at the same moment are put in an order their per-line balances chain
++  in, and refused when no order does. Lines with no balance can sit anywhere among them, so
++  in general this is a subset-sum search: an export with a balance on every line, on none or
++  on each day's last line is always ordered; one where only some lines at one moment carry a
++  balance is ordered when the search finds an order within its limit, and otherwise refused
++  saying so (never as a broken chain); the search always ends in bounded time;
++- builds the description from TransactionInformation, the merchant's or the counterparty's
++  name and the reference, so the categoriser sees what a bank statement would show.
++
++A refusal names the line of the file a transaction's object starts on, never a cell's value
++(the importer contract, T28). The balance walk, the check that the output passes the
++statement loader and the writing of the statement are the contract's (importers/contract.py).
++
++It reads the file locally and writes a new file. Nothing is sent anywhere.
++"""
++
++from __future__ import annotations
++
++import bisect
++import json
++import json.decoder
++import json.scanner
++import re
++from dataclasses import dataclass
++from datetime import date, datetime, timedelta, timezone
++from decimal import Decimal
++from pathlib import Path
++
++from ..metrics import AT_LIMIT, at_limit, flows_at_limit, pounds, pounds_text, text_pence
++from . import contract
++from .contract import ImportRefused
++
++PLAIN_AMOUNT = re.compile(r"^\d+(?:\.\d+)?$")  # OBIE writes an unsigned decimal; the sign is its indicator
++SIGNED_AMOUNT = re.compile(r"^[-+]?\d+(?:\.\d{1,2})?$")
++# A provider id is kept as it is and written to a CSV text cell, so it may not start with a
++# character a spreadsheet reads as a formula (R34) or with a space, nor hold a control character.
++FORMULA_OR_SPACE = (*contract.FORMULA_START, " ")
++CONTROL = re.compile(r"[\x00-\x1f\x7f]")
++MAX_ID = 210  # OBIE's Max210Text
++# A per-line balance of one of these types is the booked balance after the line; an available
++# or expected balance can include pending lines or an overdraft limit, so it is not read.
++BOOKED_BALANCES = {"ClosingBooked", "InterimBooked", "OpeningBooked", "PreviouslyClosedBooked"}
++PER_LINE = "per-line balances"
++# Transactions booked at the same moment are put in order by a search for the one order their
++# balances chain in; it gives up past this many steps, and the file is refused.
++ORDER_STEPS = 500_000
++# The meet-in-the-middle that fills a gap gives up when either half has more ways than this.
++MEET_LIMIT = 1 << 16
++# The first group with a balance tries at most this many starting balances; it lists every
++# subset sum of its balance-less lines when it has at most START_SEARCH of them.
++START_TRIES = 2_000
++START_SEARCH = 16
++# With at most this many balance-less lines left, the next balanced line is looked up by the
++# sums they reach rather than found by trying every balanced line.
++LOOKUP_LOOSE = 18
++
++
++class OrderUnknown(Exception):
++    """The search for an order of same-moment lines gave up before finding one or ruling all out."""
++
++    def __init__(self, lines: int, loose: int):
++        super().__init__(lines, loose)
++        self.lines, self.loose = lines, loose
++
++
++class OpenBankingImportError(ImportRefused):
++    """An Open Banking file refused; an importer's refusal under the contract (T28)."""
++
++
++@dataclass
++class ImportResult:
++    rows: int
++    start: date
++    end: date
++    opening_balance: float
++    closing_balance: float
++    balance_source: str  # "per-line balances" or "statement balance supplied at DATE"
++    pending: int  # pending transactions left out
++    repeated: int  # transactions a paged export repeated, kept once
++
++
++class _Obj(dict):
++    """A JSON object, with the offset of its opening brace and any key it gives twice."""
++
++    __slots__ = ("at", "twice")
++
++
++def _pairs(pairs):
++    obj = _Obj(pairs)
++    obj.twice = len(obj) != len(pairs)
++    return obj
++
++
++def _scanner(lines_at):
++    """A JSON scanner that notes where each object starts, reads numbers exactly, and refuses
++    a key given twice (which would let the second silently replace the first) and NaN or
++    Infinity, which are not JSON."""
++    decoder = json.JSONDecoder(object_pairs_hook=_pairs, parse_float=Decimal)
++
++    def parse_object(s_and_end, *args):
++        start = s_and_end[1] - 1
++        obj, end = json.decoder.JSONObject(s_and_end, *args)
++        obj.at = start
++        if obj.twice:
++            raise OpenBankingImportError(f"line {lines_at(start)}: a key given more than once in one object")
++        return obj, end
++
++    def parse_constant(name):
++        raise ValueError(f"{name} is not JSON")
++
++    decoder.parse_object = parse_object
++    decoder.parse_constant = parse_constant
++    decoder.memo = {}
++    return json.scanner.py_make_scanner(decoder)
++
++
++def _pages(text: str, lines_at) -> list:
++    """The response objects the file holds: one, an array of them, or several one after another."""
++    scan = _scanner(lines_at)
++    ws = json.decoder.WHITESPACE
++    docs, idx = [], ws.match(text, 0).end()
++    while idx < len(text):
++        try:
++            doc, idx = scan(text, idx)
++        except ImportRefused:
++            raise
++        except StopIteration as e:
++            raise OpenBankingImportError(f"line {lines_at(e.value)}: not JSON") from None
++        except (ValueError, RecursionError) as e:  # a JSONDecodeError says where; no cell is quoted
++            at = getattr(e, "pos", idx)
++            raise OpenBankingImportError(f"line {lines_at(at)}: not JSON") from None
++        docs.append(doc)
++        idx = ws.match(text, idx).end()
++    if not docs:
++        raise OpenBankingImportError("line 1: not JSON (the file is empty)")
++    pages = []
++    for doc in docs:
++        pages.extend(doc if isinstance(doc, list) else [doc])
++    return pages
++
++
++def _transactions(pages, lines_at) -> list:
++    out = []
++    for page in pages:
++        data = page.get("Data") if isinstance(page, dict) else None
++        txns = data.get("Transaction") if isinstance(data, dict) else None
++        if not isinstance(txns, list):
++            at = page.at if isinstance(page, _Obj) else 0
++            raise OpenBankingImportError(f"line {lines_at(at)}: not an OBIE v3.1 transactions response "
++                                         "(no Data.Transaction list)")
++        for t in txns:
++            if not isinstance(t, _Obj):
++                raise OpenBankingImportError(f"line {lines_at(page.at)}: a transaction is not a JSON object")
++            out.append(t)
++    return out
++
++
++def _text(t: dict, key: str, line: int, *, required: bool = True) -> str:
++    v = t.get(key)
++    if v is None and not required:
++        return ""
++    if not isinstance(v, str):
++        what = "is missing" if v is None else "is not text"
++        raise OpenBankingImportError(f"line {line}: {key} {what}")
++    return v
++
++
++def _money(obj, what: str, line: int) -> int:
++    """An {Amount, Currency} object's unsigned amount in whole pence, read exactly; GBP only."""
++    if not isinstance(obj, dict):
++        raise OpenBankingImportError(f"line {line}: the {what} is missing or not an object")
++    currency = obj.get("Currency")
++    if currency != "GBP":
++        tail = "; lines are never converted" if what == "amount" else ""
++        raise OpenBankingImportError(f"line {line}: the {what} is not in GBP; the account is refused{tail}")
++    raw = obj.get("Amount")
++    text = str(raw) if isinstance(raw, (str, Decimal, int)) and not isinstance(raw, bool) else ""
++    p = text_pence(text) if PLAIN_AMOUNT.match(text) else None
++    if p is None:
++        raise OpenBankingImportError(f"line {line}: the {what} is not a plain amount in whole pence like 12.40")
++    if at_limit(p):
++        raise OpenBankingImportError(f"line {line}: the {what} is {AT_LIMIT}; no figure could be reported to the penny")
++    return p
++
++
++def _signed(t: dict, key: str, p: int, line: int) -> int:
++    indicator = t.get(key)
++    if indicator == "Credit":
++        return p
++    if indicator == "Debit":
++        return -p
++    raise OpenBankingImportError(f"line {line}: {key} is neither Credit nor Debit")
++
++
++def _when(raw: str, line: int, today: date) -> tuple[date, datetime]:
++    """The booking date as the bank wrote it, and the moment booked (UTC; a time with no offset
++    is read as UTC) to order lines within it."""
++    try:
++        when = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
++    except ValueError:
++        try:
++            when = datetime.combine(date.fromisoformat(raw.strip()), datetime.min.time())
++        except ValueError:
++            raise OpenBankingImportError(f"line {line}: BookingDateTime is not an ISO 8601 date and time") from None
++    d = when.date()
++    if d > today:
++        raise OpenBankingImportError(f"line {line}: BookingDateTime is in the future")
++    moment = when.astimezone(timezone.utc) if when.tzinfo else when.replace(tzinfo=timezone.utc)
++    return d, moment
++
++
++def _description(t: dict, amount: int, line: int) -> str:
++    """TransactionInformation, then the merchant's or counterparty's name and the reference,
++    each added only if the text so far does not already hold it."""
++    party = t.get("DebtorAccount" if amount > 0 else "CreditorAccount")
++    merchant = t.get("MerchantDetails")
++    parts = [t.get("TransactionInformation"),
++             merchant.get("MerchantName") if isinstance(merchant, dict) else None,
++             party.get("Name") if isinstance(party, dict) else None,
++             t.get("TransactionReference")]
++    out = ""
++    for part in parts:
++        if part is None:
++            continue
++        if not isinstance(part, str):
++            raise OpenBankingImportError(f"line {line}: a description field is not text")
++        part = " ".join(part.split()).upper()
++        if part and part not in out:
++            out = f"{out} {part}".strip()
++    return out
++
++
++def _id(t: dict, line: int) -> str:
++    tid = t.get("TransactionId")
++    if tid is None:
++        raise OpenBankingImportError(f"line {line}: a booked transaction has no TransactionId; its id must be kept")
++    if not isinstance(tid, str) or not tid:
++        raise OpenBankingImportError(f"line {line}: TransactionId is empty or not text")
++    if tid.startswith(FORMULA_OR_SPACE) or tid != tid.strip() or CONTROL.search(tid) or len(tid) > MAX_ID:
++        raise OpenBankingImportError(f"line {line}: TransactionId starts with a character a spreadsheet reads as "
++                                     f"a formula (= + - @), or with a space, holds a control character or is "
++                                     f"longer than {MAX_ID} characters")
++    return tid
++
++
++def _balance(t: dict, line: int) -> int | None:
++    bal = t.get("Balance")
++    if bal is None:
++        return None
++    if not isinstance(bal, dict):
++        raise OpenBankingImportError(f"line {line}: the balance is not an object")
++    if bal.get("Type", "InterimBooked") not in BOOKED_BALANCES:
++        return None  # an available or expected balance is not the booked balance after the line
++    return _signed(bal, "CreditDebitIndicator", _money(bal.get("Amount"), "balance", line), line)
++
++
++def _order(group: list[tuple], before: int | None, budget: list[int] | None = None) -> list[tuple] | None:
++    """Lines booked at the same moment, in an order their per-line balances chain in from
++    `before` (the walked balance before them, None if not yet known); None if no order does.
++
++    A line with no balance constrains nothing but by its amount, and any left over can go after
++    the last line with a balance. So an order is a sequence of the lines with a balance, and
++    for each, the lines with none that go just before it: they must add up to the gap between
++    the balance before it and the one the walk has reached (none is needed when the gap is
++    zero, as when every line has a balance). The search runs over the balanced lines, without
++    recursion, trying the next line's own gap first; a gap is filled by the loose lines left,
++    found by their amounts (all of them, none, one, all but one, or a meet-in-the-middle over
++    their amounts), and a state already searched without success is not searched again. Lines
++    keep the file's order wherever the balances leave it free.
++    """
++    if all(x.balance is None for _, x in group):
++        return group
++    if len(group) == 1:  # one line: it chains from `before` or no order does
++        x = group[0][1]
++        return group if before is None or before + x.amount == x.balance else None
++    bal_ids = [i for i, (_, x) in enumerate(group) if x.balance is not None]
++    loose_ids = [i for i, (_, x) in enumerate(group) if x.balance is None]
++    amt = [x.amount for _, x in group]
++    pre = {i: group[i][1].balance - amt[i] for i in bal_ids}
++    post = {i: group[i][1].balance for i in bal_ids}
++    by_pre: dict[int, list[int]] = {}
++    for i in bal_ids:
++        by_pre.setdefault(pre[i], []).append(i)
++    posts = set(post.values())
++    heads = [i for i in bal_ids if pre[i] not in posts]  # where a chain with no known start begins
++    if not loose_ids and len(heads) > 1:
++        return None  # with every line balanced, nothing can come before a head: two cannot both be first
++    filled: dict[tuple, list[tuple[int, ...]]] = {}
++    gave_up = [False]  # a gap the search could not fill or rule out: "no order" cannot then be said
++
++    def fills(rem: tuple[int, ...], gap: int):
++        """Ways to take loose lines from `rem` (file order) adding up to `gap`, cheapest first;
++        worked out once for each remainder and gap."""
++        key = (rem, gap)
++        if key not in filled:
++            filled[key] = list(_fills(rem, gap))
++        return filled[key]
++
++    def _fills(rem: tuple[int, ...], gap: int):
++        if gap == 0:
++            return [()]
++        total = sum(amt[i] for i in rem)
++        found: dict[tuple, None] = {}
++        if total == gap:
++            found[rem] = None
++        by_amount: dict[int, int] = {}
++        for i in rem:  # one line, the first of each amount
++            by_amount.setdefault(amt[i], i)
++        for a, i in by_amount.items():
++            if a == gap:
++                found[(i,)] = None
++            if total - a == gap:
++                found[tuple(j for j in rem if j != i)] = None
++        for take in _meet(rem, gap):
++            found[take] = None
++        return sorted(found, key=len)  # the fewest lines first: balanced lines sit close together
++
++    def _meet(rem, gap):
++        # Subsets by amount: lines of one amount are interchangeable, so only how many of each.
++        counts: dict[int, list[int]] = {}
++        for i in rem:
++            counts.setdefault(amt[i], []).append(i)
++        amounts = sorted(counts, key=lambda a: -len(counts[a]))
++        half = [amounts[0::2], amounts[1::2]]
++        sizes = [1, 1]
++        for h in (0, 1):
++            for a in half[h]:
++                sizes[h] *= len(counts[a]) + 1
++        if max(sizes) > MEET_LIMIT:
++            gave_up[0] = True  # too many ways to try: this gap is neither filled nor ruled out
++            return
++        work[0] += sizes[0] + sizes[1]
++        tables = []
++        for h in (0, 1):
++            table: dict[int, list[tuple]] = {0: [()]}
++            for a in half[h]:
++                grown: dict[int, list[tuple]] = {}
++                for sm, picks in table.items():
++                    for k in range(len(counts[a]) + 1):
++                        grown.setdefault(sm + k * a, []).extend((*p, (a, k)) for p in picks)
++                table = grown
++            tables.append(table)
++        left, right = tables
++        for sm, lpicks in left.items():
++            for rp in right.get(gap - sm, ()):
++                for lp in lpicks:
++                    take = {a: k for a, k in (*lp, *rp) if k}
++                    if take:
++                        yield tuple(sorted(i for a, k in take.items() for i in counts[a][:k]))
++
++    reached: dict[tuple, set] = {}
++
++    def _reach(rem: tuple[int, ...]) -> set:
++        if rem not in reached:
++            sums = {0}
++            for j in rem:
++                sums |= {r + amt[j] for r in sums}
++            reached[rem] = sums
++        return reached[rem]
++
++    def nexts(bal, used: int, rem: tuple[int, ...]):
++        """(balanced line, the loose lines before it) to try next, the zero gaps first."""
++        if bal is None:
++            free = [i for i in bal_ids if not used >> i & 1]
++            # With every line balanced, a chain starts at its head (or anywhere, round a cycle).
++            first = [i for i in heads if i in free] if (heads and not loose_ids) else \
++                [i for i in heads if i in free] + [i for i in free if i not in heads]
++            for i in first:
++                yield i, ()  # the walk starts at this line's own balance
++            return
++        for i in by_pre.get(bal, ()):
++            if not used >> i & 1:
++                yield i, ()
++        if not rem:
++            return  # no loose line left: only a line with no gap can come next
++        free = [i for i in bal_ids if not used >> i & 1 and pre[i] != bal]
++        if len(rem) <= LOOKUP_LOOSE:  # few left: only the lines whose gap a sum of them reaches
++            reach = _reach(rem)
++            cands = [i for i in free if pre[i] - bal in reach]
++        else:
++            cands = free
++        work[0] += len(free)
++        # Every way on, across the lines that could come next, the fewest balance-less lines first.
++        options = sorted(((len(take), n, i, take) for n, i in enumerate(cands) for take in fills(rem, pre[i] - bal)),
++                         key=lambda o: (o[0], o[1]))
++        work[0] += len(cands) + len(options)  # finding them is work too: it counts against the limit
++        for _, _, i, take in options:
++            yield i, take
++
++    def _may_finish(bal, used: int, loose_left: int) -> bool:
++        """A balanced line left that no other line left, nor the walk now, leads to needs a
++        balance-less line before it; with fewer of those left than such lines, no order is left."""
++        free = [i for i in bal_ids if not used >> i & 1]
++        if len(free) <= loose_left:
++            return True
++        free_posts = {post[i] for i in free}
++        need = sum(1 for i in free if pre[i] != bal and pre[i] not in free_posts)
++        return need <= loose_left
++
++    dead: set = set()
++    steps = 0
++    work = [0]  # the ways on listed, and the subsets the meet-in-the-middle built, so far
++    rem0 = tuple(loose_ids)
++    # One frame per balanced line placed: (its iterator of choices, the state it was made in).
++    stack = [(nexts(before, 0, rem0), before, 0, rem0)]
++    chosen: list[tuple[int, tuple[int, ...]]] = []
++    while stack:
++        it, bal, used, rem = stack[-1]
++        if len(chosen) == len(bal_ids):
++            seq = [j for i, take in chosen for j in (*take, i)] + list(rem)  # the loose lines left, last
++            return [group[j] for j in seq]
++        step = next(it, None)
++        if step is None:
++            dead.add((bal, used, rem))
++            stack.pop()
++            if chosen:
++                chosen.pop()
++            continue
++        steps += 1 + work[0]
++        if budget is not None:
++            budget[0] -= 1 + work[0]
++        work[0] = 0
++        if steps > ORDER_STEPS or (budget is not None and budget[0] < 0):
++            raise OrderUnknown(len(group), len(loose_ids))
++        i, take = step
++        left = tuple(j for j in rem if j not in set(take)) if take else rem
++        state = (post[i], used | 1 << i, left)
++        if state in dead:
++            continue
++        if not _may_finish(post[i], used | 1 << i, len(left)):
++            dead.add(state)
++            continue
++        chosen.append((i, take))
++        stack.append((nexts(post[i], used | 1 << i, left), *state))
++    if gave_up[0]:
++        raise OrderUnknown(len(group), len(loose_ids))
++    return None
++
++
++def _starts(group: list[tuple]):
++    """The balances the walk may have reached before `group`, the first group with a per-line
++    balance, when nothing before it says: the balance before one of its balanced lines less the
++    lines with no balance that may come before that line (none, all, one, all but one, then by
++    a bounded search over their amounts), each once, the likeliest first."""
++    loose = [x.amount for _, x in group if x.balance is None]
++    total = sum(loose)
++    posts = {x.balance for _, x in group if x.balance is not None}
++    tiers: list[list[int]] = [[], []]  # the first balanced line is a head unless the balances cycle
++    for _, x in group:
++        pre = None if x.balance is None else x.balance - x.amount
++        if pre is not None and pre not in tiers[0] and pre not in tiers[1]:
++            tiers[0 if pre not in posts else 1].append(pre)
++    sums = [0, total, *loose, *(total - a for a in loose)]
++    if len(loose) <= START_SEARCH:  # every sum of a subset of them, by amount
++        reach = {0}
++        for a in loose:
++            reach |= {r + a for r in reach}
++        sums += sorted(reach, key=abs)
++    seen: set[int] = set()
++    for pres in tiers:  # heads, then the rest
++        for sm in sums:  # the simplest choice for every such line before a harder one for any
++            for pre in pres:
++                if pre - sm not in seen:
++                    seen.add(pre - sm)
++                    yield pre - sm
++
++
++def _first_order(groups: list[list[tuple]], k: int, cache: dict) -> list[tuple] | None:
++    """Order groups[k], the first group with a per-line balance, when the walked balance before
++    it is not known. Its own order fixes the balance it ends on, and from there the balance
++    before every later group is fixed too (the balance after a group is the balance before it
++    plus its amounts, whatever their order). So the start taken is the likeliest one that
++    orders this group and every later group with a balance; each order found is kept in
++    `cache`, by group and balance before it, for the walk to use."""
++    group = groups[k]
++    totals = [sum(x.amount for _, x in g) for g in groups]
++    later = [m for m in range(k + 1, len(groups)) if any(x.balance is not None for _, x in groups[m])]
++    gave_up = False
++    fallback = None  # an order of this group alone, should no start let the rest be ordered
++
++    budget = [ORDER_STEPS]  # one budget for every start tried, so the search ends in bounded time
++
++    def ordered(m: int, before: int):
++        key = (m, before)
++        if key not in cache:
++            cache[key] = _order(groups[m], before, budget)
++        return cache[key]
++
++    # A later group with a balance on every line pins the start: the walk must reach it at the
++    # balance before whichever of its lines comes first, so those are the only starts there are.
++    pinned = None
++    for m in later:
++        if all(x.balance is not None for _, x in groups[m]):
++            offset = sum(totals[k:m])
++            posts = {x.balance for _, x in groups[m]}
++            pres = sorted({x.balance - x.amount for _, x in groups[m]}, key=lambda p: p in posts)  # heads first
++            pinned = [p - offset for p in pres]
++            break
++
++    for tries, start in enumerate(pinned if pinned is not None else _starts(group)):
++        if tries >= START_TRIES:
++            gave_up = True
++            break
++        try:
++            order = ordered(k, start)
++            if order is None:
++                continue
++            fallback = fallback or order
++            before, at, ok = start + totals[k], k + 1, True
++            for m in later:
++                before += sum(totals[at:m])
++                at = m
++                if ordered(m, before) is None:
++                    ok = False
++                    break
++            if ok:
++                return order
++        except OrderUnknown:
++            gave_up = True  # this start was neither shown to serve nor ruled out
++            if budget[0] < 0:
++                break  # the budget is spent
++    loose = sum(x.balance is None for _, x in group)
++    if gave_up or (pinned is None and loose > START_SEARCH):
++        # Past START_SEARCH balance-less lines, only the likeliest starts were tried: that none
++        # served does not show that no order does.
++        raise OrderUnknown(len(group), loose)
++    return fallback  # a later group then names where its chain breaks; None if this one cannot be ordered
++
++
++def _first_break(group: list[tuple], before: int | None) -> contract.Line:
++    """The first line, in the order the file dates them, whose per-line balance does not follow."""
++    bal = before
++    for _, x in group:
++        after = None if bal is None else bal + x.amount
++        if x.balance is not None and after is not None and x.balance != after:
++            return x
++        bal = x.balance if x.balance is not None else after
++    return group[0][1]
++
++
++def _statement_balance(raw: str | None, at_raw: str | None) -> tuple[int, date] | None:
++    if raw is None and at_raw is None:
++        return None
++    if raw is None:
++        raise OpenBankingImportError("--at needs --statement-balance: the balance at the end of that date")
++    if at_raw is None:
++        raise OpenBankingImportError("--statement-balance needs --at: the date whose closing balance it is")
++    text = raw.strip()
++    p = text_pence(text) if SIGNED_AMOUNT.match(text) else None
++    if p is None:
++        raise OpenBankingImportError("--statement-balance is not a plain amount like -12.40")
++    if at_limit(p):
++        raise OpenBankingImportError(f"--statement-balance is {AT_LIMIT}; no figure could be reported to the penny")
++    try:
++        at = date.fromisoformat(at_raw.strip())
++    except ValueError:
++        raise OpenBankingImportError("--at is not a date like 2026-04-30") from None
++    return p, at
++
++
++def convert(src: Path, dst: Path, *, statement_balance: str | None = None, at: str | None = None,
++            today: date | None = None) -> ImportResult:
++    """`statement_balance` is the balance at the end of the date `at`, as the person gave it
++    (read exactly); both or neither."""
++    today = today or date.today()
++    supplied = _statement_balance(statement_balance, at)
++    data = Path(src).read_bytes()  # read once
++    try:
++        text = data.decode("utf-8-sig")
++    except UnicodeDecodeError as e:
++        line = data.count(b"\n", 0, e.start) + 1
++        raise OpenBankingImportError(f"line {line}: a byte that is not UTF-8") from None
++    breaks = [i for i, c in enumerate(text) if c == "\n"]
++
++    def lines_at(offset: int) -> int:
++        return bisect.bisect_left(breaks, offset) + 1
++
++    txns = _transactions(_pages(text, lines_at), lines_at)
++    if not txns:
++        raise OpenBankingImportError(f"{src}: no transactions")
++
++    booked: list[tuple] = []  # ((date, moment, file position), Line)
++    first: dict[str, tuple[int, dict]] = {}  # each kept id's line and object
++    pending = repeated = 0
++    pending_ids: set[str] = set()  # a pending transaction a page repeats is counted once
++    account = None
++    for pos, t in enumerate(txns):
++        line = lines_at(t.at)
++        status = t.get("Status")
++        if status == "Pending":
++            tid = t.get("TransactionId")
++            if not (isinstance(tid, str) and tid in pending_ids):
++                pending += 1  # left out, whatever else it holds
++            if isinstance(tid, str):
++                pending_ids.add(tid)
++            continue
++        if status != "Booked":
++            raise OpenBankingImportError(f"line {line}: Status is neither Booked nor Pending")
++        acc = t.get("AccountId")
++        if acc is not None:
++            if account is None:
++                account = (acc, line)
++            elif acc != account[0]:
++                raise OpenBankingImportError(f"line {line}: another account's transaction (the first is on line "
++                                             f"{account[1]}); import one account per file")
++        tid = _id(t, line)
++        if tid in first:
++            if first[tid][1] == t:
++                repeated += 1  # a page repeated it: kept once
++                continue
++            raise OpenBankingImportError(f"line {line}: transaction id repeated from line {first[tid][0]} with "
++                                         "different content")
++        first[tid] = (line, t)
++        amount = _signed(t, "CreditDebitIndicator", _money(t.get("Amount"), "amount", line), line)
++        d, moment = _when(_text(t, "BookingDateTime", line), line, today)
++        x = contract.Line(line=line, id=tid, date=d, description=_description(t, amount, line), amount=amount,
++                          balance=_balance(t, line))
++        booked.append(((d, moment, pos), x))
++    # A transaction one page shows pending and another booked (it settled between fetches) is
++    # kept as booked, so it was not left out.
++    pending -= len(pending_ids & first.keys())
++    if not booked:
++        raise OpenBankingImportError(f"{src}: no booked transactions ({pending} pending left out)")
++    reached = flows_at_limit([x.amount for _, x in booked])
++    if reached:
++        raise OpenBankingImportError(f"{' and '.join(reached)} {'total' if len(reached) > 1 else 'totals'} "
++                                     f"{AT_LIMIT}: no figure could be reported to the penny")
++
++    # Oldest first. A file written newest first keeps its lines booked at one moment in the
++    # reverse of the order it wrote them, before their balances order them.
++    newest_first = (booked[0][0][:2] > booked[-1][0][:2])
++    booked.sort(key=lambda b: (b[0][0], b[0][1], -b[0][2] if newest_first else b[0][2]))
++
++    # Lines booked at one moment, in the order their per-line balances chain in. The chain is
++    # the per-line balances' own, so the order is found before any opening balance is known.
++    lines: list[contract.Line] = []
++    walked: int | None = None  # the balance after the lines ordered so far, once a per-line one is seen
++    groups: list[list[tuple]] = []
++    i = 0
++    while i < len(booked):
++        j = i
++        while j < len(booked) and booked[j][0][:2] == booked[i][0][:2]:
++            j += 1
++        groups.append(booked[i:j])
++        i = j
++    cache: dict = {}
++    for k, same in enumerate(groups):
++        first_balanced = walked is None and any(x.balance is not None for _, x in same)
++        try:
++            if first_balanced:
++                group = _first_order(groups, k, cache)
++            else:
++                group = cache[(k, walked)] if (k, walked) in cache else _order(same, walked)
++        except OrderUnknown as e:
++            raise OpenBankingImportError(
++                f"line {same[0][1].line}: {e.lines} transactions are booked at the same moment and {e.loose} of "
++                "them carry no balance; no order of them that keeps the balance chain was found within the "
++                "search limit, so the file was not imported (it may be valid: an export with a balance on every "
++                "line, or on none, is always read)") from None
++        if group is None and len(same) == 1:
++            group = same  # one line that does not follow: the walk below names it
++        if group is None:
++            raise OpenBankingImportError(f"line {_first_break(same, walked).line}: no order of the "
++                                         "transactions booked at the same time keeps the balance chain; the "
++                                         "export may be missing transactions")
++        for _, x in group:
++            walked = x.balance if walked is None else walked + x.amount
++            lines.append(x)
++
++    # The opening balance: from the statement balance supplied, else the first per-line balance;
++    # with both, they must agree.
++    k = next((k for k, x in enumerate(lines) if x.balance is not None), None)
++    implied = None if k is None else lines[k].balance - sum(x.amount for x in lines[:k + 1])
++    if supplied is not None:
++        bal_at, at_date = supplied
++        start, end = lines[0].date, lines[-1].date
++        if not start - timedelta(days=1) <= at_date <= end:
++            raise OpenBankingImportError(f"--at {at_date} is outside the file's period, {start - timedelta(days=1)} "
++                                         f"(the day before its first transaction) to {end}")
++        before_at = sum(x.amount for x in lines if x.date <= at_date)
++        opening = bal_at - before_at
++        source = f"statement balance supplied at {at_date}"
++        if implied is not None and implied != opening:
++            raise OpenBankingImportError(f"--statement-balance {pounds_text(bal_at)} at {at_date} disagrees with "
++                                         f"the per-line balances, which give {pounds_text(implied + before_at)} "
++                                         f"then (line {lines[k].line}); leave it out to use them")
++    elif implied is not None:
++        opening, source = implied, PER_LINE
++    else:
++        raise OpenBankingImportError(f"{src}: no per-line balances; pass --statement-balance AMOUNT --at DATE "
++                                     "(a balance from the bank's statement, at the end of a date)")
++    try:
++        balances = contract.walk(lines, opening, column="the per-line balance")
++        contract.write_statement(dst, lines, balances, label=src)
++    except ImportRefused as e:  # said as this importer's refusal
++        raise OpenBankingImportError(str(e)) from None
++    return ImportResult(rows=len(lines), start=lines[0].date, end=lines[-1].date,
++                        opening_balance=pounds(opening), closing_balance=pounds(balances[-1]),
++                        balance_source=source, pending=pending, repeated=repeated)
+diff --git a/src/cma/store.py b/src/cma/store.py
+index 800fa99..19bd180 100644
+--- a/src/cma/store.py
++++ b/src/cma/store.py
+@@ -58,7 +58,7 @@ LEDGER_WAIT = 10.0  # seconds a purge waits for another to finish writing the le
+ PROFILE = "case.yaml"
+ INPUTS = "inputs"
+ STATEMENTS = "statements"
+-FORMATS = ("csv", "monzo")
++FORMATS = ("csv", "monzo", "openbanking")
+ # Matched with fullmatch: `$` alone would also take a key ending in a newline (T13 review 2).
+ CASE_ID = re.compile(r"[0-9a-f]{16}")  # random; never the applicant's name
+ ACCOUNT_KEY = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
+@@ -533,18 +533,26 @@ class Imported:
+     start: str
+     end: str
+     already: bool = False
++    pending: int = 0  # Open Banking: pending transactions left out (R36)
++    repeated: int = 0  # Open Banking: transactions a paged export repeated, kept once
+ 
+ 
+ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
+-                opening_balance: str | None = None) -> Imported:
++                opening_balance: str | None = None, statement_balance: str | None = None,
++                at: str | None = None) -> Imported:
+     """Import a bank file into a case: the original into inputs/ by its hash, the converted
+     statement into statements/<account>.csv, checked by the statement loader, and one log
+     entry (R42). The same file imported again leaves the case unchanged (R39)."""
+-    from .importers import contract, monzo
++    from .importers import contract, monzo, openbanking
+ 
+     folder = Path(folder)
+     if fmt not in FORMATS:
+         raise CaseStoreError(f"unknown format {fmt!r}; use one of {', '.join(FORMATS)}")
++    if fmt != "openbanking" and (statement_balance is not None or at is not None):
++        raise CaseStoreError("--statement-balance and --at are for an Open Banking file")
++    if fmt == "openbanking" and opening_balance is not None:
++        raise CaseStoreError("--opening-balance is for a Monzo export; for an Open Banking file pass "
++                             "--statement-balance AMOUNT --at DATE")
+     if not isinstance(account, str) or not ACCOUNT_KEY.fullmatch(account):
+         raise CaseStoreError("an account key is lowercase letters, digits, _ and -, starting with a "
+                              "letter or digit, at most 32 characters")
+@@ -578,6 +586,17 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
+             except contract.ImportRefused as e:  # by line, never a cell's value (T28)
+                 raise CaseStoreError(f"import refused: {str(e).replace(str(raw), src.name)}") from None
+             out = converted.read_bytes()
++        elif fmt == "openbanking":
++            raw = work / "export.json"
++            converted = work / "statement.csv"
++            _write_private(raw, data)
++            _write_private(converted, b"")
++            try:
++                ob = openbanking.convert(raw, converted, statement_balance=statement_balance, at=at)
++            except contract.ImportRefused as e:  # by line, never a cell's value (T28)
++                raise CaseStoreError(f"import refused: {str(e).replace(str(raw), src.name)}") from None
++            out = converted.read_bytes()
++            counted = {"pending": ob.pending, "repeated": ob.repeated}
+         else:
+             if opening_balance is not None:
+                 raise CaseStoreError("--opening-balance is for a Monzo export; a statement CSV has its balances")
+@@ -591,7 +610,8 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
+ 
+         entry = {"account": account, "format": fmt, "input_sha256": sha,
+                  "statement_sha256": hashlib.sha256(out).hexdigest(), "lines": len(stmt.transactions),
+-                 "start": stmt.start.isoformat(), "end": stmt.end.isoformat()}
++                 "start": stmt.start.isoformat(), "end": stmt.end.isoformat(),
++                 **(counted if fmt == "openbanking" else {})}
+         with _recorded(folder, "import") as save:
+             if any(_imported(e, sha) for e in save.entries):
+                 return Imported(account, sha, 0, "", "", already=True)  # R39: nothing changes
+@@ -614,7 +634,8 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
+             save.undo.append(_restorer(statement))
+             _write_private(statement, out)
+             save.data = entry
+-    return Imported(account, sha, entry["lines"], entry["start"], entry["end"])
++    return Imported(account, sha, entry["lines"], entry["start"], entry["end"],
++                    pending=entry.get("pending", 0), repeated=entry.get("repeated", 0))
+ 
+ 
+ def _imported(entry, sha: str) -> bool:
+diff --git a/tests/golden/openbanking/per_line_balances.json b/tests/golden/openbanking/per_line_balances.json
+new file mode 100644
+index 0000000..a1209c7
+--- /dev/null
++++ b/tests/golden/openbanking/per_line_balances.json
+@@ -0,0 +1,92 @@
++[
++  {
++    "Data": {
++      "Transaction": [
++        {
++          "AccountId": "22289",
++          "TransactionId": "T5",
++          "TransactionReference": "COUNCIL TAX",
++          "Amount": {"Amount": "25.50", "Currency": "GBP"},
++          "CreditDebitIndicator": "Debit",
++          "Status": "Booked",
++          "BookingDateTime": "2026-03-03T09:00:00+00:00",
++          "TransactionInformation": "DD COUNCIL TAX",
++          "Balance": {"Amount": {"Amount": "1174.50", "Currency": "GBP"}, "CreditDebitIndicator": "Credit", "Type": "InterimBooked"}
++        },
++        {
++          "AccountId": "22289",
++          "TransactionId": "P1",
++          "Amount": {"Amount": "10.00", "Currency": "GBP"},
++          "CreditDebitIndicator": "Debit",
++          "Status": "Pending",
++          "BookingDateTime": "2026-03-03T12:00:00+00:00",
++          "TransactionInformation": "CARD PAYMENT PENDING"
++        },
++        {
++          "AccountId": "22289",
++          "TransactionId": "T3",
++          "Amount": {"Amount": "50.00", "Currency": "GBP"},
++          "CreditDebitIndicator": "Debit",
++          "Status": "Booked",
++          "BookingDateTime": "2026-03-02T00:00:00+00:00",
++          "TransactionInformation": "CARD PAYMENT",
++          "MerchantDetails": {"MerchantName": "Tesco Stores"},
++          "Balance": {"Amount": {"Amount": "1100.00", "Currency": "GBP"}, "CreditDebitIndicator": "Credit", "Type": "InterimBooked"}
++        },
++        {
++          "AccountId": "22289",
++          "TransactionId": "T4",
++          "TransactionReference": "INV 42",
++          "Amount": {"Amount": "100.00", "Currency": "GBP"},
++          "CreditDebitIndicator": "Credit",
++          "Status": "Booked",
++          "BookingDateTime": "2026-03-02T00:00:00+00:00",
++          "TransactionInformation": "FPS CREDIT",
++          "DebtorAccount": {"SchemeName": "UK.OBIE.SortCodeAccountNumber", "Identification": "11223344556677", "Name": "Acme Ltd"},
++          "Balance": {"Amount": {"Amount": "1200.00", "Currency": "GBP"}, "CreditDebitIndicator": "Credit", "Type": "InterimBooked"}
++        }
++      ]
++    },
++    "Links": {"Self": "https://api.bank.example/open-banking/v3.1/aisp/accounts/22289/transactions?page=1", "Next": "https://api.bank.example/open-banking/v3.1/aisp/accounts/22289/transactions?page=2"},
++    "Meta": {"TotalPages": 2}
++  },
++  {
++    "Data": {
++      "Transaction": [
++        {
++          "AccountId": "22289",
++          "TransactionId": "T3",
++          "Amount": {"Amount": "50.00", "Currency": "GBP"},
++          "CreditDebitIndicator": "Debit",
++          "Status": "Booked",
++          "BookingDateTime": "2026-03-02T00:00:00+00:00",
++          "TransactionInformation": "CARD PAYMENT",
++          "MerchantDetails": {"MerchantName": "Tesco Stores"},
++          "Balance": {"Amount": {"Amount": "1100.00", "Currency": "GBP"}, "CreditDebitIndicator": "Credit", "Type": "InterimBooked"}
++        },
++        {
++          "AccountId": "22289",
++          "TransactionId": "T2",
++          "Amount": {"Amount": "250.00", "Currency": "GBP"},
++          "CreditDebitIndicator": "Credit",
++          "Status": "Booked",
++          "BookingDateTime": "2026-03-01T10:00:00+00:00",
++          "TransactionInformation": "STRIPE PAYMENTS UK",
++          "Balance": {"Amount": {"Amount": "1150.00", "Currency": "GBP"}, "CreditDebitIndicator": "Credit", "Type": "InterimBooked"}
++        },
++        {
++          "AccountId": "22289",
++          "TransactionId": "T1",
++          "Amount": {"Amount": "100.00", "Currency": "GBP"},
++          "CreditDebitIndicator": "Debit",
++          "Status": "Booked",
++          "BookingDateTime": "2026-03-01T08:00:00+00:00",
++          "TransactionInformation": "TRANSFER TO SAVINGS",
++          "Balance": {"Amount": {"Amount": "900.00", "Currency": "GBP"}, "CreditDebitIndicator": "Credit", "Type": "InterimBooked"}
++        }
++      ]
++    },
++    "Links": {"Self": "https://api.bank.example/open-banking/v3.1/aisp/accounts/22289/transactions?page=2"},
++    "Meta": {"TotalPages": 2}
++  }
++]
+diff --git a/tests/golden/openbanking/per_line_balances.statement.golden b/tests/golden/openbanking/per_line_balances.statement.golden
+new file mode 100644
+index 0000000..1cf8cd2
+--- /dev/null
++++ b/tests/golden/openbanking/per_line_balances.statement.golden
+@@ -0,0 +1,6 @@
++id,date,description,amount,balance
++T1,2026-03-01,TRANSFER TO SAVINGS,-100.00,900.00
++T2,2026-03-01,STRIPE PAYMENTS UK,250.00,1150.00
++T3,2026-03-02,CARD PAYMENT TESCO STORES,-50.00,1100.00
++T4,2026-03-02,FPS CREDIT ACME LTD INV 42,100.00,1200.00
++T5,2026-03-03,DD COUNCIL TAX,-25.50,1174.50
+diff --git a/tests/golden/openbanking/statement_balance.json b/tests/golden/openbanking/statement_balance.json
+new file mode 100644
+index 0000000..6fe1245
+--- /dev/null
++++ b/tests/golden/openbanking/statement_balance.json
+@@ -0,0 +1,45 @@
++{
++  "Data": {
++    "Transaction": [
++      {
++        "AccountId": "9001",
++        "TransactionId": "A-1",
++        "Amount": {"Amount": "500.00", "Currency": "GBP"},
++        "CreditDebitIndicator": "Credit",
++        "Status": "Booked",
++        "BookingDateTime": "2026-04-01T00:00:00+01:00",
++        "TransactionInformation": "BACS CREDIT SUMUP PAYMENTS"
++      },
++      {
++        "AccountId": "9001",
++        "TransactionId": "A-2",
++        "Amount": {"Amount": "120.25", "Currency": "GBP"},
++        "CreditDebitIndicator": "Debit",
++        "Status": "Booked",
++        "BookingDateTime": "2026-04-02T00:00:00+01:00",
++        "TransactionInformation": "DD",
++        "CreditorAccount": {"SchemeName": "UK.OBIE.SortCodeAccountNumber", "Identification": "40400411112222", "Name": "iwoca Ltd"}
++      },
++      {
++        "AccountId": "9001",
++        "TransactionId": "A-3",
++        "Amount": {"Amount": "10.00", "Currency": "GBP"},
++        "CreditDebitIndicator": "Credit",
++        "Status": "Booked",
++        "BookingDateTime": "2026-04-03T00:00:00+01:00",
++        "TransactionInformation": "INTEREST"
++      },
++      {
++        "AccountId": "9001",
++        "TransactionId": "A-4",
++        "Amount": {"Amount": "9.99", "Currency": "GBP"},
++        "CreditDebitIndicator": "Debit",
++        "Status": "Pending",
++        "BookingDateTime": "2026-04-03T15:00:00+01:00",
++        "TransactionInformation": "CARD PAYMENT"
++      }
++    ]
++  },
++  "Links": {"Self": "https://api.bank.example/open-banking/v3.1/aisp/accounts/9001/transactions"},
++  "Meta": {"TotalPages": 1}
++}
+diff --git a/tests/golden/openbanking/statement_balance.statement.golden b/tests/golden/openbanking/statement_balance.statement.golden
+new file mode 100644
+index 0000000..0c0450b
+--- /dev/null
++++ b/tests/golden/openbanking/statement_balance.statement.golden
+@@ -0,0 +1,4 @@
++id,date,description,amount,balance
++A-1,2026-04-01,BACS CREDIT SUMUP PAYMENTS,500.00,1500.00
++A-2,2026-04-02,DD IWOCA LTD,-120.25,1379.75
++A-3,2026-04-03,INTEREST,10.00,1389.75
+diff --git a/tests/test_import_openbanking.py b/tests/test_import_openbanking.py
+new file mode 100644
+index 0000000..0591682
+--- /dev/null
++++ b/tests/test_import_openbanking.py
+@@ -0,0 +1,559 @@
++"""The OBIE Account and Transaction API v3.1 importer (R36, C4): `cma case import --format
++openbanking` keeps only booked GBP transactions, keeps the provider's transaction ids,
++rebuilds the running balance from the per-line balances or from a statement balance the
++person supplies, refuses the file if the balance chain breaks anywhere, counts the pending
++lines it leaves out, and keeps a transaction a paged export repeats once. The golden files
++(tests/golden/openbanking/) were written by hand from the OBIE v3.1 transaction schema."""
++
++import copy
++import json
++from pathlib import Path
++
++import pytest
++from typer.testing import CliRunner
++
++from cma import ingest, store
++from cma.cli import app
++from cma.importers import contract, openbanking
++
++runner = CliRunner()
++GOLDEN = Path(__file__).parent / "golden" / "openbanking"
++SENTINEL = "ZQXJ"  # a string no message the tool writes holds
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    monkeypatch.setenv("CMA_HOME", str(tmp_path / "cma-home"))
++    return tmp_path / "cma-home"
++
++
++def _flat(text: str) -> str:
++    return " ".join(text.split())
++
++
++def _txn(tid, amount, indicator="Credit", when="2026-05-01T10:00:00+00:00", *, balance=None,
++         status="Booked", currency="GBP", info=None, account="ACC1"):
++    t = {"AccountId": account, "TransactionId": tid,
++         "Amount": {"Amount": amount, "Currency": currency},
++         "CreditDebitIndicator": indicator, "Status": status, "BookingDateTime": when,
++         "TransactionInformation": info if info is not None else f"FPS CREDIT {SENTINEL} {tid}"}
++    if balance is not None:
++        sign = "Debit" if balance.startswith("-") else "Credit"
++        t["Balance"] = {"Amount": {"Amount": balance.lstrip("-"), "Currency": "GBP"},
++                        "CreditDebitIndicator": sign, "Type": "InterimBooked"}
++    return t
++
++
++def _write(tmp_path, *pages, name="export.json") -> Path:
++    body = [{"Data": {"Transaction": p}, "Links": {}, "Meta": {}} for p in pages]
++    path = tmp_path / name
++    path.write_text(json.dumps(body if len(body) > 1 else body[0], indent=2), encoding="utf-8")
++    return path
++
++
++def _line_of(path: Path, tid: str, occurrence: int = 1) -> int:
++    """The line of the file the transaction object holding `tid` starts on."""
++    text = path.read_text(encoding="utf-8")
++    at = -1
++    for _ in range(occurrence):
++        at = text.index(f'"TransactionId": "{tid}"', at + 1)
++    return text.count("\n", 0, text.rindex("{", 0, at)) + 1
++
++
++def _convert(tmp_path, src, **kw):
++    out = tmp_path / "statement.csv"
++    return openbanking.convert(src, out, **kw), out
++
++
++# --- golden files ------------------------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_per_line_balances_golden(tmp_path):
++    r, out = _convert(tmp_path, GOLDEN / "per_line_balances.json")
++    assert out.read_bytes() == (GOLDEN / "per_line_balances.statement.golden").read_bytes()
++    assert (r.rows, r.pending, r.repeated) == (5, 1, 1)
++    assert (r.start.isoformat(), r.end.isoformat()) == ("2026-03-01", "2026-03-03")
++    assert (r.opening_balance, r.closing_balance) == (1000.0, 1174.5)
++    assert r.balance_source == "per-line balances"
++    ingest.load_csv(out)  # the output passes the statement loader
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("balance, at", [("1389.75", "2026-04-03"), ("1379.75", "2026-04-02"),
++                                         ("1500.00", "2026-04-01"), ("1000.00", "2026-03-31")])
++def test_statement_balance_golden(tmp_path, balance, at):
++    r, out = _convert(tmp_path, GOLDEN / "statement_balance.json", statement_balance=balance, at=at)
++    assert out.read_bytes() == (GOLDEN / "statement_balance.statement.golden").read_bytes()
++    assert (r.rows, r.pending, r.repeated) == (3, 1, 0)
++    assert (r.opening_balance, r.closing_balance) == (1000.0, 1389.75)
++    assert r.balance_source == f"statement balance supplied at {at}"
++
++
++@pytest.mark.contracts
++def test_cma_case_import_openbanking_keeps_the_golden_statement_and_counts_pending(home):
++    cid = store.new_case()
++    src = GOLDEN / "per_line_balances.json"
++    r = runner.invoke(app, ["case", "import", cid, str(src), "--format", "openbanking"])
++    assert r.exit_code == 0, r.output
++    out = _flat(r.output)
++    assert "5 transactions" in out
++    assert "left out 1 pending transaction" in out
++    assert "1 transaction repeated across pages kept once" in out
++    folder = store.case_folder(cid)
++    kept = folder / "statements" / "main.csv"
++    assert kept.read_bytes() == (GOLDEN / "per_line_balances.statement.golden").read_bytes()
++    from cma import case as caselog
++    entry = [e for e in caselog.for_case(folder).entries() if e.event == "import"][-1]
++    assert entry.data["format"] == "openbanking"
++    assert (entry.data["pending"], entry.data["repeated"]) == (1, 1)
++    # Imported again: the case is unchanged (R39).
++    again = runner.invoke(app, ["case", "import", cid, str(src), "--format", "openbanking"])
++    assert again.exit_code == 0 and "already imported" in again.output
++
++
++@pytest.mark.contracts
++def test_cma_case_import_openbanking_with_a_statement_balance(home):
++    cid = store.new_case()
++    r = runner.invoke(app, ["case", "import", cid, str(GOLDEN / "statement_balance.json"), "--format",
++                            "openbanking", "--statement-balance", "1389.75", "--at", "2026-04-03"])
++    assert r.exit_code == 0, r.output
++    kept = store.case_folder(cid) / "statements" / "main.csv"
++    assert kept.read_bytes() == (GOLDEN / "statement_balance.statement.golden").read_bytes()
++
++
++@pytest.mark.contracts
++def test_provider_ids_are_the_line_ids(tmp_path):
++    _, out = _convert(tmp_path, GOLDEN / "per_line_balances.json")
++    ids = [t.id for t in ingest.load_csv(out).transactions]
++    assert ids == ["T1", "T2", "T3", "T4", "T5"]
++
++
++@pytest.mark.contracts
++def test_equal_timestamps_are_ordered_so_the_chain_holds(tmp_path):
++    when = "2026-05-02T00:00:00+00:00"
++    src = _write(tmp_path, [
++        _txn("Z3", "5.00", "Debit", when, balance="95.00"),
++        _txn("Z2", "50.00", "Credit", when, balance="100.00"),
++        _txn("Z1", "30.00", "Debit", when, balance="50.00"),
++    ])
++    _, out = _convert(tmp_path, src)
++    assert [t.id for t in ingest.load_csv(out).transactions] == ["Z1", "Z2", "Z3"]
++
++
++@pytest.mark.contracts
++def test_lines_without_a_balance_are_walked_between_lines_with_one(tmp_path):
++    src = _write(tmp_path, [
++        _txn("B1", "10.00", "Credit", "2026-05-01T09:00:00Z"),
++        _txn("B2", "4.00", "Debit", "2026-05-01T10:00:00Z", balance="106.00"),
++        _txn("B3", "1.00", "Debit", "2026-05-02T10:00:00Z"),
++    ])
++    r, out = _convert(tmp_path, src)
++    assert [t.balance for t in ingest.load_csv(out).transactions] == [110.0, 106.0, 105.0]
++    assert r.opening_balance == 100.0
++
++
++@pytest.mark.contracts
++def test_an_overdrawn_per_line_balance_is_negative(tmp_path):
++    src = _write(tmp_path, [
++        _txn("O1", "30.00", "Debit", "2026-05-01T09:00:00Z", balance="-10.00"),
++        _txn("O2", "15.00", "Credit", "2026-05-02T09:00:00Z", balance="5.00"),
++    ])
++    r, out = _convert(tmp_path, src)
++    assert [t.balance for t in ingest.load_csv(out).transactions] == [-10.0, 5.0]
++    assert r.opening_balance == 20.0
++
++
++@pytest.mark.contracts
++def test_pages_one_after_another_are_read_as_one_export(tmp_path):
++    a = {"Data": {"Transaction": [_txn("J1", "1.00", balance="101.00")]}}
++    b = {"Data": {"Transaction": [_txn("J2", "2.00", when="2026-05-02T10:00:00Z", balance="103.00")]}}
++    src = tmp_path / "pages.json"
++    src.write_text(json.dumps(a) + "\n" + json.dumps(b) + "\n", encoding="utf-8")
++    r, _ = _convert(tmp_path, src)
++    assert r.rows == 2
++
++
++# --- refusals ----------------------------------------------------------------------------
++
++
++def _refused(tmp_path, src, match, **kw) -> str:
++    with pytest.raises(contract.ImportRefused) as e:
++        _convert(tmp_path, src, **kw)
++    msg = str(e.value)
++    assert match in _flat(msg), msg
++    assert SENTINEL not in msg  # a refusal never quotes a cell (R34, the importer contract)
++    assert not (tmp_path / "statement.csv").exists()  # nothing written
++    return msg
++
++
++@pytest.mark.contracts
++def test_no_balance_anywhere_is_refused_saying_which_to_supply(tmp_path):
++    src = _write(tmp_path, [_txn("N1", "1.00"), _txn("N2", "2.00", when="2026-05-02T10:00:00Z")])
++    _refused(tmp_path, src, "no per-line balances; pass --statement-balance AMOUNT --at DATE")
++
++
++@pytest.mark.contracts
++def test_a_broken_chain_is_refused_naming_the_line(tmp_path):
++    src = _write(tmp_path, [
++        _txn("C1", "10.00", when="2026-05-01T09:00:00Z", balance="110.00"),
++        _txn("C2", "10.00", when="2026-05-02T09:00:00Z", balance="125.00"),
++        _txn("C3", "10.00", when="2026-05-03T09:00:00Z", balance="135.00"),
++    ])
++    _refused(tmp_path, src, f"line {_line_of(src, 'C2')}: the balance walked")
++
++
++@pytest.mark.contracts
++def test_equal_timestamps_that_no_order_chains_are_refused_naming_the_first_break(tmp_path):
++    when = "2026-05-02T00:00:00+00:00"
++    src = _write(tmp_path, [
++        _txn("E0", "1.00", "Credit", "2026-05-01T00:00:00Z", balance="101.00"),
++        _txn("E1", "5.00", "Credit", when, balance="106.00"),
++        _txn("E2", "5.00", "Credit", when, balance="200.00"),
++    ])
++    _refused(tmp_path, src, f"line {_line_of(src, 'E2')}: no order of the transactions booked at the same time "
++                            "keeps the balance chain")
++
++
++@pytest.mark.contracts
++def test_a_statement_balance_that_disagrees_with_per_line_balances_is_refused(tmp_path):
++    _refused(tmp_path, GOLDEN / "per_line_balances.json", "--statement-balance 1.00 at 2026-03-02 disagrees",
++             statement_balance="1.00", at="2026-03-02")
++
++
++@pytest.mark.contracts
++def test_a_statement_balance_needs_its_date_and_a_date_in_the_period(tmp_path):
++    src = GOLDEN / "statement_balance.json"
++    _refused(tmp_path, src, "--statement-balance needs --at", statement_balance="1.00")
++    _refused(tmp_path, src, "--at needs --statement-balance", at="2026-04-01")
++    _refused(tmp_path, src, "--at 2026-05-01 is outside", statement_balance="1.00", at="2026-05-01")
++    _refused(tmp_path, src, "--at is not a date like 2026-04-30", statement_balance="1.00", at="tomorrow")
++    _refused(tmp_path, src, "--statement-balance is not a plain amount", statement_balance="1,000", at="2026-04-01")
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("currency", ["EUR", "USD"])
++def test_a_line_not_in_gbp_refuses_the_account(tmp_path, currency):
++    src = _write(tmp_path, [_txn("G1", "1.00", balance="101.00"),
++                            _txn("G2", "2.00", when="2026-05-02T10:00:00Z", currency=currency)])
++    _refused(tmp_path, src, f"line {_line_of(src, 'G2')}: the amount is not in GBP; the account is refused; lines are never converted")
++
++
++@pytest.mark.contracts
++def test_a_balance_not_in_gbp_is_refused(tmp_path):
++    t = _txn("G1", "1.00", balance="101.00")
++    t["Balance"]["Amount"]["Currency"] = "EUR"
++    src = _write(tmp_path, [t])
++    _refused(tmp_path, src, f"line {_line_of(src, 'G1')}: the balance is not in GBP")
++
++
++@pytest.mark.contracts
++def test_a_repeated_id_with_different_content_is_refused_naming_both_lines(tmp_path):
++    a = _txn("D1", "1.00", balance="101.00")
++    b = copy.deepcopy(a)
++    b["Amount"]["Amount"] = "2.00"
++    src = _write(tmp_path, [a], [b])
++    _refused(tmp_path, src, f"line {_line_of(src, 'D1', 2)}: transaction id repeated from line "
++                            f"{_line_of(src, 'D1')} with different content")
++
++
++@pytest.mark.contracts
++def test_pending_lines_are_left_out_and_counted(tmp_path):
++    src = _write(tmp_path, [_txn("K1", "1.00", balance="101.00"),
++                            _txn("K2", "50.00", "Debit", status="Pending"),
++                            _txn("K3", "7.00", status="Pending", currency="EUR")])
++    r, out = _convert(tmp_path, src)
++    assert (r.rows, r.pending) == (1, 2)
++    assert [t.id for t in ingest.load_csv(out).transactions] == ["K1"]
++
++
++@pytest.mark.contracts
++def test_only_pending_lines_is_refused(tmp_path):
++    src = _write(tmp_path, [_txn("K2", "50.00", "Debit", status="Pending")])
++    _refused(tmp_path, src, "no booked transactions (1 pending left out)")
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("change, match", [
++    (lambda t: t.update(Status="Rejected"), "Status is neither Booked nor Pending"),
++    (lambda t: t.pop("TransactionId"), "a booked transaction has no TransactionId"),
++    (lambda t: t.update(TransactionId=f"={SENTINEL}"), "TransactionId starts with a character"),
++    (lambda t: t["Amount"].update(Amount="1.005"), "the amount is not a plain amount"),
++    (lambda t: t["Amount"].update(Amount="-1.00"), "the amount is not a plain amount"),
++    (lambda t: t.update(CreditDebitIndicator="Both"), "CreditDebitIndicator is neither Credit nor Debit"),
++    (lambda t: t.update(BookingDateTime=SENTINEL), "BookingDateTime is not an ISO 8601 date"),
++    (lambda t: t.update(BookingDateTime="2999-01-01T00:00:00Z"), "is in the future"),
++    (lambda t: t["Amount"].update(Amount="10000000000000.00"), "£10,000,000,000,000 or more"),
++])
++def test_a_malformed_transaction_is_refused_naming_its_line(tmp_path, change, match):
++    t = _txn("M1", "1.00", balance="101.00")
++    change(t)
++    src = _write(tmp_path, [t])
++    msg = _refused(tmp_path, src, match)
++    assert "line 4:" in msg  # the line the transaction's object starts on
++
++
++@pytest.mark.contracts
++def test_two_accounts_in_one_file_are_refused(tmp_path):
++    src = _write(tmp_path, [_txn("A1", "1.00", balance="101.00"),
++                            _txn("A2", "1.00", when="2026-05-02T10:00:00Z", balance="102.00", account="OTHER")])
++    _refused(tmp_path, src, f"line {_line_of(src, 'A2')}: another account's transaction")
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("body, match", [
++    (b"not json", "line 1: not JSON"),
++    (b'{"Data": {"Transaction": [\n  {"TransactionId": "x"\n', "not JSON"),
++    (b'{"Data": {"Balance": []}}', "not an OBIE v3.1 transactions response"),
++    (b'{"Data": {"Transaction": []}}', "no transactions"),
++    (b'\xff\xfe', "not UTF-8"),
++    (b'{"Data": {"Transaction": [{"TransactionId": "a", "TransactionId": "b"}]}}', "a key given more than once"),
++])
++def test_a_file_that_is_not_an_obie_transactions_response_is_refused(tmp_path, body, match):
++    src = tmp_path / "export.json"
++    src.write_bytes(body)
++    _refused(tmp_path, src, match)
++
++
++@pytest.mark.contracts
++def test_case_import_refuses_balance_options_for_other_formats(home, tmp_path):
++    cid = store.new_case()
++    r = runner.invoke(app, ["case", "import", cid, str(GOLDEN / "per_line_balances.json"), "--format",
++                            "openbanking", "--opening-balance", "1.00"])
++    assert r.exit_code == 2 and "--statement-balance" in _flat(r.output)
++    src = tmp_path / "s.csv"
++    src.write_text("id,date,description,amount,balance\nx,2026-01-01,A,1.00,1.00\n")
++    r = runner.invoke(app, ["case", "import", cid, str(src), "--format", "csv",
++                            "--statement-balance", "1.00", "--at", "2026-01-01"])
++    assert r.exit_code == 2 and "Open Banking" in _flat(r.output)
++
++
++@pytest.mark.contracts
++def test_case_import_refusal_names_the_file_not_its_cells(home, tmp_path):
++    cid = store.new_case()
++    src = _write(tmp_path, [_txn("N1", "1.00")])
++    r = runner.invoke(app, ["case", "import", cid, str(src), "--format", "openbanking"])
++    assert r.exit_code == 2
++    assert "--statement-balance" in _flat(r.output) and SENTINEL not in r.output
++    assert not (store.case_folder(cid) / "statements" / "main.csv").exists()
++
++
++@pytest.mark.contracts
++def test_a_pending_transaction_a_page_repeats_is_counted_once(tmp_path):
++    p = _txn("K2", "50.00", "Debit", status="Pending")
++    src = _write(tmp_path, [_txn("K1", "1.00", balance="101.00"), p], [copy.deepcopy(p)])
++    r, _ = _convert(tmp_path, src)
++    assert (r.rows, r.pending, r.repeated) == (1, 1, 0)
++
++
++@pytest.mark.contracts
++def test_an_available_balance_is_not_read_as_the_booked_balance(tmp_path):
++    t = _txn("V1", "1.00", balance="999.00")
++    t["Balance"]["Type"] = "InterimAvailable"  # may hold pending lines or an overdraft limit
++    src = _write(tmp_path, [t])
++    _refused(tmp_path, src, "no per-line balances")
++    r, _ = _convert(tmp_path, src, statement_balance="101.00", at="2026-05-01")
++    assert r.opening_balance == 100.0
++
++
++def _chain(n, when="2026-01-01"):
++    return [_txn(f"S{i}", "1.00", when=when, balance=f"{101 + i}.00") for i in range(n)]
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("n, reverse", [(1500, False), (1500, True), (500, True)])
++def test_a_large_group_booked_at_one_moment_is_ordered_whatever_order_the_file_wrote(tmp_path, n, reverse):
++    # A date-only export puts a whole day at midnight; such a group chains in one order.
++    lines = _chain(n)
++    src = _write(tmp_path, lines[::-1] if reverse else lines)
++    r, out = _convert(tmp_path, src)
++    assert r.rows == n
++    assert [t.id for t in ingest.load_csv(out).transactions] == [f"S{i}" for i in range(n)]
++
++
++@pytest.mark.contracts
++def test_a_large_group_that_no_order_chains_is_refused_not_crashed(tmp_path):
++    lines = _chain(1500)
++    lines[700]["Balance"]["Amount"]["Amount"] = "99999.00"
++    src = _write(tmp_path, lines)
++    _refused(tmp_path, src, "no order of the transactions booked at the same time keeps the balance chain")
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("loose", [8, 12, 400])
++def test_balance_less_lines_ahead_of_the_balanced_line_that_must_come_first_are_ordered(tmp_path, loose):
++    # verify-256: lines with no balance are interchangeable, so the search must not walk their
++    # orderings before it reaches the balanced line that has to come first.
++    when = "2026-05-02T00:00:00+00:00"
++    group = [_txn(f"L{i}", "1.00", when=when) for i in range(loose)] + [
++        _txn("A", "1.00", when=when, balance="101.00")]
++    src = _write(tmp_path, [_txn("E0", "1.00", when="2026-05-01T00:00:00+00:00", balance="100.00"), *group])
++    r, out = _convert(tmp_path, src)
++    ids = [t.id for t in ingest.load_csv(out).transactions]
++    assert r.rows == loose + 2 and ids[:2] == ["E0", "A"]
++    assert r.closing_balance == 101.0 + loose
++
++
++@pytest.mark.contracts
++def test_mixed_loose_amounts_and_balanced_lines_at_one_moment_are_ordered(tmp_path):
++    when = "2026-05-02T00:00:00+00:00"
++    loose = [_txn(f"L{i}", f"{1 + i % 3}.00", when=when) for i in range(15)]  # 1, 2 or 3 pounds
++    # The balanced lines need 2 and then 5 pounds of loose lines before them.
++    balanced = [_txn("B2", "1.00", when=when, balance="108.00"), _txn("B1", "1.00", when=when, balance="103.00")]
++    src = _write(tmp_path, [_txn("E0", "1.00", when="2026-05-01T00:00:00+00:00", balance="100.00"),
++                            *loose, *balanced])
++    r, out = _convert(tmp_path, src)
++    assert r.rows == 18 and r.closing_balance == 100.0 + 2 + sum(1 + i % 3 for i in range(15))
++    ids = [t.id for t in ingest.load_csv(out).transactions]
++    assert ids.index("B1") < ids.index("B2")
++
++
++@pytest.mark.contracts
++def test_a_pending_transaction_booked_on_another_page_is_not_counted_as_left_out(tmp_path):
++    # verify-256 minor: a page fetched while it settled shows it pending, another booked.
++    src = _write(tmp_path, [_txn("K1", "1.00", balance="101.00"), _txn("X", "5.00", status="Pending")],
++                 [_txn("X", "5.00", balance="106.00", when="2026-05-01T11:00:00+00:00")])
++    r, _ = _convert(tmp_path, src)
++    assert (r.rows, r.pending) == (2, 0)
++
++
++@pytest.mark.contracts
++def test_distinct_loose_amounts_whose_subset_a_balanced_line_needs_are_ordered(tmp_path):
++    when = "2026-05-02T00:00:00+00:00"
++    pence = [2 ** i for i in range(16)]
++    target = sum(pence[::2])  # the loose lines that must come before A
++    loose = [_txn(f"L{i}", f"{p / 100:.2f}", when=when) for i, p in enumerate(pence)]
++    src = _write(tmp_path, [_txn("E0", "0.01", when="2026-05-01T00:00:00+00:00", balance="0.01"), *loose,
++                            _txn("A", "0.01", when=when, balance=f"{(target + 2) / 100:.2f}")])
++    r, _ = _convert(tmp_path, src)
++    assert r.rows == 18
++
++
++# --- the order of lines booked at one moment, over generated exports ----------------------
++#
++# Lines with no balance can go anywhere among lines with one, so finding an order is, in
++# general, a subset-sum search: an export mixing lines with and without a balance at one
++# moment may be refused at the search limit, saying so, never as a broken chain. A balance on
++# every line, on none or on each day's last line is always ordered, and these generated
++# exports with a balance on all but a few lines are too; an order is always found or refused
++# within bounded time.
++
++def _generated(n, has_balance, seed, days=1, distinct=1000, drop=False):
++    """An export of `n` lines over `days` date-only days, every line booked at midnight, in a
++    shuffled order; `has_balance(i, last_of_day, rng)` says which lines carry their balance."""
++    import random
++
++    rng = random.Random(seed)
++    amounts = [rng.randint(-20000, 30000) or 1 for _ in range(distinct)]
++    bal, lines = 100_000, []
++    for i in range(n):
++        a = rng.choice(amounts)
++        bal += a
++        day = i * days // n
++        last = (i + 1) * days // n != day or i == n - 1
++        balance = f"{bal / 100:.2f}" if has_balance(i, last, rng) else None
++        lines.append(_txn(f"G{i}", f"{abs(a) / 100:.2f}", "Credit" if a > 0 else "Debit",
++                          f"2026-04-{1 + day:02d}T00:00:00+00:00", balance=balance))
++    if drop:  # a line missing between the first and last line with a balance
++        withb = [k for k, t in enumerate(lines) if "Balance" in t]
++        del lines[(withb[0] + withb[-1]) // 2]
++    rng.shuffle(lines)
++    return lines
++
++
++def _kept_balances(out, lines):
++    given = {t["TransactionId"]: t["Balance"] for t in lines if "Balance" in t}
++    for t in ingest.load_csv(out).transactions:
++        if t.id in given:
++            b = given[t.id]
++            want = float(b["Amount"]["Amount"]) * (-1 if b["CreditDebitIndicator"] == "Debit" else 1)
++            assert t.balance == want, t.id
++
++
++REAL_SHAPES = {
++    "each day's last line": lambda i, last, rng: last,
++    "every line": lambda i, last, rng: True,
++    "all but a few": lambda i, last, rng: rng.random() > 0.05,
++}
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("shape", list(REAL_SHAPES))
++@pytest.mark.parametrize("n, days, distinct", [(20, 1, 1000), (200, 1, 1000), (200, 5, 3), (100, 4, 10)])
++@pytest.mark.parametrize("seed", [0, 1])
++def test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote(tmp_path, shape, n, days, distinct,
++                                                                             seed):
++    import time
++
++    lines = _generated(n, REAL_SHAPES[shape], seed, days, distinct)
++    src = _write(tmp_path, lines)
++    start = time.perf_counter()
++    r, out = _convert(tmp_path, src)
++    assert time.perf_counter() - start < 10
++    assert r.rows == n
++    _kept_balances(out, lines)  # every per-line balance kept, and the loader's chain check passed
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("shape", ["every line", "all but a few"])
++@pytest.mark.parametrize("seed", [0, 1, 2])
++def test_a_missing_line_among_balanced_lines_at_one_moment_is_refused(tmp_path, shape, seed):
++    lines = _generated(60, REAL_SHAPES[shape], seed, days=1, distinct=1000, drop=True)
++    src = _write(tmp_path, lines)
++    with pytest.raises(openbanking.OpenBankingImportError, match="keeps the balance chain"):
++        openbanking.convert(src, tmp_path / "out.csv")
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("seed", range(6))
++@pytest.mark.parametrize("p", [0.2, 0.5])
++def test_a_heavy_mix_at_one_moment_is_ordered_or_refused_at_the_limit_never_as_a_break(tmp_path, seed, p):
++    """A valid export mixing lines with and without a balance at one moment is either ordered
++    or refused saying the search limit was reached; never as a broken chain, and in bounded time."""
++    import time
++
++    lines = _generated(40, lambda i, last, rng: rng.random() < p, seed, days=1, distinct=1000)
++    if not any("Balance" in t for t in lines):
++        pytest.skip("no line carries a balance: nothing to order")
++    src = _write(tmp_path, lines)
++    start = time.perf_counter()
++    try:
++        _r, out = _convert(tmp_path, src)
++        _kept_balances(out, lines)
++    except openbanking.OpenBankingImportError as e:
++        assert "search limit" in str(e) and "it may be valid" in str(e), str(e)
++    assert time.perf_counter() - start < 30  # bounded: the search ends at its limit
++
++
++@pytest.mark.contracts
++def test_a_mixed_first_group_followed_by_single_balanced_lines_starts_where_they_say(tmp_path):
++    # verify-257: a later group of one balanced line must chain from the start tried; a start
++    # that put A before the balance-less line was accepted and the valid file refused.
++    src = _write(tmp_path, [
++        _txn("L0", "5.00", when="2026-05-01T00:00:00Z"),
++        _txn("A", "1.00", when="2026-05-01T00:00:00Z", balance="106.00"),
++        _txn("B", "1.00", when="2026-05-02T00:00:00Z", balance="107.00"),
++    ])
++    r, out = _convert(tmp_path, src)
++    assert [t.id for t in ingest.load_csv(out).transactions] == ["L0", "A", "B"]
++    assert (r.opening_balance, r.closing_balance) == (100.0, 107.0)
++
++
++@pytest.mark.contracts
++def test_a_later_fully_balanced_group_pins_the_start_past_the_start_search(tmp_path):
++    # verify-257 minor: 17 distinct loose amounts in the first group (past START_SEARCH), of
++    # which the even-indexed ones must come before A; a later group with a balance on every
++    # line fixes where the walk starts, so the order is found, not refused at the limit.
++    when = "2026-05-01T00:00:00Z"
++    pence = [2 ** i for i in range(17)]
++    before_a = sum(pence[::2])
++    loose = [_txn(f"L{i}", f"{p / 100:.2f}", when=when) for i, p in enumerate(pence)]
++    end = sum(pence) + 1  # opening 0.00, A is 0.01
++    later = "2026-05-02T00:00:00Z"
++    src = _write(tmp_path, [*loose, _txn("A", "0.01", when=when, balance=f"{(before_a + 1) / 100:.2f}"),
++                            _txn("C2", "0.01", when=later, balance=f"{(end + 2) / 100:.2f}"),
++                            _txn("C1", "0.01", when=later, balance=f"{(end + 1) / 100:.2f}")])
++    r, out = _convert(tmp_path, src)
++    ids = [t.id for t in ingest.load_csv(out).transactions]
++    assert r.rows == 20 and r.opening_balance == 0.0 and ids[-2:] == ["C1", "C2"]
++    assert {f"L{i}" for i in range(0, 17, 2)} == set(ids[:ids.index("A")])

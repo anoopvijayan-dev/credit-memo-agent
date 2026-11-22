@@ -1,0 +1,29 @@
+Still running. I'll wait for the completion notice.
+
+I fixed the main bug the reviewer found in the Open Banking importer. One of their minor cases is fixed too; the other two still fail as before. Each fix has a new test, and lint, the contracts tier and the full suite all pass. The changes are not committed; they sit in the worktree on top of f32f8d7.
+
+- **Major (fixed):** when lines at one moment had no balance, the importer could pick a wrong opening balance and then refuse a valid file as a broken chain. The cause was in `_order`: a group of one line was accepted without checking that its balance follows from the one before it. It is now checked.
+  - The reviewer's three-line example now imports in the right order, from £100.00 to £107.00.
+  - A single line that genuinely doesn't follow is still refused with the same "the balance walked" message as before.
+- **Minor, search limit (partly fixed):** if any later group has a balance on every line, it fixes where the walk must start. `_first_order` now tries only those starts, so the reviewer's case with 17 balance-less lines now imports instead of being refused at the search limit.
+  - **Still open:** a valid file can still be refused at the search limit in two cases:
+    - the first group has more than 16 balance-less lines and no later group has a balance on every line;
+    - a gap needs more than `MEET_LIMIT` (1 << 16) ways to try.
+
+    The refusal says the file may be valid and never calls it a broken chain. Removing these refusals completely would need a search with no time limit, which the design doesn't settle. That is the owner's call, and it is in the claim's notes.
+- **Minor, last claim (corrected):** the previous claim had the wrong `ORDER_STEPS` value, called a test an xfail when it has no xfail mark, and cited proofs from /tmp scripts. This claim only quotes commands I ran in the worktree, with their real output.
+
+Results:
+
+| Check | Result |
+|---|---|
+| `tests/test_import_openbanking.py` | 97 passed, including the two new tests |
+| Contracts tier | 907 passed |
+| Full suite | 2541 passed |
+| `ruff` and `compileall` | clean |
+
+The changes are in `src/cma/importers/openbanking.py` and `tests/test_import_openbanking.py`. The claim is at `/home/user/credit-memo-agent/.bridgie/runs/statement-review/implementer-66/claim.json`.
+
+```json
+{"task":"T29","claims":[{"text":"verify-257 major fixed: _order checks a one-line group against the balance before it, so _first_order no longer accepts a wrong start when later balanced groups are single lines; the reviewer's repro imports as L0, A, B (100.00 to 107.00). A lone non-following line after the first group still falls through to contract.walk ('the balance walked').","proof_cmd":"python -m pytest -q tests/test_import_openbanking.py -k single_balanced_lines_starts_where_they_say","proof_output":"1 passed"},{"text":"A later group with a balance on every line pins the start, so a first group with more than START_SEARCH balance-less lines is ordered instead of refused at the search limit.","proof_cmd":"python -m pytest -q tests/test_import_openbanking.py -k pins_the_start_past_the_start_search","proof_output":"1 passed"},{"text":"Every Open Banking importer test passes.","proof_cmd":"python -m pytest -q tests/test_import_openbanking.py","proof_output":"97 passed in 32.91s"},{"text":"Lint, compile, the contracts tier and the full suite pass.","proof_cmd":"ruff check src tests evals && python -m compileall -q src && echo OK; python -m pytest -q -m contracts | tail -1; python -m pytest -q | tail -1","proof_output":"All checks passed!\nOK\n907 passed, 1634 deselected in 176.11s (0:02:56)\n2541 passed in 321.42s (0:05:21)"}],"files_changed":["src/cma/importers/openbanking.py","tests/test_import_openbanking.py"],"dispositions":[{"finding":"major: _first_order accepts a wrong start because _order returns a one-line group unchecked","disposition":"reproduced","evidence":"Fixed in _order (one-line group chains only if before + amount == balance); test_a_mixed_first_group_followed_by_single_balanced_lines_starts_where_they_say passes."},{"finding":"minor: valid files refused at the search limit (START_SEARCH, MEET_LIMIT)","disposition":"reproduced","evidence":"Fixed where a later fully balanced group pins the start; test_a_later_fully_balanced_group_pins_the_start_past_the_start_search passes. Without such a group, and past MEET_LIMIT, the file is still refused at the search limit, saying it may be valid (see notes)."},{"finding":"minor: claim.json did not match the code","disposition":"reproduced","evidence":"This claim cites only commands run in the worktree with their actual output."}],"notes":"Uncommitted on top of f32f8d7. Subset-sum orderings with no fully balanced later group, or past MEET_LIMIT, can still be refused at the search limit (never as a broken chain); an unbounded exact search would remove this at unbounded runtime, a call left to the owner."}
+```

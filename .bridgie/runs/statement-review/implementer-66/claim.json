@@ -1,0 +1,47 @@
+{
+  "task": "T29",
+  "claims": [
+    {
+      "text": "verify-257 major fixed: _order checks a one-line group against the balance before it (returns None when before + amount != its balance), so _first_order no longer accepts a wrong start when later balanced groups are single lines. The reviewer's repro (L0 5.00 no balance and A 1.00 bal 106.00 at one moment, then B 1.00 bal 107.00) imports as L0, A, B, opening 100.00, closing 107.00. A one-line group after the first that does not follow still falls through to contract.walk, so test_a_broken_chain_is_refused_naming_the_line keeps its 'the balance walked' refusal.",
+      "proof_cmd": "python -m pytest -q tests/test_import_openbanking.py -k single_balanced_lines_starts_where_they_say",
+      "proof_output": "1 passed (failed before the change: refused at B with 'the balance walked from the opening balance disagrees')"
+    },
+    {
+      "text": "verify-257 minor addressed for the case it describes: a later group with a balance on every line pins the start (the walk must reach it at the pre-balance of whichever of its lines comes first), so _first_order tries only those starts, heads first, and does not give up on a first group with more than START_SEARCH balance-less lines. With 17 loose amounts of 2^i pence, the even-indexed ones needed before A, and a later fully balanced two-line group, the file is ordered instead of refused at the search limit.",
+      "proof_cmd": "python -m pytest -q tests/test_import_openbanking.py -k pins_the_start_past_the_start_search",
+      "proof_output": "1 passed (failed before the change: 'no order of them that keeps the balance chain was found within the search limit')"
+    },
+    {
+      "text": "Every Open Banking importer test passes, both new ones included.",
+      "proof_cmd": "python -m pytest -q tests/test_import_openbanking.py",
+      "proof_output": "97 passed in 32.91s"
+    },
+    {
+      "text": "Lint, compile, the contracts tier and the full suite pass.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && echo OK; python -m pytest -q -m contracts | tail -1; python -m pytest -q | tail -1",
+      "proof_output": "All checks passed!\nOK\n907 passed, 1634 deselected in 176.11s (0:02:56)\n2541 passed in 321.42s (0:05:21)"
+    }
+  ],
+  "files_changed": [
+    "src/cma/importers/openbanking.py",
+    "tests/test_import_openbanking.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major (openbanking.py:523): _first_order accepts a wrong starting balance when every later balanced group is a single line, because _order returns a one-line group without checking it against `before`; a valid file is then refused as a broken chain.",
+      "disposition": "reproduced",
+      "evidence": "Reproduced with the reviewer's three-line file (refused at B by contract.walk). Fixed in _order: a one-line group with a balance chains only if before is None or before + amount == balance, else None. convert() keeps a lone non-following line for contract.walk to name, so single-line breaks are still refused with 'the balance walked'. Also, a later fully balanced group now pins the start (see the next disposition). Test: test_a_mixed_first_group_followed_by_single_balanced_lines_starts_where_they_say (contracts), which passes."
+    },
+    {
+      "finding": "minor (openbanking.py:533): valid files are refused at the search limit when the first balanced group has more than START_SEARCH balance-less lines needing an unusual subset and a later multi-line group pins the start; or when a gap needs a subset of more than 32 distinct loose amounts (MEET_LIMIT).",
+      "disposition": "reproduced",
+      "evidence": "Reproduced the first case: 17 loose lines of 2^i pence, a later fully balanced group. Fixed generally for any later group with a balance on every line: its lines' pre-balances, less the amounts between, are the only possible starts, and _first_order tries exactly those, without the START_SEARCH give-up. Test: test_a_later_fully_balanced_group_pins_the_start_past_the_start_search (contracts), which passes. Not fixed: a first group with more than START_SEARCH loose lines and no fully balanced later group, and a gap past MEET_LIMIT. These are general subset-sum searches. They are still refused saying the search limit was reached, never as a broken chain, as the README states. See notes."
+    },
+    {
+      "finding": "minor (tests/test_import_openbanking.py): claim.json did not match the code (ORDER_STEPS stated as 100000, a test claimed as strict xfail that has no mark, '52 passed, 1 xfailed', /tmp proofs).",
+      "disposition": "reproduced",
+      "evidence": "The previous claim was wrong. The code has ORDER_STEPS = 500_000 and no xfail mark in tests/test_import_openbanking.py. This claim states only runner-style commands run in the worktree with their actual output, and uses no /tmp scripts."
+    }
+  ],
+  "notes": "Changes are uncommitted in the worktree, on top of f32f8d7. R36 says to refuse the file only if the balance chain breaks. For lines booked at one moment that mix balanced and balance-less lines, finding an order is subset-sum in general. So a refusal at the search limit is still possible for a valid file when no fully balanced later group pins the start, or when a gap needs more than MEET_LIMIT subsets. The refusal says the file may be valid and never calls it a broken chain. Closing that fully would need an exact search without bounds, and the runtime would then be unbounded. The design does not settle this, so it is left for the owner to decide."
+}
