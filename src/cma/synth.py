@@ -668,22 +668,31 @@ def write(rows: list[dict], truth: Truth, out_dir: Path, stem: str | None = None
 
 
 def to_case(rows: list[dict], truth: Truth, work: Path, *, label: str | None = None,
-            root: Path | None = None) -> tuple[str, Path]:
+            root: Path | None = None, warn=None) -> tuple[str, Path]:
     """Make one demo case in the case store from a generated statement (R47, R48): every
     account imported under its key (the business account as "main"), and the case profile
     the generator gives (its directors and own accounts) with the VAT stagger it used. The
-    statements are written to `work` first. Returns (case id, case folder)."""
+    statements are written to `work` first. `warn` is new_case's sync-folder warning (R32).
+    If anything after the case is made fails, the case this call made is removed, so no
+    half-imported demo case is left behind. Returns (case id, case folder)."""
+    import shutil
+
     from . import store
 
     csv_path, _ = write(rows, truth, Path(work))
-    case_id = store.new_case(label=label or f"synthetic {truth.archetype} {truth.profile}", demo=True, root=root)
+    case_id = store.new_case(label=label or f"synthetic {truth.archetype} {truth.profile}", demo=True, root=root,
+                             warn=warn)
     folder = store.case_folder(case_id, root)
-    names = truth.case_profile or {"directors": [], "own_accounts": []}
-    store.update_profile(folder, lambda old: {**old, "directors": list(names["directors"]),
-                                              "own_accounts": list(names["own_accounts"]),
-                                              "vat_stagger": truth.vat_stagger})
-    store.import_file(folder, csv_path, "csv", account=MAIN_KEY)
-    for account in truth.accounts:
-        store.import_file(folder, csv_path.with_name(f"{csv_path.stem}_{account['key']}.csv"), "csv",
-                          account=account["key"])
+    try:
+        names = truth.case_profile or {"directors": [], "own_accounts": []}
+        store.update_profile(folder, lambda old: {**old, "directors": list(names["directors"]),
+                                                  "own_accounts": list(names["own_accounts"]),
+                                                  "vat_stagger": truth.vat_stagger})
+        store.import_file(folder, csv_path, "csv", account=MAIN_KEY)
+        for account in truth.accounts:
+            store.import_file(folder, csv_path.with_name(f"{csv_path.stem}_{account['key']}.csv"), "csv",
+                              account=account["key"])
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)  # the case this call made, never another
+        raise
     return case_id, folder

@@ -176,3 +176,54 @@ def test_generate_cli_makes_the_two_account_case(home, tmp_path):
     folder = store.case_folder(case_id)
     both = overrides.combined_figures(overrides.case_figures(folder))
     assert {t.id: t.category.value for t in both.statement.transactions} == truth["case"]["category_by_id"]
+
+
+def _cases(home):
+    d = home / "cases"
+    return sorted(p.name for p in d.iterdir()) if d.exists() else []
+
+
+@pytest.mark.contracts
+def test_to_case_removes_the_case_it_made_when_an_import_fails(home, tmp_path, monkeypatch):
+    """Partial failure: an import refused after the case is made leaves no half-imported case."""
+    rows, truth = synth.generate("cafe", "good", end=END, features=synth.FEATURES)
+    real, calls = store.import_file, []
+
+    def failing(folder, src, fmt, **kw):
+        calls.append(kw["account"])
+        if kw["account"] == "reserve":
+            raise store.CaseStoreError("import refused: test")
+        return real(folder, src, fmt, **kw)
+
+    monkeypatch.setattr(store, "import_file", failing)
+    with pytest.raises(store.CaseStoreError):
+        synth.to_case(rows, truth, tmp_path / "work")
+    assert calls == ["main", "reserve"]
+    assert _cases(home) == []
+    monkeypatch.setattr(store, "import_file", real)
+    case_id, _ = synth.to_case(rows, truth, tmp_path / "work")  # a second run makes the case whole
+    assert _cases(home) == [case_id]
+
+
+@pytest.mark.contracts
+def test_generate_cli_case_log_refusal_is_said_without_a_traceback(home, tmp_path, monkeypatch):
+    from cma import case as caselog
+
+    def locked(*a, **kw):
+        raise caselog.CaseLocked("another window or command is writing to this case")
+
+    monkeypatch.setattr(store, "import_file", locked)
+    r = CliRunner().invoke(app, ["generate", "--archetype", "cafe", "--profile", "good", "--out", str(tmp_path),
+                                 "--feature", "all", "--case"])
+    assert r.exit_code == 4, r.output
+    assert "Not recorded." in r.output and "Traceback" not in r.output
+    assert _cases(home) == []
+
+
+@pytest.mark.contracts
+def test_generate_cli_case_in_a_sync_folder_warns_on_stderr_first(home, tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "sync_folder", lambda p, **kw: store.SyncFolder("OneDrive", tmp_path))
+    r = CliRunner().invoke(app, ["generate", "--archetype", "cafe", "--profile", "good",
+                                                 "--out", str(tmp_path), "--feature", "all", "--case"])
+    assert r.exit_code == 0, r.output
+    assert "Warning:" in r.stderr and "OneDrive" in r.stderr

@@ -82,13 +82,11 @@ def generate(
         other = out / f"{csv_path.stem}_{account['key']}.csv"
         console.print(f"wrote {other} ({len(account['rows'])} transactions), the applicant's {account['key']} account")
     if case:
-        from . import store
+        def warn(message: str) -> None:  # before the case is made (R32), as `cma case new` warns
+            err_console.print(f"[yellow]Warning:[/yellow] {escape(message)}")
 
-        try:
-            case_id, folder = synth.to_case(rows, truth, out)
-        except store.CaseStoreError as e:
-            console.print(f"[red]Refused.[/red] {escape(str(e))}")
-            raise typer.Exit(code=2) from e
+        with _case_errors():  # every case-store and case-log refusal, as the other case commands
+            case_id, folder = synth.to_case(rows, truth, out, warn=warn)
         console.print(f"made case {case_id} at {folder}, demo, with {1 + len(truth.accounts)} account(s)")
 
 
