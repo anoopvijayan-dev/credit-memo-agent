@@ -557,3 +557,34 @@ def test_a_later_fully_balanced_group_pins_the_start_past_the_start_search(tmp_p
     ids = [t.id for t in ingest.load_csv(out).transactions]
     assert r.rows == 20 and r.opening_balance == 0.0 and ids[-2:] == ["C1", "C2"]
     assert {f"L{i}" for i in range(0, 17, 2)} == set(ids[:ids.index("A")])
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("seed", range(0, 200, 20))
+def test_a_mixed_first_day_then_one_balanced_line_a_day_always_imports(tmp_path, seed):
+    # verify-257 (hardened): a valid export whose first day mixes lines with and without a
+    # balance, followed by days of one balanced line each, imports; never refused as a break.
+    import random
+
+    for s in range(seed, seed + 20):
+        rng = random.Random(s)
+        bal, lines = 10000, []
+        n0 = rng.randint(2, 7)
+        for i in range(n0):
+            a = rng.randint(-3000, 3000) or 1
+            bal += a
+            b = f"{bal / 100:.2f}" if (rng.random() < 0.5 or i == n0 - 1) else None
+            lines.append(_txn(f"F{i}", f"{abs(a) / 100:.2f}", "Credit" if a > 0 else "Debit",
+                              "2026-05-01T00:00:00Z", balance=b))
+        for d in range(rng.randint(1, 4)):
+            a = rng.randint(-3000, 3000) or 1
+            bal += a
+            lines.append(_txn(f"D{d}", f"{abs(a) / 100:.2f}", "Credit" if a > 0 else "Debit",
+                              f"2026-05-{2 + d:02d}T00:00:00Z", balance=f"{bal / 100:.2f}"))
+        first = lines[:n0]
+        rng.shuffle(first)
+        lines[:n0] = first
+        src = _write(tmp_path, lines, name=f"e{s}.json")
+        r = openbanking.convert(src, tmp_path / f"o{s}.csv")
+        assert r.closing_balance == bal / 100
+        _kept_balances(tmp_path / f"o{s}.csv", lines)
