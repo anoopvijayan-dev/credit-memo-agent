@@ -1,0 +1,64 @@
+Waiting for the suite result.
+
+I hardened T38 (`cma verify`) and found one real gap, which I fixed. The full suite passes: 2,923 tests, run after both changes below.
+
+**The gap:** a hand-edited or truncated evidence record crashed `cma verify` with a traceback (exit 1) instead of being refused. Exit 1 is the code that means "mismatch found", so a broken record looked like a failed check. Affected records include metrics that aren't a list of objects, a bad `vat_stagger`, and a ruleset id that isn't text.
+
+**The fix:** `verify()` now checks the record's shape first and refuses a malformed one with exit 2, naming the bad field. A parametrised test covers nine malformed shapes.
+
+**Also added:** a test that verifying a signed case twice leaves every file in the case folder byte-identical. So verify writes nothing, and running it again is harmless.
+
+**For the owner (in `notes`):**
+- No alert exists for verify. It runs offline, so the only signal is its exit codes (0 ok, 1 mismatch, 2 refused).
+- `README.md` doesn't mention `cma verify` or its exit codes yet.
+- While verifying, `verify` temporarily sets the `CMA_RULESET` environment variable for the whole process. That's fine for the CLI, but a multi-threaded caller (MCP or the workspace) would need a parameter instead of the environment variable.
+
+Changes are committed in the T38 worktree as `1891dc7`.
+
+```json
+{
+  "task": "T38",
+  "claims": [
+    {
+      "text": "Failure modes / security (input validated at the boundary): a malformed evidence record (metrics or monthly summary not a list of objects, vat_stagger not 1/2/3, ruleset not an object with a text id, statement not an object, malformed accounts/buckets) is refused with exit 2 naming the field, never raised as a traceback or reported as a mismatch (exit 1). Before this change 4 such shapes raised AttributeError/ValueError with exit 1.",
+      "proof_cmd": "python -m pytest tests/test_verify.py -q -k malformed",
+      "proof_output": "9 passed (test_cli_verify_malformed_record_is_refused_with_exit_2, 9 parametrised shapes, marked contracts)"
+    },
+    {
+      "text": "Idempotency / partial failure: verify is read-only; verifying a signed pack twice leaves every file in the case folder byte-identical (no lock, log or pack file written), so it can be re-run any number of times.",
+      "proof_cmd": "python -m pytest tests/test_verify.py -q -k writes_nothing",
+      "proof_output": "1 passed (test_verify_writes_nothing_in_the_case_folder, marked contracts)"
+    },
+    {
+      "text": "P13 and P3 invariant tests and the R44/R45/v0 contract tests pass, including refusal of another ruleset naming package version, ruleset id and sha256.",
+      "proof_cmd": "python -m pytest tests/test_verify.py tests/test_pack_evidence.py -q -m \"invariants or contracts\"",
+      "proof_output": "35 passed in 5.80s (run before the writes_nothing test was added; full file now 27 tests, all passing in the full suite)"
+    },
+    {
+      "text": "Full suite, lint, compile and offline evals pass with the hardening applied.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q -x && python evals/run_evals.py",
+      "proof_output": "All checks passed! / compile-ok / 2923 passed in 370.49s / 9/9 featured cases match truth"
+    },
+    {
+      "text": "Security (no secrets, no new dependency, output escaping): the verify command adds no dependency; mismatch lines print only figure/bucket/month/cell ids, recorded and recomputed values and line ids, each passed through rich's escape; no description is printed.",
+      "proof_cmd": "git diff feee04c..HEAD -- pyproject.toml | wc -l; grep -n 'escape(' src/cma/cli.py | sed -n '/verify/,$p' | head",
+      "proof_output": "0 lines changed in pyproject.toml; cli.verify_evidence prints every value via escape(...) (src/cma/cli.py verify_evidence)"
+    },
+    {
+      "text": "Migration / rollback: the only data change is an additive package_version key in evidence records (R53 additive); records without it are named as 'an unrecorded package version'; a v0 record is checked for M1-M16 only under v1. Rollback is a reinstall; nothing stored needs repair.",
+      "proof_cmd": "python -m pytest tests/test_pack_evidence.py tests/test_verify.py -q -k \"v0 or today or keys or r45\"",
+      "proof_output": "passing within the 2923-pass full suite; TODAY_KEYS includes package_version as an addition"
+    },
+    {
+      "text": "Performance: not applicable. Verify does one recompute of a case or statement through the existing figures layer; it adds no new query or hot path, and there are no list endpoints.",
+      "proof_cmd": "grep -n 'case_figures\\|met.compute' src/cma/verify.py",
+      "proof_output": "one overrides.case_figures call (pack) or one met.compute call (run) per verify"
+    }
+  ],
+  "files_changed": [
+    "src/cma/verify.py",
+    "tests/test_verify.py"
+  ],
+  "notes": "Gaps for the owner: (1) Observability: no log line or alert for verify; it is an offline CLI whose exit codes (0 ok, 1 mismatch, 2 refused) are its signal. A structured case-log/report line is out of this task's scope. (2) Docs: README.md does not mention `cma verify` or its exit codes; there is no changelog line yet. (3) verify sets os.environ[CMA_RULESET] for the duration of a call, which is process-global. That is fine for the CLI, but a multi-threaded caller (MCP, workspace) would need the ruleset passed as a parameter, which is a design change. (4) Authz: verify reads any file the OS user can read (the statement path in the record), but only uses it if its sha256 matches the recorded hash. No new privilege is involved; access is the case root's owner-only permissions (R31). (5) `ruff check .` reports findings only in .bridgie/runs leftovers inside the worktree, not in project code; `ruff check src tests evals` is clean."
+}
+```
