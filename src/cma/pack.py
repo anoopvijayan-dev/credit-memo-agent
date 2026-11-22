@@ -604,7 +604,12 @@ def _write_pack(packs: Path, snapshot: str, files: dict[str, bytes]) -> Path:
     except BaseException:
         shutil.rmtree(part, ignore_errors=True)
         raise
-    _sync_dir(packs)
+    try:
+        _sync_dir(packs)
+    except BaseException:
+        # Not durable and not yet recorded: removed, so the log and the folder agree (R42).
+        shutil.rmtree(target, ignore_errors=True)
+        raise
     return target
 
 

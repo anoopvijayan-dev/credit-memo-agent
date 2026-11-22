@@ -627,3 +627,112 @@ def test_workspace_sign_off_names_a_bad_configuration_file(home, tmp_path, monke
     monkeypatch.setattr(pack, "sign_off", bad)
     status, reply = signoff.answer(folder, case_id, "sign", {"snapshot": p.snapshot, "name": "Ann"})
     assert status == 409 and "not valid YAML" in reply["refused"] and "Nothing was signed off" in reply["refused"]
+
+
+def _head_fails_once_for(monkeypatch, event):
+    """The disk fills while the head record that would list `event` is staged: the whole line
+    of `event` is in the log, past the recorded entries, as a torn entry (case.py's
+    SaveNotRecorded 'the next holder confirms dropping it')."""
+    import errno
+
+    real = caselog.CaseLog._write_head
+    state = {"armed": False, "done": False}
+    real_append = caselog.CaseLog.append
+
+    def append(self, ev, data, *, expected):
+        state["armed"] = ev == event and not state["done"]
+        return real_append(self, ev, data, expected=expected)
+
+    def write_head(self, *a, **k):
+        if state["armed"]:
+            state["armed"], state["done"] = False, True
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(caselog.CaseLog, "append", append)
+    monkeypatch.setattr(caselog.CaseLog, "_write_head", write_head)
+
+
+def test_r42_r43_a_sign_off_entry_left_torn_is_repaired_with_confirmation_and_then_recorded(home, tmp_path,
+                                                                                            monkeypatch):
+    """verify-252's schedule: the sign-off append fails after its line is on disk, leaving it
+    torn past the recorded pack write. Sign-off is refused naming the torn entry (R43) and says
+    how to resolve it; `cma case repair` drops it once a person confirms with a typed name
+    (R42's repair), and the next sign-off records the pack's own sign-off."""
+    case_id, folder = _case(tmp_path)
+    p = pack.build_preview(folder, case_id)
+    with monkeypatch.context() as m:
+        _head_fails_once_for(m, pack.SIGN_EVENT)
+        with pytest.raises(caselog.SaveNotRecorded):
+            pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    check = caselog.for_case(folder).verify()
+    assert check.torn and not check.ok
+    torn_at = check.first_bad
+    target = folder / "packs" / p.snapshot
+    before = {f: (target / f).read_bytes() for f in os.listdir(target)}
+    runner = CliRunner()
+    r = runner.invoke(app, ["case", "sign", case_id, "--snapshot", p.snapshot], input="Ann\ny\n")
+    out = " ".join(r.output.split())
+    assert r.exit_code == 3 and f"entry {torn_at}" in out and "cma case repair" in out
+    # the workspace says the same
+    status, reply = __import__("cma.review.signoff", fromlist=["answer"]).answer(
+        folder, case_id, "sign", {"snapshot": p.snapshot, "name": "Ann"})
+    assert status == 409 and reply["first_bad"] == torn_at and "cma case repair" in reply["refused"]
+    # repair: declined changes nothing; a typed name is required; confirmed drops the torn entry
+    log_bytes = (folder / caselog.LOG_NAME).read_bytes()
+    r = runner.invoke(app, ["case", "repair", case_id], input="Ann\nn\n")
+    assert r.exit_code == 1 and (folder / caselog.LOG_NAME).read_bytes() == log_bytes
+    r = runner.invoke(app, ["case", "repair", case_id], input="Ann\ny\n")
+    assert r.exit_code == 0, r.output
+    assert f"entry {torn_at}" in " ".join(r.output.split())
+    entries = caselog.for_case(folder).entries()
+    assert entries[-1].event == caselog.TORN_DROPPED and entries[-1].data["by"] == "Ann"
+    assert caselog.for_case(folder).verify().ok
+    r = runner.invoke(app, ["case", "repair", case_id], input="Ann\ny\n")
+    assert r.exit_code == 2 and "nothing is torn" in " ".join(r.output.split())
+    r = runner.invoke(app, ["case", "sign", case_id, "--snapshot", p.snapshot], input="Ann\ny\n")
+    assert r.exit_code == 0 and "now recorded" in r.output, r.output
+    assert _events(folder)[-1] == pack.SIGN_EVENT and caselog.for_case(folder).verify().ok
+    assert {f: (target / f).read_bytes() for f in os.listdir(target)} == before
+
+
+def test_r42_a_pack_write_entry_left_torn_removes_the_pack_and_signs_off_after_repair(home, tmp_path,
+                                                                                     monkeypatch):
+    """The pack-write append fails after its line is on disk: the pack is removed (no pack
+    without its entry), the torn entry is dropped with confirmation, and sign-off then writes
+    the pack once."""
+    case_id, folder = _case(tmp_path)
+    p = pack.build_preview(folder, case_id)
+    with monkeypatch.context() as m:
+        _head_fails_once_for(m, pack.PACK_EVENT)
+        with pytest.raises(caselog.SaveNotRecorded):
+            pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    assert not (folder / "packs" / p.snapshot).exists()
+    assert caselog.for_case(folder).verify().torn
+    r = CliRunner().invoke(app, ["case", "repair", case_id], input="Ann\ny\n")
+    assert r.exit_code == 0, r.output
+    signed = pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    assert not signed.completed and _events(folder)[-2:] == [pack.PACK_EVENT, pack.SIGN_EVENT]
+
+
+def test_r42_a_failed_folder_sync_after_the_rename_leaves_no_unrecorded_pack(home, tmp_path, monkeypatch):
+    """verify-252's minor: the packs folder cannot be synced after the rename. The pack is
+    removed, so the log and the folder agree, and the next sign-off writes it."""
+    import errno
+
+    case_id, folder = _case(tmp_path)
+    p = pack.build_preview(folder, case_id)
+    real = pack._sync_dir
+
+    def sync(path):
+        if Path(path) == folder / "packs":
+            raise OSError(errno.EIO, "Input/output error")
+        return real(path)
+
+    with monkeypatch.context() as m:
+        m.setattr(pack, "_sync_dir", sync)
+        with pytest.raises(OSError):
+            pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    assert not (folder / "packs" / p.snapshot).exists() and pack.PACK_EVENT not in _events(folder)
+    signed = pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    assert not signed.completed and _events(folder)[-1] == pack.SIGN_EVENT

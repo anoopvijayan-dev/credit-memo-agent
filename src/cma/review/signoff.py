@@ -40,7 +40,9 @@ def _refusal(e: Exception) -> tuple[int, dict[str, Any]] | None:
                                 "signed off or written."}
     if isinstance(e, caselog.CaseLogBroken):
         return 409, {"refused": (f"The case log is broken at entry {e.first_bad}: {e.reason}. Nothing can be "
-                                 "signed off until it is resolved."), "first_bad": e.first_bad}
+                                 "signed off until it is resolved."
+                                 + (" The entry was not finished: confirm dropping it with `cma case repair`, "
+                                    "then sign off again." if e.torn else "")), "first_bad": e.first_bad}
     if isinstance(e, caselog.SaveNotConfirmed):
         return 500, {"not_confirmed": (f"Whether this is in the case log is not confirmed ({e}). Check the case "
                                        "(cma case check) before anything else.")}
