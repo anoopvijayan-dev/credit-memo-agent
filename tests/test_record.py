@@ -376,3 +376,28 @@ def test_r26_r42_a_record_that_fails_to_render_writes_no_pack_and_records_nothin
     monkeypatch.undo()
     s = pack.sign_off(folder, case_id, p.snapshot, "Ann")  # the same preview then signs off
     assert (s.pack / "record.html").is_file()
+
+
+@pytest.mark.contracts
+def test_p8_line_ids_and_the_signers_name_reach_the_record_only_escaped(home, tmp_path):
+    """Description text is not the only text from the case: a line id and the name typed to
+    sign off are shown too, and each is escaped wherever the record shows it (R34, P8)."""
+    ids = ['<b id=x>', '"onmouseover="a', "L'3", "</td><script>x</script>"]
+    rows, bal = ["id,date,description,amount,balance"], 1000.0
+    for i, (lid, amt) in enumerate(zip(ids, (500.0, 300.25, -100.0, 250.1), strict=True)):
+        bal += amt
+        quoted = lid.replace('"', '""')
+        rows.append(f'"{quoted}",2026-01-0{i + 5},CARD SETTLEMENT STRIPE,{amt:.2f},{bal:.2f}')
+    src = tmp_path / "hostile-ids.csv"
+    src.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    case_id = store.new_case(label="t26-hostile")
+    folder = store.case_folder(case_id)
+    store.import_file(folder, src, "csv")
+    p = pack.build_preview(folder, case_id)
+    name = '<img src=x onerror=alert(1)> Ann "q"'
+    s = pack.sign_off(folder, case_id, p.snapshot, name)
+    html = (s.pack / "record.html").read_text(encoding="utf-8")
+    for text in [*ids, name]:
+        assert text not in html and escape(text, quote=True) in html, text
+    lowered = html.lower()
+    assert "<script" not in lowered and "<img" not in lowered  # as text only, never markup
