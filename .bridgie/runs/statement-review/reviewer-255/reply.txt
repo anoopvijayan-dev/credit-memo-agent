@@ -1,0 +1,49 @@
+My verdict on T29 is **pass**: R36 is met and the verify-257 major is fixed. I found two minor issues and no blocker or major. I couldn't write `evidence.json` to the run directory because the shell was denied, so the evidence is in the block at the end.
+
+**The verify-257 fix.** `_order` now checks a group of one line against the balance before it (`src/cma/importers/openbanking.py:297-299`). So `_first_order` can no longer accept a wrong start when every later group with a balance is a single line.
+
+I also traced the rest of `_first_order` and `convert`:
+- The balance after the first group with a balance is the start plus that group's amounts, so the cache keys line up.
+- When a later group has a balance on every line, the starts it allows cover every possibility.
+- Every per-line balance is still checked by `contract.walk`, so a chain that breaks anywhere is still refused.
+
+**Test evidence.** The runner's contracts tier ran all the T29 tests (119 lines in `contracts-4.log`) and none failed. That includes the verify-257 regression tests at lines 223-246.
+
+**Minor findings:**
+1. **Unproven claim.** The claim that NaN and deeply nested JSON are refused rests only on a `python -c` the producer ran. No test the runner ran covers either case. The code path looks correct.
+2. **Sort order with mixed time zones.** Lines are sorted by the bank-written date before the UTC moment. If a file mixes `Z` and `+01:00` times near midnight, two lines can land out of time order, and a valid file is refused because its balances don't chain. This is narrow, since a bank normally writes one convention.
+
+```json
+{
+  "task": "T29",
+  "criteria": [
+    {
+      "id": "R36",
+      "tier": "adversarial",
+      "check": "Booked only: convert() leaves out Status=Pending and counts it once per id, takes off any id later seen booked (pending_ids, pending -= len(pending_ids & first.keys())), and refuses any other status. GBP only: _money refuses a non-GBP amount or balance; a pending non-GBP line is left out before currency is read. Provider ids: _id keeps TransactionId as the line id (per_line_balances.statement.golden T1..T5; test_provider_ids_are_the_line_ids). Paged repeats: kept once when the content is equal, refused when it differs. Rebuilt balance: the opening comes from the first per-line balance, or from --statement-balance/--at (checked against the per-line balances when both exist), and contract.walk (src/cma/importers/contract.py:81-90) checks every per-line balance against the walked one, so a break anywhere is refused. verify-257 major fixed: _order checks a single-line group against `before` (openbanking.py:297-299), so _first_order cannot take a start that a later single balanced line contradicts. I traced _first_order and convert: walked after group k equals start + totals[k], the cache keys match, the pinned starts from a fully balanced later group are exhaustive, and a later group that cannot be ordered from the fixed balance is refused at that group. The runner's contracts tier ran every test_import_openbanking test and all passed (contracts-4.log, 119 lines, none failed), including the verify-257 regressions at lines 223-246.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-255/contracts-4.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "tests/test_import_openbanking.py",
+      "line": 302,
+      "criterion": "R36",
+      "claim": "The claim says hostile JSON (100k nested brackets) and NaN are refused, not crashed. No runner-run test proves this: nothing in test_import_openbanking.py feeds NaN, Infinity or deep nesting, and the only proof is a producer-run python -c. The code path (_scanner's parse_constant raising ValueError, and _pages catching ValueError and RecursionError) looks right, but the claim is unproven.",
+      "repro": "grep -n 'NaN\\|nested\\|deep' tests/test_import_openbanking.py finds only copy.deepcopy. Add cases such as b'{\"Data\": {\"Transaction\": [{\"Amount\": NaN}]}}' and b'[' * 100000 to test_a_file_that_is_not_an_obie_transactions_response_is_refused."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/openbanking.py",
+      "line": 656,
+      "criterion": "R36",
+      "claim": "Lines are sorted by the date as the bank wrote it before the UTC moment. In a file that mixes UTC 'Z' and +01:00 offsets near midnight, that sort can put two lines in the wrong time order. A valid chain whose balances follow the true order is then refused as not following. This is narrow; a single bank normally writes one offset convention.",
+      "repro": "Two booked lines with balances: X at 2026-04-01T23:30:00Z (date 04-01) and Y at 2026-04-02T00:15:00+01:00 (=04-01T23:15Z, date 04-02), with Y booked first so Y.balance + X.amount == X.balance. The sort puts X before Y, and contract.walk refuses at Y's line."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {"seat": "reviewer", "adapter": "claude-code", "model": "claude-opus-5-5"}
+}
+```

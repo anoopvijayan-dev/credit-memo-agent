@@ -1,0 +1,11 @@
+ .gitattributes                                     |   2 +
+ README.md                                          |  11 +
+ src/cma/cli.py                                     |  15 +-
+ src/cma/importers/openbanking.py                   | 723 +++++++++++++++++++++
+ src/cma/store.py                                   |  31 +-
+ tests/golden/openbanking/per_line_balances.json    |  92 +++
+ .../openbanking/per_line_balances.statement.golden |   6 +
+ tests/golden/openbanking/statement_balance.json    |  45 ++
+ .../openbanking/statement_balance.statement.golden |   4 +
+ tests/test_import_openbanking.py                   | 631 ++++++++++++++++++
+ 10 files changed, 1553 insertions(+), 7 deletions(-)
