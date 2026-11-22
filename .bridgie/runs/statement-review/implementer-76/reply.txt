@@ -1,0 +1,59 @@
+T36 is built and committed in the worktree as `ccf7b77`. Everything passes: the full suite (2842 tests), ruff, and the 32 new tests in `tests/test_firm_rules.py`.
+
+**The gap I found.** Under v1, no rule is marked protected, so a firm rule was applied before v1's own table. That meant a firm rule could reclassify HMRC, director, loan and returned-payment lines, which R21 rules out. Under v2 those lines were already safe, because a protected verdict is decided before firm rules are read.
+
+**What I changed:**
+- **The guard** (`_firm_rules_for` in `src/cma/categorise.py`): if any protected built-in pattern matches a line, no firm rule applies to it. Under v2 these are the rules the table marks protected; under v1, the wording `_v1_protected` lists. The line then gets exactly the category it would get with no firm rules. When I replaced the guard with a version that lets every firm rule through, the P16 test failed under v1.
+- **The file format and loader** (new `src/cma/firm_rules.py`): `firm_rules.yaml` has one key, `rules`. Each rule needs `id`, `pattern`, `direction`, `category`, `by`, `at` and `reason`.
+  - A malformed file is refused, naming the line. `FirmRulesError` is a `RulesetError`, so every caller that already refuses a bad rule table refuses this the same way.
+  - A missing file at the default place means no firm rules. A file that `firm.yaml` names must exist.
+- **The case pipeline** (`overrides._categorise`): it now reads the firm rules file as it stands and applies it. The caches are keyed on the file's hash, so editing or deleting the file recategorises the case.
+- **Tests:** the P16 test covers every protected wording against firm rules for every category in every direction, under v1 and v2, with and without a profile. A positive control checks that unprotected lines do take the firm rules. Case-pipeline tests check that a per-line override can still change a protected line.
+
+**Decisions for you to check:**
+- **A firm rule's pattern is a counterparty name, not a regular expression.** It matches like a name on the shipped lists: whole words only, ignoring spaces, hyphens and dots between letters. This means a firm rule can't hide another list's wording with an exception or an anchor (R4). R20 says "counterparty pattern", which allows either reading.
+- **`by`, `at` and `reason` are required**, so every rule, even a hand-written one, carries R20's record of who added it, when and why.
+
+**Not covered here:**
+- `cma run` doesn't apply firm rules, because it doesn't work on a case.
+- Promoting an override to a firm rule (R20's preview and save) is T37's job.
+
+```json
+{
+  "task": "T36",
+  "claims": [
+    {
+      "text": "P16: for a firm rules file claiming every protected wording (every v2 listed name and R21's director, capital, shareholder, lender, HMRC and returned-payment wording) for every category in every direction, no line a protected built-in pattern matches changes category or takes a firm: rule, under v1 and v2, with and without a case profile, in both directions; unprotected lines the same rules match do take them (positive control).",
+      "proof_cmd": "python -m pytest -q -m invariants tests/test_firm_rules.py",
+      "proof_output": "4 passed, 28 deselected in 8.81s"
+    },
+    {
+      "text": "The case pipeline (overrides.case_figures, used by the workspace, preview and sign-off) loads firm_rules.yaml from the firm config and applies it: an unprotected credit and debit take firm:<id>, while HMRC, director, returned-payment and lender lines keep their table verdict; a per-line override still changes a protected line; editing or removing the file recategorises the case; a malformed file stops the case figures with FirmRulesError naming the line.",
+      "proof_cmd": "python -m pytest -q tests/test_firm_rules.py",
+      "proof_output": "32 passed in 10.45s"
+    },
+    {
+      "text": "firm_rules.yaml format and validation (contracts): a mapping with one key, rules, each rule with id, pattern, direction, category, by, at, reason; refused naming the line for invalid YAML, unknown/missing/repeated keys, a rule id given twice, a reserved or malformed id, a pattern that is not text or has no letter or digit, an unknown direction or category, and a category the direction cannot take; a missing default file means no rules, a file firm.yaml names must exist; FirmRulesError is a RulesetError.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_firm_rules.py",
+      "proof_output": "28 passed, 4 deselected in 1.63s"
+    },
+    {
+      "text": "Lint passes over src and tests.",
+      "proof_cmd": "ruff check src tests",
+      "proof_output": "All checks passed!"
+    },
+    {
+      "text": "The full test suite passes with the change.",
+      "proof_cmd": "python -m pytest -q",
+      "proof_output": "2842 passed in 344.58s (0:05:44)"
+    }
+  ],
+  "files_changed": [
+    "src/cma/firm_rules.py",
+    "src/cma/categorise.py",
+    "src/cma/overrides.py",
+    "tests/test_firm_rules.py"
+  ],
+  "notes": "Gap found and closed: under v1 (frozen, no rule marked protected) classify applied firm rules before v1's table, so a firm rule could reclassify HMRC, director, loan and returned-payment lines. New categorise._firm_rules_for withholds every firm rule from a line any protected built-in pattern matches (v2: rules marked protected with a category; v1: _v1_protected), so the line takes exactly what it would with no firm rules. With the guard replaced by an identity function, test_p16_no_protected_line_changes_category_through_any_firm_rule[v1] fails (mutation check run locally). Under v2 credit and debit paths already put protected verdicts first; the guard also covers a protected match set aside inside a longer unprotected phrase. Format choice: pattern is a counterparty name matched as a listed name is (whole words, separators; names_pattern), not a regex, so a firm rule cannot carry an exception, anchor or lookaround (R4); by/at/reason are required so every rule carries R20's record. overrides._categorise reads firm_rules.for_case() each time (memoised by file bytes) and the categorisation and bare-figure caches are keyed on the firm rules file hash; the pack snapshot already hashed the file (R22). cma run is not a case and is left unchanged. Promotion (R20's preview and save) is T37's and is not built here."
+}
+```

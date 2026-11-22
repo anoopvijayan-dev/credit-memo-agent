@@ -1,0 +1,22 @@
+I went through every checklist item for T36. I found one real gap and fixed it; the rest are done with proof or written up as gaps for you.
+
+**The gap:** if `firm_rules.yaml` was malformed, `cma case figures` crashed with a traceback and exit 1. Every command that goes through the same CLI error handler had the same problem. It now says "Refused." with the file's line number and exits 2, the same way a bad `firm.yaml` is handled. The change is one line in `src/cma/cli.py`, plus a new test in `tests/test_firm_rules.py` that fails on the previous commit and passes now. It is committed as 05da11b.
+
+**Test results:**
+- The full suite gave 2843 passed. That run started after the CLI fix but before I reformatted one assertion in the new test for ruff; I re-ran the new test afterwards and it passes.
+- Ruff and compileall are clean.
+- The P16 tests pass: no line a protected pattern (director, capital, shareholder, lender, HMRC, returned payment) matches ever takes a firm rule. That holds under both rule tables, with or without a case profile, for money in and money out. A per-line override can still change such a line.
+- Categorising 10,000 lines takes 1.08 s with 50 firm rules and 0.67 s with none, inside the 2-second target.
+- Editing the file recategorises the case. Deleting it puts every line back to its built-in category, which is the rollback path. The firm rules file's hash is already in the preview snapshot, so a sign-off on a preview made before an edit is refused as stale.
+
+**Gaps for you, not built** (they need design or belong to other tasks):
+- The evidence record does not yet carry the firm rules hash, and `cma run` does not apply firm rules at all.
+- Nothing counts how many lines a firm rule settles. That belongs with the firm-rule preview in T37.
+- `firm.yaml` can point to a firm rules file outside the case root. That behaviour predates this task.
+- There is no size limit on the whole file; each field is capped at 1,000 characters.
+
+The claim is at `/home/user/credit-memo-agent/.bridgie/runs/statement-review/hardener-74/claim.json`.
+
+```json
+{"task":"T36","claims":[{"text":"Failure modes: malformed firm_rules.yaml crashed `cma case figures` with a traceback (exit 1); _case_errors now refuses RulesetError, exit 2 naming the line.","proof_cmd":"python -m pytest -q -p no:cacheprovider tests/test_firm_rules.py -k cli_refuses","proof_output":"1 failed on ccf7b77's cli.py; passes after fix (33 passed in file)"},{"text":"P16 invariant holds under v1/v2, with/without profile, both directions; override still changes a protected line.","proof_cmd":"python -m pytest -q -p no:cacheprovider -m invariants -k p16","proof_output":"4 passed, 2839 deselected"},{"text":"Boundary validation: 19 malformed shapes refused naming the line; patterns compiled as names, never raw regex.","proof_cmd":"python -m pytest -q -p no:cacheprovider -m contracts tests/test_firm_rules.py tests/test_cli.py tests/test_rules_v2.py","proof_output":"235 passed, 274 deselected"},{"text":"Idempotency and rollback: parse memoised by sha; caches keyed on firm rules sha; deleting the file restores built-in categories.","proof_cmd":"python -m pytest -q -p no:cacheprovider tests/test_firm_rules.py -k editing_the_firm_rules_file","proof_output":"passes"},{"text":"Migration additive; full suite unaffected.","proof_cmd":"timeout 1200 python -m pytest -q -x -p no:cacheprovider","proof_output":"2843 passed in 351.76s"},{"text":"Snapshot includes firm_rules_sha256 so sign-off goes stale on edit.","proof_cmd":"grep -n firm_rules_sha256 src/cma/pack.py","proof_output":"363, 453, 637"},{"text":"Performance: 10,000 lines 1.08 s with 50 firm rules vs 0.67 s without.","proof_cmd":"ad-hoc classify timing (scratchpad)","proof_output":"0.674 s / 1.078 s"},{"text":"Lint/compile clean.","proof_cmd":"ruff check src tests && python -m compileall -q src","proof_output":"All checks passed!"},{"text":"Authz: no new external entry point; no new dependency.","proof_cmd":"grep -rn 'for_case()' src/cma","proof_output":"only overrides.py callers"}],"files_changed":["src/cma/cli.py","tests/test_firm_rules.py"],"notes":"Gaps: evidence JSON lacks firm rules hash and `cma run` applies no firm rules; no counter/alert of lines settled by firm rules (T37 preview); firm.yaml may name an absolute path outside the case root (pre-existing); no whole-file size cap; Windows not exercised. Full-suite run predates a ruff-only assertion reformat in the new test, which was re-run in the contracts tier."}
+```
