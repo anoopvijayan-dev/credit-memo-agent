@@ -368,20 +368,29 @@ def _rests_on(a, b, lines: set[str]) -> bool:
     return bool(lines & set(a.evidence)) or a.value != b.value or a.evidence != b.evidence
 
 
-def case_figures(folder: Path, *, pairing_days: int | None = None) -> dict[str, CaseFigures]:
+def case_figures(folder: Path, *, pairing_days: int | None = None,
+                 override_position: int | None = None) -> dict[str, CaseFigures]:
     """Every account's figures, recomputed from its statement, the profile and the whole
     override log; stale overrides listed and not applied (R17, R19). In a case of more than
     one account, every account is categorised first and then a debit in one account is
     paired with the single credit of the same amount in another, within the configured days,
     both becoming own-account transfers, before any account's figures are computed; a debit
     with more than one candidate stays unpaired and is listed with its candidates (R8, R9).
-    The days are `pairing_days`, or firm.yaml's own_account_pairing_days read now."""
+    The days are `pairing_days`, or firm.yaml's own_account_pairing_days read now.
+    `override_position`: only the override log's first that many records count, as a signed
+    pack recorded the log (verify, R44); a log that holds fewer is refused."""
     folder = Path(folder)
     entries = caselog.for_case(folder).entries()
     profile = store.load_profile(folder)
     accounts = _accounts(entries)
     statements = {a: _load(folder, a) for a in accounts}
-    state = _decide(_read_records(folder, entries), statements)
+    records = _read_records(folder, entries)
+    if override_position is not None:
+        if len(records) < override_position:
+            raise store.CaseStoreError(f"{OVERRIDES} holds {len(records)} records; {override_position} were "
+                                       "recorded")
+        records = records[:override_position]
+    state = _decide(records, statements)
     out: dict[str, CaseFigures] = {}
     failed: list[ReconciliationError] = []
     missing = [a for a in accounts if statements[a] is None]

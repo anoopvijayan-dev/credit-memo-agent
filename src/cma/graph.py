@@ -46,8 +46,8 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import ValidationError
 
+from . import __version__, firm, ingest
 from . import categorise as cat
-from . import firm, ingest
 from . import guard as grd
 from . import indicators as ind
 from . import metrics as met
@@ -488,6 +488,8 @@ def evidence_record(s: MemoState) -> dict:
         "redrafts": s.get("redrafts", 0),
         "review": s["review"].model_dump(mode="json") if s.get("review") else None,
         "memo": s.get("memo"),
+        # R45: verify names the version that made a record it cannot check.
+        "package_version": __version__,
     }
 
 
