@@ -1,0 +1,1010 @@
+diff --git a/src/cma/metrics.py b/src/cma/metrics.py
+index 38460fe..02363b8 100644
+--- a/src/cma/metrics.py
++++ b/src/cma/metrics.py
+@@ -370,6 +370,113 @@ def end_of_day_balances(txns: list[Transaction]) -> dict[date, tuple[int, str]]:
+     return out
+ 
+ 
++# --- a case of more than one account (R41) ---------------------------------------------------
++
++CASE_ID_SEP = ":"  # an account key holds no colon, so "<account>:<line id>" names one line of a case
++NO_SHARED_DAYS = ("The case's accounts share no day: their statements' periods do not overlap, so there "
++                  "is no combined end-of-day balance.")
++
++
++def case_line_id(account: str, line_id: str) -> str:
++    """A line's id within a case of more than one account: its own id prefixed with its
++    account's key, so that ids are unique across the case (R41)."""
++    return f"{account}{CASE_ID_SEP}{line_id}"
++
++
++def split_case_line_id(case_id: str) -> tuple[str, str]:
++    """The account key and the line's own id that case_line_id joined."""
++    account, _, line_id = case_id.partition(CASE_ID_SEP)
++    return account, line_id
++
++
++def case_statement(statements: dict[str, Statement]) -> Statement:
++    """Every line of the case's accounts as one statement, each id (and the id of the debit a
++    returned payment undoes) prefixed with its account key, in date order, each account's own
++    order kept within a day and the accounts in the order given (R41). Each line keeps its own
++    account's running balance: a balance figure of the case reads case_closes(), never these."""
++    lines = []
++    for n, (account, s) in enumerate(statements.items()):
++        for i, t in enumerate(s.transactions):
++            lines.append(((t.date, n, i), t.model_copy(update={
++                "id": case_line_id(account, t.id), "account_key": account,
++                "reverses": case_line_id(account, t.reverses) if t.reverses else None})))
++    return Statement(account_name="+".join(statements), transactions=[t for _, t in sorted(lines, key=lambda x: x[0])])
++
++
++@dataclass(frozen=True)
++class CaseCloses:
++    """The combined end-of-day balance of a case's accounts (R41): on each day every account
++    covers (from the latest first line to the earliest last line), the sum of every account's
++    close, each carried over days with no lines, with the line of each account that set it.
++    When those days do not exist, no closes and the reason, which every balance figure of the
++    case gives as n/a."""
++
++    closes: dict[date, tuple[int, tuple[str, ...]]]
++    reason: str | None = None
++
++
++def case_closes(statements: dict[str, Statement]) -> CaseCloses:
++    """The combined end-of-day balance over the days every account of the case covers, the
++    setting lines named by their case ids (case_line_id)."""
++    eods = {a: end_of_day_balances(s.transactions) for a, s in statements.items()}
++    first, last = max(min(e) for e in eods.values()), min(max(e) for e in eods.values())
++    if first > last:
++        return CaseCloses({}, NO_SHARED_DAYS)
++    out: dict[date, tuple[int, tuple[str, ...]]] = {}
++    d = first
++    while True:
++        out[d] = (sum(e[d][0] for e in eods.values()),
++                  tuple(case_line_id(a, e[d][1]) for a, e in eods.items()))
++        if d == last:
++            break
++        d += timedelta(days=1)
++    return CaseCloses(out)
++
++
++def _closes_balance_figures(closes: CaseCloses, pos: dict[str, int]):
++    """M5, M6 and M27 of a case of more than one account, from its combined closes (R41):
++    each derived, citing the lines that set the closes it reads (P2); n/a with the reason when
++    the accounts share no day, or when no float carries a combined balance to the penny (R2)."""
++    def order(ids) -> list[str]:
++        return sorted(set(ids), key=pos.__getitem__)
++
++    if closes.reason is not None:
++        why = closes.reason
++        return ((None, why, []), (None, why, []), (None, why, []))
++    days = sorted(closes.closes)
++    low_day = min(days, key=lambda d: closes.closes[d][0])
++    low = closes.closes[low_day][0]
++    m5 = ((low / 100 if _whole_pence_exact(low / 100) == low else None),
++          ("Lowest combined end-of-day balance of the case's accounts, over the days every account covers."
++           if _whole_pence_exact(low / 100) == low else "The lowest combined end-of-day balance is too large "
++           "to report to the penny."), order(closes.closes[low_day][1]))
++    over = [d for d in days if closes.closes[d][0] < 0]
++    m6 = (len(over), ("Calendar days, of those every account covers, whose combined close was overdrawn, each "
++                      "account's balance carried over days with no transactions."),
++          order(i for d in over for i in closes.closes[d][1]))
++    avg = _div_half_even(sum(closes.closes[d][0] for d in days), len(days))
++    exact = _whole_pence_exact(avg / 100) == avg
++    m27 = ((avg / 100 if exact else None),
++           ("The combined closing balance of the case's accounts on every calendar day every account covers, "
++            "each carried over days with no transactions, averaged over those days." if exact
++            else "The average combined end-of-day balance is too large to report to the penny."),
++           order(i for d in days for i in closes.closes[d][1]))
++    return m5, m6, m27
++
++
++def compute_case(statements: dict[str, Statement], vat_stagger: int | None = None, proposed_repayment=None
++                 ) -> tuple[Statement, CaseCloses, list[Metric], list[MonthRow]]:
++    """The figures of a case of more than one account (R41), each account's statement already
++    categorised: line ids prefixed with the account key, flow figures across every account
++    (own-account transfers, from the profile or a pairing, out of trading receipts as for one
++    account), and balance figures on the combined end-of-day balance over the days every
++    account covers, n/a with the reason when they share none."""
++    statement = case_statement(statements)
++    closes = case_closes(statements)
++    return (statement, closes, compute(statement, vat_stagger, proposed_repayment, closes=closes),
++            monthly_summary(statement, closes=closes))
++
++
+ def proposed_repayment_pence(proposed) -> int:
+     """The proposed facility's monthly repayment in whole pence, read exactly from the text it
+     is written as (a float from the repr it prints as), as a policy limit is (R2). Refused,
+@@ -521,10 +628,13 @@ def vat_quarters(vat: list[Transaction], reversed_ids: set[str], stagger: int, s
+     return out
+ 
+ 
+-def compute(statement: Statement, vat_stagger: int | None = None, proposed_repayment=None) -> list[Metric]:
++def compute(statement: Statement, vat_stagger: int | None = None, proposed_repayment=None,
++            closes: CaseCloses | None = None) -> list[Metric]:
+     """Every figure for the statement. `proposed_repayment` is the proposed facility's monthly
+     repayment from the case profile (R13), in pounds, as text, a Decimal, an int or a float;
+-    `cma run` has no case profile and gives none, so M28 is n/a with the reason there."""
++    `cma run` has no case profile and gives none, so M28 is n/a with the reason there.
++    `closes`, for a case of more than one account (compute_case), is the combined end-of-day
++    balance the balance figures M5, M6 and M27 are read from instead of the lines' own (R41)."""
+     txns = statement.transactions
+     # A debit with no category cannot be placed in any figure: refused, naming it. A credit
+     # with none is in no bucket, so it is left to the reconciliation below, which names it
+@@ -698,15 +808,22 @@ def compute(statement: Statement, vat_stagger: int | None = None, proposed_repay
+     # lines carrying the close before it, averaged in whole pence (half to even), citing the line
+     # that set each of those closes (P2: a derived figure). n/a with the reason when no float
+     # carries those pence (R2).
+-    closes = list(eod.values())
+-    eod_avg_pence = _div_half_even(sum(bal for bal, _ in closes), len(closes))
++    day_closes = list(eod.values())
++    eod_avg_pence = _div_half_even(sum(bal for bal, _ in day_closes), len(day_closes))
+     eod_avg: float | None = eod_avg_pence / 100
+     eod_note = ("The closing balance of every calendar day in the period, carried over days with no "
+                 "transactions, averaged over those days.")
+     if _whole_pence_exact(eod_avg) != eod_avg_pence:
+         eod_avg = None
+         eod_note = "The average end-of-day balance is too large to report to the penny."
+-    eod_setters = sorted({line_id for _, line_id in closes}, key=pos.__getitem__)
++    eod_setters = sorted({line_id for _, line_id in day_closes}, key=pos.__getitem__)
++
++    m5 = (_gbp(balance_pence(lowest)), "Lowest running balance after any transaction in the period.", [lowest.id])
++    m6 = (len(overdrawn), "Calendar days that closed overdrawn, carrying the balance over days with no transactions.",
++          overdrawn_evidence)
++    m27 = (eod_avg, eod_note, eod_setters)
++    if closes is not None:  # a case of more than one account: the combined closes (R41)
++        m5, m6, m27 = _closes_balance_figures(closes, pos)
+ 
+     return [
+         Metric(id="M1", name="Months covered", value=n_months, unit="months",
+@@ -719,11 +836,8 @@ def compute(statement: Statement, vat_stagger: int | None = None, proposed_repay
+                evidence=[t.id for t in rev]),
+         Metric(id="M4", name="Revenue trend", value=trend, unit="pct", method=trend_note,
+                evidence=[t.id for t in rev if _month(t.date) in whole[:3] + whole[-3:]] if trend is not None else []),
+-        Metric(id="M5", name="Lowest balance", value=_gbp(balance_pence(lowest)), unit="GBP",
+-               method="Lowest running balance after any transaction in the period.", evidence=[lowest.id]),
+-        Metric(id="M6", name="Days overdrawn", value=len(overdrawn), unit="days",
+-               method="Calendar days that closed overdrawn, carrying the balance over days with no transactions.",
+-               evidence=overdrawn_evidence),
++        Metric(id="M5", name="Lowest balance", value=m5[0], unit="GBP", method=m5[1], evidence=m5[2]),
++        Metric(id="M6", name="Days overdrawn", value=m6[0], unit="days", method=m6[1], evidence=m6[2]),
+         Metric(id="M7", name="Returned direct debits", value=len(returned), unit="count",
+                method="Lines marked as unpaid direct debits.",
+                evidence=[t.id for t in returned]),
+@@ -764,14 +878,14 @@ def compute(statement: Statement, vat_stagger: int | None = None, proposed_repay
+                method=("Unexplained money in (M25) as a share of money in less lending drawdowns, returned "
+                        "direct debits and own-account transfers, the denominator M16 uses."),
+                evidence=[t.id for t in inflows]),
+-        Metric(id="M27", name="Average end-of-day balance", value=eod_avg, unit="GBP", method=eod_note,
+-               evidence=eod_setters),
++        Metric(id="M27", name="Average end-of-day balance", value=m27[0], unit="GBP", method=m27[1],
++               evidence=m27[2]),
+         Metric(id="M28", name="Debt service cover including the proposed facility", value=cover, unit="ratio",
+                method=cover_note, evidence=[t.id for t in cover_lines] if cover is not None else []),
+     ]
+ 
+ 
+-def monthly_summary(statement: Statement) -> list[MonthRow]:
++def monthly_summary(statement: Statement, closes: CaseCloses | None = None) -> list[MonthRow]:
+     """One row per calendar month in the period, oldest first (R11).
+ 
+     Money in is every credit of the month and trading receipts the month's M2 lines, cash
+@@ -779,7 +893,11 @@ def monthly_summary(statement: Statement) -> list[MonthRow]:
+     penny (P12). Money out is an outflow figure, reported as a positive amount whose lines
+     total it negated (P2, D220). The average and lowest end-of-day balance and the days
+     overdrawn are derived from the close of every day of the month in the period, carried
+-    over days with no lines, and cite the line that set each of those closes (P2, D225)."""
++    over days with no lines, and cite the line that set each of those closes (P2, D225).
++
++    For a case of more than one account (`closes`, compute_case), the balance and overdrawn-day
++    cells read the combined closes of the month's days every account covers, citing every
++    account's line that set them, and are n/a with the reason in a month with none (R41)."""
+     txns = statement.transactions
+     for t in txns:  # a fraction of a penny is refused, as in compute()
+         pence(t)
+@@ -801,15 +919,7 @@ def monthly_summary(statement: Statement) -> list[MonthRow]:
+         first, last = max(date(y, m, 1), start), min(_month_end(y, m), end)
+         # By (year, month), not by _month's text: strftime does not pad a year below 1000.
+         lines = [t for t in txns if (t.date.year, t.date.month) == (y, m)]
+-        days = [eod[d] for d in sorted(eod) if first <= d <= last]
+-        closes = [bal for bal, _ in days]
+-        setters = sorted({line_id for _, line_id in days}, key=pos.__getitem__)
+-
+-        avg_pence = _div_half_even(sum(closes), len(closes))
+-        avg: float | None = avg_pence / 100
+-        avg_note = None
+-        if _whole_pence_exact(avg) != avg_pence:  # a derived figure: n/a with the reason (R2)
+-            avg, avg_note = None, "The month's average end-of-day balance is too large to report to the penny."
++        balance_cells = _month_balance_cells(eod, closes, first, last, pos)
+         rows.append(MonthRow(
+             month=key,
+             part_month=first != date(y, m, 1) or last != _month_end(y, m),
+@@ -818,15 +928,50 @@ def monthly_summary(statement: Statement) -> list[MonthRow]:
+             money_in=flow([t for t in lines if pence(t) > 0], "sum"),
+             money_out=flow([t for t in lines if pence(t) < 0], "outflow"),
+             trading_receipts=flow([t for t in lines if t.category in REVENUE_CATEGORIES], "sum"),
+-            average_balance=MonthlyCell(value=avg, unit="GBP", kind="derived", evidence=setters, note=avg_note),
+-            lowest_balance=MonthlyCell(value=_gbp(min(closes)), unit="GBP", kind="derived", evidence=setters),
+-            days_overdrawn=MonthlyCell(value=sum(1 for b in closes if b < 0), unit="days", kind="derived",
+-                                       evidence=setters),
++            **balance_cells,
+         ))
+         y, m = _add_months(y, m, 1)
+     return rows
+ 
+ 
++NO_SHARED_DAYS_IN_MONTH = ("No day of this month is covered by every account of the case, so there is no "
++                           "combined end-of-day balance.")
++
++
++def _month_balance_cells(eod, closes: CaseCloses | None, first: date, last: date, pos) -> dict[str, MonthlyCell]:
++    """A month's average and lowest end-of-day balance and days overdrawn (derived cells):
++    from the account's own closes, or, for a case of more than one account, from the combined
++    closes of the month's days every account covers (R41)."""
++    if closes is None:
++        days = [(bal, (line_id,)) for d, (bal, line_id) in sorted(eod.items()) if first <= d <= last]
++    else:
++        days = [closes.closes[d] for d in sorted(closes.closes) if first <= d <= last]
++    if not days:
++        why = (closes.reason if closes is not None else None) or NO_SHARED_DAYS_IN_MONTH
++        return {key: MonthlyCell(value=None, unit=unit, kind="derived", note=why)
++                for key, unit in (("average_balance", "GBP"), ("lowest_balance", "GBP"), ("days_overdrawn", "days"))}
++    bals = [bal for bal, _ in days]
++    setters = sorted({i for _, ids in days for i in ids}, key=pos.__getitem__)
++    avg_pence = _div_half_even(sum(bals), len(bals))
++    avg: float | None = avg_pence / 100
++    avg_note = None
++    if _whole_pence_exact(avg) != avg_pence:  # a derived figure: n/a with the reason (R2)
++        avg, avg_note = None, "The month's average end-of-day balance is too large to report to the penny."
++    low_pence = min(bals)
++    if closes is None:
++        low, low_note = _gbp(low_pence), None
++    elif _whole_pence_exact(low_pence / 100) == low_pence:
++        low, low_note = low_pence / 100, None
++    else:  # a combined balance no float carries to the penny: n/a with the reason (R2, R41)
++        low, low_note = None, "The month's lowest combined end-of-day balance is too large to report to the penny."
++    return {
++        "average_balance": MonthlyCell(value=avg, unit="GBP", kind="derived", evidence=setters, note=avg_note),
++        "lowest_balance": MonthlyCell(value=low, unit="GBP", kind="derived", evidence=setters, note=low_note),
++        "days_overdrawn": MonthlyCell(value=sum(1 for b in bals if b < 0), unit="days", kind="derived",
++                                      evidence=setters),
++    }
++
++
+ def _reconcile(credits, rev, buckets, money_in, trading, total, pos) -> None:
+     """R3: the buckets sum to total money in to the penny, and every credit is in exactly
+     one bucket's evidence. Otherwise refuse, naming the difference and the lines."""
+@@ -916,15 +1061,25 @@ def _share_parts(statement: Statement, metric_id: str, evidence: list[str]) -> t
+     return None
+ 
+ 
++def _case_daily_closes(closes: CaseCloses, first: date | None = None, last: date | None = None
++                       ) -> list[tuple[date, int, str]]:
++    """daily_closes() for a case of more than one account: each combined close, with the
++    lines of every account that set it."""
++    return [(d, bal, ", ".join(ids)) for d, (bal, ids) in sorted(closes.closes.items())
++            if (first is None or d >= first) and (last is None or d <= last)]
++
++
+ def derived_inputs(statement: Statement, metrics: list[Metric], metric_id: str,
+-                   proposed_repayment=None, vat_stagger: int | None = None) -> dict:
++                   proposed_repayment=None, vat_stagger: int | None = None,
++                   closes: CaseCloses | None = None) -> dict:
+     """What a derived figure is computed from, for the drill-down (R16): the figures it reads,
+     the period, a share's numerator and denominator, and, for a figure read from end-of-day
+-    balances, the close of every day it reads. Values are written as text, money to the penny."""
++    balances, the close of every day it reads. Values are written as text, money to the penny.
++    For a case of more than one account (`closes`), the balance figures read the combined
++    closes (R41)."""
+     by = {m.id: m for m in metrics}
+     m = by[metric_id]
+     inputs: list[dict] = []
+-    closes: list[tuple[date, int, str]] | None = None
+     start, end = statement.start, statement.end
+     days = (end - start).days + 1
+     for fid in DERIVED_FROM.get(metric_id, ()):
+@@ -937,7 +1092,11 @@ def derived_inputs(statement: Statement, metrics: list[Metric], metric_id: str,
+         shown = ("not given" if proposed_repayment is None
+                  else money_text(proposed_repayment_pence(proposed_repayment)))
+         inputs.append({"label": "Proposed monthly repayment (case profile)", "figure": None, "display": shown})
+-    if metric_id == "M5" and m.evidence:
++    if metric_id == "M5" and m.evidence and closes is not None:
++        day = min(closes.closes, key=lambda d: (closes.closes[d][0], d))
++        inputs.append({"label": f"Combined close on {day.isoformat()} (the lines below set each account's close)",
++                       "figure": None, "display": money_text(closes.closes[day][0])})
++    elif metric_id == "M5" and m.evidence:
+         t = statement.by_id()[m.evidence[0]]
+         inputs.append({"label": f"Running balance after line {t.id}", "figure": None,
+                        "display": money_text(balance_pence(t))})
+@@ -957,9 +1116,12 @@ def derived_inputs(statement: Statement, metrics: list[Metric], metric_id: str,
+         inputs += _cash_flow_inputs(statement)
+     if metric_id == "M13":
+         inputs += _vat_inputs(statement, vat_stagger)
++    read = None
+     if metric_id in FROM_CLOSES:
+-        closes = daily_closes(statement)
+-    return {"inputs": inputs, "closes": _closes_out(closes)}
++        read = daily_closes(statement) if closes is None else _case_daily_closes(closes)
++    if closes is not None and closes.reason is not None and metric_id in FROM_CLOSES | {"M5"}:
++        inputs.append({"label": "Days every account covers", "figure": None, "display": "none"})
++    return {"inputs": inputs, "closes": _closes_out(read)}
+ 
+ 
+ def _trend_inputs(statement: Statement) -> list[dict]:
+@@ -1014,12 +1176,18 @@ def _vat_inputs(statement: Statement, vat_stagger: int | None) -> list[dict]:
+         for q in vat_quarters(vat, reversed_ids, vat_stagger, statement.start, statement.end)]
+ 
+ 
+-def cell_inputs(statement: Statement, row: MonthRow) -> dict:
++def cell_inputs(statement: Statement, row: MonthRow, closes: CaseCloses | None = None) -> dict:
+     """A monthly balance or overdrawn-day cell's inputs: the close of every day of the month in
+-    the period, with the line that set it (P2, R11)."""
+-    return {"inputs": [{"label": "Days of the month in the period", "figure": None,
+-                        "display": f"{row.start.isoformat()} to {row.end.isoformat()}"}],
+-            "closes": _closes_out(daily_closes(statement, row.start, row.end))}
++    the period, with the line that set it (P2, R11); for a case of more than one account, the
++    combined close of every day of the month every account covers (R41)."""
++    if closes is None:
++        return {"inputs": [{"label": "Days of the month in the period", "figure": None,
++                            "display": f"{row.start.isoformat()} to {row.end.isoformat()}"}],
++                "closes": _closes_out(daily_closes(statement, row.start, row.end))}
++    read = _case_daily_closes(closes, row.start, row.end)
++    shown = f"{read[0][0].isoformat()} to {read[-1][0].isoformat()}" if read else "none"
++    return {"inputs": [{"label": "Days of the month every account covers", "figure": None, "display": shown}],
++            "closes": _closes_out(read)}
+ 
+ 
+ def _closes_out(closes) -> list[dict] | None:
+diff --git a/src/cma/overrides.py b/src/cma/overrides.py
+index e904e82..c00b5f9 100644
+--- a/src/cma/overrides.py
++++ b/src/cma/overrides.py
+@@ -304,6 +304,9 @@ class CaseFigures:
+     marked_cells: set[tuple[str, str]]  # (YYYY-MM, cell) of monthly cells that do
+     vat_stagger: int | None = None          # the profile's, as these figures were computed with
+     proposed_repayment: Any = None
++    closes: Any = None              # a case's combined figures: the combined end-of-day balance (R41)
++    bare: Statement | None = None   # categorised with no override, when any is applied: only compared with
++    missing: list[str] = field(default_factory=list)  # the case's accounts with no statement file (R41)
+ 
+ 
+ class CaseNotReconciled(ReconciliationError):
+@@ -359,6 +362,7 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
+     state = _decide(_read_records(folder, entries), statements)
+     out: dict[str, CaseFigures] = {}
+     failed: list[ReconciliationError] = []
++    missing = [a for a in accounts if statements[a] is None]
+     for account in accounts:
+         loaded = statements[account]
+         if loaded is None:
+@@ -377,6 +381,9 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
+         lines = set(applied)
+         marked: set[str] = set()
+         cells: set[tuple[str, str]] = set()
++        base_statement = None
++        if applied and len(accounts) > 1:  # only the case's combined figures compare with it (R41, R52)
++            _categorise(base_statement := _copy(bare), sha, profile, {})
+         if applied:
+             try:
+                 base_metrics, base_monthly = _bare_figures(bare, sha, profile)
+@@ -401,12 +408,56 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
+         out[account] = CaseFigures(account, sha, statement, metrics, monthly,
+                                    {k: v.ref for k, v in applied.items()},
+                                    [s for s in state.stale if s.account == account], marked, cells,
+-                                   profile["vat_stagger"], profile["proposed_monthly_repayment"])
++                                   profile["vat_stagger"], profile["proposed_monthly_repayment"],
++                                   bare=base_statement, missing=missing)
+     if failed:  # R3: no figures for any account of the case
+         raise CaseNotReconciled(failed)
+     return out
+ 
+ 
++COMBINED = "*"  # the key of a case's combined figures: never an account key (store.ACCOUNT_KEY)
++
++
++def combined_figures(figures: dict[str, CaseFigures]) -> CaseFigures | None:
++    """The figures of a case of more than one account across all its accounts (R41), from each
++    account's statement as case_figures() categorised it, its overrides applied: line ids
++    prefixed with the account key, flow figures across every account, and balance figures on
++    the combined end-of-day balance over the days every account covers, n/a with the reason
++    when those days do not exist. None for a case of one account, whose figures are its
++    account's. A figure or cell is marked as resting on an override when an overridden line is
++    among its lines, or when it differs from the same figure with no override applied, as for
++    one account (R17). An account of the case with no statement file is left out and named in
++    `missing`. The figures layer does every sum (metrics.compute_case)."""
++    from . import metrics
++
++    if len(figures) < 2:
++        return None
++    first = next(iter(figures.values()))
++    statement, closes, metrics_, monthly = metrics.compute_case(
++        {a: f.statement for a, f in figures.items()}, first.vat_stagger, first.proposed_repayment)
++    overridden = {metrics.case_line_id(a, line): r for a, f in figures.items() for line, r in f.overridden.items()}
++    lines = set(overridden)
++    marked = {m.id for m in metrics_ if lines & set(m.evidence)}
++    cells = {(r.month, cell) for r in monthly for cell in CELLS if lines & set(getattr(r, cell).evidence)}
++    if any(f.bare is not None for f in figures.values()):
++        try:
++            _, _, base_metrics, base_monthly = metrics.compute_case(
++                {a: f.bare if f.bare is not None else f.statement for a, f in figures.items()},
++                first.vat_stagger, first.proposed_repayment)
++        except ReconciliationError:  # as for one account: an override may be what puts a line right
++            base_metrics, base_monthly = None, None
++        if base_metrics is not None:
++            marked = {m.id for m, b in zip(metrics_, base_metrics, strict=True) if _rests_on(m, b, lines)}
++            base_rows = {r.month: r for r in base_monthly}
++            cells = {(row.month, cell) for row in monthly for cell in CELLS
++                     if row.month not in base_rows
++                     or _rests_on(getattr(row, cell), getattr(base_rows[row.month], cell), lines)}
++    return CaseFigures(
++        COMBINED, "+".join(f.statement_sha256 for f in figures.values()), statement, metrics_, monthly, overridden,
++        [s for f in figures.values() for s in f.stale], marked, cells,
++        first.vat_stagger, first.proposed_repayment, closes, missing=list(first.missing))
++
++
+ def stale_overrides(folder: Path) -> list[Stale]:
+     """Every stale override of the case, accounts with no statement included (R19)."""
+     folder = Path(folder)
+diff --git a/src/cma/review/drilldown.py b/src/cma/review/drilldown.py
+index 48c97ea..8bf398c 100644
+--- a/src/cma/review/drilldown.py
++++ b/src/cma/review/drilldown.py
+@@ -24,7 +24,7 @@ from pathlib import Path
+ from typing import Any
+ from urllib.parse import urlencode
+ 
+-from .. import metrics
++from .. import metrics, overrides
+ from ..models import MonthlyCell, format_value, money_exact
+ from . import summary
+ from .edit import categories_for, override_form
+@@ -52,7 +52,7 @@ def _line(t, overridden: dict[str, str], note: set[str]) -> dict[str, Any]:
+             "balance": t.balance, "balance_display": money_exact(t.balance),
+             "category": t.category.value if t.category else None, "rule": t.rule_id,
+             "overridden": t.id in overridden, "counted_in_part": t.id in note,
+-            "categories": categories_for(t)}
++            "categories": categories_for(t), "account": t.account_key}
+ 
+ 
+ def _total(statement, ids: list[str], kind: str) -> dict[str, Any] | None:
+@@ -81,7 +81,8 @@ def lines_behind(folder: Path, case_id: str, *, account: str | None = None, figu
+         if len(figures) != 1:
+             raise DrillError("name the account")
+         account = next(iter(figures))
+-    f = figures.get(account)
++    # The case's figures across its accounts (R41), for a case of more than one account.
++    f = overrides.combined_figures(figures) if account == overrides.COMBINED else figures.get(account)
+     if f is None:
+         raise DrillError("no such account in this case")
+     out["account"] = account
+@@ -107,7 +108,8 @@ def detail(f, *, figure: str | None = None, month: str | None = None, cell: str
+                    total=_total(statement, m.evidence, kind), counted_in_part=list(m.evidence_note or []),
+                    inputs=None, closes=None)
+         if kind == "derived":
+-            out.update(metrics.derived_inputs(statement, f.metrics, m.id, f.proposed_repayment, f.vat_stagger))
++            out.update(metrics.derived_inputs(statement, f.metrics, m.id, f.proposed_repayment, f.vat_stagger,
++                                              closes=getattr(f, "closes", None)))
+         return out
+     row = next((r for r in f.monthly if r.month == month), None)
+     if row is None or cell not in CELL_TITLES:
+@@ -120,10 +122,15 @@ def detail(f, *, figure: str | None = None, month: str | None = None, cell: str
+                lines=[_line(by_line[i], f.overridden, set()) for i in c.evidence],
+                total=_total(statement, c.evidence, c.kind), counted_in_part=[], inputs=None, closes=None)
+     if c.kind == "derived":
+-        out.update(metrics.cell_inputs(statement, row))
++        out.update(metrics.cell_inputs(statement, row, closes=getattr(f, "closes", None)))
+     return out
+ 
+ 
++def account_title(account: str) -> str:
++    """How a page names an account's figures, or the case's across all its accounts (R41)."""
++    return "All accounts" if account == overrides.COMBINED else f"Account {account}"
++
++
+ def _cell_display(c: MonthlyCell) -> str:
+     if c.value is None:
+         return "n/a"
+@@ -152,6 +159,9 @@ def render(d: dict[str, Any], token: str) -> str:
+     here = "/lines?" + urlencode({"account": d["account"], **d["target"]})  # where a form comes back to
+ 
+     def form(x):
++        if d["account"] == overrides.COMBINED:  # a line of the case's combined figures (R41): its own
++            account, own = metrics.split_case_line_id(x["id"])  # account and id take the override
++            return override_form(token, account, {**x, "id": own}, position, here)
+         return override_form(token, d["account"], x, position, here)
+ 
+     return back + detail_html(d, form if position is not None else None)
+@@ -163,7 +173,7 @@ def detail_html(d: dict[str, Any], form=None, section_id: str = "drilldown", bac
+     line, gives the cell that changes its category, as the workspace offers it; the pack's
+     record offers none. `back` is HTML placed at the end of the section."""
+     head = (f'<section class="lines-behind" id="{_e(section_id)}"><h2>{_e(d["id"])}: {_e(d["name"])}</h2>'
+-            f'<p class="figure-value">Account {_e(d["account"])}: <strong>{_e(d["display"])}</strong>'
++            f'<p class="figure-value">{_e(account_title(d["account"]))}: <strong>{_e(d["display"])}</strong>'
+             + (' <span class="overridden">rests on an override</span>' if d["overridden"] else "")
+             + f'</p><p class="method">{_e(d["method"])}</p>')
+     if d.get("note"):
+diff --git a/src/cma/review/summary.py b/src/cma/review/summary.py
+index c216ae4..5a521e9 100644
+--- a/src/cma/review/summary.py
++++ b/src/cma/review/summary.py
+@@ -8,6 +8,10 @@ and render() turns into the page's HTML:
+ - for each account, the money-in breakdown (trading receipts M2 with the cash inside it M18,
+   then M19 to M25, adding up to total money in M17), every figure, and the monthly summary,
+   money to the penny as every table shows it (R2);
++- for a case of more than one account, the same across all its accounts ("All accounts",
++  overrides.combined_figures): line ids prefixed with the account key, flow figures across
++  every account, and balance figures on the combined end-of-day balance over the days every
++  account covers, n/a with the reason when there are none (R41);
+ - the judgement queue, listed first: every line a person has to decide, across the case's
+   accounts, largest amount first (R15), each with why it is listed, the indicators that
+   flagged it and, for an ambiguous credit, its candidates and the bucket each would give;
+@@ -77,6 +81,10 @@ INDICATOR_TITLES = {
+ REASON_TITLES = {"unexplained": "unexplained", "ambiguous": "ambiguous",
+                  "possible_own_account_transfer": "possible own-account transfer", "indicator": "flagged"}
+ UNIT_SUFFIX = {"pct": "%", "times": " times", "days": " days", "count": ""}
++COMBINED_BASIS = ("Across every account of the case: each line's id is its account key, a colon and its own id. "
++                  "Money in and out and the figures built on them count every account's lines (own-account "
++                  "transfers stay out of trading receipts); the balance figures read the combined end-of-day "
++                  "balance of the accounts over the days every account covers.")
+ ILLUSTRATIVE = ("Thresholds marked illustrative are still at the values shipped with this tool; they are "
+                 "not your firm's lending policy.")
+ 
+@@ -258,7 +266,7 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+                            "state": "shown", "accounts": [], "queue": [], "thresholds": None,
+                            "reconciliation": None, "refusal": None, "position": None, "stale": [],
+                            "policy_check": {"shown": False}, "recommendation": None,  # left blank (R24)
+-                           "demo": False}
++                           "demo": False, "combined": None}
+     # The case log position the page is built at, read before anything else, so a save made
+     # from this page is refused as a conflict once anything was recorded after it (R17).
+     out["position"] = log_position(folder)
+@@ -294,6 +302,19 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+     out["thresholds"] = {"source": thresholds.source, "sha256": thresholds.sha256,
+                          "shipped": thresholds.sha256 == ind.shipped().sha256}
+     out["accounts"] = accounts
++    try:  # R41: a case of more than one account, across all its accounts
++        both = overrides.combined_figures(figures)
++    except Exception as e:
++        refused = refusal(e)
++        if refused is None:
++            raise
++        out.update(refused)
++        return out
++    out["combined"] = None if both is None else {
++        **_account(both, []), "missing": list(both.missing),
++        "basis": COMBINED_BASIS + "".join(
++            f" Account {a} has no statement file in the case folder, so it is left out of these figures."
++            for a in both.missing)}
+     if rules is not None and accounts:
+         out["policy_check"] = {"shown": True, "label": policy.ILLUSTRATIVE_LABEL}
+     queues = [(a, f.statement, ind.judgement_queue(f.statement, raised[a])) for a, f in figures.items()]
+@@ -374,6 +395,10 @@ def _account_html(a: dict[str, Any], token: str | None = None,
+     monthly = ('<table class="monthly"><thead><tr><th>Month</th>'
+                + "".join(f'<th class="num">{_e(title)}</th>' for _, title in CELLS)
+                + f'</tr></thead><tbody>{"".join(month_rows)}</tbody></table>')
++    if a.get("basis"):  # the case's figures across all its accounts (R41)
++        return (f'<section class="account combined" id="combined"><h2>All accounts</h2>'
++                f'<p class="period">{period}{_e(a["line_count"])} lines</p><p class="note">{_e(a["basis"])}</p>'
++                f'<h3>Money in</h3>{breakdown}<h3>Figures</h3>{figures}<h3>Monthly summary</h3>{monthly}</section>')
+     return (f'<section class="account"><h2>Account {_e(a["account"])}</h2>'
+             f'<p class="period">{period}{_e(a["line_count"])} lines</p>'
+             f'<h3>Money in</h3>{breakdown}<h3>Figures</h3>{figures}<h3>Monthly summary</h3>{monthly}'
+@@ -556,5 +581,6 @@ def render(summary: dict[str, Any], token: str | None = None) -> str:
+         return head + '<section id="empty"><p>No statement has been imported into this case yet.</p></section>'
+     from .signoff import preview_form
+ 
+-    return (head + "".join(_account_html(a, token, summary.get("thresholds")) for a in summary["accounts"])
++    combined = _account_html(summary["combined"], token) if summary.get("combined") else ""  # R41
++    return (head + combined + "".join(_account_html(a, token, summary.get("thresholds")) for a in summary["accounts"])
+             + _policy_checks_html(summary) + RECOMMENDATION_HTML + (preview_form(token) if token else ""))
+diff --git a/src/cma/store.py b/src/cma/store.py
+index be37732..3a743e1 100644
+--- a/src/cma/store.py
++++ b/src/cma/store.py
+@@ -674,6 +674,13 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
+                     f"account {account} overlaps account {same[0]} from {same[1]} to {same[2]} and "
+                     f"shares {same[3]} of its {same[4]} (date, amount) pairs there: it is probably "
+                     "the same account imported twice, so it was not added (R40)")
++            reached = _case_flows_at_limit(folder, save.entries, stmt)
++            if reached:
++                which = " and ".join(reached)
++                raise CaseStoreError(
++                    f"account {account} would bring the {which} of the case's accounts together to "
++                    f"£10,000,000,000,000 or more, each account counted in full before own-account pairs are "
++                    "removed, so no combined figure could be reported to the penny; it was not added (R41)")
+             # Files left by an import whose entry is not in the log are replaced.
+             for left in (folder / INPUTS).glob(sha + ".*"):
+                 if left != inp and left.name.split(".", 1)[0] == sha:
+@@ -746,6 +753,33 @@ def _same_account(folder: Path, entries, new) -> tuple[str, str, str, int, int]
+     return None
+ 
+ 
++def _case_flows_at_limit(folder: Path, entries, new) -> list[str]:
++    """Which of money in and money out of the case's accounts together, with the new
++    statement's, each account's lines counted in full before own-account pairs are removed,
++    would reach R2's limit (R41). Read while the case is held, from the statements the log's
++    import entries name; the figures layer adds them up. A case of one account is held to the
++    limit by the statement loader already."""
++    from . import ingest, metrics
++
++    amounts = [metrics.pence(t) for t in new.transactions]
++    others = 0
++    for e in entries:
++        if e.event != "import":
++            continue
++        account = e.data.get("account")
++        path = folder / STATEMENTS / f"{account}.csv"
++        try:
++            old = ingest.load_csv(path, account_name=account, data=path.read_bytes())
++        except (OSError, ingest.StatementError) as e:  # no account is left out of the limit
++            raise CaseStoreError(
++                f"account {account}'s statement in this case cannot be read, so the money in and money out "
++                "of the case's accounts together cannot be checked against £10,000,000,000,000; "
++                "nothing was added (R41)") from e
++        amounts += [metrics.pence(t) for t in old.transactions]
++        others += 1
++    return metrics.flows_at_limit(amounts) if others else []
++
++
+ # --- purge (R35) -----------------------------------------------------------------------
+ 
+ 
+diff --git a/tests/test_multi_account.py b/tests/test_multi_account.py
+new file mode 100644
+index 0000000..482ebd3
+--- /dev/null
++++ b/tests/test_multi_account.py
+@@ -0,0 +1,352 @@
++"""T33: a case of more than one account (R41).
++
++When a case holds more than one account, its figures across all its accounts have each line's
++id prefixed with its account key, so ids are unique within the case; flow figures count every
++account's lines; and balance figures read the combined end-of-day balance over the days every
++account covers, n/a with the reason when the accounts' periods do not overlap. The workspace
++shows them as "All accounts". An import that would bring the case's combined money in or money
++out to £10,000,000,000,000 or more is refused, naming the account, and leaves the case as it was.
++
++The two-account fixtures are worked by hand in the comments beside them."""
++
++import http.client
++import json
++from urllib.parse import urlencode
++
++import pytest
++
++from cma import case as caselog
++from cma import metrics, overrides, store
++from cma.review import drilldown, summary
++from cma.review import server as rs
++
++# main closes: 01-05..09 1,500.00 (M1), 01-10..19 300.00 (M2), 01-20 400.00 (M3).
++MAIN = ("id,date,description,amount,balance\n"
++        "M1,2026-01-05,CARD SETTLEMENT STRIPE,500.00,1500.00\n"
++        "M2,2026-01-10,DD COUNCIL,-1200.00,300.00\n"
++        "M3,2026-01-20,CARD SETTLEMENT STRIPE,100.00,400.00\n")
++# savings closes: 01-08..14 -500.00 (S1), 01-15..24 -450.00 (S2), 01-25 -440.00 (S3).
++SAVINGS = ("id,date,description,amount,balance\n"
++           "S1,2026-01-08,DD RENT,-700.00,-500.00\n"
++           "S2,2026-01-15,CARD SETTLEMENT STRIPE,50.00,-450.00\n"
++           "S3,2026-01-25,CARD SETTLEMENT STRIPE,10.00,-440.00\n")
++# The same lines a month later: no day is covered by both accounts.
++LATER = SAVINGS.replace("2026-01-", "2026-02-")
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    return root
++
++
++def _case(tmp_path, *accounts):
++    case_id = store.new_case(label="t33")
++    folder = store.case_folder(case_id)
++    for account, body in accounts:
++        src = tmp_path / f"{account}-{case_id}.csv"
++        src.write_text(body, encoding="utf-8")
++        store.import_file(folder, src, "csv", account=account)
++    return case_id, folder
++
++
++def _by_id(f):
++    return {m.id: m for m in f.metrics}
++
++
++@pytest.mark.contracts
++def test_two_accounts_overlapping_combined_figures(home, tmp_path):
++    _, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
++    figures = overrides.case_figures(folder)
++    assert set(figures) == {"main", "savings"}  # each account's own figures are kept, ids unprefixed
++    assert [t.id for t in figures["main"].statement.transactions] == ["M1", "M2", "M3"]
++    both = overrides.combined_figures(figures)
++    assert both.account == overrides.COMBINED
++    ids = [t.id for t in both.statement.transactions]
++    assert ids == ["main:M1", "savings:S1", "main:M2", "savings:S2", "main:M3", "savings:S3"]
++    assert len(set(ids)) == len(ids)
++    assert [t.account_key for t in both.statement.transactions] == ["main", "savings"] * 3
++    m = _by_id(both)
++    # Flow figures across both accounts.
++    assert m["M17"].value == 660.00 and m["M2"].value == 660.00
++    assert m["M17"].evidence == ["main:M1", "savings:S2", "main:M3", "savings:S3"]
++    assert metrics.lines_total(both.statement, m["M2"].evidence) == 66000
++    # Combined closes over 01-08..01-20, the days both cover:
++    # 01-08..09 1,000.00; 01-10..14 -200.00; 01-15..19 -150.00; 01-20 -50.00.
++    assert m["M5"].value == -200.00
++    assert m["M5"].evidence == ["savings:S1", "main:M2"]  # each account's line that set 01-10's close
++    assert m["M6"].value == 11
++    assert m["M6"].evidence == ["savings:S1", "main:M2", "savings:S2", "main:M3"]
++    # (2 * 1,000.00 + 5 * -200.00 + 5 * -150.00 - 50.00) / 13 = 15.3846..., half to even 15.38
++    assert m["M27"].value == 15.38
++    assert m["M27"].evidence == ["main:M1", "savings:S1", "main:M2", "savings:S2", "main:M3"]
++    assert "every account covers" in m["M5"].method
++    [jan] = both.monthly
++    assert jan.money_in.value == 660.00 and jan.money_out.value == 1900.00
++    assert jan.lowest_balance.value == -200.00 and jan.days_overdrawn.value == 11
++    assert jan.average_balance.value == 15.38
++    assert jan.lowest_balance.evidence == m["M27"].evidence
++
++
++@pytest.mark.contracts
++def test_two_accounts_not_overlapping_balance_figures_na(home, tmp_path):
++    _, folder = _case(tmp_path, ("main", MAIN), ("savings", LATER))
++    both = overrides.combined_figures(overrides.case_figures(folder))
++    m = _by_id(both)
++    assert m["M17"].value == 660.00  # flow figures are still combined
++    for fid in ("M5", "M6", "M27"):
++        assert m[fid].value is None, fid
++        assert m[fid].method == metrics.NO_SHARED_DAYS and m[fid].evidence == []
++    assert [r.month for r in both.monthly] == ["2026-01", "2026-02"]
++    for row in both.monthly:
++        assert row.money_in.value is not None
++        for cell in ("average_balance", "lowest_balance", "days_overdrawn"):
++            c = getattr(row, cell)
++            assert c.value is None and c.note == metrics.NO_SHARED_DAYS and c.evidence == []
++
++
++@pytest.mark.contracts
++def test_month_with_no_shared_day_is_na_others_read(home, tmp_path):
++    # savings covers 01-08 to 02-03; main only January: February has no day both cover.
++    later = SAVINGS.replace("S3,2026-01-25", "S3,2026-02-03")
++    _, folder = _case(tmp_path, ("main", MAIN), ("savings", later))
++    jan, feb = overrides.combined_figures(overrides.case_figures(folder)).monthly
++    assert jan.lowest_balance.value == -200.00
++    assert feb.lowest_balance.value is None and feb.lowest_balance.note == metrics.NO_SHARED_DAYS_IN_MONTH
++    assert feb.money_in.value == 10.00
++
++
++@pytest.mark.contracts
++def test_one_account_has_no_combined_figures(home, tmp_path):
++    _, folder = _case(tmp_path, ("main", MAIN))
++    figures = overrides.case_figures(folder)
++    assert overrides.combined_figures(figures) is None
++    assert [t.id for t in figures["main"].statement.transactions] == ["M1", "M2", "M3"]
++
++
++@pytest.mark.contracts
++def test_own_account_transfer_across_accounts_stays_out_of_trading(home, tmp_path):
++    main = MAIN + "M4,2026-01-21,FPS CREDIT ACME HOLDINGS,25.00,425.00\n"
++    _, folder = _case(tmp_path, ("main", main), ("savings", SAVINGS))
++    store.update_profile(folder, lambda p: {**p, "own_accounts": ["ACME HOLDINGS"]})
++    m = _by_id(overrides.combined_figures(overrides.case_figures(folder)))
++    assert m["M19"].evidence == ["main:M4"] and m["M19"].value == 25.00
++    assert m["M2"].value == 660.00 and "main:M4" not in m["M9"].evidence
++
++
++@pytest.mark.contracts
++def test_override_marks_combined_figures(home, tmp_path):
++    _, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
++    overrides.add_override(folder, "S2", "other", reason="not trading", name="Pat", account="savings")
++    both = overrides.combined_figures(overrides.case_figures(folder))
++    m = _by_id(both)
++    assert m["M2"].value == 610.00 and m["M25"].evidence == ["savings:S2"]
++    assert "savings:S2" in both.overridden and "M25" in both.marked
++
++
++def _api_and_page(folder, case_id):
++    srv = rs.start(folder, case_id, port=0)
++    srv.serve_in_thread()
++    try:
++        out = []
++        for path in ("/api/case", "/", "/lines?" + urlencode({"account": "*", "figure": "M5"})):
++            conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=10)
++            conn.request("GET", path, headers={"Host": f"127.0.0.1:{srv.port}", "X-CMA-Token": srv.token})
++            r = conn.getresponse()
++            assert r.status == 200, path
++            out.append(r.read().decode("utf-8"))
++            conn.close()
++        return json.loads(out[0]), out[1], out[2]
++    finally:
++        srv.close()
++
++
++@pytest.mark.contracts
++def test_workspace_shows_all_accounts(home, tmp_path):
++    case_id, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
++    api, page, lines = _api_and_page(folder, case_id)
++    c = api["combined"]
++    assert c["account"] == "*" and c["line_count"] == 6
++    assert c["period"] == {"start": "2026-01-05", "end": "2026-01-25"}
++    shown = {f["id"]: f for f in c["figures"]}
++    assert shown["M5"]["display"] == "-£200.00" and shown["M17"]["display"] == "£660.00"
++    assert [a["account"] for a in api["accounts"]] == ["main", "savings"]
++    assert '<section class="account combined" id="combined"><h2>All accounts</h2>' in page
++    assert summary.COMBINED_BASIS.split(":")[0] in page
++    # The drill-down of a combined figure lists the prefixed lines, and each line's override form
++    # names its own account and its own id.
++    assert "All accounts: <strong>-£200.00</strong>" in lines
++    assert "<td>savings:S1</td>" in lines and "<td>main:M2</td>" in lines
++    assert 'name="account" value="savings"' in lines and 'name="line" value="S1"' in lines
++    assert "Combined close on 2026-01-10" in lines
++
++
++@pytest.mark.contracts
++def test_workspace_not_overlapping_says_why(home, tmp_path):
++    case_id, folder = _case(tmp_path, ("main", MAIN), ("savings", LATER))
++    s = summary.case_summary(folder, case_id)
++    shown = {f["id"]: f for f in s["combined"]["figures"]}
++    assert shown["M5"]["display"] == "n/a" and shown["M5"]["method"] == metrics.NO_SHARED_DAYS
++    html = summary.render(s)
++    assert summary._e(metrics.NO_SHARED_DAYS) in html
++    d = drilldown.lines_behind(folder, case_id, account="*", month="2026-02", cell="lowest_balance")
++    assert d["value"] is None and d["note"] == metrics.NO_SHARED_DAYS and d["lines"] == []
++
++
++@pytest.mark.contracts
++def test_one_account_workspace_has_no_combined(home, tmp_path):
++    case_id, folder = _case(tmp_path, ("main", MAIN))
++    s = summary.case_summary(folder, case_id)
++    assert s["combined"] is None and 'id="combined"' not in summary.render(s)
++
++
++@pytest.mark.contracts
++def test_import_refused_at_combined_limit(home, tmp_path):
++    big = 6_000_000_000_000
++    a = f"id,date,description,amount,balance\nA1,2026-01-05,CARD SETTLEMENT STRIPE,{big}.00,{big}.00\n"
++    b = (f"id,date,description,amount,balance\nB1,2026-01-07,CARD SETTLEMENT STRIPE,{big}.00,{big}.00\n"
++         f"B2,2026-01-08,DD RENT,-1.00,{big - 1}.00\n")
++    _, folder = _case(tmp_path, ("main", a))
++    before = len(caselog.for_case(folder).entries())
++    src = tmp_path / "b.csv"
++    src.write_text(b, encoding="utf-8")
++    with pytest.raises(store.CaseStoreError) as e:
++        store.import_file(folder, src, "csv", account="second")
++    msg = str(e.value)
++    assert "account second" in msg and "money in" in msg and "money out" not in msg and "R41" in msg
++    assert len(caselog.for_case(folder).entries()) == before
++    assert not (folder / store.STATEMENTS / "second.csv").exists()
++    assert set(overrides.case_figures(folder)) == {"main"}
++    # Below the limit together, the same account is added.
++    small = tmp_path / "c.csv"
++    small.write_text(SAVINGS, encoding="utf-8")
++    store.import_file(folder, small, "csv", account="savings")
++
++
++@pytest.mark.contracts
++def test_import_refused_naming_both_flows(home, tmp_path):
++    big = 6_000_000_000_000
++    a = (f"id,date,description,amount,balance\nA1,2026-01-05,CARD SETTLEMENT STRIPE,{big}.00,{big}.00\n"
++         f"A2,2026-01-06,DD RENT,-{big}.00,0.00\n")
++    _, folder = _case(tmp_path, ("main", a))
++    src = tmp_path / "b.csv"
++    src.write_text(a.replace("A1", "B1").replace("A2", "B2").replace("2026-01-0", "2026-02-0"), encoding="utf-8")
++    with pytest.raises(store.CaseStoreError, match="money in and money out"):
++        store.import_file(folder, src, "csv", account="second")
++
++
++@pytest.mark.contracts
++def test_override_moving_a_line_out_marks_combined_figures(home, tmp_path):
++    # S2 (a £50 card settlement) moved to unexplained: combined M2 falls from 660.00 to 610.00,
++    # though S2 is no longer among its lines, so M2 and January's trading-receipts cell rest on
++    # the override, as each account's figures say (R17, R41).
++    _, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
++    overrides.add_override(folder, "S2", "other", reason="not trading", name="Pat", account="savings")
++    figures = overrides.case_figures(folder)
++    both = overrides.combined_figures(figures)
++    assert _by_id(both)["M2"].value == 610.00 and "savings:S2" not in _by_id(both)["M2"].evidence
++    assert "M2" in figures["savings"].marked
++    assert "M2" in both.marked and "M25" in both.marked
++    assert ("2026-01", "trading_receipts") in both.marked_cells
++    # A figure the override leaves as it was, and whose lines hold no overridden line, is not marked.
++    assert "M8" not in both.marked and ("2026-01", "money_out") not in both.marked_cells
++
++
++@pytest.mark.contracts
++def test_combined_figures_say_which_account_is_left_out(home, tmp_path):
++    case_id, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS), ("third", LATER))
++    (folder / store.STATEMENTS / "third.csv").unlink()
++    figures = overrides.case_figures(folder)
++    both = overrides.combined_figures(figures)
++    assert set(figures) == {"main", "savings"} and both.missing == ["third"]
++    s = summary.case_summary(folder, case_id)
++    assert s["combined"]["missing"] == ["third"]
++    assert "third" in s["combined"]["basis"] and "left out" in s["combined"]["basis"]
++    assert "left out" in summary.render(s)
++
++
++@pytest.mark.contracts
++def test_import_refused_when_an_account_cannot_be_read_for_the_limit(home, tmp_path):
++    _, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
++    (folder / store.STATEMENTS / "savings.csv").write_text("not,a,statement\n", encoding="utf-8")
++    before = len(caselog.for_case(folder).entries())
++    src = tmp_path / "third.csv"
++    src.write_text(LATER, encoding="utf-8")
++    with pytest.raises(store.CaseStoreError) as e:
++        store.import_file(folder, src, "csv", account="third")
++    assert "account savings" in str(e.value) and "R41" in str(e.value)
++    assert len(caselog.for_case(folder).entries()) == before
++    assert not (folder / store.STATEMENTS / "third.csv").exists()
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("key", ["*", "a:b"])
++def test_combined_key_and_colon_are_never_account_keys(home, tmp_path, key):
++    _, folder = _case(tmp_path, ("main", MAIN))
++    src = tmp_path / "x.csv"
++    src.write_text(SAVINGS, encoding="utf-8")
++    with pytest.raises(store.CaseStoreError, match="account key"):
++        store.import_file(folder, src, "csv", account=key)
++
++
++@pytest.mark.contracts
++def test_reimport_in_two_account_case_changes_nothing(home, tmp_path):
++    _, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
++    head = caselog.for_case(folder).entries()
++    src = tmp_path / "again.csv"
++    src.write_text(SAVINGS, encoding="utf-8")
++    got = store.import_file(folder, src, "csv", account="savings")
++    assert got.already and caselog.for_case(folder).entries() == head
++
++
++@pytest.mark.contracts
++def test_combined_lines_need_the_token(home, tmp_path):
++    case_id, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
++    srv = rs.start(folder, case_id, port=0)
++    srv.serve_in_thread()
++    try:
++        path = "/lines?" + urlencode({"account": "*", "figure": "M5"})
++        for headers in ({}, {"X-CMA-Token": srv.token[:-1] + ("x" if srv.token[-1] != "x" else "y")}):
++            conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=10)
++            conn.request("GET", path, headers={"Host": f"127.0.0.1:{srv.port}", **headers})
++            r = conn.getresponse()
++            body = r.read().decode("utf-8")
++            conn.close()
++            assert r.status == 403 and "main:M2" not in body
++    finally:
++        srv.close()
++
++
++@pytest.mark.contracts
++def test_override_on_combined_key_is_refused(home, tmp_path):
++    # "*" names the case's combined figures, never an account: an override against it is refused
++    # and records nothing (R17, R41).
++    _, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
++    before = caselog.for_case(folder).entries()
++    with pytest.raises(store.CaseStoreError, match="no account"):
++        overrides.add_override(folder, "main:M1", "other", reason="x", name="Pat", account=overrides.COMBINED)
++    assert caselog.for_case(folder).entries() == before
++
++
++@pytest.mark.contracts
++def test_refused_combined_import_leaves_no_input_file(home, tmp_path):
++    big = 6_000_000_000_000
++    a = f"id,date,description,amount,balance\nA1,2026-01-05,CARD SETTLEMENT STRIPE,{big}.00,{big}.00\n"
++    _, folder = _case(tmp_path, ("main", a))
++    inputs = sorted(p.name for p in (folder / store.INPUTS).iterdir())
++    src = tmp_path / "b.csv"
++    src.write_text(a.replace("A1", "B1").replace("2026-01-05", "2026-02-05"), encoding="utf-8")
++    with pytest.raises(store.CaseStoreError, match="R41"):
++        store.import_file(folder, src, "csv", account="second")
++    assert sorted(p.name for p in (folder / store.INPUTS).iterdir()) == inputs
++
++
++@pytest.mark.contracts
++def test_combined_buckets_reconcile_to_money_in(home, tmp_path):
++    _, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
++    m = _by_id(overrides.combined_figures(overrides.case_figures(folder)))
++    parts = sum(round(m[i].value * 100) for i in ("M2", "M19", "M20", "M21", "M22", "M23", "M24", "M25"))
++    assert parts == round(m["M17"].value * 100)
++    assert set(m["M18"].evidence) <= set(m["M2"].evidence)

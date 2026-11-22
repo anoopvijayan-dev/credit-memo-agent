@@ -1,0 +1,28 @@
+**Verdict: `not_proven`.** I couldn't write `evidence.json` to the run directory because file writes were denied, so it is the JSON block at the end of this reply.
+
+R41 can't pass yet. It asks for flow figures across accounts "after removing paired own-account transfers", but nothing in `src` pairs own-account transfers. That pairing is R8, which belongs to T34, and T34 depends on T33. So this task can't meet that clause as the tasks are split. The producer agrees (their disposition is "reproduced"). It needs one of two things from the owner: either a decision to put this clause outside T33's scope, or T34 delivered first.
+
+The rest of R41 holds, checked against the repository and the runner's logs:
+
+- **Unique line ids:** each id is prefixed with its account key (`metrics.py:381-404`). The ids stay unique because an account key can't contain `:` or `*`.
+- **Balance figures:** they read the combined end-of-day balance over the days every account covers (`metrics.py:418-465`, `:941-973`). They show n/a with the reason when the accounts share no day, in a month with no shared day, and when the combined balance is too large to report to the penny.
+- **Workspace:** the combined figures appear as an "All accounts" section with its own drill-down. That drill-down needs the session token like every other page.
+- **Combined import limit:** the check runs inside the held save before anything is written (`store.py:677-683`, `756-780`). It names the account and whether money in or money out reaches the limit. If an existing account's statement can't be read, the import is refused rather than that account being left out.
+- **Last round's major is fixed:** the combined figures are now compared with the same figures without overrides (`overrides.py:441-452`). A figure that an override moves a line out of is now marked as resting on an override.
+- **Tests:** all 21 tests in `tests/test_multi_account.py` passed in both `specified-3.log` and `contracts-4.log`.
+
+I found no other defects. Double submit, boundary values, partial failure and token checks all came up clean.
+
+```json
+{
+  "task": "T33",
+  "criteria": [
+    {"id": "R41", "tier": "adversarial", "check": "Prefixed ids: metrics.case_line_id/case_statement (src/cma/metrics.py:381-404) are unique because store refuses ':' and '*' as account keys (test_combined_key_and_colon_are_never_account_keys PASSED). Flows across accounts: compute_case (metrics.py:468-477) runs compute() on the merged, per-account-categorised statement. Balance figures on the combined end-of-day balance over shared days: case_closes (metrics.py:418-433, over max(first)..min(last), end_of_day_balances carrying each account's close), _closes_balance_figures (:436-465), _month_balance_cells (:941-973); n/a with NO_SHARED_DAYS / NO_SHARED_DAYS_IN_MONTH, and n/a when no float carries a combined balance. Shown in the workspace: summary.case_summary 'combined' and the 'All accounts' section, drilldown account '*'. Combined import limit: store._case_flows_at_limit (store.py:756-780) inside the held save (store.py:677-683) before any write, naming account and money in/out, refusing when an existing statement cannot be read. The previous major (R17 marking on the combined view) is fixed: combined_figures compares with the no-override combined figures via _rests_on (overrides.py:441-452), with base statements categorised in case_figures (overrides.py:384-386). All 21 tests in tests/test_multi_account.py PASSED in specified-3.log and contracts-4.log. Not proven: 'after removing paired own-account transfers'. No own-account pairing (R8) exists in src; R8 is T34, which depends on T33, so this clause cannot be met by this task as decomposed.", "result": "not_proven", "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-259/specified-3.log"}
+  ],
+  "findings": [
+    {"severity": "major", "file": "src/cma/metrics.py", "line": 468, "criterion": "R41", "claim": "R41 asks for flow figures across the case's accounts 'after removing paired own-account transfers'. compute_case computes combined flows from each account's categorised lines with no own-account pairing: R8 is implemented nowhere in src (it is T34, which depends on T33). An inter-account transfer that neither the rule table nor the profile names is counted on both sides of the combined figures, inflating combined money in, which is the reply's 'counted twice' concern. The producer acknowledges this (disposition 'reproduced'). R41 can pass only after an owner scope decision or once T34 is delivered.", "repro": "Case with main: 'X1,2026-01-10,FPS DEBIT ACME LTD,-1000.00,...' and savings: 'Y1,2026-01-11,FPS CREDIT ACME LTD,1000.00,...', no profile. overrides.combined_figures(overrides.case_figures(folder)): combined M17 includes savings:Y1 (in M25, unexplained), main:X1 stays in money out, and nothing pairs them as own-account transfers."}
+  ],
+  "verdict": "not_proven",
+  "verifier": {"seat": "reviewer", "adapter": "claude-code", "model": "claude-opus-5-5"}
+}
+```
