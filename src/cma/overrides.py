@@ -381,8 +381,10 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
         lines = set(applied)
         marked: set[str] = set()
         cells: set[tuple[str, str]] = set()
+        base_statement = None
+        if applied and len(accounts) > 1:  # only the case's combined figures compare with it (R41, R52)
+            _categorise(base_statement := _copy(bare), sha, profile, {})
         if applied:
-            _categorise(base_statement := _copy(bare), sha, profile, {})  # for the case's combined figures
             try:
                 base_metrics, base_monthly = _bare_figures(bare, sha, profile)
             except ReconciliationError:
@@ -407,7 +409,7 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
                                    {k: v.ref for k, v in applied.items()},
                                    [s for s in state.stale if s.account == account], marked, cells,
                                    profile["vat_stagger"], profile["proposed_monthly_repayment"],
-                                   bare=base_statement if applied else None, missing=missing)
+                                   bare=base_statement, missing=missing)
     if failed:  # R3: no figures for any account of the case
         raise CaseNotReconciled(failed)
     return out
