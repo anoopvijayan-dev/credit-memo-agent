@@ -204,6 +204,9 @@ def sync_folder(path: PurePath, *, home: Path | None = None,
     info file; a symlink is followed, since the files land where it points. This is a
     warning, not a lock: a folder synced under a name no client uses is not seen."""
     env = dict(os.environ) if env is None else env
+    # Windows keeps variable names in upper case (ONEDRIVECOMMERCIAL), so names are matched
+    # whatever their case (Antigravity re-review of T14).
+    env = {k.upper(): v for k, v in env.items()}
     home = Path.home() if home is None else home
     paths = [path]
     if isinstance(path, Path):
@@ -211,9 +214,15 @@ def sync_folder(path: PurePath, *, home: Path | None = None,
             resolved = path.resolve()
             if resolved != path:
                 paths.append(resolved)
-    roots = [("OneDrive", PurePath(env[v])) for v in ONEDRIVE_VARS
-             if env.get(v) and PurePath(env[v]).is_absolute()]
+    roots = [("OneDrive", PurePath(env[v.upper()])) for v in ONEDRIVE_VARS
+             if env.get(v.upper()) and PurePath(env[v.upper()]).is_absolute()]
     roots += [("Dropbox", r) for r in _dropbox_roots(home, env) if r.is_absolute()]
+    # A sync root reached through a symlink is matched where it points too, as `path` is.
+    for client, root in list(roots):
+        with suppress(OSError, RuntimeError):
+            real = Path(root).resolve()
+            if real != Path(root):
+                roots.append((client, real))
     for p in paths:
         for client, root in roots:
             if _within(p, root):
@@ -337,7 +346,21 @@ def _restorer(path: Path, mode: int = FILE_MODE):
 
 
 class _Loader(firm._UniqueKeyLoader):
-    """safe_load with a key given twice refused (firm.yaml's rule)."""
+    """safe_load with a key given twice refused (firm.yaml's rule), and a YAML number with a
+    decimal point read as the decimal typed, never a binary float that rounds it: 1500.001 is
+    refused as fractional pence rather than read as 1500.0 (Antigravity re-review of T13)."""
+
+
+def _decimal_scalar(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> Any:
+    try:
+        return Decimal(node.value)
+    except InvalidOperation:  # .inf, .nan and the like: let the float rules refuse them
+        return loader.construct_yaml_float(node)
+
+
+_Loader.add_constructor("tag:yaml.org,2002:float", _decimal_scalar)
+
+_GROUPED = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?")  # 1,500.50: commas only between thousands
 
 
 def _name(value: Any, where: str) -> str:
@@ -356,13 +379,22 @@ def _repayment(value: Any) -> str:
     where = "proposed_monthly_repayment"
     if isinstance(value, bool):
         raise CaseStoreError(f"{where} must be an amount in pounds, such as 1500.00")
+    if isinstance(value, Decimal):
+        value = str(value)  # YAML's 1500.50, read as typed (_Loader)
     if isinstance(value, float):
-        value = repr(value)  # YAML read 1500.50 as a float; its shortest form is the text typed
+        value = repr(value)
     if isinstance(value, int):
         value = str(value)
     if not isinstance(value, str):
         raise CaseStoreError(f"{where} must be an amount in pounds, such as 1500.00")
-    text = value.strip().replace(",", "").removeprefix("£")
+    text = value.strip().removeprefix("£")
+    if "," in text:
+        # A comma only groups thousands: 1500,50 is a decimal comma, never £150,050 (Antigravity
+        # re-review of T13).
+        if not _GROUPED.fullmatch(text):
+            raise CaseStoreError(f"{where} must be an amount in pounds, such as 1500.00 or 1,500.00; a comma "
+                                 "may only separate thousands")
+        text = text.replace(",", "")
     try:
         amount = Decimal(text)
     except InvalidOperation:
@@ -827,9 +859,12 @@ def _append_ledger(root: Path, line: dict[str, str]) -> None:
                 raise OSError(errno.EBUSY, "the purge ledger is in use by another purge")
             time.sleep(0.05)
         try:
-            if _ledger_records(root, line["case"]):
+            # Read through the handle that holds the lock: on Windows the lock is mandatory, so
+            # another handle of this process could not read the ledger (Antigravity re-review
+            # of T15: every purge after the first would fail there).
+            if _records(_read_fd(fd), line["case"]):
                 return  # another purge of this case recorded it while this one finished
-            os.write(fd, data)  # one short write in append mode: lines from two purges never mix
+            caselog._write_all(fd, data)  # append mode; a short write is continued, never left torn
             os.fsync(fd)
         finally:
             with suppress(OSError):
@@ -845,6 +880,10 @@ def purge_target(case_id: str, root: Path | None = None) -> Path:
         raise CaseStoreError("a case id is 16 lowercase hex characters, as `cma case new` prints it")
     root = ensure_root(root)
     for folder in (root / CASES / case_id, root / CASES / f"{PURGING}{case_id}"):
+        if folder.is_symlink():
+            # A purge deletes what is inside the folder: through a symlink that would be files
+            # outside the case store (Antigravity re-review of T15).
+            raise CaseStoreError(f"{folder} is a symlink, not a case folder; nothing was purged")
         if (folder / PROFILE).is_file() or (folder.name.startswith(PURGING) and folder.is_dir()):
             return folder
     raise CaseStoreError(f"no case {case_id} under {root}")
@@ -903,11 +942,14 @@ def _take_out_of_use(folder: Path, gone: Path, wait: float | None) -> None:
     log = caselog.for_case(folder)
     if not (folder / PROFILE).is_file():
         raise FileNotFoundError(str(folder))
-    # Lock files are made only for a case that lacks them; a folder that vanished since is
-    # then never recreated (the writer raises FileNotFoundError).
-    create = not (log.gate_path.exists() and log.lock_path.exists())
+    # Lock files are made only for a case that lacks them, and only inside the folder as it
+    # is: never with the folder itself, so a folder another purge moved away since is not
+    # recreated (FileNotFoundError; Antigravity re-review of T15).
+    for lock in (log.gate_path, log.lock_path):  # the gate first, as the writer makes them
+        if not lock.exists():
+            os.close(os.open(lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600))
     moved = False
-    with log.writer(wait=wait, create=create):
+    with log.writer(wait=wait, create=False):
         if not (folder / PROFILE).is_file():
             raise FileNotFoundError(str(folder))
         try:
@@ -928,12 +970,24 @@ def _unlink_writable(path: Path) -> None:
         path.unlink()
 
 
+def _read_fd(fd: int) -> str:
+    os.lseek(fd, 0, os.SEEK_SET)
+    chunks = []
+    while chunk := os.read(fd, 1 << 16):
+        chunks.append(chunk)
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+
 def _ledger_records(root: Path, case_id: str) -> bool:
     """Whether the purge ledger already holds a line for `case_id`."""
     try:
         text = (root / PURGE_LEDGER).read_text(encoding="utf-8")
     except FileNotFoundError:
         return False
+    return _records(text, case_id)
+
+
+def _records(text: str, case_id: str) -> bool:
     for line in text.splitlines():
         with suppress(ValueError):
             if json.loads(line).get("case") == case_id:
