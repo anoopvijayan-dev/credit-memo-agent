@@ -1,0 +1,39 @@
+T26's record.html change passes every checklist line except three gaps that need the owner. I added one test and changed no production code.
+
+**Checks:** lint and compile pass. The full suite passes (2442 tests), as do the invariants (989), contracts (809) and dual_run (84) tiers.
+
+**Added test:** if record.html fails to render, no pack is written, no half-written pack folder is left behind and nothing is added to the case log. Signing the same preview afterwards then works. It is in `tests/test_record.py` and marked contracts; that file now passes 17 tests.
+
+**Performance:** I measured signing with a script outside the runner tiers.
+
+| Statement lines | Sign-off time | record.html size |
+|---|---|---|
+| 1,000 | 0.20s | 1.4 MB |
+| 10,000 | 1.44s | 10.2 MB |
+
+The time is within the 2-second target at 10,000 lines.
+
+**Gaps for the owner, in `notes`:**
+- **File size:** the record repeats each line under every figure and monthly cell that uses it. It is about 10 MB at 10,000 lines and is not paginated. Shrinking it means listing each line once and pointing figures at it, which is a design choice, so I left it.
+- **Release note:** the design doesn't say where release notes go, so I didn't write one.
+- **Unproven timing:** the timing numbers come from my own script, not a runner tier, so the reviewer won't count them as proof.
+
+```json
+{
+  "task": "T26",
+  "claims": [
+    {"text": "Docs: README sign-off paragraph and pack.py docstrings name record.html among the pack's files; record.py's module docstring states what the record holds (done).", "proof_cmd": "git show b6cdfae --stat -- README.md src/cma/pack.py src/cma/record.py", "proof_output": "README.md, src/cma/pack.py and src/cma/record.py are changed by b6cdfae."},
+    {"text": "Lint and compile pass on src and tests.", "proof_cmd": "ruff check src tests; python -m compileall -q src", "proof_output": "All checks passed!; compile-ok"},
+    {"text": "Full suite and marker tiers pass on the worktree.", "proof_cmd": "python -m pytest -q; python -m pytest -q -m invariants|contracts|dual_run", "proof_output": "2442 passed; invariants 989 passed; contracts 809 passed; dual_run 84 passed"},
+    {"text": "Failure modes / partial failure: a record that fails to render leaves no pack or .part folder and appends nothing to the case log, and the same preview then signs off. New test added, marked contracts.", "proof_cmd": "python -m pytest tests/test_record.py -q", "proof_output": "17 passed (includes test_r26_r42_a_record_that_fails_to_render_writes_no_pack_and_records_nothing)"},
+    {"text": "Idempotency: record.html goes through the existing once-only pack write (PACK_FILES, _write_pack, rename then log), and its sha256 is recorded in the signed_off entry. A second sign-off is refused by the existing tests, now expecting four files.", "proof_cmd": "python -m pytest tests/test_signoff.py tests/test_record.py -q", "proof_output": "62 passed (before the new test); test_r26_the_pack_writes_record_html_once_with_its_hash_in_the_case_log passes"},
+    {"text": "Security: no new entry point. The workspace pages use the existing token and loopback check, and _shell only prepends the escaped demo banner. The record escapes every case text (P8 test with hostile descriptions), refers to nothing outside itself and holds no script, form or base, and its CSP is default-src 'none'. Anchor ids come from ACCOUNT_KEY-validated keys and are escaped. No new dependency.", "proof_cmd": "python -m pytest tests/test_record.py -q -k 'p8 or refers_to_nothing'; grep -n 'ACCOUNT_KEY =' src/cma/store.py", "proof_output": "passed; 64:ACCOUNT_KEY = re.compile(r\"[a-z0-9][a-z0-9_-]{0,31}\")"},
+    {"text": "Data: there is no migration. The pack gains one file and old packs are untouched. PII stays inside the case folder under the owner-only case root, and the record holds descriptions as the memo's evidence does.", "proof_cmd": "git show b6cdfae --stat", "proof_output": "no schema, store or log-format files changed; only pack.py, record.py, review/*, README, tests"},
+    {"text": "Performance (measured): sign-off with the record runs 0.20s and writes 1.4 MB at 1,000 lines, and 1.44s and 10.2 MB at 10,000 lines. That is within R52's 2s target, but the file size grows with figures times lines (gap, see notes).", "proof_cmd": "PYTHONPATH=src python <scratchpad>/size.py 1000; ... 10000", "proof_output": "1000 lines sign_off 0.20s record.html 1.4 MB; 10000 lines sign_off 1.44s record.html 10.2 MB"},
+    {"text": "Observability: the existing signed_off log entry records record.html's hash with the other pack files. No new alert applies, because the tool is local-only by design.", "proof_cmd": "python -m pytest tests/test_record.py -q -k hash_in_the_case_log", "proof_output": "passed"},
+    {"text": "Operability/rollback: no flag. Rollback is reinstalling the previous wheel. Packs are immutable, and an older package ignores the extra record.html. show_policy_verdict off hides outcomes in the record (P20 off test).", "proof_cmd": "python -m pytest tests/test_record.py -q -k p20", "proof_output": "passed (on/default and off, one and two accounts)"}
+  ],
+  "files_changed": ["tests/test_record.py"],
+  "notes": "Gaps for the owner: (1) record.html lists every line once per figure and per monthly cell, so it reaches about 10 MB at 10,000 lines. It is bounded but not paginated. Deduplicating lines into one table with per-figure id lists would need a design choice, so I left it. (2) The design names no changelog or release note for this repo, so none was written. (3) The perf measurement came from a scratchpad script, not a runner tier."
+}
+```

@@ -1,0 +1,821 @@
+diff --git a/README.md b/README.md
+index 797e055..b0df630 100644
+--- a/README.md
++++ b/README.md
+@@ -104,7 +104,9 @@ cma case preview <id>
+ 
+ # Sign off the figures of the latest preview (or --snapshot <hash>): it asks for your typed
+ # name and confirms, records it with your operating-system user and the UTC time, and writes
+-# memo.md and evidence.json once to packs/<snapshot> in the case folder. Signing off the
++# memo.md, record.html (a self-contained record that works offline: every figure links to
++# its lines, with the sign-off), evidence.json and monthly.csv once to packs/<snapshot> in
++# the case folder. Signing off the
+ # figures does not approve the loan. Refused, writing nothing, when the case changed since
+ # the preview (it names what), when the case log is broken (exit 3, naming the first bad
+ # entry), when the figures do not reconcile or the text fails the guard, or when that
+diff --git a/src/cma/pack.py b/src/cma/pack.py
+index 040c61d..10942fb 100644
+--- a/src/cma/pack.py
++++ b/src/cma/pack.py
+@@ -21,7 +21,8 @@
+   map, the packaged policy's hash, the show_policy_verdict setting and the package version.
+ 
+ `cma case sign` and the workspace's sign-off form (sign_off, below) sign off the figures of
+-one such preview, bound to its snapshot, and write memo.md, evidence.json (v1) and monthly.csv once to
++one such preview, bound to its snapshot, and write memo.md, record.html (the self-contained
++offline record: record.py), evidence.json (v1) and monthly.csv once to
+ packs/<snapshot>, appending the pack write and the sign-off to the case log after the rename
+ (R22, R23, R24, R26, R28, R42, R43).
+ 
+@@ -433,14 +434,14 @@ def build_preview(folder: Path, case_id: str) -> Preview:
+ #    is refused naming what changed (R23); reconciliation runs again (R3) and the text is
+ #    checked by the guard again (R28);
+ # 4. a pack already written for the snapshot is never overwritten (R26);
+-# 5. memo.md, evidence.json and monthly.csv are made in full in packs/.part-<random>, synced, and the
+-#    folder is renamed to packs/<snapshot>; only then are the pack write and the sign-off
+-#    appended to the case log (R42). If the log refuses the pack write, the folder is
++# 5. memo.md, record.html, evidence.json and monthly.csv are made in full in
++#    packs/.part-<random>, synced, and the folder is renamed to packs/<snapshot>; only then
++#    are the pack write and the sign-off appended to the case log (R42). If the log refuses the pack write, the folder is
+ #    removed again, so the log and the folder agree.
+ 
+ PACKS = "packs"
+ PART = ".part-"  # a pack folder being written; never a pack
+-PACK_FILES = ("memo.md", "evidence.json", "monthly.csv")
++PACK_FILES = ("memo.md", "record.html", "evidence.json", "monthly.csv")
+ PACK_EVENT, SIGN_EVENT = "pack_written", "signed_off"
+ MAX_NAME = 200
+ SIGN_WORDING = ("Sign off the figures: you confirm these figures and their lines were checked. This does not "
+@@ -799,8 +800,10 @@ def sign_off(folder: Path, case_id: str, snapshot: str, name: str) -> Signed:
+                    "wording": SIGN_WORDING}
+         evidence = json.dumps(_evidence(p, signoff, firm.load(), entries, folder), indent=2, sort_keys=True,
+                               ensure_ascii=False)
+-        files = {"memo.md": p.text.encode("utf-8"), "evidence.json": (evidence + "\n").encode("utf-8"),
+-                 "monthly.csv": monthly_csv(p)}
++        from . import record
++
++        files = {"memo.md": p.text.encode("utf-8"), "record.html": record.render(p, signoff).encode("utf-8"),
++                 "evidence.json": (evidence + "\n").encode("utf-8"), "monthly.csv": monthly_csv(p)}
+         shas = {k: hashlib.sha256(v).hexdigest() for k, v in files.items()}
+         _remove_leftovers(packs)  # only once the sign-off is taken, so a refusal changes nothing
+         target = _write_pack(packs, snapshot, files)
+diff --git a/src/cma/record.py b/src/cma/record.py
+new file mode 100644
+index 0000000..ab2be78
+--- /dev/null
++++ b/src/cma/record.py
+@@ -0,0 +1,132 @@
++"""The pack's record.html (C6; R2, R16, R25, R26, R34, R48, R56, P8, P20).
++
++One self-contained HTML file, written once at sign-off beside memo.md, evidence.json and
++monthly.csv, from the signed preview. It works offline: its style is inline, it holds no
++script, and it refers to nothing outside itself (no URL, no image, no stylesheet, no font),
++and its content security policy lets it load nothing. It holds:
++
++- on a demo case, the demo stamp first (R48);
++- the sign-off: the typed name, the operating-system user, the UTC time and the snapshot,
++  in the words of the sign-off, never as approving the loan (R22, R24);
++- the memo-ready sections as memo.md holds them;
++- for each account, the money-in breakdown, every figure, the monthly summary and the
++  indicators, money to the penny as every table shows it (R2). Every figure, bucket and
++  monthly cell links to a section of the record that lists exactly the lines behind it, with
++  their total, or the inputs and method, by the figure's kind, as the workspace's drill-down
++  shows them (R16, R26);
++- while show_policy_verdict is on, for each account the policy check, with the illustrative
++  label in the same section as the outcome (R25, P20); with it off, no outcome and no rule
++  result (R56). The recommendation is a field left blank for the underwriter (R24).
++
++It renders what the figures layer and policy.evaluate computed for the preview; it computes
++no money. Every piece of text from the case is escaped (R34, P8).
++"""
++
++from __future__ import annotations
++
++from html import escape
++from typing import Any
++
++from . import indicators as ind
++from .review import drilldown, summary
++
++CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; form-action 'none'; base-uri 'none'"
++STYLE = """
++:root { color-scheme: light dark; }
++body { margin: 0 auto; max-width: 72rem; padding: 1rem; font-family: system-ui, sans-serif; line-height: 1.4; }
++h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
++h2 { font-size: 1.15rem; margin: 1.5rem 0 0.25rem; }
++h3 { font-size: 1rem; margin: 1rem 0 0.25rem; }
++table { border-collapse: collapse; width: 100%; margin: 0 0 0.75rem; font-size: 0.9rem; }
++th, td { border-bottom: 1px solid #8884; padding: 0.2rem 0.5rem; text-align: left; vertical-align: top; }
++.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
++tr.within td:nth-child(2) { padding-left: 1.5rem; font-style: italic; }
++tr.total td { font-weight: 600; border-top: 2px solid #8888; }
++.overridden, .part, .illustrative, .firm, .note, .none { font-size: 0.8rem; opacity: 0.8; }
++.policy-check, .lines-behind { border: 1px solid #8888; padding: 0.5rem 1rem; margin: 0 0 0.75rem; }
++.illustrative-label, .demo-banner { font-weight: 600; }
++.demo-banner { border: 2px solid #c80; padding: 0.25rem 1rem; }
++.field { min-height: 3rem; border: 1px dashed #8888; }
++pre.memo { white-space: pre-wrap; }
++"""
++
++
++def _e(value: Any) -> str:
++    return escape("" if value is None else str(value), quote=True)
++
++
++def anchor(account: str, **target: str) -> str:
++    """The id of the record's section listing the lines behind a figure or a monthly cell."""
++    if "figure" in target:
++        return f"lines-{account}-{target['figure']}"
++    return f"lines-{account}-{target['month']}-{target['cell']}"
++
++
++def _href(account: str, **target: str) -> str:
++    return _e("#" + anchor(account, **target))
++
++
++def _policy_check(a) -> dict[str, Any]:
++    """The signed preview's policy result, in the shape the workspace's panel shows it."""
++    r = a.policy
++    return {"policy_name": r.policy_name, "policy_sha256": r.policy_sha256, "overall": r.overall.value,
++            "rules": [{"rule_id": x.rule_id, "description": x.description, "metric_id": x.metric_id,
++                       "outcome": x.outcome.value, "detail": x.detail} for x in r.rules]}
++
++
++def _details(a) -> list[str]:
++    """A section for every figure and every monthly cell of the account: exactly its lines."""
++    f = a.figures
++    targets = [{"figure": m.id} for m in a.metrics]
++    targets += [{"month": r.month, "cell": key} for r in f.monthly for key, _ in summary.CELLS]
++    back = f'<p class="back"><a href="#account-{_e(a.account)}">Back to account {_e(a.account)}</a></p>'
++    out = []
++    for t in targets:
++        d = {"account": a.account, **drilldown.detail(f, **t)}
++        out.append(drilldown.detail_html(d, section_id=anchor(a.account, **t), back=back))
++    return out
++
++
++def _signoff_html(signoff: dict[str, Any]) -> str:
++    return ('<section id="sign-off"><h2>Sign-off</h2>'
++            f'<p>Figures signed off by <strong>{_e(signoff["name"])}</strong> (operating-system user '
++            f'{_e(signoff["os_user"])}) at {_e(signoff["at"])} (UTC), bound to snapshot '
++            f'<code>{_e(signoff["snapshot"])}</code>.</p>'
++            f'<p class="wording">{_e(signoff["wording"])}</p></section>')
++
++
++def render(p, signoff: dict[str, Any]) -> str:
++    """The record of a signed preview `p` (pack.Preview) and its sign-off, as one HTML file."""
++    thresholds = (None if p.thresholds is None else
++                  {"source": p.thresholds.source,
++                   "shipped": p.thresholds.sha256 == ind.shipped().sha256})
++    contents = "".join(f'<li><a href="#account-{_e(a.account)}">Account {_e(a.account)}</a></li>' for a in p.accounts)
++    body = []
++    body.append(summary.demo_banner(p.demo))  # the workspace's banner, the pack's stamp (R48)
++    body.append(f'<header><h1>Statement review record</h1><p>Case {_e(p.case)}, snapshot '
++                f'<code>{_e(p.snapshot)}</code>.</p></header>')
++    body.append(_signoff_html(signoff))
++    body.append(f'<nav id="contents"><ul><li><a href="#memo">Memo-ready sections</a></li>{contents}'
++                + ('<li><a href="#policy-checks">Policy check</a></li>' if p.policy_shown else "")
++                + '<li><a href="#recommendation">Recommendation</a></li></ul></nav>')
++    body.append(f'<section id="memo"><h2>Memo-ready sections</h2><pre class="memo">{_e(p.text)}</pre></section>')
++    details = []
++    for a in p.accounts:
++        shown = summary._account(a.figures, a.indicators, None)
++        html = summary._account_html(shown, thresholds=thresholds, href=_href)
++        body.append(html.replace('<section class="account">',
++                                 f'<section class="account" id="account-{_e(a.account)}">', 1))
++        details += _details(a)
++    if p.policy_shown:
++        body.append('<section id="policy-checks"><h2>Policy check</h2>'
++                    + "".join(summary._policy_html({"account": a.account, "policy_check": _policy_check(a)})
++                              for a in p.accounts if a.policy is not None) + "</section>")
++    body.append(summary.RECOMMENDATION_HTML)
++    body.append('<section id="lines"><h2>The lines behind each figure and cell</h2>' + "".join(details)
++                + "</section>")
++    return ('<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
++            f'<meta http-equiv="Content-Security-Policy" content="{_e(CSP)}">\n'
++            '<meta name="referrer" content="no-referrer">\n'
++            '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
++            f'<title>Statement review record: case {_e(p.case)}</title>\n<style>{STYLE}</style>\n</head>\n'
++            f'<body>\n{"".join(body)}\n</body>\n</html>\n')
+diff --git a/src/cma/review/drilldown.py b/src/cma/review/drilldown.py
+index f16de13..48c97ea 100644
+--- a/src/cma/review/drilldown.py
++++ b/src/cma/review/drilldown.py
+@@ -84,8 +84,17 @@ def lines_behind(folder: Path, case_id: str, *, account: str | None = None, figu
+     f = figures.get(account)
+     if f is None:
+         raise DrillError("no such account in this case")
+-    statement, by_line = f.statement, f.statement.by_id()
+     out["account"] = account
++    out.update(detail(f, figure=figure, month=month, cell=cell))
++    return out
++
++
++def detail(f, *, figure: str | None = None, month: str | None = None, cell: str | None = None) -> dict[str, Any]:
++    """The lines behind one figure or one monthly cell of one account's figures
++    (overrides.CaseFigures), with their total, or the inputs and method, by the figure's kind
++    (R16). The workspace's drill-down and the pack's record (R26) both show this."""
++    statement, by_line = f.statement, f.statement.by_id()
++    out: dict[str, Any] = {}
+     if figure is not None:
+         m = next((x for x in f.metrics if x.id == figure), None)
+         if m is None:
+@@ -139,7 +148,21 @@ def render(d: dict[str, Any], token: str) -> str:
+     if d["state"] != "shown":
+         return back + summary.render({"business_name": None, "label": None, "profile": None, **d,
+                                       "accounts": []})
+-    head = (f'<section id="drilldown"><h2>{_e(d["id"])}: {_e(d["name"])}</h2>'
++    position = d.get("position")
++    here = "/lines?" + urlencode({"account": d["account"], **d["target"]})  # where a form comes back to
++
++    def form(x):
++        return override_form(token, d["account"], x, position, here)
++
++    return back + detail_html(d, form if position is not None else None)
++
++
++def detail_html(d: dict[str, Any], form=None, section_id: str = "drilldown", back: str = "") -> str:
++    """One figure's or cell's lines as an HTML section: the value, its method, the lines' total
++    or the inputs by kind, and the lines (R16); every case text escaped (R34). `form`, given a
++    line, gives the cell that changes its category, as the workspace offers it; the pack's
++    record offers none. `back` is HTML placed at the end of the section."""
++    head = (f'<section class="lines-behind" id="{_e(section_id)}"><h2>{_e(d["id"])}: {_e(d["name"])}</h2>'
+             f'<p class="figure-value">Account {_e(d["account"])}: <strong>{_e(d["display"])}</strong>'
+             + (' <span class="overridden">rests on an override</span>' if d["overridden"] else "")
+             + f'</p><p class="method">{_e(d["method"])}</p>')
+@@ -161,21 +184,15 @@ def render(d: dict[str, Any], token: str) -> str:
+                        f'<td>{_e(c["line"])}</td></tr>' for c in d["closes"])
+         head += ('<h3>End-of-day closes read</h3><table class="closes"><thead><tr><th>Day</th>'
+                  f'<th class="num">Close</th><th>Set by line</th></tr></thead><tbody>{rows}</tbody></table>')
+-    position = d.get("position")
+-    here = "/lines?" + urlencode({"account": d["account"], **d["target"]})  # where a form comes back to
+-
+-    def form(x):
+-        return f'<td>{override_form(token, d["account"], x, position, here)}</td>' if position is not None else ""
+-
+     rows = "".join(
+         f'<tr><td>{_e(x["id"])}</td><td>{_e(x["date"])}</td><td>{_e(x["description"])}</td>'
+         f'<td class="num">{_e(x["amount_display"])}</td><td class="num">{_e(x["balance_display"])}</td>'
+         f'<td>{_e(x["category"])}</td><td>{_e(x["rule"])}'
+         + (' <span class="overridden">override</span>' if x["overridden"] else "")
+         + (' <span class="in-part">counted in part</span>' if x["counted_in_part"] else "")
+-        + f'</td>{form(x)}</tr>' for x in d["lines"])
+-    change = "<th>Change category</th>" if position is not None else ""
++        + "</td>" + (f"<td>{form(x)}</td>" if form else "") + "</tr>" for x in d["lines"])
++    change = "<th>Change category</th>" if form else ""
+     table = ('<h3>Lines</h3><table class="lines"><thead><tr><th>Line</th><th>Date</th><th>Description</th>'
+              '<th class="num">Amount</th><th class="num">Balance</th><th>Category</th><th>Set by</th>'
+-             f'{change}</tr></thead><tbody>{rows}</tbody></table></section>')
+-    return back + head + table
++             f'{change}</tr></thead><tbody>{rows}</tbody></table>{back}</section>')
++    return head + table
+diff --git a/src/cma/review/server.py b/src/cma/review/server.py
+index c7a89d3..6d5eea2 100644
+--- a/src/cma/review/server.py
++++ b/src/cma/review/server.py
+@@ -318,6 +318,13 @@ class ReviewServer:
+     def url(self) -> str:
+         return f"http://{LOOPBACK}:{self.port}/?token={self.token}"
+ 
++    def _shell(self, html: str) -> bytes:
++        """The page with `html` as its main element, a demo case's banner first on every page (R48)."""
++        from . import summary
++
++        html = summary.demo_banner(summary.is_demo(self.folder)) + html
++        return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
++
+     def _case_json(self) -> bytes:
+         """The case summary as data (R3): computed afresh, through the figures layer."""
+         from . import summary
+@@ -329,7 +336,7 @@ class ReviewServer:
+         from . import summary
+ 
+         html = summary.render(summary.case_summary(self.folder, self.case_id), token=self.token)
+-        return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
++        return self._shell(html)
+ 
+     def _lines_json(self, **target) -> bytes:
+         """The lines behind one figure or monthly cell, as data (R16)."""
+@@ -343,7 +350,7 @@ class ReviewServer:
+         from . import drilldown
+ 
+         html = drilldown.render(drilldown.lines_behind(self.folder, self.case_id, **target), self.token)
+-        return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
++        return self._shell(html)
+ 
+     def _save(self, kind: str, fields: dict, recompute: bool = True) -> tuple[int, dict]:
+         """One write from the workspace: its status and reply, the recomputed case included for
+@@ -358,12 +365,12 @@ class ReviewServer:
+         from . import signoff
+ 
+         html = signoff.html(kind, status, reply, self.token)
+-        return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
++        return self._shell(html)
+ 
+     def _outcome_html(self, status: int, reply: dict) -> bytes:
+         from . import edit
+ 
+-        return self._page.replace(SUMMARY_MARK.encode(), edit.outcome_html(status, reply, self.token).encode("utf-8"))
++        return self._shell(edit.outcome_html(status, reply, self.token))
+ 
+     def serve_forever(self) -> None:
+         self.httpd.serve_forever()
+diff --git a/src/cma/review/static/app.css b/src/cma/review/static/app.css
+index b413c97..92b6b82 100644
+--- a/src/cma/review/static/app.css
++++ b/src/cma/review/static/app.css
+@@ -20,3 +20,4 @@ tr.total td { font-weight: 600; border-top: 2px solid #8888; }
+ .field { min-height: 3rem; border: 1px dashed #8888; }
+ form.override, form.stale { display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0; }
+ form.override input, form.override select, form.stale input { font-size: 0.8rem; max-width: 12rem; }
++.demo-banner { border: 2px solid #c80; background: #c802; padding: 0.25rem 1rem; margin: 0 0 1rem; font-weight: 600; }
+diff --git a/src/cma/review/summary.py b/src/cma/review/summary.py
+index 1b5bd81..c216ae4 100644
+--- a/src/cma/review/summary.py
++++ b/src/cma/review/summary.py
+@@ -257,13 +257,15 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+     out: dict[str, Any] = {"case": case_id, "label": None, "business_name": None, "profile": None,
+                            "state": "shown", "accounts": [], "queue": [], "thresholds": None,
+                            "reconciliation": None, "refusal": None, "position": None, "stale": [],
+-                           "policy_check": {"shown": False}, "recommendation": None}  # left blank (R24)
++                           "policy_check": {"shown": False}, "recommendation": None,  # left blank (R24)
++                           "demo": False}
+     # The case log position the page is built at, read before anything else, so a save made
+     # from this page is refused as a conflict once anything was recorded after it (R17).
+     out["position"] = log_position(folder)
+     try:
+         profile = store.load_profile(folder)
+         out["label"], out["business_name"] = profile.get("label"), profile.get("business_name")
++        out["demo"] = bool(profile.get("demo"))  # R48: the banner says what the case is
+         out["profile"] = {key: (list(profile[key]) if key in store.LIST_FIELDS else profile[key])
+                           for key in PROFILE_SHOWN}
+     except Exception as e:
+@@ -331,23 +333,29 @@ def _figure_row(f: dict[str, Any], cls: str = "", href: str | None = None) -> st
+ 
+ 
+ def _account_html(a: dict[str, Any], token: str | None = None,
+-                  thresholds: dict[str, Any] | None = None) -> str:
++                  thresholds: dict[str, Any] | None = None, href=None) -> str:
++    """One account's money in, figures, monthly summary and indicators. Each figure, bucket and
++    cell links to its lines: through the workspace with the page's token, or through `href`
++    (account, **target) -> an escaped link, as the pack's record links within itself (R26)."""
+     acct = a["account"]
++    if href is None:
++        def href(account, **target):
++            return _href(token, account, **target)
+     period = f'{_e(a["period"]["start"])} to {_e(a["period"]["end"])}, ' if a["period"] else ""
+     head = '<thead><tr><th>Id</th><th>Figure</th><th class="num">Value</th><th class="num">Lines</th></tr></thead>'
+     mi = a["money_in"]
+     rows = []
+     for b in mi["buckets"]:
+-        rows.append(_figure_row(b, href=_href(token, acct, figure=b["id"])))
++        rows.append(_figure_row(b, href=href(acct, figure=b["id"])))
+         if b["id"] == "M2":
+             cash = mi["cash_within_trading"]
+-            rows.append(_figure_row(cash, "within", _href(token, acct, figure=cash["id"])))
++            rows.append(_figure_row(cash, "within", href(acct, figure=cash["id"])))
+     total = mi["total"]
+     breakdown = (f'<table class="breakdown">{head}<tbody>{"".join(rows)}</tbody>'
+-                 f'<tfoot>{_figure_row(total, "total", _href(token, acct, figure=total["id"]))}</tfoot></table>')
++                 f'<tfoot>{_figure_row(total, "total", href(acct, figure=total["id"]))}</tfoot></table>')
+     figures = ('<table class="figures"><thead><tr><th>Id</th><th>Figure</th><th class="num">Value</th>'
+                '<th>Method</th><th class="num">Lines</th></tr></thead><tbody>'
+-               + "".join(f'<tr><td>{_linked(f["id"], _href(token, acct, figure=f["id"]))}</td><td>{_e(f["name"])}'
++               + "".join(f'<tr><td>{_linked(f["id"], href(acct, figure=f["id"]))}</td><td>{_e(f["name"])}'
+                          + (' <span class="overridden">rests on an override</span>' if f["overridden"] else "")
+                          + f'</td><td class="num">{_e(f["display"])}</td><td>{_e(f["method"])}</td>'
+                          f'<td class="num">{_e(f["lines"])}</td></tr>' for f in a["figures"])
+@@ -359,7 +367,7 @@ def _account_html(a: dict[str, Any], token: str | None = None,
+             c = r[key]
+             mark = ' <span class="overridden">*</span>' if c["overridden"] else ""
+             why = f' <span class="note">{_e(c["note"])}</span>' if c["value"] is None and c["note"] else ""
+-            shown = _linked(c["display"], _href(token, acct, month=r["month"], cell=key))
++            shown = _linked(c["display"], href(acct, month=r["month"], cell=key))
+             cells.append(f'<td class="num">{shown}{why}{mark}</td>')
+         part = ' <span class="part">part month</span>' if r["part_month"] else ""
+         month_rows.append(f'<tr><td>{_e(r["month"])}{part}</td>{"".join(cells)}</tr>')
+@@ -509,6 +517,23 @@ def _profile_html(p: dict[str, Any] | None) -> str:
+     return f'<section id="profile"><h2>Case profile</h2><table class="profile"><tbody>{"".join(rows)}</tbody></table></section>'
+ 
+ 
++def demo_banner(demo: bool) -> str:
++    """The banner a demo case shows on every page (R48), saying it demonstrates the mechanism
++    and is not an applicant file; the same words as the pack's stamp."""
++    from ..pack import DEMO_STAMP
++
++    return f'<section id="demo-banner" class="demo-banner"><p>{_e(DEMO_STAMP)}</p></section>' if demo else ""
++
++
++def is_demo(folder: Path) -> bool:
++    """Whether the case's profile marks it as a demo (R48); a profile that cannot be read shows
++    no banner, and the page says why it shows no figures."""
++    try:
++        return bool(store.load_profile(folder).get("demo"))
++    except Exception:
++        return False
++
++
+ def render(summary: dict[str, Any], token: str | None = None) -> str:
+     """The case summary as HTML for the page's main element; every case text escaped. Given
+     the page's token, each figure, bucket and monthly cell links to the lines behind it (R16)."""
+diff --git a/tests/test_record.py b/tests/test_record.py
+new file mode 100644
+index 0000000..45f1cbf
+--- /dev/null
++++ b/tests/test_record.py
+@@ -0,0 +1,355 @@
++"""T26: the pack's self-contained, offline record.html (C6; R2, R16, R25, R26, R34, R48, R56,
++P8, P20).
++
++record.html is written once at sign-off beside memo.md, evidence.json and monthly.csv. It
++refers to nothing outside itself, every figure, bucket and monthly cell links to a section
++of the record that lists exactly the lines behind it, the illustrative label sits with every
++outcome, no outcome or rule result appears with show_policy_verdict off, and it shows the
++sign-off. A demo case shows the banner in the workspace and the stamp in the memo and the
++record (R48)."""
++
++import csv
++import hashlib
++import http.client
++import io
++import json
++import random
++import re
++from html import escape
++from html.parser import HTMLParser
++
++import pytest
++
++from cma import case as caselog
++from cma import overrides, pack, policy, record, store
++from cma.review import server as rs
++from cma.review import summary
++
++STATEMENT = ("id,date,description,amount,balance\n"
++             "L1,2026-01-05,CARD SETTLEMENT STRIPE,500.00,1500.00\n"
++             "L2,2026-01-06,FPS CREDIT J BLOGGS,300.25,1800.25\n"
++             "L3,2026-01-07,IWOCA LOAN REPAYMENT,-100.00,1700.25\n"
++             "L4,2026-02-02,CASH PAID IN,250.10,1950.35\n"
++             "L5,2026-02-20,DD COUNCIL,-2100.00,-149.65\n"
++             "L6,2026-03-03,CARD SETTLEMENT SUMUP,400.00,250.35\n")
++OTHER = ("id,date,description,amount,balance\n"
++         "S1,2026-01-03,CARD SETTLEMENT SUMUP,900.00,900.00\n"
++         "S2,2026-01-20,IWOCA LOAN REPAYMENT,-120.00,780.00\n")
++OUTCOME_WORD = re.compile(r"\b(pass|refer|fail|PASS|REFER|FAIL)\b")
++HOSTILE = ['<script>alert("x")</script> STRIPE', "CARD SETTLEMENT STRIPE & <b>bold</b>",
++           "\"onmouseover=\"alert(1)\" FPS CREDIT", "'><img src=x onerror=alert(1)>",
++           "=HYPERLINK(\"http://evil.example\") CASH PAID IN", "A &amp; B <!-- c --> </pre></section>"]
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    return root
++
++
++def _setting(home, shown):
++    home.mkdir(parents=True, exist_ok=True)
++    if shown is not None:
++        (home / "firm.yaml").write_text(f"show_policy_verdict: {'true' if shown else 'false'}\n", encoding="utf-8")
++
++
++def _case(tmp_path, accounts=(("main", STATEMENT),), demo=False):
++    case_id = store.new_case(label="t26", demo=demo)
++    folder = store.case_folder(case_id)
++    for account, body in accounts:
++        src = tmp_path / f"{account}.csv"
++        src.write_text(body, encoding="utf-8")
++        store.import_file(folder, src, "csv", account=account)
++    return case_id, folder
++
++
++def _sign(folder, case_id, name="Ann Smith"):
++    p = pack.build_preview(folder, case_id)
++    s = pack.sign_off(folder, case_id, p.snapshot, name)
++    return p, s, (s.pack / "record.html").read_text(encoding="utf-8")
++
++
++def _statement(descriptions):
++    """A five-column statement whose credits carry `descriptions`, the balance walked in pence."""
++    buf = io.StringIO()
++    w = csv.writer(buf, lineterminator="\n")
++    w.writerow(["id", "date", "description", "amount", "balance"])
++    pence = 0
++    for n, d in enumerate(descriptions, start=1):
++        pence += 1000 + n
++        w.writerow([f"H{n}", f"2026-01-{n:02d}", d, f"{(1000 + n) / 100:.2f}", f"{pence // 100}.{pence % 100:02d}"])
++    return buf.getvalue()
++
++
++class _Elements(HTMLParser):
++    """Each element with its attributes, its text and the elements around it."""
++
++    def __init__(self):
++        super().__init__(convert_charrefs=True)
++        self.stack, self.done = [], []
++
++    def handle_starttag(self, tag, attrs):
++        a = dict(attrs)
++        el = {"tag": tag, "attrs": a, "class": (a.get("class") or "").split(), "id": a.get("id"),
++              "text": [], "within": list(self.stack), "children": []}
++        if self.stack:
++            self.stack[-1]["children"].append(el)
++        if tag in ("meta", "br", "input", "img", "link"):
++            self.done.append({**el, "text": ""})
++            return
++        self.stack.append(el)
++
++    def handle_endtag(self, tag):
++        while self.stack:
++            el = self.stack.pop()
++            el["text"] = "".join(el["text"])
++            self.done.append(el)
++            if self.stack:
++                self.stack[-1]["text"].append(el["text"])
++            if el["tag"] == tag:
++                break
++
++    def handle_data(self, data):
++        if self.stack:
++            self.stack[-1]["text"].append(data)
++
++
++def _elements(html):
++    p = _Elements()
++    p.feed(html)
++    p.close()
++    return p.done
++
++
++def _lines_listed(section):
++    """The line ids in a lines-behind section's Lines table, in order."""
++    tables = [c for c in _walk(section) if c["tag"] == "table" and "lines" in c["class"]]
++    assert len(tables) == 1
++    out = []
++    for tr in [c for c in _walk(tables[0]) if c["tag"] == "tr"]:
++        tds = [c for c in tr["children"] if c["tag"] == "td"]
++        if tds:
++            out.append(tds[0]["text"])
++    return out
++
++
++def _walk(el):
++    for c in el["children"]:
++        yield c
++        yield from _walk(c)
++
++
++# --- R26: the pack holds the record, self-contained and offline ----------------------------
++
++
++@pytest.mark.contracts
++def test_r26_the_pack_writes_record_html_once_with_its_hash_in_the_case_log(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    p, s, html = _sign(folder, case_id)
++    assert "record.html" in pack.PACK_FILES and (s.pack / "record.html").is_file()
++    signed = caselog.for_case(folder).entries()[-1].data
++    assert signed["files"]["record.html"] == hashlib.sha256((s.pack / "record.html").read_bytes()).hexdigest()
++    assert html.startswith("<!doctype html>") and p.snapshot in html and case_id in html
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("shown", [True, False])
++def test_r26_the_record_refers_to_nothing_outside_itself(home, tmp_path, shown):
++    _setting(home, shown)
++    case_id, folder = _case(tmp_path, (("main", STATEMENT), ("other", OTHER)))
++    _p, _s, html = _sign(folder, case_id)
++    lowered = html.lower()
++    for banned in ("http:", "https:", "ftp:", "file:", "data:", "javascript:", "<script", "<link", "<img",
++                   "<iframe", "<object", "<embed", "@import", "url(", " src=", "srcset", "<base", "<form"):
++        assert banned not in lowered, banned
++    els = _elements(html)
++    ids = {e["id"] for e in els if e["id"]}
++    hrefs = [e["attrs"]["href"] for e in els if "href" in e["attrs"]]
++    assert hrefs and all(h.startswith("#") for h in hrefs)
++    assert {h[1:] for h in hrefs} <= ids  # every link lands in the record itself
++    csp = [e for e in els if e["tag"] == "meta" and e["attrs"].get("http-equiv") == "Content-Security-Policy"]
++    assert len(csp) == 1 and "default-src 'none'" in csp[0]["attrs"]["content"]
++
++
++@pytest.mark.contracts
++def test_r26_r16_every_figure_bucket_and_cell_links_to_exactly_its_lines(home, tmp_path):
++    case_id, folder = _case(tmp_path, (("main", STATEMENT), ("other", OTHER)))
++    p, _s, html = _sign(folder, case_id)
++    els = _elements(html)
++    by_id = {e["id"]: e for e in els if e["id"]}
++    links = {e["attrs"]["href"][1:] for e in els if e["tag"] == "a" and e["attrs"].get("href", "").startswith("#lines-")}
++    figures = overrides.case_figures(folder)
++    for a in p.accounts:
++        f = figures[a.account]
++        targets = [({"figure": m.id}, m.evidence, m) for m in f.metrics]
++        targets += [({"month": r.month, "cell": key}, getattr(r, key).evidence, None)
++                    for r in f.monthly for key, _ in summary.CELLS]
++        assert len(targets) > 28
++        for target, evidence, m in targets:
++            anchor = record.anchor(a.account, **target)
++            assert anchor in links, anchor  # the account's tables link to it
++            section = by_id[anchor]
++            assert "lines-behind" in section["class"]
++            assert _lines_listed(section) == list(evidence), anchor  # exactly its lines, in order
++            if m is not None:
++                assert m.display_exact() in section["text"]  # to the penny (R2)
++    # a sum figure's section shows its lines' total, which is the figure
++    m2 = by_id[record.anchor("main", figure="M2")]
++    m2_figure = next(m for m in figures["main"].metrics if m.id == "M2")
++    assert f"Total of the lines' signed amounts: {m2_figure.display_exact()}, the figure." in m2["text"]
++    m8 = by_id[record.anchor("main", figure="M8")]  # an outflow: its lines total it negated
++    assert "the figure negated" in m8["text"]
++    # every line's description appears in the record, escaped, beside its id
++    assert "IWOCA LOAN REPAYMENT" in by_id[record.anchor("main", figure="M8")]["text"]
++
++
++@pytest.mark.contracts
++def test_r22_r24_the_record_shows_the_sign_off_and_never_approves_the_loan(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    _p, s, html = _sign(folder, case_id, "  Ann   Smith ")
++    section = next(e for e in _elements(html) if e["id"] == "sign-off")
++    text = section["text"]
++    assert "Ann Smith" in text and s.os_user in text and s.at in text and s.snapshot in text
++    assert pack.SIGN_WORDING in text
++    assert "approve the loan" not in html.replace("does not approve the loan", "")
++    assert (s.pack / "memo.md").read_text(encoding="utf-8") in escape_text_of(html)
++
++
++def escape_text_of(html):
++    """The record's memo-ready sections, read back from its pre element."""
++    return next(e for e in _elements(html) if e["tag"] == "pre" and "memo" in e["class"])["text"]
++
++
++# --- P8: description text only in escaped form ---------------------------------------------
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("seed", [0, 1, 2])
++def test_p8_record_html_holds_description_text_only_escaped(home, tmp_path, seed):
++    rng = random.Random(seed)
++    descriptions = [rng.choice(HOSTILE) + " " + "".join(rng.choice("<>&\"'=/abcXYZ") for _ in range(12))
++                    for _ in range(6)]
++    case_id, folder = _case(tmp_path, (("main", _statement(descriptions)),))
++    _p, _s, html = _sign(folder, case_id)
++    for d in descriptions:
++        if escape(d, quote=True) == d:
++            continue
++        assert d not in html  # never raw
++        assert escape(d, quote=True) in html  # always escaped
++    assert "<script" not in html.lower() and "<img" not in html.lower()
++    # read back as text, every description is there whole
++    texts = "".join(e["text"] for e in _elements(html) if e["tag"] == "td")
++    assert all(d in texts for d in descriptions)
++
++
++# --- P20: the label wherever an outcome appears; nothing with the setting off -------------
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("shown", [None, True], ids=["default", "on"])
++@pytest.mark.parametrize("accounts", [(("main", STATEMENT),), (("main", STATEMENT), ("other", OTHER))],
++                         ids=["one-account", "two-accounts"])
++def test_p20_record_with_show_policy_verdict_on(home, tmp_path, shown, accounts):
++    _setting(home, shown)
++    case_id, folder = _case(tmp_path, accounts)
++    p, _s, html = _sign(folder, case_id)
++    els = _elements(html)
++    panels = [e for e in els if "policy-check" in e["class"]]
++    memo = [e for e in els if e["tag"] == "pre" and "memo" in e["class"]]
++    assert len(panels) == len(p.accounts) and len(memo) == 1
++    for panel in panels:
++        assert policy.ILLUSTRATIVE_LABEL in panel["text"]
++    for a in p.accounts:
++        panel = next(x for x in panels if x["attrs"].get("data-account") == a.account)
++        assert f"Overall outcome: {a.policy.overall.value.upper()}" in panel["text"]
++        for r in a.policy.rules:
++            assert r.rule_id in panel["text"] and r.detail in panel["text"]
++    # the memo's own policy section carries the label with its outcomes
++    assert OUTCOME_WORD.search(memo[0]["text"]) and policy.ILLUSTRATIVE_LABEL in memo[0]["text"]
++    # every element that shows an outcome sits inside a panel that holds the label
++    for e in els:
++        if "outcome" in e["class"] or "rule-outcome" in e["class"]:
++            assert any(id(w) in {id(x) for x in panels} for w in e["within"]), e["text"]
++    # and nowhere else does an outcome appear
++    outside, cut = re.subn(r'<section class="policy-check".*?</section>', "", html, flags=re.S)
++    outside, cut_memo = re.subn(r'<pre class="memo">.*?</pre>', "", outside, flags=re.S)
++    assert cut == len(panels) and cut_memo == 1
++    assert not OUTCOME_WORD.search(re.sub(r"<[^>]*>", " ", outside))
++    rec = [e for e in els if e["attrs"].get("data-field") == "recommendation"]
++    assert len(rec) == 1 and rec[0]["text"].strip() == ""  # blank for the underwriter (R24)
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("accounts", [(("main", STATEMENT),), (("main", STATEMENT), ("other", OTHER))],
++                         ids=["one-account", "two-accounts"])
++def test_p20_record_with_show_policy_verdict_off_holds_no_outcome_or_rule_result(home, tmp_path, accounts):
++    _setting(home, False)
++    case_id, folder = _case(tmp_path, accounts)
++    _p, _s, html = _sign(folder, case_id)
++    assert not OUTCOME_WORD.search(html)
++    assert not [e for e in _elements(html) if {"policy-check", "outcome", "rule-outcome"} & set(e["class"])]
++    assert 'id="policy-checks"' not in html and "Overall outcome" not in html
++    assert policy.ILLUSTRATIVE_LABEL not in html and pack.POLICY_TITLE not in html
++    for f in overrides.case_figures(folder).values():
++        for r in policy.evaluate(f.metrics).rules:  # no rule result: neither its sentence nor its rule
++            for text in (r.detail, r.description):
++                assert text not in html and escape(text, quote=True) not in html
++            assert f">{r.rule_id}<" not in html and f"[{r.rule_id}]" not in html
++    rec = [e for e in _elements(html) if e["attrs"].get("data-field") == "recommendation"]
++    assert len(rec) == 1 and rec[0]["text"].strip() == ""
++
++
++# --- R48: a demo case shows the banner and the stamp ---------------------------------------
++
++
++@pytest.fixture
++def serve():
++    servers = []
++
++    def start(case_id):
++        srv = rs.start(store.case_folder(case_id), case_id, port=0)
++        srv.serve_in_thread()
++        servers.append(srv)
++        return srv
++
++    yield start
++    for srv in servers:
++        srv.close()
++
++
++def _get(srv, path):
++    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=10)
++    try:
++        conn.request("GET", path, headers={"Host": f"127.0.0.1:{srv.port}", "X-CMA-Token": srv.token})
++        r = conn.getresponse()
++        return r.status, r.read().decode("utf-8")
++    finally:
++        conn.close()
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("demo", [True, False])
++def test_r48_a_demo_case_shows_the_banner_and_stamp_in_the_workspace_memo_and_record(home, tmp_path, serve, demo):
++    case_id, folder = _case(tmp_path, demo=demo)
++    srv = serve(case_id)
++    stamp = escape(pack.DEMO_STAMP, quote=True)
++    banner = 'id="demo-banner"'
++    for path in ("/", "/lines?account=main&figure=M2"):
++        status, page = _get(srv, path)
++        assert status == 200
++        assert (banner in page and stamp in page) is demo, path
++        if demo:  # the banner comes first in the page's main element
++            main = '<main id="workspace">'
++            assert page[page.index(main) + len(main):].startswith(f'<section {banner}'), path
++    status, body = _get(srv, "/api/case")
++    assert status == 200 and json.loads(body)["demo"] is demo
++    _p, s, html = _sign(folder, case_id)
++    memo = (s.pack / "memo.md").read_text(encoding="utf-8")
++    assert (pack.DEMO_STAMP in memo) is demo
++    assert (banner in html and stamp in html) is demo
++    if demo:
++        assert html.index(banner) < html.index('id="sign-off"')  # the stamp is the record's first section
++    ev = json.loads((s.pack / "evidence.json").read_text(encoding="utf-8"))
++    assert ev["demo"] is demo
+diff --git a/tests/test_signoff.py b/tests/test_signoff.py
+index d0295c8..9dc5794 100644
+--- a/tests/test_signoff.py
++++ b/tests/test_signoff.py
+@@ -72,7 +72,7 @@ def test_sign_off_writes_memo_and_evidence_once_bound_to_the_snapshot(home, tmp_
+     p = pack.build_preview(folder, case_id)
+     s = pack.sign_off(folder, case_id, p.snapshot, "  Ann   Smith ")
+     target = folder / "packs" / p.snapshot
+-    assert s.pack == target and sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv"]
++    assert s.pack == target and sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv", "record.html"]
+     assert (target / "memo.md").read_text(encoding="utf-8") == p.text  # from the signed preview
+     ev = json.loads((target / "evidence.json").read_text(encoding="utf-8"))
+     assert ev["snapshot"] == p.snapshot and ev["inputs"] == p.inputs and ev["case"] == case_id
+@@ -254,7 +254,7 @@ def test_r42_entries_are_logged_after_the_rename_and_a_refused_entry_removes_the
+     real = caselog.CaseLog.append
+ 
+     def watched(self, event, data, *, expected):
+-        seen.append((event, target.is_dir() and sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv"]))
++        seen.append((event, target.is_dir() and sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv", "record.html"]))
+         return real(self, event, data, expected=expected)
+ 
+     monkeypatch.setattr(caselog.CaseLog, "append", watched)
+@@ -503,7 +503,7 @@ def test_r26_a_pack_the_tool_stopped_before_recording_is_refused_as_unrecorded_n
+         with pytest.raises(_Died):
+             pack.sign_off(folder, case_id, p.snapshot, "Ann")
+     target = folder / "packs" / p.snapshot
+-    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv"]
++    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv", "record.html"]
+     assert pack.PACK_EVENT not in _events(folder) and pack.SIGN_EVENT not in _events(folder)
+     events = _events(folder)
+     for snapshot in (p.snapshot, pack.build_preview(folder, case_id).snapshot):  # the same preview, or a new one
+@@ -511,7 +511,7 @@ def test_r26_a_pack_the_tool_stopped_before_recording_is_refused_as_unrecorded_n
+             pack.sign_off(folder, case_id, snapshot, "Ann")
+         msg = str(e.value)
+         assert "records no pack written" in msg and "move that folder aside" in msg and "already signed off" not in msg
+-    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv"]  # never removed or replaced
++    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md", "monthly.csv", "record.html"]  # never removed or replaced
+     assert _events(folder)[: len(events)] == events and pack.SIGN_EVENT not in _events(folder)
+     os.rename(target, folder / "aside")
+     signed = pack.sign_off(folder, case_id, p.snapshot, "Ann")
