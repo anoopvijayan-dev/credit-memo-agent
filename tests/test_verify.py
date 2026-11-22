@@ -323,3 +323,131 @@ def test_p13_generated_two_account_packs_reproduce_exactly(home, tmp_path, seed)
         # The pairing window the pack recorded is the one verify uses, whatever firm.yaml says now.
         (home / firm.FILE_NAME).write_text("own_account_pairing_days: 0\n", encoding="utf-8")
         assert verify.verify(ev, case_folder=folder).mismatches == []
+
+
+# --- verify-270's findings --------------------------------------------------------------------
+
+SAVINGS = ("id,date,description,amount,balance\n"
+           "S1,2026-01-05,FPS DEBIT ACME,-500.60,1000.00\n"
+           "S2,2026-01-20,GROSS INTEREST,1.25,1001.25\n")
+
+
+@pytest.mark.invariants
+def test_p13_an_account_imported_after_sign_off_is_not_among_the_recorded_inputs(home, tmp_path):
+    """The recorded inputs are the accounts the pack recorded: another account imported into
+    the case after the sign-off, which could pair with the signed one, changes nothing verify
+    checks."""
+    _case_id, folder, ev = _signed(tmp_path)
+    src = tmp_path / "savings.csv"
+    src.write_text(SAVINGS, encoding="utf-8")
+    store.import_file(folder, src, "csv", account="savings")
+    assert set(overrides.case_figures(folder)) == {"main", "savings"}
+    result = verify.verify(ev, case_folder=folder)
+    assert result.mismatches == []
+    assert result.checked["figures"] == 28
+
+
+@pytest.mark.contracts
+def test_a_boolean_in_place_of_a_number_is_a_mismatch_and_a_flag_given_as_a_number_is_refused(monkeypatch):
+    monkeypatch.setenv("CMA_RULESET", "v1")
+    ev = json.loads(EXAMPLE.read_text())
+    by_id = {m["id"]: m for m in ev["metrics"]}
+    for mid in ("M7", "M13"):
+        assert by_id[mid]["value"] in (0, 1) and not isinstance(by_id[mid]["value"], bool)
+        by_id[mid]["value"] = bool(by_id[mid]["value"])
+    row = next(r for r in ev["monthly_summary"] if r["money_out"]["value"] == 0 or r["days_overdrawn"]["value"] in (0, 1))
+    cell = row["days_overdrawn"] if row["days_overdrawn"]["value"] in (0, 1) else row["money_out"]
+    name = "days_overdrawn" if cell is row["days_overdrawn"] else "money_out"
+    cell["value"] = bool(cell["value"])
+    where = [m.where for m in verify.verify(ev, base=EXAMPLE.parent).mismatches]
+    month = row["month"]
+    assert {"figure M7 value", "figure M13 value", f"monthly {month} {name} value"} <= set(where)
+    ev = json.loads(EXAMPLE.read_text())
+    ev["monthly_summary"][0]["part_month"] = int(ev["monthly_summary"][0]["part_month"])
+    with pytest.raises(verify.VerifyRefused, match="part_month"):
+        verify.verify(ev, base=EXAMPLE.parent)
+
+
+def _example():
+    return json.loads(EXAMPLE.read_text())
+
+
+def _cell(ev, value):
+    ev["monthly_summary"][0]["money_in"] = value
+    return ev
+
+
+def _no_sha(ev):
+    del ev["statement"]["sha256"]
+    return ev
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("edit", [
+    lambda ev: {**ev, "accounts": None, "case": "abc"},
+    lambda ev: _cell(ev, 500.0), lambda ev: _cell(ev, "500.00"),
+    lambda ev: {**ev, "metrics": ev["metrics"] + ev["metrics"][:1]},
+    lambda ev: {**ev, "monthly_summary": ev["monthly_summary"] + ev["monthly_summary"][:1]},
+    _no_sha, lambda ev: {**ev, "statement": {**ev["statement"], "sha256": ""}},
+])
+def test_a_malformed_run_record_is_refused_never_raised(monkeypatch, edit):
+    monkeypatch.setenv("CMA_RULESET", "v1")
+    with pytest.raises(verify.VerifyRefused):
+        verify.verify(edit(_example()), base=EXAMPLE.parent)
+
+
+def _set(path, value):
+    def edit(ev):
+        cur = ev
+        for k in path[:-1]:
+            cur = cur[k]
+        cur[path[-1]] = value
+        return ev
+    return edit
+
+
+def _dup(ev, key):
+    acct = ev["accounts"][0]
+    if key == "accounts":
+        ev["accounts"] = ev["accounts"] + ev["accounts"][:1]
+    elif key == "buckets":
+        acct["money_in"]["buckets"] = acct["money_in"]["buckets"] + acct["money_in"]["buckets"][:1]
+    else:
+        acct[key] = acct[key] + acct[key][:1]
+    return ev
+
+
+def _moved_total(ev):
+    mi = ev["accounts"][0]["money_in"]
+    mi["buckets"] = [mi["total"], *mi["buckets"]]
+    mi["total"] = None
+    return ev
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("edit", [
+    _set(("inputs", "statements"), "bad"), _set(("inputs", "statements"), {"main": 3}),
+    _set(("inputs", "override_log"), "bad"),
+    _set(("inputs", "override_log"), {"position": -1}), _set(("inputs", "override_log"), {"position": True}),
+    _set(("inputs", "override_log"), {"position": False}), _set(("inputs", "override_log"), {"position": None}),
+    _set(("inputs", "override_log"), {}), _set(("inputs", "own_account_pairing_days"), "3"),
+    _set(("inputs", "own_account_pairing_days"), True), _set(("inputs", "own_account_pairing_days"), -1),
+    _set(("accounts", 0, "money_in", "total"), {"id": ["M17"]}),
+    _set(("accounts", 0, "money_in", "total"), "bad"),
+    _set(("accounts", 0, "money_in", "cash_within_trading"), 5),
+    _set(("accounts", 0, "monthly_summary", 0, "money_in"), 500.0),
+    lambda ev: _dup(ev, "metrics"), lambda ev: _dup(ev, "monthly_summary"),
+    lambda ev: _dup(ev, "accounts"), lambda ev: _dup(ev, "buckets"),
+])
+def test_a_malformed_pack_record_is_refused_never_raised_or_misread(home, tmp_path, edit):
+    _case_id, folder, ev = _signed(tmp_path)
+    overrides.add_override(folder, "L5", "revenue_transfer", reason="customer", name="Ann")
+    with pytest.raises(verify.VerifyRefused):
+        verify.verify(edit(ev), case_folder=folder)
+
+
+@pytest.mark.contracts
+def test_a_bucket_moved_out_of_its_place_is_a_mismatch(home, tmp_path):
+    _case_id, folder, ev = _signed(tmp_path)
+    where = [m.where for m in verify.verify(_moved_total(ev), case_folder=folder).mismatches]
+    assert "account main: bucket total" in where
