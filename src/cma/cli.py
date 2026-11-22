@@ -707,6 +707,54 @@ def case_preview(case_id: str = typer.Argument(..., metavar="CASE", help="The ca
         raise typer.Exit(code=1)
 
 
+@case_app.command("sign")
+def case_sign(
+    case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
+    snapshot: str | None = typer.Option(
+        None, "--snapshot", help="The snapshot `cma case preview` printed; the latest preview's if not given."),
+):
+    """Sign off the figures of a preview, with your typed name, and write the pack once to
+    packs/<snapshot> (R22, R24, R26). Interactive only: it asks for your name and confirms.
+    Signing off the figures does not approve the loan. Refused, writing nothing, when the case
+    changed since the preview (naming what), when the case log is broken (naming the first bad
+    entry), when the figures do not reconcile or the text fails the grounding guard, or when
+    the snapshot's pack is already written. Exit 2 refused, 3 broken log, 4 not recorded."""
+    from . import case as caselog
+    from . import pack, store
+
+    with _case_errors():
+        folder = store.case_folder(case_id)
+        if snapshot is None:
+            latest = pack.latest_preview(caselog.for_case(folder).entries())
+            if latest is None:
+                console.print("[red]Refused.[/red] this case has no preview yet: run `cma case preview` "
+                              "first, read it, then sign off its figures.")
+                raise typer.Exit(code=2)
+            snapshot = latest[1]["snapshot"]
+        console.print(f"Preview snapshot {escape(snapshot)}")
+        console.print(pack.SIGN_WORDING)
+        name = typer.prompt("Your name, to sign off the figures")
+        if not typer.confirm(f"Sign off the figures of snapshot {snapshot[:12]} as {name}?", default=False):
+            console.print("Not signed off; nothing was written.")
+            raise typer.Exit(code=1)
+        try:
+            s = pack.sign_off(folder, case_id, snapshot, name)
+        except pack.SignOffRefused as e:
+            console.print(f"[red]Refused.[/red] {escape(str(e))}; nothing was written.")
+            raise typer.Exit(code=2) from None
+        except ReconciliationError as e:  # R3
+            console.print(f"[red]Refused.[/red] {escape(str(e))}; nothing was written.")
+            raise typer.Exit(code=2) from None
+        except (pack.FieldMapError, pack.PreviewError, StatementError, AmountError, RulesetError,
+                ThresholdsError, PolicyError) as e:
+            console.print(f"[red]Refused.[/red] {escape(str(e))}; nothing was written.")
+            raise typer.Exit(code=2) from None
+    console.print(f"Figures signed off by {escape(s.name)} (operating-system user {escape(s.os_user)}) "
+                  f"at {s.at}, bound to snapshot {s.snapshot}.", soft_wrap=True)
+    console.print(f"Pack written once to {escape(str(s.pack))}: {', '.join(s.files)}; recorded as case log "
+                  f"entry {s.position}.", soft_wrap=True)
+
+
 @case_app.command("purge")
 def case_purge(
     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),

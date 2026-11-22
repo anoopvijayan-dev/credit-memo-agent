@@ -20,6 +20,11 @@
   the firm rules file, the profile, the override log position, the thresholds, the memo field
   map, the packaged policy's hash, the show_policy_verdict setting and the package version.
 
+`cma case sign` and the workspace's sign-off form (sign_off, below) sign off the figures of
+one such preview, bound to its snapshot, and write memo.md and evidence.json once to
+packs/<snapshot>, appending the pack write and the sign-off to the case log after the rename
+(R22, R23, R24, R26, R28, R42, R43).
+
 Nothing here does arithmetic on money: figures come from overrides.case_figures and the
 outcome from policy.evaluate. The preview writes no file; it appends one `preview` entry to
 the case log, holding the snapshot and the hashes it is made of (R42), while it holds the
@@ -69,6 +74,8 @@ class FieldMapError(ValueError):
 
 class PreviewError(ValueError):
     """The case cannot be previewed (no statement yet); nothing was recorded."""
+
+# (SignOffRefused, for a sign-off, is defined with sign_off below.)
 
 
 # --- the memo field map -----------------------------------------------------------------
@@ -242,6 +249,7 @@ class AccountPreview:
     sentences: dict[str, str]  # field id -> its sentence, for the fields figures map to
     policy_lines: list[str]
     guard: GuardResult | None = None
+    figures: overrides.CaseFigures | None = None  # what the figures were computed from, for the pack
 
 
 @dataclass
@@ -383,7 +391,7 @@ def _build(folder: Path, case_id: str, entries) -> Preview:
         accounts.append(AccountPreview(
             a, f.statement_sha256, start, end, f.metrics, result,
             {mf.id: field_sentence(mf, f.metrics, start, end) for mf in field_map.fields if mf.figures},
-            [rule_sentence(r, by_id) for r in result.rules] if result else []))
+            [rule_sentence(r, by_id) for r in result.rules] if result else [], figures=f))
         if result:
             accounts[-1].policy_lines.insert(0, f"Overall outcome: {result.overall.value}.")
     inputs = snapshot_inputs(folder, entries, every, profile, config, field_map, thresholds.sha256,
@@ -405,3 +413,266 @@ def build_preview(folder: Path, case_id: str) -> Preview:
         save.data = {"snapshot": p.snapshot, "inputs": p.inputs, "grounded": p.grounded,
                      "policy_check": "shown" if p.policy_shown else "hidden"}
     return p
+
+
+# --- sign-off ------------------------------------------------------------------------------
+#
+# The underwriter signs off the figures of a preview they saw, never the loan (R24). A
+# sign-off holds the case as a writer from start to end, so it judges the whole log (R43):
+#
+# 1. the case log is checked whole; a broken or incomplete log is refused naming the first
+#    bad entry (CaseLogBroken), and nothing is written;
+# 2. a pack folder a crash left half-written (packs/.part-*) is removed;
+# 3. the preview the underwriter signed is found in the log by its snapshot; the case's
+#    inputs are read again and compared with the ones that preview recorded, and any change
+#    is refused naming what changed (R23); reconciliation runs again (R3) and the text is
+#    checked by the guard again (R28);
+# 4. a pack already written for the snapshot is never overwritten (R26);
+# 5. memo.md and evidence.json are made in full in packs/.part-<random>, synced, and the
+#    folder is renamed to packs/<snapshot>; only then are the pack write and the sign-off
+#    appended to the case log (R42). If the log refuses the pack write, the folder is
+#    removed again, so the log and the folder agree.
+
+PACKS = "packs"
+PART = ".part-"  # a pack folder being written; never a pack
+PACK_FILES = ("memo.md", "evidence.json")
+PACK_EVENT, SIGN_EVENT = "pack_written", "signed_off"
+MAX_NAME = 200
+SIGN_WORDING = ("Sign off the figures: you confirm these figures and their lines were checked. This does not "
+                "approve the loan; the recommendation and every judgement field stay blank for you.")
+INPUT_TITLES = {
+    "ruleset": "the ruleset",
+    "firm_rules_sha256": "the firm rules file",
+    "profile_sha256": "the case profile",
+    "thresholds_sha256": "the indicator thresholds",
+    "memo_field_map_sha256": "the memo field map",
+    "policy_sha256": "the policy file",
+    "show_policy_verdict": "the show_policy_verdict setting",
+    "package_version": "the package version",
+}
+
+
+class SignOffRefused(ValueError):
+    """The sign-off was refused; no pack was written and nothing was recorded."""
+
+    def __init__(self, message: str, changed: list[str] | None = None):
+        super().__init__(message)
+        self.changed = changed or []
+
+
+@dataclass(frozen=True)
+class Signed:
+    case: str
+    snapshot: str
+    name: str
+    os_user: str
+    at: str  # UTC
+    pack: Path
+    files: dict[str, str]  # file name -> sha256
+    position: int  # the case log position of the sign-off entry
+
+
+def changed_inputs(signed: dict[str, Any], now: dict[str, Any]) -> list[str]:
+    """What differs between the inputs a preview recorded and the case's inputs now, in words:
+    accounts by key, and every other input by what it is (R23). Never a name or a value."""
+    out = []
+    old_s, new_s = signed.get("statements") or {}, now.get("statements") or {}
+    for a in sorted(set(old_s) | set(new_s)):
+        if a not in old_s:
+            out.append(f"a statement was imported for account {a}")
+        elif a not in new_s:
+            out.append(f"the statement for account {a} is no longer in the case")
+        elif old_s[a] != new_s[a]:
+            out.append(f"the statement for account {a} changed")
+    old_o, new_o = signed.get("override_log") or {}, now.get("override_log") or {}
+    if old_o != new_o:
+        if old_o.get("position") != new_o.get("position"):
+            out.append(f"the override log (it held {old_o.get('position')} entries, it now holds "
+                       f"{new_o.get('position')})")
+        else:
+            out.append("the override log")
+    for key, title in INPUT_TITLES.items():
+        if signed.get(key) != now.get(key):
+            out.append(title)
+    if not out and signed != now:  # an input this release does not know by name
+        out.append("the case's inputs")
+    return out
+
+
+def _signer(name: Any) -> str:
+    if not isinstance(name, str) or not any(ch.isalnum() for ch in name):
+        raise SignOffRefused("a sign-off needs your name, typed: at least one letter or digit")
+    name = " ".join(name.split())
+    if len(name) > MAX_NAME:
+        raise SignOffRefused(f"the name is longer than {MAX_NAME} characters")
+    return name
+
+
+def latest_preview(entries) -> tuple[int, dict[str, Any]] | None:
+    """The case log position and data of the last preview entry, or None."""
+    for n in range(len(entries), 0, -1):
+        e = entries[n - 1]
+        if e.event == EVENT and isinstance(e.data.get("snapshot"), str):
+            return n, e.data
+    return None
+
+
+def _preview_entry(entries, snapshot: str) -> dict[str, Any] | None:
+    for e in reversed(entries):
+        if e.event == EVENT and e.data.get("snapshot") == snapshot:
+            return e.data
+    return None
+
+
+def _remove_leftovers(packs: Path) -> None:
+    """Remove pack folders a crash left half-written: they were never renamed into place, so
+    nothing refers to them."""
+    import shutil
+
+    if not packs.is_dir():
+        return
+    for child in packs.iterdir():
+        if child.name.startswith(PART) and child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child, ignore_errors=True)
+
+
+def _evidence(p: Preview, signoff: dict[str, Any], config: firm.FirmConfig) -> dict[str, Any]:
+    """The pack's evidence: ids, figures, hashes and the sign-off; no description."""
+    from . import __version__
+    from .models import EVIDENCE_SCHEMA_VERSION
+
+    rules = policy.load_policy()
+    accounts = []
+    for a in p.accounts:
+        f = a.figures
+        lines = [{"id": t.id, "category": t.category.value if t.category else None, "rule_id": t.rule_id}
+                 for t in f.statement.transactions] if f else []
+        accounts.append({
+            "account": a.account, "statement_sha256": a.statement_sha256, "start": a.start, "end": a.end,
+            "transactions": len(lines), "lines": lines, "overridden": dict(f.overridden) if f else {},
+            "metrics": [m.model_dump(mode="json") for m in a.metrics],
+            "monthly_summary": [r.model_dump(mode="json") for r in f.monthly] if f else [],
+            "policy": a.policy.evidence_dump(mode="json") if a.policy else None,
+            "guard": {**a.guard.model_dump(mode="json"), "grounded": _grounded(a.guard)} if a.guard else None,
+        })
+    return {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "case": p.case,
+        "snapshot": p.snapshot,
+        "inputs": p.inputs,
+        "ruleset": p.inputs["ruleset"],
+        "demo": p.demo,
+        "memo_field_map": {"name": p.field_map.name, "sha256": p.field_map.sha256},
+        "memo_fields": p.fields,
+        "accounts": accounts,
+        "policy_check": ({"shown": True, "label": policy.ILLUSTRATIVE_LABEL, "policy": rules.get("name"),
+                          "policy_sha256": p.inputs["policy_sha256"]} if p.policy_shown
+                         else {"shown": False, "policy_sha256": p.inputs["policy_sha256"]}),
+        "grounded": p.grounded,
+        "egress": {"destination": "offline", "offline_lock": config.offline_lock is not False,
+                   "recorded": "the pack is written from the figures layer; no model is asked"},
+        "sign_off": signoff,
+        "package_version": __version__,
+    }
+
+
+def _write_pack(packs: Path, snapshot: str, files: dict[str, bytes]) -> Path:
+    """Make every file of the pack in a folder of its own, sync it, and rename the folder to
+    packs/<snapshot>: a reader sees no pack or the whole pack, never part of one."""
+    import os
+    import shutil
+    import tempfile
+
+    packs.mkdir(mode=store.DIR_MODE, exist_ok=True)
+    target = packs / snapshot
+    part = Path(tempfile.mkdtemp(prefix=PART, dir=packs))
+    try:
+        os.chmod(part, store.DIR_MODE)
+        for name, data in files.items():
+            fd = os.open(part / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, store.FILE_MODE)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
+        _sync_dir(part)
+        if target.exists() or target.is_symlink():  # held as a writer, so no tool of ours races this
+            raise SignOffRefused(f"a pack is already written for snapshot {snapshot} ({PACKS}/{snapshot}); "
+                                 "a pack is never overwritten")
+        os.rename(part, target)
+    except BaseException:
+        shutil.rmtree(part, ignore_errors=True)
+        raise
+    _sync_dir(packs)
+    return target
+
+
+def _sync_dir(path: Path) -> None:
+    import os
+
+    if os.name == "nt":  # a folder cannot be opened to sync on Windows
+        return
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def sign_off(folder: Path, case_id: str, snapshot: str, name: str) -> Signed:
+    """Sign off the figures of the preview whose snapshot is `snapshot`, as `name`, and write
+    its pack once. Refused, writing nothing, when the log is broken (CaseLogBroken, naming the
+    first bad entry), when no preview has that snapshot, when anything in the snapshot has
+    changed since (naming what), when the buckets do not reconcile (ReconciliationError),
+    when the text fails the guard, or when the snapshot's pack is already written."""
+    import shutil
+
+    from . import case as caselog
+    from .overrides import _now
+
+    folder = Path(folder)
+    name = _signer(name)
+    if not isinstance(snapshot, str) or not re.fullmatch(r"[0-9a-f]{64}", snapshot):
+        raise SignOffRefused("name the preview you sign off by its snapshot (64 hex characters)")
+    log = caselog.for_case(folder)
+    packs = folder / PACKS
+    with log.writer():
+        head = log.require_intact()  # R43: the whole log, judged while holding the case
+        entries = log.entries()
+        _remove_leftovers(packs)
+        signed = _preview_entry(entries, snapshot)
+        if signed is None:
+            raise SignOffRefused(f"no preview of this case has snapshot {snapshot}; preview the case "
+                                 "(cma case preview) and sign off that preview")
+        if (packs / snapshot).exists() or any(e.event == SIGN_EVENT and e.data.get("snapshot") == snapshot
+                                              for e in entries):
+            raise SignOffRefused(f"the figures of snapshot {snapshot} are already signed off and its pack written "
+                                 f"({PACKS}/{snapshot}); a pack is never overwritten")
+        p = _build(folder, case_id, entries)  # R3: refused when the buckets do not reconcile
+        if p.snapshot != snapshot:
+            what = changed_inputs(signed.get("inputs") or {}, p.inputs)
+            raise SignOffRefused("the case has changed since that preview was built: " + "; ".join(what)
+                                 + ". Nothing was signed off; preview the case again and sign off the new "
+                                 "preview", changed=what)
+        if not p.grounded:
+            raise SignOffRefused("the preview's text fails the grounding guard (R28); no pack can be "
+                                 "signed off from it")
+        signoff = {"name": name, "os_user": store._os_user(), "at": _now(), "snapshot": snapshot,
+                   "preview_position": next(n for n in range(len(entries), 0, -1)
+                                            if entries[n - 1].event == EVENT
+                                            and entries[n - 1].data.get("snapshot") == snapshot),
+                   "wording": SIGN_WORDING}
+        evidence = json.dumps(_evidence(p, signoff, firm.load()), indent=2, sort_keys=True, ensure_ascii=False)
+        files = {"memo.md": p.text.encode("utf-8"), "evidence.json": (evidence + "\n").encode("utf-8")}
+        shas = {k: hashlib.sha256(v).hexdigest() for k, v in files.items()}
+        target = _write_pack(packs, snapshot, files)
+        try:
+            log.append(PACK_EVENT, {"snapshot": snapshot, "pack": f"{PACKS}/{snapshot}", "files": shas},
+                       expected=head.position)
+        except caselog.SaveNotConfirmed:
+            raise  # its entry may be in the log: the pack stays, and `cma case check` says
+        except BaseException:
+            shutil.rmtree(target, ignore_errors=True)  # not recorded: no pack without its entry
+            raise
+        entry = log.append(SIGN_EVENT, {k: signoff[k] for k in ("name", "os_user", "at", "snapshot")}
+                           | {"pack": f"{PACKS}/{snapshot}", "files": shas}, expected=head.position + 1)
+    return Signed(case_id, snapshot, name, signoff["os_user"], signoff["at"], target, shas, entry.seq)

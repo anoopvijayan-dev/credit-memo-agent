@@ -102,6 +102,16 @@ cma review <id>                                   # --no-browser to only print t
 # file, only a preview entry in the case log. Exit 1 when the text fails the guard.
 cma case preview <id>
 
+# Sign off the figures of the latest preview (or --snapshot <hash>): it asks for your typed
+# name and confirms, records it with your operating-system user and the UTC time, and writes
+# memo.md and evidence.json once to packs/<snapshot> in the case folder. Signing off the
+# figures does not approve the loan. Refused, writing nothing, when the case changed since
+# the preview (it names what), when the case log is broken (exit 3, naming the first bad
+# entry), when the figures do not reconcile or the text fails the guard, or when that
+# snapshot's pack is already written; a pack is never overwritten. There is no --yes. The
+# workspace (`cma review`) offers the same preview and sign-off from the case page.
+cma case sign <id>
+
 # Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
 # first entry that was changed, removed, reordered or left half written.
 cma case check private/cma/cases/<id>
