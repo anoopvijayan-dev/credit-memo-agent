@@ -634,3 +634,64 @@ def test_a_promotion_that_cannot_take_the_firm_rules_lock_saves_nothing(home, tm
         promotion.promote(folder, {"seq": seq, "pattern": "ACME TRUST", "name": "Pat", "reason": "r"},
                           shown=3, expected=n)
     assert not path.exists() and len(case.for_case(folder).entries()) == n
+
+
+# --- two cases promoting at once (T37 pass, verify-268's scenario) -------------------------
+
+
+OTHER = ("id,date,description,amount,balance\n"
+         "B1,2026-01-05,FPS CREDIT HOLLY ESTATES,800.00,1800.00\n"
+         "B2,2026-01-06,FPS CREDIT HOLLY ESTATES FEB,800.00,2600.00\n")
+
+
+def _two_overridden_cases(tmp_path):
+    _, a, seq_a = _overridden(tmp_path)
+    _, b = _case(tmp_path, OTHER, name="other.csv")
+    seq_b = overrides.add_override(b, "B1", "other_explained_in", reason="rent passed through", name="Sam").seq
+    return (a, seq_a, "ACME TRUST"), (b, seq_b, "HOLLY ESTATES")
+
+
+@pytest.mark.parametrize("round_", range(6))
+def test_two_cases_promoting_at_once_both_keep_their_rule(home, tmp_path, round_):
+    import threading
+
+    cases = _two_overridden_cases(tmp_path)
+    _rules_path().parent.mkdir(parents=True, exist_ok=True)
+    start, results = threading.Barrier(2), {}
+
+    def run(folder, seq, pattern):
+        n = len(case.for_case(folder).entries())
+        p = promotion.preview(folder, {"seq": seq, "pattern": pattern})
+        start.wait()
+        try:
+            results[pattern] = promotion.promote(folder, {"seq": seq, "pattern": pattern, "name": "Pat",
+                                                          "reason": "r"}, shown=p.count, expected=n)
+        except Exception as e:  # the test reports whatever either thread met
+            results[pattern] = e
+
+    threads = [threading.Thread(target=run, args=c) for c in cases]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    assert all(isinstance(r, promotion.Promoted) for r in results.values()), results
+    assert sorted(r.id for r in firm_rules.for_case().rules) == ["acme_trust", "holly_estates"]
+    for folder, _, _ in cases:
+        assert [e.event for e in case.for_case(folder).entries()].count(promotion.EVENT) == 1
+
+
+def test_a_case_confirming_a_preview_another_cases_promotion_overtook_is_refused_and_loses_nothing(home, tmp_path):
+    # The confirmed preview read the rules file before the other case's rule was saved, so its
+    # digest no longer holds: it is refused, the other case's rule stays, and nothing is logged.
+    (a, seq_a, pat_a), (b, seq_b, pat_b) = _two_overridden_cases(tmp_path)
+    _rules_path().parent.mkdir(parents=True, exist_ok=True)
+    pa = promotion.preview(a, {"seq": seq_a, "pattern": pat_a})
+    pb = promotion.preview(b, {"seq": seq_b, "pattern": pat_b})
+    na, nb = len(case.for_case(a).entries()), len(case.for_case(b).entries())
+    promotion.promote(a, {"seq": seq_a, "pattern": pat_a, "name": "Pat", "reason": "r"}, shown=pa.count,
+                      expected=na, seen=pa.digest)
+    with pytest.raises(promotion.PreviewChanged):
+        promotion.promote(b, {"seq": seq_b, "pattern": pat_b, "name": "Sam", "reason": "r"}, shown=pb.count,
+                          expected=nb, seen=pb.digest)
+    assert [r.id for r in firm_rules.for_case().rules] == ["acme_trust"]
+    assert len(case.for_case(b).entries()) == nb
