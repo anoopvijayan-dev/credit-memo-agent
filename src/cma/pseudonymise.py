@@ -24,9 +24,10 @@ built to do so, word by word:
   digits for a word with a digit, so the counterparty normaliser (M9, M15, round trips,
   reversal links) groups the lines as before.
 
-A profile name that holds recognised wording somewhere (a director named after a lender) is
-kept as it is, in the profile and the descriptions, since replacing it would change what the
-rules see. Before anything is written, the copy is categorised and computed and compared with
+A profile name that holds recognised wording somewhere (a business called Greenfield Capital,
+a director named after a lender) keeps only that wording: its other words become their word
+tokens, in the profile and the descriptions alike, so the rules and the profile still read the
+copy as they read the original, and the name itself does not survive. Before anything is written, the copy is categorised and computed and compared with
 the original, line by line and figure by figure; any difference refuses the copy, naming the
 figure, and nothing is written. The token mapping itself is never written.
 """
@@ -243,6 +244,22 @@ def pseudonymise_statement(data: bytes, profile: dict[str, Any] | None = None, *
             return True
         return any(p.search(tok) for p in extra) or any(p.search(tok) for p in blockers)
 
+    keep_words: dict[str, set[str]] = {}
+    for k in kept_names:
+        words: set[str] = set()
+        seen = False
+        for i, d in enumerate(descs):
+            for span in name_spans[k][i]:
+                seen = True
+                for m in _WORD.finditer(d, span[0], span[1]):
+                    if any(_overlaps(m.span(), f) for f in kept_by_line[i]):
+                        words.add(m.group())
+        if not seen:
+            folded = cat._fold(names[k])
+            own = _kept_spans(folded, rulesets, extra)
+            words = {m.group() for m in _WORD.finditer(folded) if any(_overlaps(m.span(), f) for f in own)}
+        keep_words[k] = words
+
     tokens = _Tokens(taken=set(originals), blocked=blocked)
     name_token = {k: tokens.letter() for k in names if k not in kept_names}
     variants: dict[tuple[str, ...], dict[str, str]] = {}
@@ -250,7 +267,10 @@ def pseudonymise_statement(data: bytes, profile: dict[str, Any] | None = None, *
     out_descs: list[str] = []
     words_replaced = 0
     for i, d in enumerate(descs):
-        fixed = _merge(list(kept_by_line[i]) + [s for k in kept_names for s in name_spans[k][i]])
+        # A name that holds recognised wording is not kept whole: its words go through the word
+        # path below, so only the recognised words stay and the rest become their word tokens,
+        # as they do in the profile (R46; T39 pass: "Greenfield Capital Ltd" was kept whole).
+        fixed = _merge(kept_by_line[i])
         live = [(k, s) for k in name_token for s in name_spans[k][i]]
         regions = _merge(s for _, s in live)
         edits: list[tuple[int, int, str]] = []
@@ -282,7 +302,10 @@ def pseudonymise_statement(data: bytes, profile: dict[str, Any] | None = None, *
     if profile is not None:
         def tok(n: str) -> str:
             k = _key(n)
-            return n if k in kept_names else name_token[k]
+            if k not in kept_names:
+                return name_token[k]
+            folded = cat._fold(n)
+            return _WORD.sub(lambda m: m.group() if m.group() in keep_words[k] else tokens.word(m.group()), folded)
         new_profile = dict(profile)
         for f in store.LIST_FIELDS:
             new_profile[f] = [tok(n) for n in profile[f]]

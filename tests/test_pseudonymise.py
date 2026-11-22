@@ -272,3 +272,25 @@ def test_a_refusal_names_lines_and_figures_never_description_text(monkeypatch):
     assert "M2" in str(e.value) and "nothing was written" in str(e.value)
     for secret in ("JANE", "SECRETWORD"):
         assert secret not in str(e.value)
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("business, director", [("Greenfield Capital Ltd", "Robert Finance"),
+                                                 ("Smith Loans Ltd", "Anna Funding"),
+                                                 ("Northside Cash And Carry", "Peter Iwoca")])
+def test_p10_a_name_holding_recognised_wording_keeps_only_that_wording(business, director):
+    # T39 pass: a business or director whose name held a word the rules read (CAPITAL, FINANCE,
+    # LOANS...) was kept whole, in the profile and the statement, so the name itself survived
+    # pseudonymisation (R46). Only the recognised wording stays now; the rest is tokens.
+    prof = _profile(business_name=business, directors=[director])
+    data = _statement([("2026-03-02", f"FPS CREDIT {business.upper()} INV 1234", 50_000),
+                       ("2026-03-03", f"FPS TO {director.upper()}", -10_000),
+                       ("2026-03-04", f"FPS CREDIT {director.upper()}", 20_000),
+                       ("2026-03-05", "CARD SETTLEMENT STRIPE", 30_000)])
+    result = ps.pseudonymise_statement(data, prof)
+    out = result.statement.decode() + json.dumps(result.profile)
+    recognised = {"CAPITAL", "FINANCE", "LOANS", "FUNDING", "CASH", "IWOCA", "LTD", "AND", "CARRY"}
+    for word in (business + " " + director).upper().split():
+        if word not in recognised:
+            assert word not in out.upper(), word
+    _figures_equal(data, prof, result)
