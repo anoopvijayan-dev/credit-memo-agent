@@ -418,9 +418,6 @@ def test_a_pending_transaction_booked_on_another_page_is_not_counted_as_left_out
 
 
 @pytest.mark.contracts
-@pytest.mark.xfail(strict=True, reason="T29 gap for the owner: when same-moment lines with no balance have "
-                   "distinct amounts and a balanced line needs a particular subset of them before it, ordering "
-                   "is subset-sum; the search passes ORDER_STEPS from 16 such lines and refuses a valid file")
 def test_distinct_loose_amounts_whose_subset_a_balanced_line_needs_are_ordered(tmp_path):
     when = "2026-05-02T00:00:00+00:00"
     pence = [2 ** i for i in range(16)]
@@ -430,3 +427,99 @@ def test_distinct_loose_amounts_whose_subset_a_balanced_line_needs_are_ordered(t
                             _txn("A", "0.01", when=when, balance=f"{(target + 2) / 100:.2f}")])
     r, _ = _convert(tmp_path, src)
     assert r.rows == 18
+
+
+# --- the order of lines booked at one moment, over generated exports ----------------------
+#
+# Lines with no balance can go anywhere among lines with one, so finding an order is, in
+# general, a subset-sum search: an export mixing lines with and without a balance at one
+# moment may be refused at the search limit, saying so, never as a broken chain. A balance on
+# every line, on none or on each day's last line is always ordered, and these generated
+# exports with a balance on all but a few lines are too; an order is always found or refused
+# within bounded time.
+
+def _generated(n, has_balance, seed, days=1, distinct=1000, drop=False):
+    """An export of `n` lines over `days` date-only days, every line booked at midnight, in a
+    shuffled order; `has_balance(i, last_of_day, rng)` says which lines carry their balance."""
+    import random
+
+    rng = random.Random(seed)
+    amounts = [rng.randint(-20000, 30000) or 1 for _ in range(distinct)]
+    bal, lines = 100_000, []
+    for i in range(n):
+        a = rng.choice(amounts)
+        bal += a
+        day = i * days // n
+        last = (i + 1) * days // n != day or i == n - 1
+        balance = f"{bal / 100:.2f}" if has_balance(i, last, rng) else None
+        lines.append(_txn(f"G{i}", f"{abs(a) / 100:.2f}", "Credit" if a > 0 else "Debit",
+                          f"2026-04-{1 + day:02d}T00:00:00+00:00", balance=balance))
+    if drop:  # a line missing between the first and last line with a balance
+        withb = [k for k, t in enumerate(lines) if "Balance" in t]
+        del lines[(withb[0] + withb[-1]) // 2]
+    rng.shuffle(lines)
+    return lines
+
+
+def _kept_balances(out, lines):
+    given = {t["TransactionId"]: t["Balance"] for t in lines if "Balance" in t}
+    for t in ingest.load_csv(out).transactions:
+        if t.id in given:
+            b = given[t.id]
+            want = float(b["Amount"]["Amount"]) * (-1 if b["CreditDebitIndicator"] == "Debit" else 1)
+            assert t.balance == want, t.id
+
+
+REAL_SHAPES = {
+    "each day's last line": lambda i, last, rng: last,
+    "every line": lambda i, last, rng: True,
+    "all but a few": lambda i, last, rng: rng.random() > 0.05,
+}
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("shape", list(REAL_SHAPES))
+@pytest.mark.parametrize("n, days, distinct", [(20, 1, 1000), (200, 1, 1000), (200, 5, 3), (100, 4, 10)])
+@pytest.mark.parametrize("seed", [0, 1])
+def test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote(tmp_path, shape, n, days, distinct,
+                                                                             seed):
+    import time
+
+    lines = _generated(n, REAL_SHAPES[shape], seed, days, distinct)
+    src = _write(tmp_path, lines)
+    start = time.perf_counter()
+    r, out = _convert(tmp_path, src)
+    assert time.perf_counter() - start < 10
+    assert r.rows == n
+    _kept_balances(out, lines)  # every per-line balance kept, and the loader's chain check passed
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("shape", ["every line", "all but a few"])
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_a_missing_line_among_balanced_lines_at_one_moment_is_refused(tmp_path, shape, seed):
+    lines = _generated(60, REAL_SHAPES[shape], seed, days=1, distinct=1000, drop=True)
+    src = _write(tmp_path, lines)
+    with pytest.raises(openbanking.OpenBankingImportError, match="keeps the balance chain"):
+        openbanking.convert(src, tmp_path / "out.csv")
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("seed", range(6))
+@pytest.mark.parametrize("p", [0.2, 0.5])
+def test_a_heavy_mix_at_one_moment_is_ordered_or_refused_at_the_limit_never_as_a_break(tmp_path, seed, p):
+    """A valid export mixing lines with and without a balance at one moment is either ordered
+    or refused saying the search limit was reached; never as a broken chain, and in bounded time."""
+    import time
+
+    lines = _generated(40, lambda i, last, rng: rng.random() < p, seed, days=1, distinct=1000)
+    if not any("Balance" in t for t in lines):
+        pytest.skip("no line carries a balance: nothing to order")
+    src = _write(tmp_path, lines)
+    start = time.perf_counter()
+    try:
+        _r, out = _convert(tmp_path, src)
+        _kept_balances(out, lines)
+    except openbanking.OpenBankingImportError as e:
+        assert "search limit" in str(e) and "it may be valid" in str(e), str(e)
+    assert time.perf_counter() - start < 30  # bounded: the search ends at its limit

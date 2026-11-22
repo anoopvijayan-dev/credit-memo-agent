@@ -22,8 +22,12 @@ So this module:
   date (--statement-balance AMOUNT --at DATE); every per-line balance the file holds is
   checked against the walked one, so a chain that breaks anywhere refuses the file;
 - orders lines oldest first by booking date as the bank wrote it, then by the moment booked;
-  transactions booked at the same moment are put in the one order their per-line balances
-  chain in, and refused when no order does;
+  transactions booked at the same moment are put in an order their per-line balances chain
+  in, and refused when no order does. Lines with no balance can sit anywhere among them, so
+  in general this is a subset-sum search: an export with a balance on every line, on none or
+  on each day's last line is always ordered; one where only some lines at one moment carry a
+  balance is ordered when the search finds an order within its limit, and otherwise refused
+  saying so (never as a broken chain); the search always ends in bounded time;
 - builds the description from TransactionInformation, the merchant's or the counterparty's
   name and the reference, so the categoriser sees what a bank statement would show.
 
@@ -63,7 +67,24 @@ BOOKED_BALANCES = {"ClosingBooked", "InterimBooked", "OpeningBooked", "Previousl
 PER_LINE = "per-line balances"
 # Transactions booked at the same moment are put in order by a search for the one order their
 # balances chain in; it gives up past this many steps, and the file is refused.
-ORDER_STEPS = 100_000
+ORDER_STEPS = 500_000
+# The meet-in-the-middle that fills a gap gives up when either half has more ways than this.
+MEET_LIMIT = 1 << 16
+# The first group with a balance tries at most this many starting balances; it lists every
+# subset sum of its balance-less lines when it has at most START_SEARCH of them.
+START_TRIES = 2_000
+START_SEARCH = 16
+# With at most this many balance-less lines left, the next balanced line is looked up by the
+# sums they reach rather than found by trying every balanced line.
+LOOKUP_LOOSE = 18
+
+
+class OrderUnknown(Exception):
+    """The search for an order of same-moment lines gave up before finding one or ruling all out."""
+
+    def __init__(self, lines: int, loose: int):
+        super().__init__(lines, loose)
+        self.lines, self.loose = lines, loose
 
 
 class OpenBankingImportError(ImportRefused):
@@ -257,94 +278,263 @@ def _balance(t: dict, line: int) -> int | None:
     return _signed(bal, "CreditDebitIndicator", _money(bal.get("Amount"), "balance", line), line)
 
 
-def _order(group: list[tuple], before: int | None) -> list[tuple] | None:
-    """Lines booked at the same moment, in the one order their per-line balances chain in from
-    `before` (the walked balance before them, None if not yet known); None if no order does."""
+def _order(group: list[tuple], before: int | None, budget: list[int] | None = None) -> list[tuple] | None:
+    """Lines booked at the same moment, in an order their per-line balances chain in from
+    `before` (the walked balance before them, None if not yet known); None if no order does.
+
+    A line with no balance constrains nothing but by its amount, and any left over can go after
+    the last line with a balance. So an order is a sequence of the lines with a balance, and
+    for each, the lines with none that go just before it: they must add up to the gap between
+    the balance before it and the one the walk has reached (none is needed when the gap is
+    zero, as when every line has a balance). The search runs over the balanced lines, without
+    recursion, trying the next line's own gap first; a gap is filled by the loose lines left,
+    found by their amounts (all of them, none, one, all but one, or a meet-in-the-middle over
+    their amounts), and a state already searched without success is not searched again. Lines
+    keep the file's order wherever the balances leave it free.
+    """
     if len(group) == 1 or all(x.balance is None for _, x in group):
         return group
-    # A depth-first search without recursion (a group can hold thousands of lines, as a
-    # date-only export puts a whole day at midnight). The lines that may come next after a
-    # balance are those with no balance and those whose balance before them is that balance,
-    # looked up rather than scanned, and tried in file order, so a group that chains is
-    # ordered in about one step per line whichever order the file wrote it in.
-    # Lines with no balance matter only by their amount, so of those with one amount only the
-    # first unused is tried, and a state already searched without success (the balance, the
-    # balanced lines used and how many of each loose amount) is not searched again: loose
-    # lines ahead of a balanced line that must come first cost a step each, not every ordering.
-    n = len(group)
-    by_before: dict[int, list[int]] = {}
-    loose_of: dict[int, list[int]] = {}  # amount -> loose lines with it, in file order
-    for i, (_, x) in enumerate(group):
-        if x.balance is None:
-            loose_of.setdefault(x.amount, []).append(i)
-        else:
-            by_before.setdefault(x.balance - x.amount, []).append(i)
-    amounts = list(loose_of)
-    slot = {i: a for a, ids in loose_of.items() for i in ids}
-    taken = dict.fromkeys(amounts, 0)  # loose lines of each amount used so far, first ones first
-    used = [False] * n
-    afters = {x.balance for _, x in group if x.balance is not None}
-    # With no balance known yet, a line whose balance before it is no other line's balance
-    # after it is where the chain starts, so such lines are tried first.
-    heads = [i for b, ids in by_before.items() if b not in afters for i in ids]
+    bal_ids = [i for i, (_, x) in enumerate(group) if x.balance is not None]
+    loose_ids = [i for i, (_, x) in enumerate(group) if x.balance is None]
+    amt = [x.amount for _, x in group]
+    pre = {i: group[i][1].balance - amt[i] for i in bal_ids}
+    post = {i: group[i][1].balance for i in bal_ids}
+    by_pre: dict[int, list[int]] = {}
+    for i in bal_ids:
+        by_pre.setdefault(pre[i], []).append(i)
+    posts = set(post.values())
+    heads = [i for i in bal_ids if pre[i] not in posts]  # where a chain with no known start begins
+    if not loose_ids and len(heads) > 1:
+        return None  # with every line balanced, nothing can come before a head: two cannot both be first
+    filled: dict[tuple, list[tuple[int, ...]]] = {}
+    gave_up = [False]  # a gap the search could not fill or rule out: "no order" cannot then be said
 
-    def loose_next():
-        return [loose_of[a][taken[a]] for a in amounts if taken[a] < len(loose_of[a])]
+    def fills(rem: tuple[int, ...], gap: int):
+        """Ways to take loose lines from `rem` (file order) adding up to `gap`, cheapest first;
+        worked out once for each remainder and gap."""
+        key = (rem, gap)
+        if key not in filled:
+            filled[key] = list(_fills(rem, gap))
+        return filled[key]
 
-    def candidates(bal):
+    def _fills(rem: tuple[int, ...], gap: int):
+        if gap == 0:
+            return [()]
+        total = sum(amt[i] for i in rem)
+        found: dict[tuple, None] = {}
+        if total == gap:
+            found[rem] = None
+        by_amount: dict[int, int] = {}
+        for i in rem:  # one line, the first of each amount
+            by_amount.setdefault(amt[i], i)
+        for a, i in by_amount.items():
+            if a == gap:
+                found[(i,)] = None
+            if total - a == gap:
+                found[tuple(j for j in rem if j != i)] = None
+        for take in _meet(rem, gap):
+            found[take] = None
+        return sorted(found, key=len)  # the fewest lines first: balanced lines sit close together
+
+    def _meet(rem, gap):
+        # Subsets by amount: lines of one amount are interchangeable, so only how many of each.
+        counts: dict[int, list[int]] = {}
+        for i in rem:
+            counts.setdefault(amt[i], []).append(i)
+        amounts = sorted(counts, key=lambda a: -len(counts[a]))
+        half = [amounts[0::2], amounts[1::2]]
+        sizes = [1, 1]
+        for h in (0, 1):
+            for a in half[h]:
+                sizes[h] *= len(counts[a]) + 1
+        if max(sizes) > MEET_LIMIT:
+            gave_up[0] = True  # too many ways to try: this gap is neither filled nor ruled out
+            return
+        work[0] += sizes[0] + sizes[1]
+        tables = []
+        for h in (0, 1):
+            table: dict[int, list[tuple]] = {0: [()]}
+            for a in half[h]:
+                grown: dict[int, list[tuple]] = {}
+                for sm, picks in table.items():
+                    for k in range(len(counts[a]) + 1):
+                        grown.setdefault(sm + k * a, []).extend((*p, (a, k)) for p in picks)
+                table = grown
+            tables.append(table)
+        left, right = tables
+        for sm, lpicks in left.items():
+            for rp in right.get(gap - sm, ()):
+                for lp in lpicks:
+                    take = {a: k for a, k in (*lp, *rp) if k}
+                    if take:
+                        yield tuple(sorted(i for a, k in take.items() for i in counts[a][:k]))
+
+    reached: dict[tuple, set] = {}
+
+    def _reach(rem: tuple[int, ...]) -> set:
+        if rem not in reached:
+            sums = {0}
+            for j in rem:
+                sums |= {r + amt[j] for r in sums}
+            reached[rem] = sums
+        return reached[rem]
+
+    def nexts(bal, used: int, rem: tuple[int, ...]):
+        """(balanced line, the loose lines before it) to try next, the zero gaps first."""
         if bal is None:
-            first = sorted(i for i in heads if not used[i])
-            rest = sorted({i for ids in by_before.values() for i in ids if not used[i]} - set(first))
-            return first + sorted([*rest, *loose_next()])
-        return sorted([*(i for i in by_before.get(bal, ()) if not used[i]), *loose_next()])
+            free = [i for i in bal_ids if not used >> i & 1]
+            # With every line balanced, a chain starts at its head (or anywhere, round a cycle).
+            first = [i for i in heads if i in free] if (heads and not loose_ids) else \
+                [i for i in heads if i in free] + [i for i in free if i not in heads]
+            for i in first:
+                yield i, ()  # the walk starts at this line's own balance
+            return
+        for i in by_pre.get(bal, ()):
+            if not used >> i & 1:
+                yield i, ()
+        if not rem:
+            return  # no loose line left: only a line with no gap can come next
+        free = [i for i in bal_ids if not used >> i & 1 and pre[i] != bal]
+        if len(rem) <= LOOKUP_LOOSE:  # few left: only the lines whose gap a sum of them reaches
+            reach = _reach(rem)
+            cands = [i for i in free if pre[i] - bal in reach]
+        else:
+            cands = free
+        work[0] += len(free)
+        # Every way on, across the lines that could come next, the fewest balance-less lines first.
+        options = sorted(((len(take), n, i, take) for n, i in enumerate(cands) for take in fills(rem, pre[i] - bal)),
+                         key=lambda o: (o[0], o[1]))
+        work[0] += len(cands) + len(options)  # finding them is work too: it counts against the limit
+        for _, _, i, take in options:
+            yield i, take
 
-    def state(bal):
-        return bal, mask, tuple(taken[a] for a in amounts)
+    def _may_finish(bal, used: int, loose_left: int) -> bool:
+        """A balanced line left that no other line left, nor the walk now, leads to needs a
+        balance-less line before it; with fewer of those left than such lines, no order is left."""
+        free = [i for i in bal_ids if not used >> i & 1]
+        if len(free) <= loose_left:
+            return True
+        free_posts = {post[i] for i in free}
+        need = sum(1 for i in free if pre[i] != bal and pre[i] not in free_posts)
+        return need <= loose_left
 
-    order: list[int] = []
-    mask = 0  # the balanced lines used
     dead: set = set()
-    frames = [[candidates(before), 0, before]]  # one more frame than lines chosen
     steps = 0
-
-    def undo(i):
-        nonlocal mask
-        used[i] = False
-        if i in slot:
-            taken[slot[i]] -= 1
-        else:
-            mask &= ~(1 << i)
-
-    while frames:
-        if len(order) == n:
-            return [group[i] for i in order]
-        frame = frames[-1]
-        cands, k, bal = frame
-        if k >= len(cands):
-            dead.add(state(bal))
-            frames.pop()
-            if order:
-                undo(order.pop())
+    work = [0]  # the ways on listed, and the subsets the meet-in-the-middle built, so far
+    rem0 = tuple(loose_ids)
+    # One frame per balanced line placed: (its iterator of choices, the state it was made in).
+    stack = [(nexts(before, 0, rem0), before, 0, rem0)]
+    chosen: list[tuple[int, tuple[int, ...]]] = []
+    while stack:
+        it, bal, used, rem = stack[-1]
+        if len(chosen) == len(bal_ids):
+            seq = [j for i, take in chosen for j in (*take, i)] + list(rem)  # the loose lines left, last
+            return [group[j] for j in seq]
+        step = next(it, None)
+        if step is None:
+            dead.add((bal, used, rem))
+            stack.pop()
+            if chosen:
+                chosen.pop()
             continue
-        frame[1] += 1
-        steps += 1
-        if steps > ORDER_STEPS:
-            return None
-        i = cands[k]
-        x = group[i][1]
-        after = None if bal is None else bal + x.amount
-        nxt = x.balance if x.balance is not None else after
-        used[i] = True
-        if i in slot:
-            taken[slot[i]] += 1
-        else:
-            mask |= 1 << i
-        if state(nxt) in dead:
-            undo(i)
+        steps += 1 + work[0]
+        if budget is not None:
+            budget[0] -= 1 + work[0]
+        work[0] = 0
+        if steps > ORDER_STEPS or (budget is not None and budget[0] < 0):
+            raise OrderUnknown(len(group), len(loose_ids))
+        i, take = step
+        left = tuple(j for j in rem if j not in set(take)) if take else rem
+        state = (post[i], used | 1 << i, left)
+        if state in dead:
             continue
-        order.append(i)
-        frames.append([candidates(nxt), 0, nxt])
+        if not _may_finish(post[i], used | 1 << i, len(left)):
+            dead.add(state)
+            continue
+        chosen.append((i, take))
+        stack.append((nexts(post[i], used | 1 << i, left), *state))
+    if gave_up[0]:
+        raise OrderUnknown(len(group), len(loose_ids))
     return None
+
+
+def _starts(group: list[tuple]):
+    """The balances the walk may have reached before `group`, the first group with a per-line
+    balance, when nothing before it says: the balance before one of its balanced lines less the
+    lines with no balance that may come before that line (none, all, one, all but one, then by
+    a bounded search over their amounts), each once, the likeliest first."""
+    loose = [x.amount for _, x in group if x.balance is None]
+    total = sum(loose)
+    posts = {x.balance for _, x in group if x.balance is not None}
+    tiers: list[list[int]] = [[], []]  # the first balanced line is a head unless the balances cycle
+    for _, x in group:
+        pre = None if x.balance is None else x.balance - x.amount
+        if pre is not None and pre not in tiers[0] and pre not in tiers[1]:
+            tiers[0 if pre not in posts else 1].append(pre)
+    sums = [0, total, *loose, *(total - a for a in loose)]
+    if len(loose) <= START_SEARCH:  # every sum of a subset of them, by amount
+        reach = {0}
+        for a in loose:
+            reach |= {r + a for r in reach}
+        sums += sorted(reach, key=abs)
+    seen: set[int] = set()
+    for pres in tiers:  # heads, then the rest
+        for sm in sums:  # the simplest choice for every such line before a harder one for any
+            for pre in pres:
+                if pre - sm not in seen:
+                    seen.add(pre - sm)
+                    yield pre - sm
+
+
+def _first_order(groups: list[list[tuple]], k: int, cache: dict) -> list[tuple] | None:
+    """Order groups[k], the first group with a per-line balance, when the walked balance before
+    it is not known. Its own order fixes the balance it ends on, and from there the balance
+    before every later group is fixed too (the balance after a group is the balance before it
+    plus its amounts, whatever their order). So the start taken is the likeliest one that
+    orders this group and every later group with a balance; each order found is kept in
+    `cache`, by group and balance before it, for the walk to use."""
+    group = groups[k]
+    totals = [sum(x.amount for _, x in g) for g in groups]
+    later = [m for m in range(k + 1, len(groups)) if any(x.balance is not None for _, x in groups[m])]
+    gave_up = False
+    fallback = None  # an order of this group alone, should no start let the rest be ordered
+
+    budget = [ORDER_STEPS]  # one budget for every start tried, so the search ends in bounded time
+
+    def ordered(m: int, before: int):
+        key = (m, before)
+        if key not in cache:
+            cache[key] = _order(groups[m], before, budget)
+        return cache[key]
+
+    for tries, start in enumerate(_starts(group)):
+        if tries >= START_TRIES:
+            gave_up = True
+            break
+        try:
+            order = ordered(k, start)
+            if order is None:
+                continue
+            fallback = fallback or order
+            before, at, ok = start + totals[k], k + 1, True
+            for m in later:
+                before += sum(totals[at:m])
+                at = m
+                if ordered(m, before) is None:
+                    ok = False
+                    break
+            if ok:
+                return order
+        except OrderUnknown:
+            gave_up = True  # this start was neither shown to serve nor ruled out
+            if budget[0] < 0:
+                break  # the budget is spent
+    loose = sum(x.balance is None for _, x in group)
+    if gave_up or loose > START_SEARCH:
+        # Past START_SEARCH balance-less lines, only the likeliest starts were tried: that none
+        # served does not show that no order does.
+        raise OrderUnknown(len(group), loose)
+    return fallback  # a later group then names where its chain breaks; None if this one cannot be ordered
 
 
 def _first_break(group: list[tuple], before: int | None) -> contract.Line:
@@ -455,20 +645,35 @@ def convert(src: Path, dst: Path, *, statement_balance: str | None = None, at: s
     # the per-line balances' own, so the order is found before any opening balance is known.
     lines: list[contract.Line] = []
     walked: int | None = None  # the balance after the lines ordered so far, once a per-line one is seen
+    groups: list[list[tuple]] = []
     i = 0
     while i < len(booked):
         j = i
         while j < len(booked) and booked[j][0][:2] == booked[i][0][:2]:
             j += 1
-        group = _order(booked[i:j], walked)
+        groups.append(booked[i:j])
+        i = j
+    cache: dict = {}
+    for k, same in enumerate(groups):
+        first_balanced = walked is None and any(x.balance is not None for _, x in same)
+        try:
+            if first_balanced:
+                group = _first_order(groups, k, cache)
+            else:
+                group = cache[(k, walked)] if (k, walked) in cache else _order(same, walked)
+        except OrderUnknown as e:
+            raise OpenBankingImportError(
+                f"line {same[0][1].line}: {e.lines} transactions are booked at the same moment and {e.loose} of "
+                "them carry no balance; no order of them that keeps the balance chain was found within the "
+                "search limit, so the file was not imported (it may be valid: an export with a balance on every "
+                "line, or on none, is always read)") from None
         if group is None:
-            raise OpenBankingImportError(f"line {_first_break(booked[i:j], walked).line}: no order of the "
+            raise OpenBankingImportError(f"line {_first_break(same, walked).line}: no order of the "
                                          "transactions booked at the same time keeps the balance chain; the "
                                          "export may be missing transactions")
         for _, x in group:
             walked = x.balance if walked is None else walked + x.amount
             lines.append(x)
-        i = j
 
     # The opening balance: from the statement balance supplied, else the first per-line balance;
     # with both, they must agree.
