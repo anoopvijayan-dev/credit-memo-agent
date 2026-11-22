@@ -1,0 +1,55 @@
+{
+  "task": "T31",
+  "claims": [
+    {
+      "text": "Gap found and closed (data/failure modes): a custom mapping that gave a key twice was silently accepted with the last value kept, so `paid_in: Out` then `paid_in: In` could swap money in and money out. parse_mapping and the packaged profiles now load through firm._UniqueKeyLoader, the project's duplicate-key rule, and refuse naming the key.",
+      "proof_cmd": "python -m pytest tests/test_import_bank_csv.py -q -k given_a_key_twice",
+      "proof_output": "1 passed (before the fix the same mapping returned {'paid_in': 'In', 'paid_out': 'Out'} with no refusal)"
+    },
+    {
+      "text": "Idempotency (R39): importing the same bank CSV twice leaves the case unchanged and says already imported; covered by a new contracts test.",
+      "proof_cmd": "python -m pytest tests/test_import_bank_csv.py -q -k twice_leaves_the_case_unchanged",
+      "proof_output": "1 passed"
+    },
+    {
+      "text": "Golden file per profile (barclays, lloyds, natwest, starling) and a custom mapping convert byte-for-byte to their hand-worked statements, which ingest.load_csv accepts; via cma case import as well. Refusals name the source line and never a cell value (sentinel test).",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_import_bank_csv.py",
+      "proof_output": "54 passed in 1.05s"
+    },
+    {
+      "text": "Input validation at the boundary: amounts read exactly in pence with strict UK grouping, the £10,000,000,000,000 limit per line and per flow, dates by mapping format with English month names, newest-first detection, balance walk checked against the bank's column, formula-leading descriptions neutralised by the shared writer.",
+      "proof_cmd": "python -m pytest tests/test_import_bank_csv.py -q",
+      "proof_output": "54 passed in 0.98s"
+    },
+    {
+      "text": "No regression: lint, compile and the full suite pass.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q",
+      "proof_output": "All checks passed! / compile-ok / 2662 passed in 331.53s"
+    },
+    {
+      "text": "Authz on the new entry point: the only entry point is `cma case import` (local CLI), which goes through store.import_file like every other format, under the owner-only case root (R31) and the case log's single-writer save; no new network surface. Not applicable beyond that: no server route is added.",
+      "proof_cmd": "git show 4cb29d3 -- src/cma/cli.py src/cma/store.py | grep -n 'bankcsv\\|_recorded'",
+      "proof_output": "store.import_file dispatches base == BANK_CSV to bankcsv.convert inside the same work folder and `with _recorded(folder, \"import\")` save as other formats"
+    },
+    {
+      "text": "Observability: each import appends a case-log entry with format (bank-csv:PROFILE), input and statement hashes, line count, period, and for a custom mapping its sha256.",
+      "proof_cmd": "python -m pytest tests/test_import_bank_csv.py -q -k 'logs_the_profile or records_its_hash'",
+      "proof_output": "5 passed"
+    },
+    {
+      "text": "Rollback / migration: additive only (new format value, new module, packaged YAML); no stored data changes, nothing to backfill; reverting the commits removes the format and existing cases keep their already-written statements. Performance: one pass over the file, O(n) balance checks; not a hot path. New dependencies: none.",
+      "proof_cmd": "git diff --stat 432e090..HEAD -- pyproject.toml",
+      "proof_output": "(no output: pyproject.toml unchanged, no new dependency)"
+    },
+    {
+      "text": "Docs: README documents bank-csv:PROFILE, --mapping and --opening-balance; profiles.yaml documents the mapping keys.",
+      "proof_cmd": "grep -n 'bank-csv' README.md",
+      "proof_output": "README.md:89-90: cma case import ... --format bank-csv:lloyds ...; --format bank-csv --mapping private/bank-map.yaml --opening-balance 200.00"
+    }
+  ],
+  "files_changed": [
+    "src/cma/importers/bankcsv.py",
+    "tests/test_import_bank_csv.py"
+  ],
+  "notes": "Gaps for the owner, not closed in code: (1) Wheel inclusion of src/cma/bank_profiles/profiles.yaml is not proven here: hatch packages src/cma whole, but hatchling is not installed so no wheel could be built; the runner's wheel check (Observability CI) should load it. (2) The import entry records a named profile by name only, not the profile's hash; if a later release changes a packaged profile, the log tells which by package version only. Hashing the profile mapping beside mapping_sha256 would make it traceable. (3) design.md's consumer trace and C4 do not yet name bank-csv's mapping file or the --mapping option; a design revision is the owner's. (4) The named profiles' column layouts are as commonly seen, not checked against real exports from each bank; a bank changing its export is refused naming the missing columns. (5) No alert: the tool has no remote alerting by design; a refusal with a non-zero exit is the signal."
+}

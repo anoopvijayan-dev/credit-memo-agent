@@ -1,0 +1,20 @@
+ .gitattributes                                  |   2 +
+ README.md                                       |   7 +
+ src/cma/bank_profiles/__init__.py               |   3 +
+ src/cma/bank_profiles/profiles.yaml             |  51 ++++
+ src/cma/cli.py                                  |  15 +-
+ src/cma/importers/bankcsv.py                    | 361 ++++++++++++++++++++++++
+ src/cma/store.py                                |  53 +++-
+ tests/golden/bank_csv/barclays.export.golden    |   4 +
+ tests/golden/bank_csv/barclays.statement.golden |   4 +
+ tests/golden/bank_csv/custom.export.golden      |   4 +
+ tests/golden/bank_csv/custom.mapping.yaml       |   9 +
+ tests/golden/bank_csv/custom.statement.golden   |   4 +
+ tests/golden/bank_csv/lloyds.export.golden      |   5 +
+ tests/golden/bank_csv/lloyds.statement.golden   |   5 +
+ tests/golden/bank_csv/natwest.export.golden     |   4 +
+ tests/golden/bank_csv/natwest.statement.golden  |   4 +
+ tests/golden/bank_csv/starling.export.golden    |   4 +
+ tests/golden/bank_csv/starling.statement.golden |   4 +
+ tests/test_import_bank_csv.py                   | 318 +++++++++++++++++++++
+ 19 files changed, 848 insertions(+), 13 deletions(-)

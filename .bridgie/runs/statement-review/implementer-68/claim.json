@@ -1,0 +1,47 @@
+{
+  "task": "T31",
+  "claims": [
+    {
+      "text": "R38: each named bank profile (barclays, lloyds, natwest, starling) and a custom mapping converts its hand-written golden export into its hand-worked golden statement, byte for byte, and the output passes ingest.load_csv. The fixtures cover paid-in/paid-out columns (lloyds, custom), non-ISO dates (DD/MM/YYYY, '02 Mar 2026', DD.MM.YYYY) and newest-first order (lloyds, custom). Tests are marked contracts.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_import_bank_csv.py -k \"golden or custom_mapping\"",
+      "proof_output": "10 passed, 42 deselected in 2.14s"
+    },
+    {
+      "text": "R38 'same checks as the five-column loader': every statement goes through contract.write_statement or contract.checked, so ingest.load_csv refuses it before anything is written. The importer adds its own row checks: a bad date, both or neither of paid-in and paid-out, a signed or sub-penny paid-in value, a misgrouped thousands separator, a malformed balance, extra cells, a broken balance chain, a repeated id, an amount or a money-in total at the £10,000,000,000,000 limit, a declared order the dates contradict, a missing or repeated column, and a missing or disagreeing opening balance. A future date or a date out of order is refused by the loader, naming the source line. Every refusal names the source file's line and never echoes a cell (checked with a sentinel).",
+      "proof_cmd": "python -m pytest -q tests/test_import_bank_csv.py -k \"refused or neither or opening\"",
+      "proof_output": "29 passed, 23 deselected in 0.58s"
+    },
+    {
+      "text": "cma case import takes --format bank-csv:PROFILE, or --format bank-csv --mapping FILE. It stores the golden statement, logs the format, and records mapping_sha256 for a custom mapping. It refuses options that do not fit: bank-csv without a profile or a mapping, a mapping beside a named profile, an unknown profile, --mapping on another format, and --statement-balance on a bank CSV. A row refusal reaches the CLI by line, never by cell.",
+      "proof_cmd": "python -m pytest -q tests/test_import_bank_csv.py -k \"cma_case\"",
+      "proof_output": "11 passed, 41 deselected in 1.14s"
+    },
+    {
+      "text": "Full suite, lint, compile and offline evals pass with the change in place.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q && python evals/run_evals.py",
+      "proof_output": "All checks passed! / 2660 passed in 335.35s (0:05:35) / 9/9 featured cases match truth (features: acquirers, director, cash, lenders, two_accounts)"
+    }
+  ],
+  "files_changed": [
+    "src/cma/importers/bankcsv.py",
+    "src/cma/bank_profiles/__init__.py",
+    "src/cma/bank_profiles/profiles.yaml",
+    "src/cma/store.py",
+    "src/cma/cli.py",
+    "README.md",
+    ".gitattributes",
+    "tests/test_import_bank_csv.py",
+    "tests/golden/bank_csv/barclays.export.golden",
+    "tests/golden/bank_csv/barclays.statement.golden",
+    "tests/golden/bank_csv/lloyds.export.golden",
+    "tests/golden/bank_csv/lloyds.statement.golden",
+    "tests/golden/bank_csv/natwest.export.golden",
+    "tests/golden/bank_csv/natwest.statement.golden",
+    "tests/golden/bank_csv/starling.export.golden",
+    "tests/golden/bank_csv/starling.statement.golden",
+    "tests/golden/bank_csv/custom.export.golden",
+    "tests/golden/bank_csv/custom.mapping.yaml",
+    "tests/golden/bank_csv/custom.statement.golden"
+  ],
+  "notes": "Committed on the task branch as 4cb29d3. Design choices made where the spec is silent: (1) A custom mapping is a YAML file passed with --mapping, using the same keys as a packaged profile (columns: date, description, amount or paid_in+paid_out, optional balance and id; date_format; order). Its sha256 goes in the import log entry. (2) Without an id column, a line's id is L<source line>, so it traces back to the file. (3) order: auto decides newest-first from the first and last dates, and from the bank's balances when every row shares one date. (4) The bank's provider category columns, such as Starling's Spending Category, are not read. (5) %b/%B month names are read in English whatever the locale. The four profile layouts are the commonly seen header rows of those banks' CSV downloads; they have not been checked against current real exports, which the firm has not supplied. A changed layout is refused, naming the missing columns. A bank export with preamble lines before its header, as some banks write, is not supported. The bank export fixtures are named *.export.golden rather than *.csv because test_p7_golden_covers_every_case requires that tests/ commit no .csv statement; the Monzo goldens follow the same convention. Loader refusals routed through contract.checked name the line only (refusal_parts), so the tests for the future-date and out-of-order cases assert the line, not the reason. That is the existing contract behaviour, not something this task changes. Note on the proof outputs: claims 1 to 3 were rerun after the commit, but claim 4's 2660 passed and 9/9 evals were run on the working tree just before it. The commit added no change to src or tests beyond those runs."
+}
