@@ -257,13 +257,15 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
     out: dict[str, Any] = {"case": case_id, "label": None, "business_name": None, "profile": None,
                            "state": "shown", "accounts": [], "queue": [], "thresholds": None,
                            "reconciliation": None, "refusal": None, "position": None, "stale": [],
-                           "policy_check": {"shown": False}, "recommendation": None}  # left blank (R24)
+                           "policy_check": {"shown": False}, "recommendation": None,  # left blank (R24)
+                           "demo": False}
     # The case log position the page is built at, read before anything else, so a save made
     # from this page is refused as a conflict once anything was recorded after it (R17).
     out["position"] = log_position(folder)
     try:
         profile = store.load_profile(folder)
         out["label"], out["business_name"] = profile.get("label"), profile.get("business_name")
+        out["demo"] = bool(profile.get("demo"))  # R48: the banner says what the case is
         out["profile"] = {key: (list(profile[key]) if key in store.LIST_FIELDS else profile[key])
                           for key in PROFILE_SHOWN}
     except Exception as e:
@@ -331,23 +333,29 @@ def _figure_row(f: dict[str, Any], cls: str = "", href: str | None = None) -> st
 
 
 def _account_html(a: dict[str, Any], token: str | None = None,
-                  thresholds: dict[str, Any] | None = None) -> str:
+                  thresholds: dict[str, Any] | None = None, href=None) -> str:
+    """One account's money in, figures, monthly summary and indicators. Each figure, bucket and
+    cell links to its lines: through the workspace with the page's token, or through `href`
+    (account, **target) -> an escaped link, as the pack's record links within itself (R26)."""
     acct = a["account"]
+    if href is None:
+        def href(account, **target):
+            return _href(token, account, **target)
     period = f'{_e(a["period"]["start"])} to {_e(a["period"]["end"])}, ' if a["period"] else ""
     head = '<thead><tr><th>Id</th><th>Figure</th><th class="num">Value</th><th class="num">Lines</th></tr></thead>'
     mi = a["money_in"]
     rows = []
     for b in mi["buckets"]:
-        rows.append(_figure_row(b, href=_href(token, acct, figure=b["id"])))
+        rows.append(_figure_row(b, href=href(acct, figure=b["id"])))
         if b["id"] == "M2":
             cash = mi["cash_within_trading"]
-            rows.append(_figure_row(cash, "within", _href(token, acct, figure=cash["id"])))
+            rows.append(_figure_row(cash, "within", href(acct, figure=cash["id"])))
     total = mi["total"]
     breakdown = (f'<table class="breakdown">{head}<tbody>{"".join(rows)}</tbody>'
-                 f'<tfoot>{_figure_row(total, "total", _href(token, acct, figure=total["id"]))}</tfoot></table>')
+                 f'<tfoot>{_figure_row(total, "total", href(acct, figure=total["id"]))}</tfoot></table>')
     figures = ('<table class="figures"><thead><tr><th>Id</th><th>Figure</th><th class="num">Value</th>'
                '<th>Method</th><th class="num">Lines</th></tr></thead><tbody>'
-               + "".join(f'<tr><td>{_linked(f["id"], _href(token, acct, figure=f["id"]))}</td><td>{_e(f["name"])}'
+               + "".join(f'<tr><td>{_linked(f["id"], href(acct, figure=f["id"]))}</td><td>{_e(f["name"])}'
                          + (' <span class="overridden">rests on an override</span>' if f["overridden"] else "")
                          + f'</td><td class="num">{_e(f["display"])}</td><td>{_e(f["method"])}</td>'
                          f'<td class="num">{_e(f["lines"])}</td></tr>' for f in a["figures"])
@@ -359,7 +367,7 @@ def _account_html(a: dict[str, Any], token: str | None = None,
             c = r[key]
             mark = ' <span class="overridden">*</span>' if c["overridden"] else ""
             why = f' <span class="note">{_e(c["note"])}</span>' if c["value"] is None and c["note"] else ""
-            shown = _linked(c["display"], _href(token, acct, month=r["month"], cell=key))
+            shown = _linked(c["display"], href(acct, month=r["month"], cell=key))
             cells.append(f'<td class="num">{shown}{why}{mark}</td>')
         part = ' <span class="part">part month</span>' if r["part_month"] else ""
         month_rows.append(f'<tr><td>{_e(r["month"])}{part}</td>{"".join(cells)}</tr>')
@@ -507,6 +515,23 @@ def _profile_html(p: dict[str, Any] | None) -> str:
              else '<span class="none">No proposed monthly repayment given: M28 is n/a</span>')
     rows.append(f"<tr><th>Proposed monthly repayment</th><td>{shown}</td></tr>")
     return f'<section id="profile"><h2>Case profile</h2><table class="profile"><tbody>{"".join(rows)}</tbody></table></section>'
+
+
+def demo_banner(demo: bool) -> str:
+    """The banner a demo case shows on every page (R48), saying it demonstrates the mechanism
+    and is not an applicant file; the same words as the pack's stamp."""
+    from ..pack import DEMO_STAMP
+
+    return f'<section id="demo-banner" class="demo-banner"><p>{_e(DEMO_STAMP)}</p></section>' if demo else ""
+
+
+def is_demo(folder: Path) -> bool:
+    """Whether the case's profile marks it as a demo (R48); a profile that cannot be read shows
+    no banner, and the page says why it shows no figures."""
+    try:
+        return bool(store.load_profile(folder).get("demo"))
+    except Exception:
+        return False
 
 
 def render(summary: dict[str, Any], token: str | None = None) -> str:

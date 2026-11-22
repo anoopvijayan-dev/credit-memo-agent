@@ -318,6 +318,13 @@ class ReviewServer:
     def url(self) -> str:
         return f"http://{LOOPBACK}:{self.port}/?token={self.token}"
 
+    def _shell(self, html: str) -> bytes:
+        """The page with `html` as its main element, a demo case's banner first on every page (R48)."""
+        from . import summary
+
+        html = summary.demo_banner(summary.is_demo(self.folder)) + html
+        return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
+
     def _case_json(self) -> bytes:
         """The case summary as data (R3): computed afresh, through the figures layer."""
         from . import summary
@@ -329,7 +336,7 @@ class ReviewServer:
         from . import summary
 
         html = summary.render(summary.case_summary(self.folder, self.case_id), token=self.token)
-        return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
+        return self._shell(html)
 
     def _lines_json(self, **target) -> bytes:
         """The lines behind one figure or monthly cell, as data (R16)."""
@@ -343,7 +350,7 @@ class ReviewServer:
         from . import drilldown
 
         html = drilldown.render(drilldown.lines_behind(self.folder, self.case_id, **target), self.token)
-        return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
+        return self._shell(html)
 
     def _save(self, kind: str, fields: dict, recompute: bool = True) -> tuple[int, dict]:
         """One write from the workspace: its status and reply, the recomputed case included for
@@ -358,12 +365,12 @@ class ReviewServer:
         from . import signoff
 
         html = signoff.html(kind, status, reply, self.token)
-        return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
+        return self._shell(html)
 
     def _outcome_html(self, status: int, reply: dict) -> bytes:
         from . import edit
 
-        return self._page.replace(SUMMARY_MARK.encode(), edit.outcome_html(status, reply, self.token).encode("utf-8"))
+        return self._shell(edit.outcome_html(status, reply, self.token))
 
     def serve_forever(self) -> None:
         self.httpd.serve_forever()

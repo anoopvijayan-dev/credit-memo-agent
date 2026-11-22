@@ -104,7 +104,9 @@ cma case preview <id>
 
 # Sign off the figures of the latest preview (or --snapshot <hash>): it asks for your typed
 # name and confirms, records it with your operating-system user and the UTC time, and writes
-# memo.md and evidence.json once to packs/<snapshot> in the case folder. Signing off the
+# memo.md, record.html (a self-contained record that works offline: every figure links to
+# its lines, with the sign-off), evidence.json and monthly.csv once to packs/<snapshot> in
+# the case folder. Signing off the
 # figures does not approve the loan. Refused, writing nothing, when the case changed since
 # the preview (it names what), when the case log is broken (exit 3, naming the first bad
 # entry), when the figures do not reconcile or the text fails the guard, or when that
