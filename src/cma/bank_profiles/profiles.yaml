@@ -1,0 +1,51 @@
+# Named bank CSV profiles for `cma case import --format bank-csv:PROFILE` (R38).
+#
+# Each profile maps a bank's CSV export onto the five-column statement:
+#   columns:      date and description (one column or a list, joined with a space), then
+#                 either amount (one signed column) or paid_in and paid_out (two unsigned
+#                 columns, one filled per row); optionally balance (the bank's running
+#                 balance after each row) and id (the bank's own transaction id; without it
+#                 each line's id is L and the line of the file its row starts on).
+#   date_format:  a strptime format, or a list tried in turn; %b and %B read English month
+#                 names whatever the machine's locale.
+#   order:        oldest_first, newest_first or auto (from the dates, then the balances).
+#
+# The layouts are the header rows these banks' online banking writes for a CSV download as
+# commonly seen; a bank can change its export, and the importer then refuses the file naming
+# the columns it cannot find. A custom mapping (--mapping FILE) takes the same keys.
+
+barclays:
+  columns:
+    date: Date
+    description: [Subcategory, Memo]
+    amount: Amount
+  date_format: "%d/%m/%Y"
+  order: auto
+
+lloyds:
+  columns:
+    date: Transaction Date
+    description: [Transaction Type, Transaction Description]
+    paid_out: Debit Amount
+    paid_in: Credit Amount
+    balance: Balance
+  date_format: "%d/%m/%Y"
+  order: auto
+
+natwest:
+  columns:
+    date: Date
+    description: [Type, Description]
+    amount: Value
+    balance: Balance
+  date_format: ["%d %b %Y", "%d/%m/%Y"]
+  order: auto
+
+starling:
+  columns:
+    date: Date
+    description: [Type, Counter Party, Reference]
+    amount: Amount (GBP)
+    balance: Balance (GBP)
+  date_format: "%d/%m/%Y"
+  order: auto
