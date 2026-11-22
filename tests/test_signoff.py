@@ -403,3 +403,69 @@ def test_workspace_preview_page_offers_the_sign_off_form_and_escapes_the_text(ho
                          kind="application/x-www-form-urlencoded")
     assert status == 200 and 'id="signed-off"' in page and "Ann &lt;b&gt;" in page and "<b>" not in page
     assert (folder / "packs" / snapshot / "evidence.json").exists()
+
+
+# --- hardening: authz on the new entry points, and refusals the workspace and CLI report ---
+
+
+def _raw(srv, method, path, body=b"", headers=None):
+    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
+    try:
+        conn.request(method, path, body=body, headers=headers or {})
+        r = conn.getresponse()
+        return r.status, r.read()
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("path", ["/sign", "/api/sign", "/preview", "/api/preview"])
+def test_workspace_sign_and_preview_need_the_token_host_and_origin(home, tmp_path, serve, path):
+    case_id, folder = _case(tmp_path)
+    p = pack.build_preview(folder, case_id)
+    srv = serve(case_id)
+    body = json.dumps({"snapshot": p.snapshot, "name": "Ann"}).encode()
+    good = {"Host": f"127.0.0.1:{srv.port}", "Content-Type": "application/json",
+            "Origin": f"http://127.0.0.1:{srv.port}"}
+    events = _events(folder)
+    cases = [
+        ("POST", path, {**good}),  # no token
+        ("POST", path, {**good, "X-CMA-Token": "wrong"}),
+        ("POST", path, {**good, "X-CMA-Token": srv.token, "Origin": "http://evil.example"}),
+        ("POST", path, {**good, "X-CMA-Token": srv.token, "Host": "evil.example"}),
+    ]
+    for method, target, headers in cases:
+        status, _ = _raw(srv, method, target, body, headers)
+        assert status == 403, (target, headers)
+    status, _ = _raw(srv, "GET", path, b"", {"Host": good["Host"], "X-CMA-Token": srv.token})
+    assert status == 405  # a write is POST only
+    assert _events(folder) == events and not (folder / "packs").exists()
+
+
+def test_workspace_sign_off_on_a_broken_log_names_the_first_bad_entry(home, tmp_path, serve):
+    case_id, folder = _case(tmp_path)
+    p = pack.build_preview(folder, case_id)
+    srv = serve(case_id)
+    log = folder / caselog.LOG_NAME
+    lines = log.read_bytes().splitlines(keepends=True)
+    lines[1] = lines[1].replace(b'"import"', b'"imporT"')
+    log.write_bytes(b"".join(lines))
+    status, body = _post(srv, "/api/sign", {"snapshot": p.snapshot, "name": "Ann"})
+    reply = json.loads(body)
+    assert status == 409 and reply["first_bad"] == 2 and "entry 2" in reply["refused"]
+    assert not (folder / "packs").exists()
+    status, page = _post(srv, f"/sign?token={srv.token}", f"snapshot={p.snapshot}&name=Ann&back=%2F",
+                         kind="application/x-www-form-urlencoded")
+    assert status == 409 and 'id="sign-refused"' in page and "entry 2" in page
+
+
+def test_cli_case_sign_reports_a_save_not_recorded_and_leaves_no_pack(home, tmp_path, monkeypatch):
+    case_id, folder = _case(tmp_path)
+    p = pack.build_preview(folder, case_id)
+
+    def refused(self, event, data, *, expected):
+        raise caselog.SaveNotRecorded("the case lock file was replaced; the save was not recorded")
+
+    monkeypatch.setattr(caselog.CaseLog, "append", refused)
+    r = CliRunner().invoke(app, ["case", "sign", case_id, "--snapshot", p.snapshot], input="Ann\ny\n")
+    assert r.exit_code == 4 and "not recorded" in r.output.lower()
+    assert not (folder / "packs" / p.snapshot).exists()
