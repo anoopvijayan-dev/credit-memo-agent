@@ -10,7 +10,7 @@ an override, an own-account pairing, a protected built-in pattern (R21), an ambi
 a new firm rule (design C1, precedence).
 
 Saving (promote) holds the case, builds the preview again and refuses when it no longer
-counts the lines the underwriter was shown, then adds the rule to the firm rules file (its
+counts the lines the underwriter was shown or gives another digest of them (Preview.digest), then adds the rule to the firm rules file (its
 pattern, direction, category, the typed name, the UTC time and the reason) and records the
 promotion in the case log (R42). The firm rules file is read as it stands by every case
 categorised afterwards (firm_rules.for_case), the open case included, so the rule applies
@@ -28,6 +28,7 @@ Messages name lines and overrides by id and number, never by what the case holds
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -81,6 +82,16 @@ class Preview:
     rule: dict[str, str]  # id, pattern, direction, category
     seq: int
     lines: list[Matched] = field(default_factory=list)
+    firm_rules_sha256: str | None = None  # the firm rules file the preview read; None for none
+
+    @property
+    def digest(self) -> str:
+        """What the underwriter was shown: the rule, the firm rules file it was read against,
+        and each matched line with whether the rule sets it and why not. Saving refuses when
+        the preview built again gives another digest, even with the same number of lines."""
+        shown = {"rule": self.rule, "seq": self.seq, "firm_rules": self.firm_rules_sha256,
+                 "lines": [[m.account, m.line.id, m.applies, m.why] for m in self.lines]}
+        return hashlib.sha256(json.dumps(shown, sort_keys=True).encode("utf-8")).hexdigest()
 
     @property
     def count(self) -> int:
@@ -204,7 +215,7 @@ def _build(folder: Path, entries, fields: dict[str, Any], existing: firm_rules.F
             why = None if applies else _why_not(t, rule_now, ruleset, desc, candidate)
             matched.append(Matched(acct, t, t.category.value if t.category else "", rule_now or None, applies, why))
     return Preview({"id": rid, "pattern": pattern, "direction": direction, "category": category.value},
-                   rec["seq"], matched)
+                   rec["seq"], matched, existing.sha256)
 
 
 def _firm_rules_now() -> tuple[Path, bytes | None, firm_rules.FirmRules]:
@@ -234,10 +245,37 @@ class Promoted:
     firm_rules_sha256: str
 
 
-def promote(folder: Path, fields: dict[str, Any], *, shown: Any, expected: int | None = None) -> Promoted:
+def _appended(before: bytes | None, existing: firm_rules.FirmRules, record: dict[str, Any], path: Path) -> str:
+    """The firm rules file with `record` added. The new rule is appended to the file's own text,
+    so the firm's comments and layout stay, when the result reads back as the file's rules and
+    then the new one; otherwise (a file in another layout) the file is written afresh."""
+    full = yaml.safe_dump({"rules": [dict(r) for r in existing.records] + [record]}, sort_keys=False,
+                          allow_unicode=True, width=1000)
+    want = firm_rules.parse(full, str(path)).records
+    if before is None or not existing.records:
+        return full
+    try:
+        text = before.decode("utf-8")
+    except UnicodeDecodeError:
+        return full
+    item = yaml.safe_dump([record], sort_keys=False, allow_unicode=True, width=1000)
+    for indent in ("", "  ", "    "):
+        block = "".join(indent + ln if ln.strip() else ln for ln in item.splitlines(keepends=True))
+        candidate = text.rstrip("\n") + "\n" + block
+        try:
+            if firm_rules.parse(candidate, str(path)).records == want:
+                return candidate
+        except (firm_rules.FirmRulesError, yaml.YAMLError):
+            continue
+    return full
+
+
+def promote(folder: Path, fields: dict[str, Any], *, shown: Any, expected: int | None = None,
+            seen: str | None = None) -> Promoted:
     """Save the rule the preview showed (R20): `shown` is the number of lines the preview the
-    underwriter saw counted; a preview that now counts another number is refused, naming both,
-    and nothing is saved. `expected` is the case log position the page was built at."""
+    underwriter saw counted, and `seen` its digest; a preview that now counts another number,
+    or gives another digest (other lines, another outcome for one, another firm rules file), is
+    refused and nothing is saved. `expected` is the case log position the page was built at."""
     folder = Path(folder)
     if isinstance(shown, str) and shown.isdigit():
         shown = int(shown)
@@ -253,10 +291,12 @@ def promote(folder: Path, fields: dict[str, Any], *, shown: Any, expected: int |
         if p.count != shown:
             raise PreviewChanged(f"the preview showed {shown} matching lines and the rule now matches {p.count}; "
                                  "preview it again; nothing was saved")
+        if seen is not None and seen != p.digest:
+            raise PreviewChanged("the lines the rule matches, or what it would set, changed since the preview; "
+                                 "preview it again; nothing was saved")
         at = overrides._now()
         record = {**p.rule, "by": name, "at": at, "reason": reason}
-        rules = [dict(r) for r in existing.records] + [record]
-        text = yaml.safe_dump({"rules": rules}, sort_keys=False, allow_unicode=True, width=1000)
+        text = _appended(before, existing, record, path)
         firm_rules.parse(text, str(path))  # the file as it will be read: never written otherwise
         if not path.parent.is_dir():
             raise store.CaseStoreError(f"the folder of the firm rules file {path.name} does not exist")

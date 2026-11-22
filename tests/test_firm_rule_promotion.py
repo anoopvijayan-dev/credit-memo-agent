@@ -196,6 +196,11 @@ def serve():
         srv.close()
 
 
+def _seen(folder, seq, pattern="ACME TRUST"):
+    """The digest the preview page would carry for this rule (Preview.digest)."""
+    return promotion.preview(folder, {"seq": seq, "pattern": pattern, "direction": "in", "id": "acme_trust"}).digest
+
+
 def _request(srv, method, path, body=None, kind="application/json"):
     conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
     try:
@@ -228,7 +233,8 @@ def test_the_workspace_previews_then_saves_a_promotion(home, tmp_path, serve):
     assert not _rules_path().exists()
     status, raw = _request(srv, "POST", "/api/promote", {
         "seq": seq, "pattern": "ACME TRUST", "direction": "in", "id": shown["preview"]["rule"]["id"],
-        "shown": shown["preview"]["count"], "expected": shown["position"], "confirm": "1",
+        "shown": shown["preview"]["count"], "seen": shown["preview"]["digest"], "expected": shown["position"],
+        "confirm": "1",
         "name": "Pat Jones", "reason": "trust distributions"})
     assert status == 200, raw
     done = json.loads(raw)
@@ -238,7 +244,7 @@ def test_the_workspace_previews_then_saves_a_promotion(home, tmp_path, serve):
 
 
 def test_the_page_shows_the_promote_form_and_the_preview_escaped(home, tmp_path, serve):
-    case_id, _, seq = _overridden(tmp_path)
+    case_id, folder, seq = _overridden(tmp_path)
     srv = serve(case_id)
     status, raw = _request(srv, "GET", f"/?token={srv.token}")
     assert status == 200, raw
@@ -248,6 +254,7 @@ def test_the_page_shows_the_promote_form_and_the_preview_escaped(home, tmp_path,
     assert status == 200
     assert b'id="promote-preview"' in raw and b'class="promote-confirm"' in raw
     assert b'name="shown" value="3"' in raw
+    assert f'name="seen" value="{_seen(folder, seq)}"'.encode() in raw
     # a malformed request is refused naming nothing of the case
     status, raw = _request(srv, "POST", f"/promote?token={srv.token}", {"seq": seq, "pattern": "ACME", "amount": "1"},
                            kind=rs.FORM)
@@ -270,7 +277,7 @@ def test_confirming_the_page_preview_saves_the_rule_and_a_stale_page_is_refused(
     srv = serve(case_id)
     n = len(case.for_case(folder).entries())
     form = {"seq": seq, "pattern": "ACME TRUST", "direction": "in", "id": "acme_trust", "shown": 3,
-            "confirm": "1", "name": "Pat Jones", "reason": "trust distributions"}
+            "seen": _seen(folder, seq), "confirm": "1", "name": "Pat Jones", "reason": "trust distributions"}
     status, raw = _request(srv, "POST", f"/promote?token={srv.token}", {**form, "expected": n - 1}, kind=rs.FORM)
     assert status == 409 and b'id="promote-refused"' in raw and not _rules_path().exists()
     status, raw = _request(srv, "POST", f"/promote?token={srv.token}", {**form, "expected": n}, kind=rs.FORM)
@@ -317,7 +324,8 @@ def test_resending_the_same_confirmed_promotion_saves_one_rule(home, tmp_path, s
     srv = serve(case_id)
     n = len(case.for_case(folder).entries())
     form = {"seq": seq, "pattern": "ACME TRUST", "direction": "in", "id": "acme_trust", "shown": 3,
-            "expected": n, "confirm": "1", "name": "Pat Jones", "reason": "trust distributions"}
+            "seen": _seen(folder, seq), "expected": n, "confirm": "1", "name": "Pat Jones",
+            "reason": "trust distributions"}
     status, _ = _request(srv, "POST", "/api/promote", form)
     assert status == 200
     status, raw = _request(srv, "POST", "/api/promote", form)  # a double submit, or a retry
@@ -377,3 +385,76 @@ def test_a_pattern_is_a_name_never_a_regular_expression(home, tmp_path, pattern)
     # STRIPE (L5) never matches through an alternation, nor every line through .*
     assert "L5" not in [m.line.id for m in p.lines]
     assert p.count < 6
+
+
+# --- the digest of what was shown, and the firm's own file (T37 pass) ----------------------
+
+
+def test_a_preview_with_the_same_count_but_another_outcome_saves_nothing(home, tmp_path):
+    # Another case's promotion adds an earlier firm rule for the same counterparty between the
+    # preview and its confirmation: the rule still matches 3 lines, but now sets none of them.
+    _, folder, seq = _overridden(tmp_path)
+    fields = {"seq": seq, "pattern": "ACME TRUST", "direction": "in", "id": "acme_trust"}
+    p = promotion.preview(folder, fields)
+    assert p.count == 3 and p.applies == 1
+    _rules_path().parent.mkdir(parents=True, exist_ok=True)
+    _rules_path().write_text("rules:\n  - id: earlier\n    pattern: ACME TRUST\n    direction: in\n"
+                             "    category: revenue_transfer\n    by: Sam\n    at: '2026-11-01T09:00:00Z'\n"
+                             "    reason: another case\n", encoding="utf-8")
+    again = promotion.preview(folder, fields)
+    assert again.count == p.count and again.digest != p.digest
+    n = len(case.for_case(folder).entries())
+    with pytest.raises(promotion.PreviewChanged, match="changed since the preview"):
+        promotion.promote(folder, {**fields, "name": "Pat", "reason": "r"}, shown=p.count, expected=n,
+                          seen=p.digest)
+    assert [r.id for r in firm_rules.for_case().rules] == ["earlier"]
+    assert len(case.for_case(folder).entries()) == n
+
+
+def test_a_confirmation_without_the_preview_digest_is_refused(home, tmp_path, serve):
+    case_id, folder, seq = _overridden(tmp_path)
+    srv = serve(case_id)
+    n = len(case.for_case(folder).entries())
+    status, raw = _request(srv, "POST", "/api/promote", {
+        "seq": seq, "pattern": "ACME TRUST", "direction": "in", "id": "acme_trust", "shown": 3, "expected": n,
+        "confirm": "1", "name": "Pat", "reason": "r"})
+    assert status == 400 and b"seen" in raw
+    assert not _rules_path().exists() and len(case.for_case(folder).entries()) == n
+
+
+def test_promoting_keeps_the_firms_comments_and_layout(home, tmp_path):
+    _, folder, seq = _overridden(tmp_path)
+    own = ("# Firm rules, kept by the credit team. Do not remove the header.\n"
+           "rules:\n"
+           "  # Rent collected for the landlord, not trading.\n"
+           "  - id: landlord\n"
+           "    pattern: HOLLY ESTATES\n"
+           "    direction: in\n"
+           "    category: other_explained_in\n"
+           "    by: Sam\n"
+           "    at: '2026-11-01T09:00:00Z'\n"
+           "    reason: rent passed through\n")
+    _rules_path().parent.mkdir(parents=True, exist_ok=True)
+    _rules_path().write_text(own, encoding="utf-8")
+    fields = {"seq": seq, "pattern": "ACME TRUST", "direction": "in"}
+    p = promotion.preview(folder, fields)
+    promotion.promote(folder, {**fields, "name": "Pat", "reason": "trust"}, shown=p.count,
+                      expected=len(case.for_case(folder).entries()), seen=p.digest)
+    text = _rules_path().read_text(encoding="utf-8")
+    assert text.startswith(own)
+    assert [r.id for r in firm_rules.for_case().rules] == ["landlord", "acme_trust"]
+
+
+def test_a_firm_rules_file_in_another_layout_is_written_afresh_and_still_reads(home, tmp_path):
+    _, folder, seq = _overridden(tmp_path)
+    _rules_path().parent.mkdir(parents=True, exist_ok=True)
+    _rules_path().write_text("{rules: [{id: landlord, pattern: HOLLY ESTATES, direction: in, category: "
+                             "other_explained_in, by: Sam, at: '2026-11-01T09:00:00Z', reason: rent}]}\n",
+                             encoding="utf-8")
+    fields = {"seq": seq, "pattern": "ACME TRUST", "direction": "in"}
+    p = promotion.preview(folder, fields)
+    promotion.promote(folder, {**fields, "name": "Pat", "reason": "trust"}, shown=p.count,
+                      expected=len(case.for_case(folder).entries()), seen=p.digest)
+    rules = firm_rules.for_case()
+    assert [r.id for r in rules.rules] == ["landlord", "acme_trust"]
+    assert rules.records[0]["reason"] == "rent" and rules.records[1]["by"] == "Pat"

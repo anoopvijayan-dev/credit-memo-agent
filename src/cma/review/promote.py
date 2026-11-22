@@ -7,8 +7,8 @@ answers with the preview: every line of the open case the rule would match, each
 whether the rule would set its category or what keeps it (an override, a pairing, a
 protected built-in pattern, an ambiguous verdict, a profile name or an earlier firm rule).
 Nothing is saved until the underwriter confirms that preview, whose form carries the number
-of lines it showed and the case log position; promotion.promote refuses when either has
-moved. /api/promote answers the same as data.
+of lines it showed, the digest of what it showed and the case log position;
+promotion.promote refuses when any has moved. /api/promote answers the same as data.
 
 Every case text is escaped (R34); this module computes no money.
 """
@@ -24,7 +24,7 @@ from .. import case as caselog
 from .. import promotion, store
 from ..categorise import RulesetError
 
-KEYS = frozenset({"seq", "pattern", "direction", "id", "name", "reason", "expected", "confirm", "shown", "back"})
+KEYS = frozenset({"seq", "pattern", "direction", "id", "name", "reason", "expected", "confirm", "shown", "seen", "back"})
 RULE_KEYS = ("seq", "pattern", "direction", "id")
 
 
@@ -35,7 +35,7 @@ def _rule_fields(fields: dict[str, Any]) -> dict[str, Any]:
 def _shown(p: promotion.Preview) -> dict[str, Any]:
     from .summary import _line
 
-    return {"rule": p.rule, "seq": p.seq, "count": p.count, "applies": p.applies,
+    return {"rule": p.rule, "seq": p.seq, "count": p.count, "applies": p.applies, "digest": p.digest,
             "lines": [{"account": m.account, **_line(m.line), "applies": m.applies, "why": m.why} for m in p.lines]}
 
 
@@ -57,9 +57,13 @@ def answer(folder: Path, case_id: str, fields: dict[str, Any]) -> tuple[int, dic
         if not isinstance(expected, int) or isinstance(expected, bool):
             return 400, {"refused": "a promotion carries the case log position the preview was built at "
                                     "(expected); preview it again."}
+        seen = fields.get("seen")
+        if not isinstance(seen, str) or not seen:
+            return 400, {"refused": "a promotion carries the digest of the preview it confirms (seen); "
+                                    "preview it again."}
         r = promotion.promote(folder, {**_rule_fields(fields), "name": fields.get("name"),
                                        "reason": fields.get("reason")},
-                              shown=fields.get("shown"), expected=expected)
+                              shown=fields.get("shown"), expected=expected, seen=seen)
     except (store.CaseStoreError, RulesetError, ValueError) as e:
         return 400, {"refused": f"{str(e).rstrip('.')}."}
     except caselog.LogConflict as e:
@@ -149,7 +153,8 @@ def html(status: int, reply: dict[str, Any], token: str, fields: dict[str, Any])
     if reply.get("position") is not None:
         form = (f'<form class="promote-confirm" method="post" action="{_action(token)}">'
                 + _hidden("seq", p["seq"]) + _hidden("pattern", r["pattern"]) + _hidden("direction", r["direction"])
-                + _hidden("id", r["id"]) + _hidden("shown", p["count"]) + _hidden("expected", reply["position"])
+                + _hidden("id", r["id"]) + _hidden("shown", p["count"]) + _hidden("seen", p["digest"])
+                + _hidden("expected", reply["position"])
                 + _hidden("confirm", "1")
                 + '<input name="reason" required maxlength="1000" placeholder="Reason" aria-label="Reason"> '
                 '<input name="name" required maxlength="1000" placeholder="Your name" aria-label="Your name"> '
