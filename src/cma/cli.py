@@ -961,6 +961,60 @@ def review_workspace(
     console.print("Review workspace stopped.")
 
 
+@app.command("verify")
+def verify_evidence(
+    evidence: Path = typer.Argument(..., metavar="EVIDENCE", help="An evidence JSON: a pack's evidence.json or "
+                                    "the .evidence.json `cma run` writes."),
+    case_id: str = typer.Option(None, "--case", metavar="CASE",
+                                help="A signed pack's case; by default the case the record names."),
+    statement: Path = typer.Option(None, "--statement",
+                                   help="A `cma run` record's statement file, if not at the path it records."),
+):
+    """Recompute every figure, bucket and monthly cell of an evidence record from the inputs it
+    recorded and report each mismatch, or that there is none (R44). A record made with a
+    ruleset other than the one installed is refused, naming the package version and ruleset
+    that made it (R45); a record with no schema_version (v0) is checked for M1 to M16 only.
+    Exit 0 with no mismatch, 1 with a mismatch, 2 when the record cannot be verified."""
+    from . import store
+    from . import verify as vf
+
+    def refused(msg: str):
+        console.print(f"[red]Refused.[/red] {escape(msg)}")
+        raise typer.Exit(code=2)
+
+    try:
+        record = json.loads(Path(evidence).read_bytes().decode("utf-8"))
+    except OSError as e:
+        refused(f"{evidence} cannot be read ({e.strerror or type(e).__name__})")
+    except (UnicodeDecodeError, ValueError):
+        refused(f"{evidence} is not a JSON evidence record")
+    folder = None
+    try:
+        if case_id is not None:
+            folder = store.case_folder(case_id)
+        with _case_errors():
+            result = vf.verify(record, case_folder=folder, base=Path(evidence).parent, statement=statement)
+    except vf.VerifyRefused as e:
+        refused(str(e))
+    except store.CaseStoreError as e:
+        refused(str(e))
+    c = result.checked
+    what = f"{c['figures']} figures, {c['buckets']} buckets and {c['monthly_cells']} monthly cells"
+    rs = result.ruleset
+    console.print(f"Recomputed {what} of this {result.kind} record under ruleset {escape(str(rs.get('id')))} "
+                  f"(sha256 {escape(str(rs.get('sha256')))}).")
+    if result.note:
+        console.print(f"[yellow]Note:[/yellow] {escape(result.note)}.")
+    if not result.mismatches:
+        console.print("[green]Verified:[/green] no mismatch.")
+        return
+    console.print(f"[red]{len(result.mismatches)} mismatches:[/red]")
+    for m in result.mismatches:  # ids, values and line ids only: never a description
+        console.print(f"- {escape(m.where)}: recorded {escape(json.dumps(m.recorded))}, recomputed "
+                      f"{escape(json.dumps(m.recomputed))}", soft_wrap=True, highlight=False)
+    raise typer.Exit(code=1)
+
+
 @app.command()
 def truth(path: Path):
     """Print the ground truth for a generated statement."""

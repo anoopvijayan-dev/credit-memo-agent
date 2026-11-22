@@ -31,7 +31,8 @@ pytestmark = pytest.mark.contracts
 # those of its policy key. R53: new evidence fields are additive; none of these goes.
 TODAY_KEYS = {"schema_version", "statement", "model", "egress", "vat_stagger", "ruleset", "lines", "metrics",
               "monthly_summary", "thresholds", "indicators", "judgement_queue", "policy", "guard", "redrafts",
-              "review", "memo"}
+              "review", "memo",
+              "package_version"}  # added by T38 so verify can name the version that made a record (R45)
 POLICY_KEYS = {"overall", "policy_name", "policy_sha256", "rules"}
 # The keys of today's record that describe its one statement; a pack carries them per account.
 STATEMENT_KEYS = {"statement", "vat_stagger", "lines", "metrics", "monthly_summary", "thresholds", "indicators",

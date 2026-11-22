@@ -139,6 +139,18 @@ cma case preview <id>
 # workspace (`cma review`) offers the same preview and sign-off from the case page.
 cma case sign <id>
 
+# Verify an evidence record: recompute every figure, bucket and monthly cell from the
+# inputs it recorded and list each mismatch by id (never a description). A pack is checked
+# against its case's statements, profile and firm rules, which must be the ones recorded,
+# and the override log up to the position the pack recorded, so later overrides and
+# accounts imported later change nothing. A `cma run` record is checked against its
+# statement file, which must hash as recorded. A record made with another ruleset is
+# refused, naming the package version and ruleset that made it; a record without
+# schema_version (v0) is checked for M1 to M16 only. It writes nothing. Exit 0 with no
+# mismatch, 1 with a mismatch, 2 when the record cannot be verified.
+cma verify private/cma/cases/<id>/packs/<snapshot>/evidence.json
+cma verify memo.evidence.json --statement private/statement.csv
+
 # Drop an entry the case log holds past its recorded entries that a crash, a full disk or a
 # lost power left unfinished, once you confirm it with your typed name; the drop is itself
 # recorded. Refused, changing nothing, when nothing is torn or the log is broken before it
