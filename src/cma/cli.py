@@ -673,6 +673,40 @@ def case_figures(case_id: str = typer.Argument(..., metavar="CASE", help="The ca
                           f"({s.why}); not applied until confirmed or dropped")
 
 
+@case_app.command("preview")
+def case_preview(case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed.")):
+    """Print the pack's memo sections, in the memo field map's order, the policy check while
+    show_policy_verdict is on, the grounding guard's verdict and the snapshot hash a sign-off
+    will be bound to (R22, R26, R28). Writes no file: only a preview entry in the case log.
+    Exit 1 when the text fails the grounding guard, 2 when the case cannot be previewed."""
+    from . import pack, store
+
+    with _case_errors():
+        folder = store.case_folder(case_id)
+        try:
+            p = pack.build_preview(folder, case_id)
+        except ReconciliationError as e:  # R3: no figures, so no sections
+            console.print(f"[red]Refused.[/red] {escape(str(e))}")
+            raise typer.Exit(code=2) from None
+        except (pack.FieldMapError, pack.PreviewError, StatementError, AmountError, RulesetError,
+                ThresholdsError, PolicyError) as e:
+            console.print(f"[red]Refused.[/red] {escape(str(e))}; nothing was recorded.")
+            raise typer.Exit(code=2) from None
+    # The text quotes the case's own figures only; printed as it is, never read as markup.
+    console.print(p.text, markup=False, highlight=False, soft_wrap=True)
+    if not p.grounded:
+        console.print("[red]The text fails the grounding guard[/red]; no pack can be signed off from "
+                      "this preview (R28):")
+        for account, number, why in p.findings():
+            console.print(f"  account {escape(account)}: {escape(number or '-')}: {escape(why)}", markup=True)
+    else:
+        console.print("Grounding guard: every number is a figure or a policy threshold, with its id.")
+    console.print(f"snapshot {p.snapshot}")
+    console.print(f"recorded as case log entry {p.position}; nothing else was written")
+    if not p.grounded:
+        raise typer.Exit(code=1)
+
+
 @case_app.command("purge")
 def case_purge(
     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),

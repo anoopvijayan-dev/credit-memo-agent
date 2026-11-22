@@ -93,6 +93,15 @@ cma case resolve-override <id> 3 --confirm --name "Pat"   # or --drop
 # the page comes back with the figures, indicators and policy check recomputed.
 cma review <id>                                   # --no-browser to only print the URL
 
+# Preview the pack before sign-off: the memo-ready sections in the order of the memo field
+# map (by default the 13 fields in src/cma/memo_fields/memo_fields.yaml; a firm's own
+# memo_fields.yaml at the case root replaces it), each figure followed by its id, fields
+# with no figure marked for the underwriter and left empty, the illustrative policy check
+# (label first) while show_policy_verdict is on, the demo stamp on a demo case, the
+# grounding guard's verdict and the snapshot hash a sign-off is bound to. It writes no
+# file, only a preview entry in the case log. Exit 1 when the text fails the guard.
+cma case preview <id>
+
 # Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
 # first entry that was changed, removed, reordered or left half written.
 cma case check private/cma/cases/<id>
