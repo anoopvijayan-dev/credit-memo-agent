@@ -102,6 +102,7 @@ def test_sign_off_writes_memo_and_evidence_once_bound_to_the_snapshot(home, tmp_
     ("account", "a statement was imported for account other"),
     ("field_map", "the memo field map"),
     ("verdict", "the show_policy_verdict setting"),
+    ("pairing_days", "the own-account pairing days"),
 ])
 def test_r23_stale_snapshot_is_refused_naming_what_changed(home, tmp_path, change, named):
     case_id, folder = _case(tmp_path)
@@ -119,6 +120,8 @@ def test_r23_stale_snapshot_is_refused_naming_what_changed(home, tmp_path, chang
         store.import_file(folder, src, "csv", account="other")
     elif change == "field_map":
         (home / "memo_fields.yaml").write_text(pack.default_field_map_text() + "\n# firm\n", encoding="utf-8")
+    elif change == "pairing_days":  # R8's configured days, bound into the snapshot (T34)
+        (home / "firm.yaml").write_text("own_account_pairing_days: 5\n", encoding="utf-8")
     else:
         (home / "firm.yaml").write_text("show_policy_verdict: false\n", encoding="utf-8")
     before, events = _tree(folder), _events(folder)

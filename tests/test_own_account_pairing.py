@@ -231,3 +231,24 @@ def test_p11_a_debit_with_two_candidates_is_unpaired_and_listed_with_every_candi
         for i in ids:  # R9: unpaired, and in the queue with every other line of its group
             assert not (lines[i].rule_id or "").startswith(PAIRING)
             assert set(ids) - {i} <= listed[i]
+
+
+@pytest.mark.contracts
+def test_removing_the_pairing_days_setting_restores_the_default(home, tmp_path):
+    # Rollback of the setting: delete the key and the shipped 3 days apply again, with no repair.
+    _, folder = _case(tmp_path, _two(5))
+    _firm(home, "own_account_pairing_days: 7\nshow_policy_verdict: true\n")
+    assert _rules(folder)["main:M2"] == "pairing:savings:S2"
+    _firm(home, "show_policy_verdict: true\n")
+    assert firm.load().own_account_pairing_days == firm.DEFAULT_PAIRING_DAYS == 3
+    assert not (_rules(folder)["main:M2"] or "").startswith(PAIRING)
+
+
+@pytest.mark.contracts
+def test_a_malformed_pairing_days_setting_refuses_the_workspace_figures(home, tmp_path):
+    # A multi-account case reads the setting; a bad value refuses the figures, never a silent default.
+    _, folder = _case(tmp_path, _two(2))
+    _firm(home, "own_account_pairing_days: -1\n")
+    figures, refused = summary.load_figures(folder)
+    assert figures is None and refused["state"] == "refused"
+    assert "own_account_pairing_days" in refused["refusal"]
