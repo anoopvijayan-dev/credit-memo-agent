@@ -643,6 +643,17 @@ def convert(src: Path, dst: Path, *, statement_balance: str | None = None, at: s
     # A transaction one page shows pending and another booked (it settled between fetches) is
     # kept as booked, so it was not left out.
     pending -= len(pending_ids & first.keys())
+    return finish(booked, src, dst, supplied, pending=pending, repeated=repeated)
+
+
+def finish(booked: list[tuple], src: Path, dst: Path, supplied: tuple[int, date] | None, *,
+           pending: int, repeated: int) -> ImportResult:
+    """The checks every Open Banking style importer shares (R36, and R37 for TrueLayer): the
+    flows against the limit, lines oldest first with those booked at one moment in the order
+    their per-line balances chain in, the opening balance from a supplied statement balance or
+    the per-line balances, the walk that refuses a chain that breaks anywhere, and the
+    statement written through the contract. `booked` holds ((date, moment, file position),
+    contract.Line) for each booked GBP transaction kept; `supplied` is _statement_balance's."""
     if not booked:
         raise OpenBankingImportError(f"{src}: no booked transactions ({pending} pending left out)")
     reached = flows_at_limit([x.amount for _, x in booked])

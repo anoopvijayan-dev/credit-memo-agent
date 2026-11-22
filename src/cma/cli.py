@@ -579,14 +579,15 @@ def case_import(
     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
     file: Path = typer.Argument(..., help="The bank file. Copied into the case; nothing is uploaded."),
     fmt: str = typer.Option(..., "--format", help="csv (the five-column statement), monzo (a Monzo export) or "
-                            "openbanking (an OBIE v3.1 transactions file)."),
+                            "openbanking (an OBIE v3.1 transactions file) or truelayer (a TrueLayer Data API "
+                            "transactions export)."),
     account: str = typer.Option("main", "--account", help="A short key for the account, such as main or savings."),
     opening_balance: str | None = typer.Option(
         None, help="Monzo only: the balance just before the first transaction, when the export has no Balance column."),
     statement_balance: str | None = typer.Option(
-        None, help="Open Banking only: a balance from the bank's statement, at the end of the date --at, when "
-                   "the file has no per-line balances."),
-    at: str | None = typer.Option(None, "--at", help="Open Banking only: the date (YYYY-MM-DD) --statement-balance "
+        None, help="Open Banking or TrueLayer only: a balance from the bank's statement, at the end of the date "
+                   "--at, when the file has no per-line balances."),
+    at: str | None = typer.Option(None, "--at", help="Open Banking or TrueLayer only: the date (YYYY-MM-DD) --statement-balance "
                                                      "is the closing balance of."),
 ):
     """Import a statement into a case: the original kept by hash, the statement per account (R31, R42)."""
