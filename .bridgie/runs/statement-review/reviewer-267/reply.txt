@@ -1,0 +1,97 @@
+Reviewed task **T38** (`cma verify`) against the repository in `/home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review` and the runner logs (`mechanical:1`–`dual_run:7`).
+
+### Summary of findings
+
+1. **Major ([verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L247-L289), R44 / P13):** `_verify_pack` checks only statement hashes listed in `inputs["statements"]`, then calls `overrides.case_figures(folder, ...)` which loads *every* account in the case log ([overrides.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/overrides.py#L385-L414)). Importing a second account into a case *after* signing off a 1-account pack leaves all recorded inputs intact, yet `verify` pulls the new account into `pair_own_accounts` (mutating the signed account's recomputed figures) and reports `Mismatch("account <new>", "not recorded", "recomputed")` (exit 1) instead of recomputing solely from the recorded accounts.
+2. **Major ([verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L118), R44):** `_compare` ([verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L118)) and `_compare_months` ([verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L142-L148)) use plain Python `!=`, where `True == 1.0`, `False == 0.0`, `0 == False`, and `1 == True`. Tampering numeric metrics/cells with booleans (e.g., `M7.value = true`, `M13.value = false`, `days_overdrawn.value = false`) or `part_month` with `0`/`1` silently passes verification with zero mismatches.
+3. **Major ([verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L305-L334), R44 / claim #1):** Several malformed evidence record shapes bypass `_check_shape` and crash `verify()` / `cma verify` with unhandled exceptions (exit 1 traceback) or silent wrong slicing instead of `VerifyRefused` (exit 2):
+   - `{"accounts": null}` crashes at [verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L318) (`TypeError: 'NoneType' object is not iterable`).
+   - Non-dict monthly cells (e.g., `"money_in": 500.0` or `"500.00"`) crash at [verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L147-L148) (`TypeError`/`AttributeError`).
+   - Non-dict `inputs.statements` / `inputs.override_log` crash at [verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L247) and [verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L261); non-int `inputs.own_account_pairing_days` crashes in `pair_own_accounts` ([categorise.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/categorise.py#L1524)); negative or boolean `inputs.override_log.position` (`-1`, `True`, `False`) passes `isinstance(position, int)` at [verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L266) and silently slices `records[:override_position]` at [overrides.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/overrides.py#L388-L392) (and non-int/null silently falls back to `None`, applying post-sign-off overrides).
+   - Malformed `money_in.total` / `money_in.cash_within_trading` (e.g., `{"id": ["M17"]}` or `"bad"`) either crashes with `TypeError: unhashable type: 'list'` at [verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L113) or reports a mismatch (exit 1) instead of refusing (exit 2).
+4. **Minor ([verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L200), R44):** `_verify_run` skips the statement SHA-256 check whenever `statement.sha256` is `null`, `""`, or absent, allowing a tampered v1 `cma run` record with a stripped hash to verify against any substituted statement file.
+5. **Minor ([verify.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T38-review/src/cma/verify.py#L108-L162), R44):** `_compare`, `_compare_months`, and `_verify_pack` do not detect duplicate metric ids, bucket ids, months, or accounts (and `_buckets` flattens `total`/`buckets`/`cash_within_trading`), so duplicated identical entries verify with zero mismatches and inflated `checked` counts.
+
+```json
+{
+  "task": "T38",
+  "criteria": [
+    {
+      "id": "R44",
+      "tier": "adversarial",
+      "check": "Checked src/cma/verify.py (_verify_run:185-222, _verify_pack:228-290, _compare:103-125, _compare_months:128-155, _check_shape:305-334), src/cma/overrides.py:371-419, and src/cma/cli.py:936-987 against R44 and runner logs (contracts-4.log:1068-1090, invariants-5.log:1070-1085). Failed due to 3 major defects: unrecorded accounts imported after sign-off pollute pack recomputation, bool/number type confusion hides tampered values, and malformed record shapes crash with unhandled exceptions or wrong override slicing.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R45",
+      "tier": "adversarial",
+      "check": "Checked src/cma/verify.py:_check_ruleset (lines 63-80) and verify() (lines 357-360), src/cma/graph.py:492 (package_version), src/cma/pack.py:656 (package_version), and src/cma/cli.py:953-972. Both unknown ruleset ids and sha256 mismatches are refused before recomputation naming package_version, ruleset id, and sha256; confirmed passing in contracts-4.log:1074-1076,1080.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P3",
+      "tier": "adversarial",
+      "check": "Checked src/cma/overrides.py:371-468 (case_figures caches _PARSED, _CLASSES, _BARE keyed purely on unoverridden inputs) and tests/test_verify.py:118-133 + tests/test_overrides.py:76-120. Confirmed test_p3_figures_twice_and_overrides_one_at_a_time_equal_a_fresh_computation passed in invariants-5.log:1073 and full suite passed in specified-3.log (2935 passed).",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "P13",
+      "tier": "adversarial",
+      "check": "Checked src/cma/verify.py:_verify_pack (lines 228-290) and src/cma/overrides.py:385-414 against P13 and invariants-5.log:1070-1085. While existing tests pass when no new account is added after sign-off, importing another account into the case after sign-off leaves all recorded inputs intact yet causes verify() to run pair_own_accounts against the unrecorded account and report mismatches on the signed pack.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/verify.py",
+      "line": 265,
+      "criterion": "P13",
+      "claim": "_verify_pack recomputes via overrides.case_figures(folder, ...) over every account currently in the case log instead of restricting to inputs['statements']. Importing a second account into a case after a 1-account pack was signed off causes pair_own_accounts to mutate the signed account's categories/figures and appends Mismatch('account <new>', 'not recorded', 'recomputed'), failing verification (exit 1) on an untampered signed pack whose recorded inputs are all unchanged.",
+      "repro": "Create a case, import account 'main', build preview and sign off to produce evidence.json (inputs.statements == {'main': sha}). Then run store.import_file(folder, savings_csv, 'csv', account='savings') and call verify.verify(ev, case_folder=folder). Even with main.csv, case.yaml, firm_rules.yaml, and overrides.jsonl unchanged, verify returns Mismatch('account savings', 'not recorded', 'recomputed') plus any mismatches on 'main' caused by cross-account own-account pairing."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/verify.py",
+      "line": 118,
+      "criterion": "R44",
+      "claim": "_compare (line 118) and _compare_months (lines 142, 148) compare recorded and recomputed values with plain Python !=, where True == 1.0, False == 0.0, 0 == False, and 1 == True. Tampering numeric figures or monthly cells with booleans, or part_month with 0/1, silently passes verification with zero mismatches.",
+      "repro": "Load examples/cafe_stretched.memo.evidence.json (where M7 value is 1.0, M13 value is 0.0, monthly_summary[0]['part_month'] is False, and days_overdrawn value is 0). Replace M7['value'] = True, M13['value'] = False, monthly_summary[0]['part_month'] = 0, and monthly_summary[0]['days_overdrawn']['value'] = False. Run verify.verify(ev, base=EXAMPLE.parent) or `cma verify`: returns mismatches == [] and exit code 0."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/verify.py",
+      "line": 318,
+      "criterion": "R44",
+      "claim": "_check_shape misses multiple malformed evidence record shapes, refuting claim #1 and causing unhandled exceptions (traceback, exit 1) or silent wrong override slicing instead of VerifyRefused (exit 2): (1) {'accounts': None} crashes with TypeError at verify.py:318; (2) non-dict monthly cells (e.g. 'money_in': 500.0 or '500.00') crash with TypeError/AttributeError at verify.py:147-148; (3) non-dict inputs.statements or inputs.override_log crashes with AttributeError at verify.py:247/261, non-int inputs.own_account_pairing_days crashes with TypeError in pair_own_accounts, and bool/negative/non-int inputs.override_log.position (True, False, -1, None) silently slices records[:1]/records[:0]/records[:-1] or applies post-sign-off overrides at overrides.py:388-392; (4) malformed money_in.total/cash_within_trading (e.g. {'id': ['M17']} or 'bad') crashes with TypeError at verify.py:113 or reports a mismatch (exit 1).",
+      "repro": "1) Run `cma verify` on {**example, 'accounts': None} -> unhandled TypeError at src/cma/verify.py:318. 2) Set example['monthly_summary'][0]['money_in'] = 500.0 and run `cma verify` -> unhandled TypeError at src/cma/verify.py:147. 3) On a signed pack evidence.json, set ev['inputs']['override_log'] = {'position': -1} (with 2 overrides in case) -> overrides.py:392 slices records[:-1] instead of refusing; or set ev['inputs']['override_log'] = 'bad' -> unhandled AttributeError at verify.py:261; or set ev['accounts'][0]['money_in']['total'] = {'id': ['M17']} -> unhandled TypeError at verify.py:113."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/verify.py",
+      "line": 200,
+      "criterion": "R44",
+      "claim": "_verify_run skips statement SHA-256 verification when statement.sha256 is null, empty string, or absent (`if recorded.get('sha256') and sha != recorded['sha256']:`), allowing a tampered v1 `cma run` record with its statement hash stripped to be verified against any substituted CSV file instead of refusing.",
+      "repro": "Take a v1 `cma run` evidence record, delete ev['statement']['sha256'] (or set it to None or ''), edit the statement CSV on disk (or pass a different CSV with --statement), and run verify.verify(ev, base=...). Instead of VerifyRefused, it recomputes from the unverified file."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/verify.py",
+      "line": 108,
+      "criterion": "R44",
+      "claim": "_compare, _compare_months, and _verify_pack do not reject duplicate metric ids, bucket ids, months, or accounts in the recorded JSON, and _buckets flattens total/buckets/cash_within_trading by id. Duplicating an identical metric/bucket/month/account entry or moving M17 from money_in.total into money_in.buckets verifies with zero mismatches and inflated checked counts.",
+      "repro": "On a valid signed pack evidence.json, duplicate ev['accounts'][0]['metrics'][0] (M1) or move ev['accounts'][0]['money_in']['total'] into ev['accounts'][0]['money_in']['buckets'] and set total=None. verify.verify(ev, case_folder=folder) returns mismatches == [] with checked['figures'] == 29."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "antigravity",
+    "model": "Gemini 4 Neon (High)"
+  }
+}
+```
