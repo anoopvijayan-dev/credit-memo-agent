@@ -1,0 +1,33 @@
+{
+  "task": "T24",
+  "criteria": [
+    {
+      "id": "R27",
+      "tier": "adversarial",
+      "check": "src/cma/pack.py:290-293 writes a field with no figures as the FOR_UNDERWRITER marker and no text; parse_field_map (pack.py:164-171) refuses a template on a field with no figures, so such a field stays empty; MemoField.for_underwriter = not figures (pack.py:89-91). The packaged map (src/cma/memo_fields/memo_fields.yaml) has the 13 reply fields that design.md:1210 lists, in order, with M18 directly after M2 in monthly_turnover. Credit history, key risks and recommendation (plus business details and loan request) are unmapped. Judgement fields cannot map a figure, by id or by title (pack.py:166-167). Ran: test_r27_unmapped_fields_are_marked_for_the_underwriter_and_left_empty (specified-3.log).",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-247/specified-3.log"
+    },
+    {
+      "id": "P14",
+      "tier": "adversarial",
+      "check": "Read guard.py (NUMBER, ISO_DATE, TAG blanking, SENTENCE, LIMIT_WORDS, NUMBER_WORDS, _value_fits) against pack.quote/format_value (whole pound for GBP, 1dp pct, 2dp ratio, minus kept), rule_sentence (a limit word right before each [Rn] value, n/a branch with its tag), DEMO_STAMP, FOR_UNDERWRITER and ILLUSTRATIVE_LABEL (no digits or number words), and the ISO period dates the guard blanks. The attempt-1 defect is fixed: _label blanks the tool-written account key in the guard's copy only, keeping lengths, and every other character is read (pack.py:271-277, 392-393). Metrics always include M1-M28 (metrics.py:720-771), so field_sentence cannot raise KeyError. The runner ran the P14 tests and they passed: invariants-5.log:735-742 (8 digit and number-word keys), 749 (random numeric keys), plus the synthetic-archetype, overrides/negatives/n/a and literal-number tests.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-247/invariants-5.log"
+    },
+    {
+      "id": "P20",
+      "tier": "adversarial",
+      "check": "pack._text (pack.py:296-301): with show_policy_verdict on, the policy section comes after every memo field, its first line is policy.ILLUSTRATIVE_LABEL, and each account's outcome and rule lines sit inside that same ## section. The recommendation is a judgement field that can never map a figure, so it stays blank. With the setting off there is no policy section, no [Rn] tag and no outcome word, and the log entry records policy_check=hidden. test_p20_preview_text_with_show_policy_verdict_on[accounts0/1] and _off PASSED (invariants-5.log:744-746).",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-247/invariants-5.log"
+    }
+  ],
+  "findings": [],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

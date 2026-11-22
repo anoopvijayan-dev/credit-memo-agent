@@ -392,12 +392,12 @@
         "T16",
         "T17"
       ],
-      "status": "verify",
+      "status": "passed",
       "attempts": 2,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T24",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-249/evidence.json",
-      "escalation": "attempt 1 of 3 fail: P14 fail (pack._build runs guard.check on _text(p, account) for each account. Read guard.py NUMBER/check (lines 42-213) against pack._text, which writes 'Account {key}: ' and '### Account {key}' when a case has several accounts. store.ACCOUNT_KEY (store.py:64) allows digits, so a valid key such as '2' or 'hsbc-1' puts a bare untagged number into the text, and the guard flags it. The P14 tests ran (invariants-5.log) but use only the keys main/spare/other and the synthetic keys.); major: In a multi-account case the memo text prefixes each sentence with 'Account {key}: ' and writes '### Account {key}'. Account keys may contain digits (store.py:64 ACCOUNT_KEY [a-z0-9][a-z0-9_-]{0,31}). The guard reads a key such as '2', '12' or 'hsbc-1' (the digit after '-' passes the NUMBER lookbehind) as an untagged number. That number is either 'not in the metrics table' or a missing citation, so the preview is ungrounded and no pack can be signed (R28). P14 says the text passes the guard for any case. at src/cma/pack.py:292; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-250/evidence.json",
+      "escalation": null
     },
     {
       "id": "T27",
