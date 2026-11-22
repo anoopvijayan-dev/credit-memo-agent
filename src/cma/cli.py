@@ -578,22 +578,34 @@ def case_profile(
 def case_import(
     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
     file: Path = typer.Argument(..., help="The bank file. Copied into the case; nothing is uploaded."),
-    fmt: str = typer.Option(..., "--format", help="csv (the five-column statement) or monzo (a Monzo export)."),
+    fmt: str = typer.Option(..., "--format", help="csv (the five-column statement), monzo (a Monzo export) or "
+                            "openbanking (an OBIE v3.1 transactions file) or truelayer (a TrueLayer Data API "
+                            "transactions export)."),
     account: str = typer.Option("main", "--account", help="A short key for the account, such as main or savings."),
     opening_balance: str | None = typer.Option(
         None, help="Monzo only: the balance just before the first transaction, when the export has no Balance column."),
+    statement_balance: str | None = typer.Option(
+        None, help="Open Banking or TrueLayer only: a balance from the bank's statement, at the end of the date "
+                   "--at, when the file has no per-line balances."),
+    at: str | None = typer.Option(None, "--at", help="Open Banking or TrueLayer only: the date (YYYY-MM-DD) --statement-balance "
+                                                     "is the closing balance of."),
 ):
     """Import a statement into a case: the original kept by hash, the statement per account (R31, R42)."""
     from . import store
 
     with _case_errors():
         folder = store.case_folder(case_id)
-        r = store.import_file(folder, file, fmt, account=account, opening_balance=opening_balance)
+        r = store.import_file(folder, file, fmt, account=account, opening_balance=opening_balance,
+                              statement_balance=statement_balance, at=at)
     if r.already:
         console.print(f"already imported (sha256 {r.input_sha256[:12]}); the case is unchanged")
         return
     console.print(f"imported account {r.account}: {r.lines} transactions, {r.start} to {r.end} "
                   f"(sha256 {r.input_sha256[:12]})")
+    if r.pending:  # R36: pending lines are left out, and counted
+        console.print(f"left out {r.pending} pending transaction{'s' if r.pending != 1 else ''}")
+    if r.repeated:
+        console.print(f"{r.repeated} transaction{'s' if r.repeated != 1 else ''} repeated across pages kept once")
 
 
 @case_app.command("override")

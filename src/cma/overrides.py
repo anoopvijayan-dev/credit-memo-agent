@@ -236,8 +236,14 @@ def _load(folder: Path, account: str) -> tuple[Statement, str] | None:
     if parsed is None:
         parsed = load_csv(path, account_name=account, data=data)
         _PARSED.put((account, sha), _copy(parsed))
-        return parsed, sha
-    return _copy(parsed), sha
+    else:
+        parsed = _copy(parsed)
+    # The provider's own categories ride along as untrusted hints (R37): set after the
+    # statement is parsed and memoised by its bytes alone, so no figure can depend on them.
+    hints = store.load_hints(folder, account)
+    for t in parsed.transactions:
+        t.provider_hint = hints.get(t.id)
+    return parsed, sha
 
 
 @dataclass
