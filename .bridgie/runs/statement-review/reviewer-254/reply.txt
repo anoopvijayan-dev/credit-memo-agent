@@ -1,0 +1,74 @@
+I'm reviewing the T29 diff; I've found a reproducible defect in the start-balance search and am writing up the evidence now.
+
+**Verdict: fail on R36.** I read the code and the runner logs; I couldn't run anything, because Bash is denied here.
+
+**What passes:**
+- Only booked lines are kept, and pending ones are counted.
+- Only GBP is accepted, and nothing is converted.
+- The bank's `TransactionId` is kept as the line id.
+- A transaction repeated across pages is kept once when identical, and the file is refused when the two copies differ.
+- All the `test_import_openbanking` tests ran and passed in the runner's contracts tier (contracts-4.log:171-222).
+- The previous review's finding is fixed: the 8/12/400 balance-less-line tests pass.
+
+**The new defect (major):**
+- **Where:** `_first_order` (`openbanking.py:510-527`) is used when nothing before the first balanced group says what the balance is. To test a guessed starting balance, it orders each later group that has a balance. But `_order` hands back any single-line group unchecked (`openbanking.py:295`).
+- **Effect:** when later groups are single lines (any export where the other lines have their own timestamps), the first guess, "the balanced line goes first", is accepted. The walk then hits a later per-line balance it doesn't match, and a valid file is refused as a broken balance chain. That is the refusal R36 allows only when the chain really breaks.
+- **Repro:** opening balance £100.00.
+  - L0: credit £5.00, no balance, 2026-05-01T00:00Z.
+  - A: credit £1.00, balance £106.00, same moment.
+  - B: credit £1.00, balance £107.00, 2026-05-02T00:00Z.
+  - The order L0, A, B chains correctly. The importer picks A, L0 instead, walks B to £112.00 against the file's £107.00, and refuses it.
+- No test covers this shape: every test either has a balanced line before the mixed group or has multi-line later groups.
+
+**Smaller findings (minor):**
+- The search can still refuse valid files, now with a "search limit" message. This happens when the first balanced group has more than 16 lines without a balance and needs an unusual subset of them first, or when there are more than 32 distinct amounts among them. The README and the heavy-mix test both accept this.
+- `claim.json` doesn't match the code under review. It says `ORDER_STEPS` is 100,000 (the code has 500,000), and that the distinct-amounts test is a strict xfail (no xfail is in the file; the runner ran it and it passed). It also reports "52 passed, 1 xfailed", which no runner log shows, and its proofs ran from `/tmp` scripts the runner didn't run.
+
+I couldn't write `evidence.json` to the run folder without Bash, so it is below.
+
+```json
+{
+  "task": "T29",
+  "criteria": [
+    {
+      "id": "R36",
+      "tier": "adversarial",
+      "check": "Booked only: convert() skips Status=Pending and counts it (a page that later shows it booked is uncounted), and refuses any other status (src/cma/importers/openbanking.py convert). GBP only: _money refuses a non-GBP amount or balance. Provider ids: _id keeps TransactionId (openbanking.py:257-267), and per_line_balances.statement.golden shows T1..T5. Paged repeats: kept once when identical, refused when different. Balance rebuilt from per-line balances or --statement-balance/--at, then contract.walk checks every per-line balance (contract.py:81-90). The runner's contracts tier ran every test_import_openbanking test and all passed (contracts-4.log:171-222), including the verify-256 regression tests with 8, 12 and 400 loose lines. Gap: _first_order accepts a wrong starting balance when later balanced groups are single lines, because _order returns a single-line group without checking it (openbanking.py:295, 520-527). A valid file whose chain does not break is then refused as a broken chain, so 'rebuild the running balance from per-line balances' and 'refuse only if the chain breaks' fail for it.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-254/contracts-4.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/openbanking.py",
+      "line": 523,
+      "criterion": "R36",
+      "claim": "_first_order checks each starting balance it tries by ordering every later group that has a balance, through ordered(m, before) -> _order. _order returns any single-line group at once without comparing its balance with `before` (line 295). So when every later balanced group is a single line, which is normal in a timestamped export, the first start _starts yields (sm=0: the balanced line first, no balance-less line before it) is accepted even when it is wrong. convert() then walks a wrong order, and contract.walk refuses a valid file with 'the balance walked from the opening balance disagrees with the per-line balance'. That is a broken-chain refusal of a file whose chain does not break.",
+      "repro": "Opening balance £100.00. Transactions, all Booked GBP Credit: L0 £5.00 with no Balance, BookingDateTime 2026-05-01T00:00:00Z; A £1.00 with Balance 106.00 InterimBooked, 2026-05-01T00:00:00Z; B £1.00 with Balance 107.00, 2026-05-02T00:00:00Z. The true order L0 (105), A (106), B (107) chains. _starts yields pre_A - 0 = 105.00 first. _order(group0, 105.00) gives [A, L0], and ordered(1, 111.00) returns B's group unchecked because it is one line, so the start is accepted. The walk gives A 106, L0 111, B 112, and B's 107 refuses the file at B's line. Run: openbanking.convert(path, out) on that file. No existing test covers a mixed first balanced group followed only by single-line groups."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/openbanking.py",
+      "line": 533,
+      "criterion": "R36",
+      "claim": "Valid files are still refused, now as 'search limit', when the first balanced group has more than START_SEARCH (16) balance-less lines and needs a subset of them that is not none, all, one or all but one before its balanced line, given a later multi-line group that pins the start; or when a gap needs a subset of more than 32 distinct loose amounts (MEET_LIMIT, line 350). The README and test_a_heavy_mix accept refusal of valid files, which goes beyond R36's refusal only on a broken chain.",
+      "repro": "First group at midnight: 17 loose credits of 2^i pence (i=0..16) and A with balance = opening + 87381p (even-index subset) + A's amount; a later multi-line group with balances on every line fixes the start. _starts never yields opening = pre_A - 87381, and OrderUnknown follows."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_import_openbanking.py",
+      "line": null,
+      "criterion": "R36",
+      "claim": "claim.json does not match the code under review. It says ORDER_STEPS = 100000 (the code has 500_000, openbanking.py:70). It says test_distinct_loose_amounts_whose_subset_a_balanced_line_needs_are_ordered is a strict xfail; the test has no xfail mark, and the runner ran it and it PASSED (contracts-4.log:180). It reports '52 passed, 1 xfailed', which no runner log shows, and its proofs come from /tmp scripts the runner did not run.",
+      "repro": "grep -n 'ORDER_STEPS =\\|xfail' src/cma/importers/openbanking.py tests/test_import_openbanking.py; grep distinct_loose contracts-4.log"
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "claude-opus-5-5"
+  }
+}
+```

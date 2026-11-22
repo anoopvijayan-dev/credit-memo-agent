@@ -1,0 +1,93 @@
+{
+  "task": "T29",
+  "criteria": [
+    {
+      "id": "R36",
+      "tier": "adversarial",
+      "check": "Booked only: convert() skips Status=Pending and counts it (a page that later shows it booked is uncounted), and refuses any other status (src/cma/importers/openbanking.py convert). GBP only: _money refuses a non-GBP amount or balance. Provider ids: _id keeps TransactionId (openbanking.py:257-267), and per_line_balances.statement.golden shows T1..T5. Paged repeats: kept once when identical, refused when different. Balance rebuilt from per-line balances or --statement-balance/--at, then contract.walk checks every per-line balance (contract.py:81-90). The runner's contracts tier ran every test_import_openbanking test and all passed (contracts-4.log:171-222), including the verify-256 regression tests with 8, 12 and 400 loose lines. Gap: _first_order accepts a wrong starting balance when later balanced groups are single lines, because _order returns a single-line group without checking it (openbanking.py:295, 520-527). A valid file whose chain does not break is then refused as a broken chain, so 'rebuild the running balance from per-line balances' and 'refuse only if the chain breaks' fail for it.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-254/contracts-4.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-257/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-257/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-257/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-257/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-257/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-257/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-257/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/openbanking.py",
+      "line": 523,
+      "criterion": "R36",
+      "claim": "_first_order checks each starting balance it tries by ordering every later group that has a balance, through ordered(m, before) -> _order. _order returns any single-line group at once without comparing its balance with `before` (line 295). So when every later balanced group is a single line, which is normal in a timestamped export, the first start _starts yields (sm=0: the balanced line first, no balance-less line before it) is accepted even when it is wrong. convert() then walks a wrong order, and contract.walk refuses a valid file with 'the balance walked from the opening balance disagrees with the per-line balance'. That is a broken-chain refusal of a file whose chain does not break.",
+      "repro": "Opening balance £100.00. Transactions, all Booked GBP Credit: L0 £5.00 with no Balance, BookingDateTime 2026-05-01T00:00:00Z; A £1.00 with Balance 106.00 InterimBooked, 2026-05-01T00:00:00Z; B £1.00 with Balance 107.00, 2026-05-02T00:00:00Z. The true order L0 (105), A (106), B (107) chains. _starts yields pre_A - 0 = 105.00 first. _order(group0, 105.00) gives [A, L0], and ordered(1, 111.00) returns B's group unchecked because it is one line, so the start is accepted. The walk gives A 106, L0 111, B 112, and B's 107 refuses the file at B's line. Run: openbanking.convert(path, out) on that file. No existing test covers a mixed first balanced group followed only by single-line groups."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/openbanking.py",
+      "line": 533,
+      "criterion": "R36",
+      "claim": "Valid files are still refused, now as 'search limit', when the first balanced group has more than START_SEARCH (16) balance-less lines and needs a subset of them that is not none, all, one or all but one before its balanced line, given a later multi-line group that pins the start; or when a gap needs a subset of more than 32 distinct loose amounts (MEET_LIMIT, line 350). The README and test_a_heavy_mix accept refusal of valid files, which goes beyond R36's refusal only on a broken chain.",
+      "repro": "First group at midnight: 17 loose credits of 2^i pence (i=0..16) and A with balance = opening + 87381p (even-index subset) + A's amount; a later multi-line group with balances on every line fixes the start. _starts never yields opening = pre_A - 87381, and OrderUnknown follows."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_import_openbanking.py",
+      "line": null,
+      "criterion": "R36",
+      "claim": "claim.json does not match the code under review. It says ORDER_STEPS = 100000 (the code has 500_000, openbanking.py:70). It says test_distinct_loose_amounts_whose_subset_a_balanced_line_needs_are_ordered is a strict xfail; the test has no xfail mark, and the runner ran it and it PASSED (contracts-4.log:180). It reports '52 passed, 1 xfailed', which no runner log shows, and its proofs come from /tmp scripts the runner did not run.",
+      "repro": "grep -n 'ORDER_STEPS =\\|xfail' src/cma/importers/openbanking.py tests/test_import_openbanking.py; grep distinct_loose contracts-4.log"
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
