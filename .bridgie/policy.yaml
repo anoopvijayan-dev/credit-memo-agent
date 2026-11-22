@@ -10,16 +10,17 @@ default_lane: engineering
 #     specified: ['npm test']
 #     contracts: ['npm run test:contracts']
 # Verification commands per tier (Python project; run inside each task's worktree).
-# The marker tiers pass when a change has no tests with that marker (pytest exit 5, "no tests
-# collected"), by the owner's choice (lenient, 2026-11-16); the reviewer still judges missing tests.
+# The marker tiers pass when a change has no tests with that marker (by the owner's choice, lenient,
+# 2026-11-16); the reviewer still judges missing tests. Since 2026-11-22 (owner's choice) they read the
+# full run's results (pytest --tier-results, tools/tier_check.py) instead of running those tests again.
 verify:
   commands:
     mechanical: ['ruff check src tests evals', 'python -m compileall -q src']
-    specified: ['python -m pytest -v -rs']
-    contracts: ['python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -v -m contracts']
-    invariants: ['python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -v -m invariants']
+    specified: ['python -m pytest -v -rs --tier-results']
+    contracts: ['python tools/tier_check.py contracts']
+    invariants: ['python tools/tier_check.py invariants']
     behavioural: ['python evals/run_evals.py']
-    dual_run: ['python -c "import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)" -m pytest -v -m dual_run']
+    dual_run: ['python tools/tier_check.py dual_run']
 # Owner's choice, 2026-11-22: the reviewer is Antigravity (Google), not Codex, which is at its
 # usage limit until 2026-11-25. Cross-family review is on again; the tasks that passed while it
 # was off (T04 to T37, reviewed by claude-code alone) are re-reviewed with Antigravity.
