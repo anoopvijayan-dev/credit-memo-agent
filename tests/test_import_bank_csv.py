@@ -244,6 +244,27 @@ def test_a_mapping_file_that_is_not_a_mapping_is_refused(tmp_path):
 
 
 @pytest.mark.contracts
+def test_a_mapping_file_that_gives_a_key_twice_is_refused():
+    # YAML keeps the last of two equal keys; here that would swap money in and money out.
+    data = (b"columns:\n  date: Date\n  description: Details\n  paid_in: Out\n  paid_out: In\n"
+            b"  paid_in: In\n  paid_out: Out\ndate_format: '%d/%m/%Y'\n")
+    with pytest.raises(contract.ImportRefused, match="key paid_in is given more than once"):
+        bankcsv.parse_mapping(data, "m.yaml")
+
+
+@pytest.mark.contracts
+def test_cma_case_import_bank_csv_twice_leaves_the_case_unchanged(home):
+    cid = store.new_case()
+    folder = store.case_folder(cid)
+    args = ["case", "import", cid, str(GOLDEN / "lloyds.export.golden"), "--format", "bank-csv:lloyds"]
+    assert runner.invoke(app, args).exit_code == 0
+    before = [e.event for e in caselog.for_case(folder).entries()]
+    again = runner.invoke(app, args)
+    assert again.exit_code == 0 and "already imported" in again.output  # R39
+    assert [e.event for e in caselog.for_case(folder).entries()] == before
+
+
+@pytest.mark.contracts
 def test_every_packaged_profile_is_a_valid_mapping():
     for name in bankcsv.profile_names():
         bankcsv.check_mapping(bankcsv.profile(name))

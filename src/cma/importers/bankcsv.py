@@ -53,6 +53,7 @@ from typing import Any
 
 import yaml
 
+from ..firm import _RepeatedKey, _UniqueKeyLoader
 from ..ingest import CsvRecordError, iter_data, read_header
 from ..metrics import AT_LIMIT, at_limit, flows_at_limit, follows, pounds, text_pence
 from . import contract
@@ -162,8 +163,14 @@ def check_mapping(raw: Any) -> dict[str, Any]:
     return {"columns": out, "date_format": list(fmts), "order": order}
 
 
+def _load(text: str) -> Any:
+    """safe_load with a key given twice refused (firm.yaml's rule): YAML would otherwise keep
+    the last value, so `paid_in: Out` then `paid_in: In` would silently swap money in and out."""
+    return yaml.load(text, Loader=_UniqueKeyLoader)  # a SafeLoader subclass
+
+
 def _profiles() -> dict[str, Any]:
-    return yaml.safe_load(resources.files("cma.bank_profiles").joinpath("profiles.yaml").read_text("utf-8"))
+    return _load(resources.files("cma.bank_profiles").joinpath("profiles.yaml").read_text("utf-8"))
 
 
 def profile_names() -> list[str]:
@@ -182,7 +189,9 @@ def profile(name: str) -> dict[str, Any]:
 
 def parse_mapping(data: bytes, where: str = "the mapping file") -> dict[str, Any]:
     try:
-        raw = yaml.safe_load(data.decode("utf-8-sig"))
+        raw = _load(data.decode("utf-8-sig"))
+    except _RepeatedKey as e:
+        raise BankCsvImportError(f"{where}: key {e.key} is given more than once; keep one") from None
     except (UnicodeDecodeError, yaml.YAMLError):
         raise BankCsvImportError(f"{where}: not readable YAML") from None
     if not isinstance(raw, dict):
