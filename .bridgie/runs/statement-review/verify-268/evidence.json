@@ -1,0 +1,100 @@
+{
+  "task": "T37",
+  "criteria": [
+    {
+      "id": "R20",
+      "tier": "adversarial",
+      "check": "Preview: src/cma/promotion.py preview()/_build (lines ~176-217) lists every line rule_matches() accepts in the open case, with whether the rule sets it, and writes nothing; the workspace answers it at /promote and /api/promote (src/cma/review/promote.py answer/html). Save: promote() (281-313) holds the case, rebuilds the preview, refuses on a changed count or digest, writes id/pattern/direction/category/by/at/reason to the firm rules file via _write_private. Applied afterwards: overrides._categorise (src/cma/overrides.py:217-224) reads firm_rules.for_case() each time, and its cache keys include the rules file sha. The tests test_promoting_saves_the_rule_logs_it_and_later_cases_apply_it and test_the_preview_counts_every_line_the_rule_matches_and_writes_nothing ran and passed in specified-3.log and contracts-4.log. Fails under concurrent promotions from two cases sharing the firm rules file: one rule can be lost while both case logs record the promotion (finding 1).",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R42",
+      "tier": "adversarial",
+      "check": "The promotion is appended to the case log as the firm_rule_promotion event through store._recorded (src/cma/store.py:304-325), which uses log.append with the expected position, so the entry carries the previous entry's hash; promotion.py:310-313 sets save.data. The rules file is restored when the append fails (test_a_promotion_the_case_log_does_not_record_puts_the_rules_file_back, which passed in the runner logs). A double submit is refused by the stale expected position (test_resending_the_same_confirmed_promotion_saves_one_rule, which passed).",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-268/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-268/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-268/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-268/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-268/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-268/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-268/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/promotion.py",
+      "line": 303,
+      "criterion": "R20",
+      "claim": "firm_rules.yaml is shared by every case, but promote() locks only the open case. The byte comparison (now != before) at line 303 comes before the write at 309 with no firm-level lock, so two concurrent promotions from different cases can both pass the comparison, and the second write drops the first case's rule. Both case logs then record a firm_rule_promotion with a firm_rules_sha256 for a file that no longer holds A's rule. R20's 'save ... to the firm rules file' is not met.",
+      "repro": "Two workspaces on case A and case B under one CMA_HOME. Both build their preview, both enter promote(), both read before = X at line 289 and pass line 303. A runs _write_private(X + ruleA), then B runs _write_private(X + ruleB). Afterwards firm_rules.for_case().rules holds only ruleB, while A's case log records a firm_rule_promotion of ruleA. To force the interleaving, pause A between lines 303 and 309, for example with a monkeypatched store._restorer that waits on an event, while B runs its promotion."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/promotion.py",
+      "line": 308,
+      "criterion": "R20",
+      "claim": "The undo step captures the rules file as it was before this case's write. If another case writes after it and this case's log append then fails, the undo restores the old bytes and deletes the other case's rule, although the other case's log records its promotion.",
+      "repro": "Case A writes X+a at line 309. Case B reads X+a, writes X+a+b and records its promotion. A's log.append then raises, for example SaveNotRecorded from an OS error during the append. store._recorded runs A's undo, which writes X, so B's recorded rule is gone from firm_rules.yaml."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/promotion.py",
+      "line": 214,
+      "criterion": "R20",
+      "claim": "The preview's applies/why is worked out per line with classify() and misses effects across the whole statement, such as own-account pairing and reversal linking. A line the preview reports as kept by a pairing can be set by the rule once saved, and its debit partner, which is not in the preview, changes category.",
+      "repro": "Two-account case: account A has debit -100.00 'TFR TO SAVINGS CO', and account B has credit 100.00 'FPS CREDIT ACME TRUST' in the pairing window, so they are paired. In B, override another credit 'FPS CREDIT ACME TRUST REF' to returned_dd and promote pattern 'ACME TRUST', direction in. The preview marks the paired credit applies=False, why='an own-account pairing settles this line'. After saving, classify gives that credit firm:acme_trust, category returned_dd. _pairable (categorise.py:1477) excludes RETURNED_DD, so the pair is not made: the rule sets the line, and A's debit is recategorised."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

@@ -1,0 +1,1084 @@
+diff --git a/src/cma/promotion.py b/src/cma/promotion.py
+new file mode 100644
+index 0000000..f05daca
+--- /dev/null
++++ b/src/cma/promotion.py
+@@ -0,0 +1,315 @@
++"""Promoting an override to a firm rule (R20, R21, R42).
++
++The underwriter, having overridden a line, can make the change a rule for the firm: a
++counterparty pattern, the direction it applies to and the override's category. Before
++anything is saved the workspace shows the lines the rule would match in the open case
++(preview): every line of every account whose wording the pattern matches in that direction,
++and for each whether the rule would set its category or not, and why not. A line keeps what
++an override, an own-account pairing, a protected built-in pattern (R21), an ambiguous verdict
++(R4), a case-profile name (R5, R6) or an earlier firm rule gives it, because those rank above
++a new firm rule (design C1, precedence).
++
++Saving (promote) holds the case, builds the preview again and refuses when it no longer
++counts the lines the underwriter was shown or gives another digest of them (Preview.digest), then adds the rule to the firm rules file (its
++pattern, direction, category, the typed name, the UTC time and the reason) and records the
++promotion in the case log (R42). The firm rules file is read as it stands by every case
++categorised afterwards (firm_rules.for_case), the open case included, so the rule applies
++from the next categorisation (R20). If the case log does not record the promotion, the file
++is put back as it was.
++
++The case log entry names the rule by id, its direction and category, the override it came
++from, the counts the preview showed, who promoted it and when, and the hash of the rules file
++written. It carries neither the pattern nor the reason, which are text about the applicant's
++counterparties; the rules file holds them.
++
++Messages name lines and overrides by id and number, never by what the case holds.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import re
++from dataclasses import dataclass, field
++from pathlib import Path
++from typing import Any
++
++import yaml
++
++from . import case as caselog
++from . import firm, firm_rules, overrides, store
++from .categorise import (
++    PAIRING,
++    Rule,
++    _firm_rules_for,
++    _fold,
++    active_ruleset,
++    classify,
++    names_pattern,
++    pair_own_accounts,
++    rule_matches,
++)
++from .models import Category, Transaction
++
++EVENT = "firm_rule_promotion"
++
++WHY = {
++    "override": "an override sets this line's category",
++    "pairing": "an own-account pairing settles this line",
++    "protected": "a protected built-in pattern matches this line (R21)",
++    "ambiguous": "this line's wording is ambiguous; only an override or a pairing settles it (R4)",
++    "profile": "a name from the case profile decides this line",
++    "firm": "an earlier firm rule matches this line first",
++}
++
++
++class PreviewChanged(store.CaseStoreError):
++    """The rule no longer matches the lines the underwriter was shown; nothing was saved."""
++
++
++@dataclass(frozen=True)
++class Matched:
++    account: str
++    line: Transaction
++    now: str            # the line's category as the case stands
++    rule_now: str | None
++    applies: bool       # whether the new rule would set its category
++    why: str | None     # why not, when it would not
++
++
++@dataclass(frozen=True)
++class Preview:
++    rule: dict[str, str]  # id, pattern, direction, category
++    seq: int
++    lines: list[Matched] = field(default_factory=list)
++    firm_rules_sha256: str | None = None  # the firm rules file the preview read; None for none
++
++    @property
++    def digest(self) -> str:
++        """What the underwriter was shown: the rule, the firm rules file it was read against,
++        and each matched line with whether the rule sets it and why not. Saving refuses when
++        the preview built again gives another digest, even with the same number of lines."""
++        shown = {"rule": self.rule, "seq": self.seq, "firm_rules": self.firm_rules_sha256,
++                 "lines": [[m.account, m.line.id, m.applies, m.why] for m in self.lines]}
++        return hashlib.sha256(json.dumps(shown, sort_keys=True).encode("utf-8")).hexdigest()
++
++    @property
++    def count(self) -> int:
++        return len(self.lines)
++
++    @property
++    def applies(self) -> int:
++        return sum(1 for m in self.lines if m.applies)
++
++
++def _text(value: Any, what: str) -> str:
++    if not isinstance(value, str) or not any(ch.isalnum() for ch in value):
++        raise store.CaseStoreError(f"a firm rule needs a {what}: type one, with at least one letter or digit")
++    value = value.strip()
++    if len(value) > firm_rules.MAX_TEXT:
++        raise store.CaseStoreError(f"the {what} is longer than {firm_rules.MAX_TEXT} characters")
++    return value
++
++
++def _rule_id(given: Any, pattern: str, taken: set[str]) -> str:
++    """The id given, checked; or one made from the pattern, unused by the firm's rules."""
++    if given not in (None, ""):
++        if not isinstance(given, str) or not firm_rules._ID.fullmatch(given):
++            raise store.CaseStoreError("a firm rule id may hold only letters, digits, _, . and -")
++        if given in firm_rules.RESERVED_RULE_IDS:
++            raise store.CaseStoreError(f"id {given} is reserved for the categoriser's own provenance")
++        if given in taken:
++            raise store.CaseStoreError(f"the firm already has a rule {given}; give the rule another id")
++        return given
++    base = re.sub(r"[^a-z0-9]+", "_", _fold(pattern).lower()).strip("_")[:40] or "rule"
++    if base in firm_rules.RESERVED_RULE_IDS:
++        base = f"firm_{base}"
++    rid, n = base, 2
++    while rid in taken:
++        rid, n = f"{base}_{n}", n + 1
++    return rid
++
++
++def _override(records: list[dict[str, Any]], seq: Any) -> dict[str, Any]:
++    if isinstance(seq, str) and seq.isdigit():
++        seq = int(seq)
++    if not isinstance(seq, int) or isinstance(seq, bool):
++        raise store.CaseStoreError("name the override to promote by its number")
++    rec = next((r for r in records if r.get("seq") == seq), None)
++    if rec is None or rec.get("kind") != "override":
++        raise store.CaseStoreError(f"there is no override {seq} in this case")
++    return rec
++
++
++def _categorised(folder: Path, entries) -> tuple[dict[str, Any], list[dict[str, Any]], dict]:
++    """Every account's statement as the case stands: overrides applied and, in a case of more
++    than one account, own-account pairs settled (overrides.case_figures' first steps)."""
++    profile = store.load_profile(folder)
++    accounts = overrides._accounts(entries)
++    statements = {a: overrides._load(folder, a) for a in accounts}
++    records = overrides._read_records(folder, entries)
++    state = overrides._decide(records, statements)
++    loaded = {a: v for a, v in statements.items() if v is not None}
++    for account, (statement, sha) in loaded.items():
++        overrides._categorise(statement, sha, profile, state.applied.get(account, {}))
++    if len(accounts) > 1:
++        pair_own_accounts({a: v[0] for a, v in loaded.items()},
++                          overridden={a: state.applied.get(a, {}).keys() for a in loaded},
++                          days=firm.load().own_account_pairing_days)
++    return loaded, records, profile
++
++
++def _why_not(t: Transaction, rule_now: str, ruleset, desc: str, candidate: Rule) -> str:
++    if rule_now.startswith("override:"):
++        return WHY["override"]
++    if rule_now.startswith(PAIRING + ":"):
++        return WHY["pairing"]
++    if not _firm_rules_for(ruleset, desc, t.amount, (candidate,)):
++        return WHY["protected"]
++    if ":conflict:" in rule_now:
++        return WHY["ambiguous"]
++    if rule_now.startswith("profile:"):
++        return WHY["profile"]
++    if rule_now.startswith("firm:"):
++        return WHY["firm"]
++    return WHY["protected"]
++
++
++def _build(folder: Path, entries, fields: dict[str, Any], existing: firm_rules.FirmRules) -> Preview:
++    loaded, records, profile = _categorised(folder, entries)
++    rec = _override(records, fields.get("seq"))
++    pattern = _text(fields.get("pattern"), "counterparty pattern")
++    if not firm_rules._SEPARATOR_RUN.sub("", _fold(pattern)):
++        raise store.CaseStoreError("a firm rule's pattern needs at least one letter or digit")
++    account = rec["account"]
++    line = next((t for t in loaded[account][0].transactions if t.id == rec["line"]), None) \
++        if account in loaded else None
++    direction = fields.get("direction") or None
++    if direction is None:
++        if line is None:
++            raise store.CaseStoreError(f"override {rec['seq']}'s line is not in the case; say the rule's "
++                                       "direction (in, out or any)")
++        direction = "in" if line.amount > 0 else "out"
++    if direction not in firm_rules.DIRECTIONS:
++        raise store.CaseStoreError(f"direction must be one of {', '.join(firm_rules.DIRECTIONS)}")
++    category = Category(rec["new"])
++    if category not in firm_rules._categories_for(direction):
++        raise store.CaseStoreError(f"override {rec['seq']}'s category {category.value} is not one a rule for "
++                                   f"direction {direction} can give")
++    rid = _rule_id(fields.get("id"), pattern, {r.id for r in existing.rules})
++    candidate = Rule(rid, re.compile(names_pattern([pattern])), direction, category)
++    ruleset = active_ruleset()
++    names = store.profile_names(profile)
++    with_rule = (*existing.rules, candidate)
++    matched: list[Matched] = []
++    for acct, (statement, _sha) in loaded.items():
++        for t in statement.transactions:
++            desc = t.description.upper() if ruleset.frozen else _fold(t.description)
++            if not rule_matches(candidate, desc, t.amount):
++                continue
++            rule_now = t.rule_id or ""
++            if rule_now.startswith(("override:", PAIRING + ":")):
++                applies = False
++            else:
++                applies = classify(t, ruleset, profile=names, firm_rules=with_rule)[1] == f"firm:{rid}"
++            why = None if applies else _why_not(t, rule_now, ruleset, desc, candidate)
++            matched.append(Matched(acct, t, t.category.value if t.category else "", rule_now or None, applies, why))
++    return Preview({"id": rid, "pattern": pattern, "direction": direction, "category": category.value},
++                   rec["seq"], matched, existing.sha256)
++
++
++def _firm_rules_now() -> tuple[Path, bytes | None, firm_rules.FirmRules]:
++    config = firm.load()
++    path = config.firm_rules_path
++    existing = firm_rules.read(path, required=config.names_path("firm_rules"))
++    try:
++        data = path.read_bytes()
++    except FileNotFoundError:
++        data = None
++    return path, data, existing
++
++
++def preview(folder: Path, fields: dict[str, Any]) -> Preview:
++    """The lines a rule promoted from override `fields['seq']` with `fields['pattern']` would
++    match in the open case, and whether it would set each one's category. Nothing is written."""
++    folder = Path(folder)
++    _, _, existing = _firm_rules_now()
++    return _build(folder, caselog.for_case(folder).entries(), fields, existing)
++
++
++@dataclass(frozen=True)
++class Promoted:
++    rule: dict[str, str]
++    preview: Preview
++    position: int
++    firm_rules_sha256: str
++
++
++def _appended(before: bytes | None, existing: firm_rules.FirmRules, record: dict[str, Any], path: Path) -> str:
++    """The firm rules file with `record` added. The new rule is appended to the file's own text,
++    so the firm's comments and layout stay, when the result reads back as the file's rules and
++    then the new one; otherwise (a file in another layout) the file is written afresh."""
++    full = yaml.safe_dump({"rules": [dict(r) for r in existing.records] + [record]}, sort_keys=False,
++                          allow_unicode=True, width=1000)
++    want = firm_rules.parse(full, str(path)).records
++    if before is None or not existing.records:
++        return full
++    try:
++        text = before.decode("utf-8")
++    except UnicodeDecodeError:
++        return full
++    item = yaml.safe_dump([record], sort_keys=False, allow_unicode=True, width=1000)
++    for indent in ("", "  ", "    "):
++        block = "".join(indent + ln if ln.strip() else ln for ln in item.splitlines(keepends=True))
++        candidate = text.rstrip("\n") + "\n" + block
++        try:
++            if firm_rules.parse(candidate, str(path)).records == want:
++                return candidate
++        except (firm_rules.FirmRulesError, yaml.YAMLError):
++            continue
++    return full
++
++
++def promote(folder: Path, fields: dict[str, Any], *, shown: Any, expected: int | None = None,
++            seen: str | None = None) -> Promoted:
++    """Save the rule the preview showed (R20): `shown` is the number of lines the preview the
++    underwriter saw counted, and `seen` its digest; a preview that now counts another number,
++    or gives another digest (other lines, another outcome for one, another firm rules file), is
++    refused and nothing is saved. `expected` is the case log position the page was built at."""
++    folder = Path(folder)
++    if isinstance(shown, str) and shown.isdigit():
++        shown = int(shown)
++    if not isinstance(shown, int) or isinstance(shown, bool) or shown < 0:
++        raise store.CaseStoreError("a promotion carries the number of lines its preview showed (shown); "
++                                   "preview the rule first")
++    name = _text(fields.get("name"), "name")
++    reason = _text(fields.get("reason"), "reason")
++    with store._recorded(folder, EVENT) as save:
++        overrides._check_position(len(save.entries), expected)
++        path, before, existing = _firm_rules_now()
++        p = _build(folder, save.entries, fields, existing)
++        if p.count != shown:
++            raise PreviewChanged(f"the preview showed {shown} matching lines and the rule now matches {p.count}; "
++                                 "preview it again; nothing was saved")
++        if seen is not None and seen != p.digest:
++            raise PreviewChanged("the lines the rule matches, or what it would set, changed since the preview; "
++                                 "preview it again; nothing was saved")
++        at = overrides._now()
++        record = {**p.rule, "by": name, "at": at, "reason": reason}
++        text = _appended(before, existing, record, path)
++        firm_rules.parse(text, str(path))  # the file as it will be read: never written otherwise
++        if not path.parent.is_dir():
++            raise store.CaseStoreError(f"the folder of the firm rules file {path.name} does not exist")
++        now = path.read_bytes() if path.is_file() else None
++        if now != before:
++            raise store.CaseStoreError("the firm rules file changed while the rule was being saved; preview it "
++                                       "again; nothing was saved")
++        data = text.encode("utf-8")
++        save.undo.append(store._restorer(path))
++        store._write_private(path, data)
++        sha = hashlib.sha256(data).hexdigest()
++        save.data = {"rule": p.rule["id"], "direction": p.rule["direction"], "category": p.rule["category"],
++                     "from_override": p.seq, "matched": p.count, "applies": p.applies, "name": name,
++                     "os_user": store._os_user(), "at": at, "firm_rules_sha256": sha}
++        position = len(save.entries) + 1
++    return Promoted(p.rule, p, position, sha)
+diff --git a/src/cma/review/promote.py b/src/cma/review/promote.py
+new file mode 100644
+index 0000000..a12d651
+--- /dev/null
++++ b/src/cma/review/promote.py
+@@ -0,0 +1,168 @@
++"""The workspace's firm-rule promotion (C5; R20, R21, R42).
++
++Each override the case applies is listed with a form to promote it to a firm rule: the
++counterparty pattern the underwriter types, the direction (the override's line's, unless
++they choose another), the reason and their name. The form posts to /promote, which first
++answers with the preview: every line of the open case the rule would match, each saying
++whether the rule would set its category or what keeps it (an override, a pairing, a
++protected built-in pattern, an ambiguous verdict, a profile name or an earlier firm rule).
++Nothing is saved until the underwriter confirms that preview, whose form carries the number
++of lines it showed, the digest of what it showed and the case log position;
++promotion.promote refuses when any has moved. /api/promote answers the same as data.
++
++Every case text is escaped (R34); this module computes no money.
++"""
++
++from __future__ import annotations
++
++from html import escape
++from pathlib import Path
++from typing import Any
++from urllib.parse import urlencode
++
++from .. import case as caselog
++from .. import promotion, store
++from ..categorise import RulesetError
++
++KEYS = frozenset({"seq", "pattern", "direction", "id", "name", "reason", "expected", "confirm", "shown", "seen", "back"})
++RULE_KEYS = ("seq", "pattern", "direction", "id")
++
++
++def _rule_fields(fields: dict[str, Any]) -> dict[str, Any]:
++    return {k: fields.get(k) for k in RULE_KEYS}
++
++
++def _shown(p: promotion.Preview) -> dict[str, Any]:
++    from .summary import _line
++
++    return {"rule": p.rule, "seq": p.seq, "count": p.count, "applies": p.applies, "digest": p.digest,
++            "lines": [{"account": m.account, **_line(m.line), "applies": m.applies, "why": m.why} for m in p.lines]}
++
++
++def answer(folder: Path, case_id: str, fields: dict[str, Any]) -> tuple[int, dict[str, Any]]:
++    """Preview a promotion (no `confirm`), or save the one the preview showed (`confirm`)."""
++    folder = Path(folder)
++    if extra := sorted(k for k in fields if k not in KEYS):
++        return 400, {"refused": f"{', '.join(extra)} is not part of a firm-rule promotion; nothing was saved."}
++    confirm = fields.get("confirm") not in (None, "", False, "0")
++    try:
++        if not confirm:
++            p = promotion.preview(folder, _rule_fields(fields))
++            from .summary import log_position
++
++            return 200, {"preview": _shown(p), "position": log_position(folder), "saved": False}
++        expected = fields.get("expected")
++        if isinstance(expected, str) and expected.isdigit():
++            expected = int(expected)
++        if not isinstance(expected, int) or isinstance(expected, bool):
++            return 400, {"refused": "a promotion carries the case log position the preview was built at "
++                                    "(expected); preview it again."}
++        seen = fields.get("seen")
++        if not isinstance(seen, str) or not seen:
++            return 400, {"refused": "a promotion carries the digest of the preview it confirms (seen); "
++                                    "preview it again."}
++        r = promotion.promote(folder, {**_rule_fields(fields), "name": fields.get("name"),
++                                       "reason": fields.get("reason")},
++                              shown=fields.get("shown"), expected=expected, seen=seen)
++    except (store.CaseStoreError, RulesetError, ValueError) as e:
++        return 400, {"refused": f"{str(e).rstrip('.')}."}
++    except caselog.LogConflict as e:
++        return 409, {"conflict": (f"The case changed since this preview was built (it was built at case log entry "
++                                  f"{e.expected}, the case is now at entry {e.actual}). Nothing was saved: "
++                                  "preview the rule again."), "reload": True}
++    except caselog.SaveNotConfirmed as e:
++        return 500, {"not_confirmed": (f"Whether this promotion is in the case log is not confirmed ({e}). Check "
++                                       "the case (cma case check) before saving anything else."), "check": True}
++    except caselog.SaveNotRecorded as e:
++        return 503, {"not_recorded": f"The promotion was not recorded ({e}). Preview the rule again.", "reload": True}
++    except caselog.CaseLocked:
++        return 409, {"locked": ("The case is held: another window or command is writing to it. Nothing was "
++                                "saved; try again in a moment."), "reload": True}
++    except caselog.CaseLogBroken as e:
++        return 409, {"refused": (f"The case log is broken at entry {e.first_bad}: {e.reason}. Nothing can be saved "
++                                 "until it is resolved.")}
++    except OSError as e:
++        return 500, {"refused": f"A file could not be read or written ({e.strerror or type(e).__name__}); "
++                                "nothing was saved."}
++    return 200, {"saved": True, "rule": r.rule, "matched": r.preview.count, "applies": r.preview.applies,
++                 "position": r.position, "firm_rules_sha256": r.firm_rules_sha256}
++
++
++# --- HTML ----------------------------------------------------------------------------------
++
++
++def _e(value: Any) -> str:
++    return escape("" if value is None else str(value), quote=True)
++
++
++def _hidden(name: str, value: Any) -> str:
++    return f'<input type="hidden" name="{_e(name)}" value="{_e(value)}">'
++
++
++def _action(token: str) -> str:
++    return _e("/promote?" + urlencode({"token": token}))
++
++
++def promotable_html(promotable: list[dict[str, Any]], token: str | None, position: int | None) -> str:
++    """The overrides the case applies, each with a form to promote it to a firm rule (R20)."""
++    if not promotable or not token or position is None:
++        return ""
++    rows = []
++    for o in promotable:
++        options = "".join(f'<option value="{d}"{" selected" if d == o["direction"] else ""}>{d}</option>'
++                          for d in ("in", "out", "any"))
++        form = (f'<form class="promote" method="post" action="{_action(token)}">' + _hidden("seq", o["seq"])
++                + '<input name="pattern" required maxlength="1000" placeholder="Counterparty, as the bank prints it" '
++                  'aria-label="Counterparty pattern"> '
++                + f'<select name="direction" aria-label="Direction">{options}</select> '
++                + '<button type="submit">Preview firm rule</button></form>')
++        rows.append(f'<tr><td>{_e(o["seq"])}</td><td>{_e(o["account"])}</td><td>{_e(o["line"])}</td>'
++                    f'<td>{_e(o["category"])}</td><td>{form}</td></tr>')
++    return ('<section id="promote-overrides"><h2>Make an override a firm rule</h2>'
++            '<p>A firm rule gives a counterparty\'s lines a category in every case categorised afterwards. '
++            'You see the lines it would match in this case before anything is saved.</p>'
++            '<table class="promotable"><thead><tr><th>Override</th><th>Account</th><th>Line</th>'
++            f'<th>Category</th><th></th></tr></thead><tbody>{"".join(rows)}</tbody></table></section>')
++
++
++def _reload(token: str) -> str:
++    return f'<p><a href="{_e("/?" + urlencode({"token": token}))}">Back to the case</a></p>'
++
++
++def html(status: int, reply: dict[str, Any], token: str, fields: dict[str, Any]) -> str:
++    """The page's main element for a promotion's preview, its saving, or why either was refused."""
++    if status != 200:
++        text = next((reply[k] for k in ("conflict", "locked", "refused", "not_recorded", "not_confirmed")
++                     if k in reply), "The rule could not be saved.")
++        return (f'<section class="refusal" id="promote-refused"><h2>No firm rule saved</h2><p>{_e(text)}</p>'
++                + _reload(token) + "</section>")
++    if reply.get("saved"):
++        r = reply["rule"]
++        return ('<section id="promoted"><h2>Firm rule saved</h2>'
++                f'<p>Rule <code>{_e(r["id"])}</code>: {_e(r["direction"])} lines naming {_e(r["pattern"])} are '
++                f'{_e(r["category"])}. It matched {_e(reply["matched"])} lines in this case and sets the category '
++                f'of {_e(reply["applies"])}; every case categorised from now on applies it. The promotion is case '
++                f'log entry {_e(reply["position"])}.</p>' + _reload(token) + "</section>")
++    p = reply["preview"]
++    r = p["rule"]
++    rows = "".join(
++        f'<tr><td>{_e(x["account"])}</td><td>{_e(x["id"])}</td><td>{_e(x["date"])}</td><td>{_e(x["description"])}</td>'
++        f'<td class="money">{_e(x["amount"])}</td><td>{_e(x["category"])}</td>'
++        f'<td>{"yes" if x["applies"] else _e("no: " + (x["why"] or ""))}</td></tr>' for x in p["lines"])
++    form = ""
++    if reply.get("position") is not None:
++        form = (f'<form class="promote-confirm" method="post" action="{_action(token)}">'
++                + _hidden("seq", p["seq"]) + _hidden("pattern", r["pattern"]) + _hidden("direction", r["direction"])
++                + _hidden("id", r["id"]) + _hidden("shown", p["count"]) + _hidden("seen", p["digest"])
++                + _hidden("expected", reply["position"])
++                + _hidden("confirm", "1")
++                + '<input name="reason" required maxlength="1000" placeholder="Reason" aria-label="Reason"> '
++                '<input name="name" required maxlength="1000" placeholder="Your name" aria-label="Your name"> '
++                '<button type="submit">Save firm rule</button></form>')
++    return ('<section id="promote-preview"><h2>Preview of the firm rule</h2>'
++            f'<p>Rule <code>{_e(r["id"])}</code>: {_e(r["direction"])} lines naming {_e(r["pattern"])} become '
++            f'{_e(r["category"])}. In this case it matches {_e(p["count"])} lines and would set the category of '
++            f'{_e(p["applies"])}.</p>'
++            '<table class="lines"><thead><tr><th>Account</th><th>Line</th><th>Date</th><th>Description</th>'
++            '<th>Amount</th><th>Category now</th><th>Rule sets it</th></tr></thead>'
++            f'<tbody>{rows}</tbody></table>{form}{_reload(token)}</section>')
+diff --git a/src/cma/review/server.py b/src/cma/review/server.py
+index 6d5eea2..522ec36 100644
+--- a/src/cma/review/server.py
++++ b/src/cma/review/server.py
+@@ -18,9 +18,10 @@ renders what the figures layer computed; it computes no money. Its request log i
+ Refusals say only that the request was refused, never what the case holds.
+ 
+ Every page and data path is GET only. The override form and the stale overrides' forms (R17,
+-R19; edit.py), and the preview and sign-off forms (R22, R26; signoff.py) are the only writes:
+-POST to /override, /stale, /preview and /sign from the page, or to /api/override, /api/stale,
+-/api/preview and /api/sign for data, each with the token and the workspace's own Origin,
++R19; edit.py), the preview and sign-off forms (R22, R26; signoff.py) and the firm-rule
++promotion form (R20; promote.py) are the only writes: POST to /override, /stale, /preview,
++/sign and /promote from the page, or to /api/override, /api/stale, /api/preview, /api/sign
++and /api/promote for data, each with the token and the workspace's own Origin,
+ a body of at most MAX_BODY bytes with its Content-Length (never chunked), and a form or JSON
+ content type.
+ """
+@@ -63,8 +64,10 @@ REFUSED = b"Refused: this workspace answers only the URL it printed when it star
+ WRITES = {"/override": ("override", "page"), "/stale": ("stale", "page"),
+           "/api/override": ("override", "data"), "/api/stale": ("stale", "data"),
+           "/preview": ("preview", "page"), "/sign": ("sign", "page"),
+-          "/api/preview": ("preview", "data"), "/api/sign": ("sign", "data")}
+-PACK_WRITES = frozenset({"preview", "sign"})  # answered with a page of their own, never a redirect
++          "/api/preview": ("preview", "data"), "/api/sign": ("sign", "data"),
++          "/promote": ("promote", "page"), "/api/promote": ("promote", "data")}
++PACK_WRITES = frozenset({"preview", "sign"})
++PAGE_WRITES = PACK_WRITES | {"promote"}  # answered with a page of their own, never a redirect
+ MAX_BODY = 16 * 1024  # bytes: a form or JSON body is far smaller
+ FORM = "application/x-www-form-urlencoded"
+ 
+@@ -231,8 +234,8 @@ class _Handler(BaseHTTPRequestHandler):
+             status, reply = 500, {"error": "The change could not be saved."}
+         if shape == "data":
+             self._send(status, json.dumps(reply, ensure_ascii=False).encode("utf-8"), "application/json")
+-        elif kind in PACK_WRITES:
+-            self._send(status, self.server.pack_html(kind, status, reply), "text/html; charset=utf-8")
++        elif kind in PAGE_WRITES:
++            self._send(status, self.server.pack_html(kind, status, reply, fields), "text/html; charset=utf-8")
+         elif status == 200:
+             self.send_response(303)
+             for key, value in SECURITY_HEADERS.items():
+@@ -355,16 +358,21 @@ class ReviewServer:
+     def _save(self, kind: str, fields: dict, recompute: bool = True) -> tuple[int, dict]:
+         """One write from the workspace: its status and reply, the recomputed case included for
+         a data path (R17, R52); a page form is sent back to the page, which is built afresh."""
+-        from . import edit, signoff
++        from . import edit, promote, signoff
+ 
++        if kind == "promote":
++            return promote.answer(self.folder, self.case_id, fields)
+         if kind in PACK_WRITES:
+             return signoff.answer(self.folder, self.case_id, kind, fields)
+         return edit.answer(self.folder, self.case_id, kind, fields, recompute=recompute)
+ 
+-    def _pack_html(self, kind: str, status: int, reply: dict) -> bytes:
+-        from . import signoff
++    def _pack_html(self, kind: str, status: int, reply: dict, fields: dict | None = None) -> bytes:
++        from . import promote, signoff
+ 
+-        html = signoff.html(kind, status, reply, self.token)
++        if kind == "promote":
++            html = promote.html(status, reply, self.token, fields or {})
++        else:
++            html = signoff.html(kind, status, reply, self.token)
+         return self._shell(html)
+ 
+     def _outcome_html(self, status: int, reply: dict) -> bytes:
+diff --git a/src/cma/review/summary.py b/src/cma/review/summary.py
+index 1265fc4..a29f55c 100644
+--- a/src/cma/review/summary.py
++++ b/src/cma/review/summary.py
+@@ -265,6 +265,22 @@ def stale_list(folder: Path, figures: dict[str, overrides.CaseFigures] | None) -
+     return out
+ 
+ 
++def _promotable(figures: dict[str, overrides.CaseFigures],
++                lines: dict[str, dict[str, Transaction]]) -> list[dict[str, Any]]:
++    """The overrides the case applies, each of which the underwriter may promote to a firm
++    rule (R20), with the direction of its line."""
++    out = []
++    for account, f in figures.items():
++        for line, ref in f.overridden.items():
++            t = lines[account].get(line)
++            if t is None or not ref.startswith("override:"):
++                continue
++            out.append({"seq": int(ref.split(":", 1)[1]), "account": account, "line": line,
++                        "category": t.category.value if t.category else None,
++                        "direction": "in" if t.amount > 0 else "out"})
++    return sorted(out, key=lambda o: o["seq"])
++
++
+ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+     """The case as the workspace shows it, computed afresh from its files."""
+     folder = Path(folder)
+@@ -272,7 +288,7 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+                            "state": "shown", "accounts": [], "queue": [], "thresholds": None,
+                            "reconciliation": None, "refusal": None, "position": None, "stale": [],
+                            "policy_check": {"shown": False}, "recommendation": None,  # left blank (R24)
+-                           "demo": False, "combined": None}
++                           "demo": False, "combined": None, "promotable": []}
+     # The case log position the page is built at, read before anything else, so a save made
+     # from this page is refused as a conflict once anything was recorded after it (R17).
+     out["position"] = log_position(folder)
+@@ -328,6 +344,7 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
+     lines = {a: {t.id: t for t in f.statement.transactions} for a, f in figures.items()}
+     kinds = {a: {i.id: i.kind for i in raised[a]} for a in figures}
+     out["queue"] = [_queue_entry(a, e, lines[a], kinds[a]) for a, e in ind.case_judgement_queue(queues)]
++    out["promotable"] = _promotable(figures, lines)  # R20
+     if not out["accounts"]:
+         out["state"] = "empty"
+     return out
+@@ -577,6 +594,10 @@ def render(summary: dict[str, Any], token: str | None = None) -> str:
+     head += stale_html(summary.get("stale") or [], token, summary.get("position"))  # R19
+     if summary["state"] == "shown":
+         head += _queue_html(summary.get("queue") or [], token, summary.get("position"))  # listed first (R15)
++    if summary["state"] == "shown":
++        from .promote import promotable_html
++
++        head += promotable_html(summary.get("promotable") or [], token, summary.get("position"))  # R20
+     head += _profile_html(summary.get("profile"))
+     state = summary["state"]
+     if state == "not_reconciled":
+diff --git a/tests/test_firm_rule_promotion.py b/tests/test_firm_rule_promotion.py
+new file mode 100644
+index 0000000..32e067d
+--- /dev/null
++++ b/tests/test_firm_rule_promotion.py
+@@ -0,0 +1,460 @@
++"""T37: promoting an override to a firm rule from the workspace (R20, R21, R42).
++
++Before anything is saved the workspace shows the lines the rule would match in the open case,
++each saying whether the rule would set its category; saving writes the rule's pattern,
++direction, category, the typed name, the UTC time and the reason to the firm rules file,
++records the promotion in the case log, and every case categorised afterwards applies it.
++
++The workspace tests talk to a real server running in a thread, with the per-launch token."""
++
++import http.client
++import json
++from urllib.parse import urlencode
++
++import pytest
++import yaml
++
++from cma import case, firm, firm_rules, overrides, promotion, store
++from cma.review import server as rs
++
++pytestmark = pytest.mark.contracts
++
++STATEMENT = ("id,date,description,amount,balance\n"
++             "L1,2026-01-05,FPS CREDIT ACME TRUST,500.00,1500.00\n"
++             "L2,2026-01-06,FPS CREDIT ACME-TRUST JAN,300.00,1800.00\n"
++             "L3,2026-01-07,HMRC REPAYMENT ACME TRUST,100.00,1900.00\n"
++             "L4,2026-01-08,FPS ACME TRUST FEES,-50.00,1850.00\n"
++             "L5,2026-01-09,CARD SETTLEMENT STRIPE,200.00,2050.00\n"
++             "L6,2026-02-02,FPS CREDIT ACME TRUSTEES <b>X</b>,40.00,2090.00\n")
++LATER = ("id,date,description,amount,balance\n"
++         "N1,2026-03-05,FPS CREDIT ACME TRUST MAR,700.00,700.00\n"
++         "N2,2026-03-06,FPS CREDIT J BLOGGS,20.00,720.00\n")
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    return root
++
++
++def _case(tmp_path, body=STATEMENT, name="main.csv"):
++    case_id = store.new_case(label="t37")
++    folder = store.case_folder(case_id)
++    src = tmp_path / name
++    src.write_text(body, encoding="utf-8")
++    store.import_file(folder, src, "csv")
++    return case_id, folder
++
++
++def _overridden(tmp_path):
++    case_id, folder = _case(tmp_path)
++    r = overrides.add_override(folder, "L1", "other_explained_in", reason="trust distribution", name="Pat Jones")
++    return case_id, folder, r.seq
++
++
++def _rules_path():
++    return firm.load().firm_rules_path
++
++
++def _line(folder, line, account="main"):
++    figs = overrides.case_figures(folder)
++    return next(t for t in figs[account].statement.transactions if t.id == line)
++
++
++# --- the preview -------------------------------------------------------------------------
++
++
++def test_the_preview_counts_every_line_the_rule_matches_and_writes_nothing(home, tmp_path):
++    _, folder, seq = _overridden(tmp_path)
++    before = case.for_case(folder).entries()
++    p = promotion.preview(folder, {"seq": seq, "pattern": "ACME TRUST"})
++    # The credits naming ACME TRUST, whatever separator the bank prints, whole words only:
++    # not the debit (direction in, from the override's credit) nor ACME TRUSTEES.
++    assert [m.line.id for m in p.lines] == ["L1", "L2", "L3"]
++    assert p.count == 3 and p.applies == 1
++    by = {m.line.id: m for m in p.lines}
++    assert by["L2"].applies and by["L2"].why is None
++    assert not by["L1"].applies and by["L1"].why == promotion.WHY["override"]
++    assert not by["L3"].applies and by["L3"].why == promotion.WHY["protected"]  # HMRC (R21)
++    assert p.rule == {"id": "acme_trust", "pattern": "ACME TRUST", "direction": "in",
++                      "category": "other_explained_in"}
++    assert not _rules_path().exists()
++    assert case.for_case(folder).entries() == before
++
++
++def test_the_preview_takes_the_direction_given_and_refuses_a_category_it_cannot_give(home, tmp_path):
++    _, folder, seq = _overridden(tmp_path)
++    p = promotion.preview(folder, {"seq": seq, "pattern": "ACME TRUST", "direction": "in"})
++    assert p.rule["direction"] == "in"
++    for direction in ("out", "any"):  # other_explained_in is money in only
++        with pytest.raises(store.CaseStoreError, match=f"direction {direction}"):
++            promotion.preview(folder, {"seq": seq, "pattern": "ACME TRUST", "direction": direction})
++    with pytest.raises(store.CaseStoreError, match="direction must be"):
++        promotion.preview(folder, {"seq": seq, "pattern": "ACME TRUST", "direction": "up"})
++    with pytest.raises(store.CaseStoreError, match="no override 9"):
++        promotion.preview(folder, {"seq": 9, "pattern": "ACME TRUST"})
++
++
++# --- saving ------------------------------------------------------------------------------
++
++
++def test_promoting_saves_the_rule_logs_it_and_later_cases_apply_it(home, tmp_path):
++    _, folder, seq = _overridden(tmp_path)
++    position = len(case.for_case(folder).entries())
++    p = promotion.preview(folder, {"seq": seq, "pattern": "ACME TRUST"})
++    r = promotion.promote(folder, {"seq": seq, "pattern": "ACME TRUST", "name": "Pat Jones",
++                                   "reason": "trust distributions are not trading"},
++                          shown=p.count, expected=position)
++    saved = yaml.safe_load(_rules_path().read_text(encoding="utf-8"))["rules"]
++    assert len(saved) == 1
++    rec = saved[0]
++    assert {k: rec[k] for k in ("id", "pattern", "direction", "category", "by", "reason")} == {
++        "id": "acme_trust", "pattern": "ACME TRUST", "direction": "in", "category": "other_explained_in",
++        "by": "Pat Jones", "reason": "trust distributions are not trading"}
++    assert str(rec["at"]).endswith("Z") or "+00:00" in str(rec["at"])
++    loaded = firm_rules.for_case()
++    assert [x.id for x in loaded.rules] == ["acme_trust"]
++    # the promotion is in the case log, with neither the pattern nor the reason
++    last = case.for_case(folder).entries()[-1]
++    assert last.event == promotion.EVENT and r.position == last.seq == position + 1
++    assert last.data["rule"] == "acme_trust" and last.data["from_override"] == seq
++    assert last.data["matched"] == 3 and last.data["applies"] == 1 and last.data["name"] == "Pat Jones"
++    assert last.data["firm_rules_sha256"] == loaded.sha256
++    assert "ACME" not in json.dumps(last.data) and "trading" not in json.dumps(last.data)
++    case.for_case(folder).require_intact()
++    # the open case, categorised again, applies it where the preview said it would
++    assert _line(folder, "L2").rule_id == "firm:acme_trust"
++    assert _line(folder, "L3").rule_id != "firm:acme_trust"
++    # a case categorised afterwards applies it too
++    _, later = _case(tmp_path, LATER, "later.csv")
++    n1 = _line(later, "N1")
++    assert n1.category.value == "other_explained_in" and n1.rule_id == "firm:acme_trust"
++    assert _line(later, "N2").rule_id != "firm:acme_trust"
++
++
++def test_a_second_promotion_keeps_the_first_rule_and_takes_a_new_id(home, tmp_path):
++    _, folder, seq = _overridden(tmp_path)
++    for reason in ("first", "second"):
++        n = len(case.for_case(folder).entries())
++        p = promotion.preview(folder, {"seq": seq, "pattern": "ACME TRUST"})
++        promotion.promote(folder, {"seq": seq, "pattern": "ACME TRUST", "name": "Pat",
++                                   "reason": reason}, shown=p.count, expected=n)
++    ids = [r.id for r in firm_rules.for_case().rules]
++    assert ids == ["acme_trust", "acme_trust_2"]
++
++
++def test_a_promotion_whose_preview_no_longer_counts_the_lines_shown_saves_nothing(home, tmp_path):
++    _, folder, seq = _overridden(tmp_path)
++    n = len(case.for_case(folder).entries())
++    with pytest.raises(promotion.PreviewChanged, match="showed 2 matching lines and the rule now matches 3"):
++        promotion.promote(folder, {"seq": seq, "pattern": "ACME TRUST", "name": "Pat", "reason": "r"},
++                          shown=2, expected=n)
++    assert not _rules_path().exists()
++    assert len(case.for_case(folder).entries()) == n
++
++
++def test_a_promotion_from_a_stale_position_is_a_conflict_and_saves_nothing(home, tmp_path):
++    _, folder, seq = _overridden(tmp_path)
++    n = len(case.for_case(folder).entries())
++    with pytest.raises(case.LogConflict):
++        promotion.promote(folder, {"seq": seq, "pattern": "ACME TRUST", "name": "Pat", "reason": "r"},
++                          shown=3, expected=n - 1)
++    assert not _rules_path().exists()
++
++
++def test_a_promotion_the_case_log_does_not_record_puts_the_rules_file_back(home, tmp_path, monkeypatch):
++    _, folder, seq = _overridden(tmp_path)
++    n = len(case.for_case(folder).entries())
++
++    def refuse(self, event, data, *, expected):
++        raise case.LogConflict(expected, expected + 1)
++
++    monkeypatch.setattr(case.CaseLog, "append", refuse)
++    with pytest.raises(case.LogConflict):
++        promotion.promote(folder, {"seq": seq, "pattern": "ACME TRUST", "name": "Pat", "reason": "r"},
++                          shown=3, expected=n)
++    assert not _rules_path().exists()
++
++
++# --- from the workspace ------------------------------------------------------------------
++
++
++@pytest.fixture
++def serve():
++    servers = []
++
++    def start(case_id):
++        srv = rs.start(store.case_folder(case_id), case_id, port=0)
++        srv.serve_in_thread()
++        servers.append(srv)
++        return srv
++
++    yield start
++    for srv in servers:
++        srv.close()
++
++
++def _seen(folder, seq, pattern="ACME TRUST"):
++    """The digest the preview page would carry for this rule (Preview.digest)."""
++    return promotion.preview(folder, {"seq": seq, "pattern": pattern, "direction": "in", "id": "acme_trust"}).digest
++
++
++def _request(srv, method, path, body=None, kind="application/json"):
++    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
++    try:
++        h = {"Host": f"127.0.0.1:{srv.port}"}
++        if "token=" not in path:
++            h["X-CMA-Token"] = srv.token
++        data = None
++        if body is not None:
++            data = json.dumps(body).encode() if kind == "application/json" else urlencode(body).encode()
++            h["Content-Type"] = kind
++        conn.request(method, path, body=data, headers=h)
++        r = conn.getresponse()
++        return r.status, r.read()
++    finally:
++        conn.close()
++
++
++def test_the_workspace_previews_then_saves_a_promotion(home, tmp_path, serve):
++    case_id, folder, seq = _overridden(tmp_path)
++    srv = serve(case_id)
++    status, raw = _request(srv, "GET", "/api/case")
++    summary = json.loads(raw)
++    assert summary["promotable"] == [{"seq": seq, "account": "main", "line": "L1",
++                                      "category": "other_explained_in", "direction": "in"}]
++    status, raw = _request(srv, "POST", "/api/promote", {"seq": seq, "pattern": "ACME TRUST"})
++    assert status == 200
++    shown = json.loads(raw)
++    assert shown["saved"] is False and shown["preview"]["count"] == 3
++    assert [x["id"] for x in shown["preview"]["lines"]] == ["L1", "L2", "L3"]
++    assert not _rules_path().exists()
++    status, raw = _request(srv, "POST", "/api/promote", {
++        "seq": seq, "pattern": "ACME TRUST", "direction": "in", "id": shown["preview"]["rule"]["id"],
++        "shown": shown["preview"]["count"], "seen": shown["preview"]["digest"], "expected": shown["position"],
++        "confirm": "1",
++        "name": "Pat Jones", "reason": "trust distributions"})
++    assert status == 200, raw
++    done = json.loads(raw)
++    assert done["saved"] is True and done["rule"]["id"] == "acme_trust" and done["matched"] == 3
++    assert [r.id for r in firm_rules.for_case().rules] == ["acme_trust"]
++    assert case.for_case(folder).entries()[-1].event == promotion.EVENT
++
++
++def test_the_page_shows_the_promote_form_and_the_preview_escaped(home, tmp_path, serve):
++    case_id, folder, seq = _overridden(tmp_path)
++    srv = serve(case_id)
++    status, raw = _request(srv, "GET", f"/?token={srv.token}")
++    assert status == 200, raw
++    assert b'id="promote-overrides"' in raw and b'class="promote"' in raw
++    status, raw = _request(srv, "POST", f"/promote?token={srv.token}",
++                           {"seq": seq, "pattern": "ACME TRUST", "direction": "in"}, kind=rs.FORM)
++    assert status == 200
++    assert b'id="promote-preview"' in raw and b'class="promote-confirm"' in raw
++    assert b'name="shown" value="3"' in raw
++    assert f'name="seen" value="{_seen(folder, seq)}"'.encode() in raw
++    # a malformed request is refused naming nothing of the case
++    status, raw = _request(srv, "POST", f"/promote?token={srv.token}", {"seq": seq, "pattern": "ACME", "amount": "1"},
++                           kind=rs.FORM)
++    assert status == 400 and b'id="promote-refused"' in raw and b"amount" in raw
++    assert not _rules_path().exists()
++
++
++def test_the_preview_page_escapes_case_text(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    r = overrides.add_override(folder, "L6", "other_explained_in", reason="r", name="Pat")
++    srv = serve(case_id)
++    status, raw = _request(srv, "POST", f"/promote?token={srv.token}",
++                           {"seq": r.seq, "pattern": "ACME TRUSTEES"}, kind=rs.FORM)
++    assert status == 200
++    assert b"<b>X</b>" not in raw and b"&lt;b&gt;X&lt;/b&gt;" in raw
++
++
++def test_confirming_the_page_preview_saves_the_rule_and_a_stale_page_is_refused(home, tmp_path, serve):
++    case_id, folder, seq = _overridden(tmp_path)
++    srv = serve(case_id)
++    n = len(case.for_case(folder).entries())
++    form = {"seq": seq, "pattern": "ACME TRUST", "direction": "in", "id": "acme_trust", "shown": 3,
++            "seen": _seen(folder, seq), "confirm": "1", "name": "Pat Jones", "reason": "trust distributions"}
++    status, raw = _request(srv, "POST", f"/promote?token={srv.token}", {**form, "expected": n - 1}, kind=rs.FORM)
++    assert status == 409 and b'id="promote-refused"' in raw and not _rules_path().exists()
++    status, raw = _request(srv, "POST", f"/promote?token={srv.token}", {**form, "expected": n}, kind=rs.FORM)
++    assert status == 200 and b'id="promoted"' in raw
++    assert [r.id for r in firm_rules.for_case().rules] == ["acme_trust"]
++
++
++# --- hardening (T37) ---------------------------------------------------------------------
++
++
++def _request_raw(srv, method, path, body, headers):
++    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
++    try:
++        data = json.dumps(body).encode()
++        conn.request(method, path, body=data, headers={"Content-Type": "application/json", **headers})
++        r = conn.getresponse()
++        return r.status, r.read()
++    finally:
++        conn.close()
++
++
++def test_a_promotion_without_the_token_or_from_another_origin_is_refused(home, tmp_path, serve):
++    case_id, folder, seq = _overridden(tmp_path)
++    srv = serve(case_id)
++    n = len(case.for_case(folder).entries())
++    body = {"seq": seq, "pattern": "ACME TRUST", "direction": "in", "id": "acme_trust", "shown": 3,
++            "expected": n, "confirm": "1", "name": "Pat", "reason": "r"}
++    host = {"Host": f"127.0.0.1:{srv.port}"}
++    status, _ = _request_raw(srv, "POST", "/api/promote", body, host)
++    assert status == 403
++    status, _ = _request_raw(srv, "POST", "/api/promote", body, {**host, "X-CMA-Token": "wrong"})
++    assert status == 403
++    status, _ = _request_raw(srv, "POST", "/api/promote", body,
++                             {**host, "X-CMA-Token": srv.token, "Origin": "http://evil.example"})
++    assert status == 403
++    status, _ = _request_raw(srv, "GET", f"/api/promote?token={srv.token}", body, host)
++    assert status == 405
++    assert not _rules_path().exists()
++    assert len(case.for_case(folder).entries()) == n
++
++
++def test_resending_the_same_confirmed_promotion_saves_one_rule(home, tmp_path, serve):
++    case_id, folder, seq = _overridden(tmp_path)
++    srv = serve(case_id)
++    n = len(case.for_case(folder).entries())
++    form = {"seq": seq, "pattern": "ACME TRUST", "direction": "in", "id": "acme_trust", "shown": 3,
++            "seen": _seen(folder, seq), "expected": n, "confirm": "1", "name": "Pat Jones",
++            "reason": "trust distributions"}
++    status, _ = _request(srv, "POST", "/api/promote", form)
++    assert status == 200
++    status, raw = _request(srv, "POST", "/api/promote", form)  # a double submit, or a retry
++    assert status in (400, 409), raw
++    assert [r.id for r in firm_rules.for_case().rules] == ["acme_trust"]
++    assert [e.event for e in case.for_case(folder).entries()].count(promotion.EVENT) == 1
++
++
++def test_the_firm_rules_file_is_written_readable_by_its_owner_only(home, tmp_path):
++    import os
++    import stat
++
++    _, folder, seq = _overridden(tmp_path)
++    n = len(case.for_case(folder).entries())
++    promotion.promote(folder, {"seq": seq, "pattern": "ACME TRUST", "name": "Pat", "reason": "r"},
++                      shown=3, expected=n)
++    mode = stat.S_IMODE(os.stat(_rules_path()).st_mode)
++    assert mode & 0o077 == 0, oct(mode)
++
++
++def test_a_rules_file_changed_since_the_preview_is_read_as_it_now_stands(home, tmp_path):
++    """Another case promoted a rule after this preview: saving builds on the file as it is,
++    keeps the other rule and takes an id of its own."""
++    _, folder, seq = _overridden(tmp_path)
++    n = len(case.for_case(folder).entries())
++    promotion.preview(folder, {"seq": seq, "pattern": "ACME TRUST"})
++    path = _rules_path()
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text(yaml.safe_dump({"rules": [{
++        "id": "acme_trust", "pattern": "SOMEONE ELSE", "direction": "in", "category": "other_explained_in",
++        "by": "Sam", "at": "2026-11-20T10:00:00Z", "reason": "other case"}]}), encoding="utf-8")
++    r = promotion.promote(folder, {"seq": seq, "pattern": "ACME TRUST", "name": "Pat", "reason": "r"},
++                          shown=3, expected=n)
++    assert r.rule["id"] == "acme_trust_2"
++    assert [x.id for x in firm_rules.for_case().rules] == ["acme_trust", "acme_trust_2"]
++
++
++def test_a_malformed_firm_rules_file_refuses_the_preview_and_is_left_as_it_was(home, tmp_path):
++    _, folder, seq = _overridden(tmp_path)
++    path = _rules_path()
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text("rules: [ {id: x}\n", encoding="utf-8")
++    before = path.read_bytes()
++    with pytest.raises(firm_rules.FirmRulesError):
++        promotion.preview(folder, {"seq": seq, "pattern": "ACME TRUST"})
++    n = len(case.for_case(folder).entries())
++    with pytest.raises(firm_rules.FirmRulesError):
++        promotion.promote(folder, {"seq": seq, "pattern": "ACME TRUST", "name": "Pat", "reason": "r"},
++                          shown=3, expected=n)
++    assert path.read_bytes() == before and len(case.for_case(folder).entries()) == n
++
++
++@pytest.mark.parametrize("pattern", ["ACME (TRUST", "ACME.*", "ACME|STRIPE", "(?i)acme"])
++def test_a_pattern_is_a_name_never_a_regular_expression(home, tmp_path, pattern):
++    _, folder, seq = _overridden(tmp_path)
++    p = promotion.preview(folder, {"seq": seq, "pattern": pattern})
++    # STRIPE (L5) never matches through an alternation, nor every line through .*
++    assert "L5" not in [m.line.id for m in p.lines]
++    assert p.count < 6
++
++
++# --- the digest of what was shown, and the firm's own file (T37 pass) ----------------------
++
++
++def test_a_preview_with_the_same_count_but_another_outcome_saves_nothing(home, tmp_path):
++    # Another case's promotion adds an earlier firm rule for the same counterparty between the
++    # preview and its confirmation: the rule still matches 3 lines, but now sets none of them.
++    _, folder, seq = _overridden(tmp_path)
++    fields = {"seq": seq, "pattern": "ACME TRUST", "direction": "in", "id": "acme_trust"}
++    p = promotion.preview(folder, fields)
++    assert p.count == 3 and p.applies == 1
++    _rules_path().parent.mkdir(parents=True, exist_ok=True)
++    _rules_path().write_text("rules:\n  - id: earlier\n    pattern: ACME TRUST\n    direction: in\n"
++                             "    category: revenue_transfer\n    by: Sam\n    at: '2026-11-01T09:00:00Z'\n"
++                             "    reason: another case\n", encoding="utf-8")
++    again = promotion.preview(folder, fields)
++    assert again.count == p.count and again.digest != p.digest
++    n = len(case.for_case(folder).entries())
++    with pytest.raises(promotion.PreviewChanged, match="changed since the preview"):
++        promotion.promote(folder, {**fields, "name": "Pat", "reason": "r"}, shown=p.count, expected=n,
++                          seen=p.digest)
++    assert [r.id for r in firm_rules.for_case().rules] == ["earlier"]
++    assert len(case.for_case(folder).entries()) == n
++
++
++def test_a_confirmation_without_the_preview_digest_is_refused(home, tmp_path, serve):
++    case_id, folder, seq = _overridden(tmp_path)
++    srv = serve(case_id)
++    n = len(case.for_case(folder).entries())
++    status, raw = _request(srv, "POST", "/api/promote", {
++        "seq": seq, "pattern": "ACME TRUST", "direction": "in", "id": "acme_trust", "shown": 3, "expected": n,
++        "confirm": "1", "name": "Pat", "reason": "r"})
++    assert status == 400 and b"seen" in raw
++    assert not _rules_path().exists() and len(case.for_case(folder).entries()) == n
++
++
++def test_promoting_keeps_the_firms_comments_and_layout(home, tmp_path):
++    _, folder, seq = _overridden(tmp_path)
++    own = ("# Firm rules, kept by the credit team. Do not remove the header.\n"
++           "rules:\n"
++           "  # Rent collected for the landlord, not trading.\n"
++           "  - id: landlord\n"
++           "    pattern: HOLLY ESTATES\n"
++           "    direction: in\n"
++           "    category: other_explained_in\n"
++           "    by: Sam\n"
++           "    at: '2026-11-01T09:00:00Z'\n"
++           "    reason: rent passed through\n")
++    _rules_path().parent.mkdir(parents=True, exist_ok=True)
++    _rules_path().write_text(own, encoding="utf-8")
++    fields = {"seq": seq, "pattern": "ACME TRUST", "direction": "in"}
++    p = promotion.preview(folder, fields)
++    promotion.promote(folder, {**fields, "name": "Pat", "reason": "trust"}, shown=p.count,
++                      expected=len(case.for_case(folder).entries()), seen=p.digest)
++    text = _rules_path().read_text(encoding="utf-8")
++    assert text.startswith(own)
++    assert [r.id for r in firm_rules.for_case().rules] == ["landlord", "acme_trust"]
++
++
++def test_a_firm_rules_file_in_another_layout_is_written_afresh_and_still_reads(home, tmp_path):
++    _, folder, seq = _overridden(tmp_path)
++    _rules_path().parent.mkdir(parents=True, exist_ok=True)
++    _rules_path().write_text("{rules: [{id: landlord, pattern: HOLLY ESTATES, direction: in, category: "
++                             "other_explained_in, by: Sam, at: '2026-11-01T09:00:00Z', reason: rent}]}\n",
++                             encoding="utf-8")
++    fields = {"seq": seq, "pattern": "ACME TRUST", "direction": "in"}
++    p = promotion.preview(folder, fields)
++    promotion.promote(folder, {**fields, "name": "Pat", "reason": "trust"}, shown=p.count,
++                      expected=len(case.for_case(folder).entries()), seen=p.digest)
++    rules = firm_rules.for_case()
++    assert [r.id for r in rules.rules] == ["landlord", "acme_trust"]
++    assert rules.records[0]["reason"] == "rent" and rules.records[1]["by"] == "Pat"

@@ -1,0 +1,78 @@
+**Verdict: fail.** The promotion works when one case writes at a time, but two cases promoting at the same moment can lose one firm rule while both case logs record it as saved. That breaks R20's "save … to the firm rules file".
+
+I read the repository, not just the packet. The runner's specified and contracts logs show the promotion tests ran and passed (24 PASSED lines in each).
+
+**R20 — fail.**
+- What works:
+  - The preview lists the lines the rule matches and writes nothing (`promotion.py` `preview`/`_build`).
+  - Saving rebuilds the preview while holding the case. It refuses if the line count or the digest has changed, then writes the pattern, direction, category, name, UTC time and reason (lines 281–313).
+  - The open case and later cases pick the rule up, because `overrides._categorise` re-reads the rules file each time and its cache key includes the file's hash.
+  - The tests for "the preview count matches" and "later cases apply the rule" ran and passed.
+- What fails: the firm rules file is shared by every case, but `promote()` locks only the open case. Its "has the file changed?" check at line 303 comes before the write at 308–309. Two cases can both pass that check, and the second write then silently drops the first case's rule (major). The producer raised this in their notes and left it as a design decision. Under the review rules it still counts against R20.
+
+**R42 — pass.** The promotion goes into the case log as a `firm_rule_promotion` entry through `store._recorded`, carrying the previous entry's hash. The rules file is put back if the entry isn't recorded, and the test for that ran and passed.
+
+**Findings**
+1. **Major — lost rule under concurrent promotion** (`src/cma/promotion.py:303`). Two workspaces on two cases sharing one rules file:
+   1. Both read and build their preview.
+   2. Both pass the check at line 303.
+   3. Case A writes A's rule; case B then writes B's rule over it, without A's.
+   4. Both case logs record a promotion, but A's rule is gone.
+2. **Minor — rollback can delete another case's rule** (`src/cma/promotion.py:308`). The undo saves the file as it was before this case's write. If case B writes after case A, and A's case-log entry then fails, A's undo restores the old file. B's rule is deleted although B's log records the promotion.
+3. **Minor — the preview's "would set it" column can be wrong** (`src/cma/promotion.py:214`). The column is worked out line by line. It misses effects across the whole statement, such as own-account pairing. Example: in a two-account case, a credit "FPS CREDIT ACME TRUST" is paired as an own-account transfer, and another ACME TRUST credit is overridden to `returned_dd` and promoted. The preview says the pairing settles the first credit, so the rule won't set it. After saving, the rule makes that credit a returned payment, which can't be paired, so the pair breaks and the rule does set it. Its debit partner also changes category without appearing in the preview. The line count is still right; only the per-line answer is wrong.
+
+The Bash tool was denied partway through, and I have no file-writing tool, so I couldn't write `evidence.json` to the run directory. It is below, for the runner to take from this reply.
+
+```json
+{
+  "task": "T37",
+  "criteria": [
+    {
+      "id": "R20",
+      "tier": "adversarial",
+      "check": "Preview: src/cma/promotion.py preview()/_build (lines ~176-217) lists every line rule_matches() accepts in the open case, with whether the rule sets it, and writes nothing; the workspace answers it at /promote and /api/promote (src/cma/review/promote.py answer/html). Save: promote() (281-313) holds the case, rebuilds the preview, refuses on a changed count or digest, writes id/pattern/direction/category/by/at/reason to the firm rules file via _write_private. Applied afterwards: overrides._categorise (src/cma/overrides.py:217-224) reads firm_rules.for_case() each time, and its cache keys include the rules file sha. The tests test_promoting_saves_the_rule_logs_it_and_later_cases_apply_it and test_the_preview_counts_every_line_the_rule_matches_and_writes_nothing ran and passed in specified-3.log and contracts-4.log. Fails under concurrent promotions from two cases sharing the firm rules file: one rule can be lost while both case logs record the promotion (finding 1).",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R42",
+      "tier": "adversarial",
+      "check": "The promotion is appended to the case log as the firm_rule_promotion event through store._recorded (src/cma/store.py:304-325), which uses log.append with the expected position, so the entry carries the previous entry's hash; promotion.py:310-313 sets save.data. The rules file is restored when the append fails (test_a_promotion_the_case_log_does_not_record_puts_the_rules_file_back, which passed in the runner logs). A double submit is refused by the stale expected position (test_resending_the_same_confirmed_promotion_saves_one_rule, which passed).",
+      "result": "pass",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/promotion.py",
+      "line": 303,
+      "criterion": "R20",
+      "claim": "firm_rules.yaml is shared by every case, but promote() locks only the open case. The byte comparison (now != before) at line 303 comes before the write at 309 with no firm-level lock, so two concurrent promotions from different cases can both pass the comparison, and the second write drops the first case's rule. Both case logs then record a firm_rule_promotion with a firm_rules_sha256 for a file that no longer holds A's rule. R20's 'save ... to the firm rules file' is not met.",
+      "repro": "Two workspaces on case A and case B under one CMA_HOME. Both build their preview, both enter promote(), both read before = X at line 289 and pass line 303. A runs _write_private(X + ruleA), then B runs _write_private(X + ruleB). Afterwards firm_rules.for_case().rules holds only ruleB, while A's case log records a firm_rule_promotion of ruleA. To force the interleaving, pause A between lines 303 and 309, for example with a monkeypatched store._restorer that waits on an event, while B runs its promotion."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/promotion.py",
+      "line": 308,
+      "criterion": "R20",
+      "claim": "The undo step captures the rules file as it was before this case's write. If another case writes after it and this case's log append then fails, the undo restores the old bytes and deletes the other case's rule, although the other case's log records its promotion.",
+      "repro": "Case A writes X+a at line 309. Case B reads X+a, writes X+a+b and records its promotion. A's log.append then raises, for example SaveNotRecorded from an OS error during the append. store._recorded runs A's undo, which writes X, so B's recorded rule is gone from firm_rules.yaml."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/promotion.py",
+      "line": 214,
+      "criterion": "R20",
+      "claim": "The preview's applies/why is worked out per line with classify() and misses effects across the whole statement, such as own-account pairing and reversal linking. A line the preview reports as kept by a pairing can be set by the rule once saved, and its debit partner, which is not in the preview, changes category.",
+      "repro": "Two-account case: account A has debit -100.00 'TFR TO SAVINGS CO', and account B has credit 100.00 'FPS CREDIT ACME TRUST' in the pairing window, so they are paired. In B, override another credit 'FPS CREDIT ACME TRUST REF' to returned_dd and promote pattern 'ACME TRUST', direction in. The preview marks the paired credit applies=False, why='an own-account pairing settles this line'. After saving, classify gives that credit firm:acme_trust, category returned_dd. _pairable (categorise.py:1477) excludes RETURNED_DD, so the pair is not made: the rule sets the line, and A's debit is recategorised."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "claude-opus-5-5"
+  }
+}
+```
