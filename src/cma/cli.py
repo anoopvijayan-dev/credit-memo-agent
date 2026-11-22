@@ -746,9 +746,14 @@ def case_sign(
             console.print(f"[red]Refused.[/red] {escape(str(e))}; nothing was written.")
             raise typer.Exit(code=2) from None
         except (pack.FieldMapError, pack.PreviewError, StatementError, AmountError, RulesetError,
-                ThresholdsError, PolicyError) as e:
+                ThresholdsError, PolicyError, FirmConfigError) as e:
             console.print(f"[red]Refused.[/red] {escape(str(e))}; nothing was written.")
             raise typer.Exit(code=2) from None
+    if s.completed:
+        console.print(f"The pack for snapshot {s.snapshot} was already written; its sign-off by {escape(s.name)} "
+                      f"(operating-system user {escape(s.os_user)}) at {s.at} was not recorded, and is now "
+                      f"recorded as case log entry {s.position}. The pack was not rewritten.", soft_wrap=True)
+        return
     console.print(f"Figures signed off by {escape(s.name)} (operating-system user {escape(s.os_user)}) "
                   f"at {s.at}, bound to snapshot {s.snapshot}.", soft_wrap=True)
     console.print(f"Pack written once to {escape(str(s.pack))}: {', '.join(s.files)}; recorded as case log "

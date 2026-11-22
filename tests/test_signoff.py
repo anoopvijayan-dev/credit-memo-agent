@@ -518,9 +518,11 @@ def test_r26_a_pack_the_tool_stopped_before_recording_is_refused_as_unrecorded_n
     assert signed.pack == target and _events(folder)[-2:] == [pack.PACK_EVENT, pack.SIGN_EVENT]
 
 
-def test_r26_a_pack_whose_sign_off_was_not_recorded_is_refused_naming_its_entry(home, tmp_path, monkeypatch):
-    """The tool stops between recording the pack write and the sign-off: signing off again says
-    the pack is written, at which log entry, and that its sign-off was not recorded."""
+def test_r42_a_sign_off_the_tool_stopped_before_recording_is_recorded_on_the_next_sign_off(home, tmp_path,
+                                                                                           monkeypatch):
+    """The tool stops between recording the pack write and the sign-off: signing off again
+    under another name is refused, naming the entry and the name the pack carries; signing off
+    under that name records the pack's own sign-off, once, without rewriting the pack."""
     case_id, folder = _case(tmp_path)
     p = pack.build_preview(folder, case_id)
     with monkeypatch.context() as m:
@@ -529,9 +531,99 @@ def test_r26_a_pack_whose_sign_off_was_not_recorded_is_refused_naming_its_entry(
             pack.sign_off(folder, case_id, p.snapshot, "Ann")
     events = _events(folder)
     assert events[-1] == pack.PACK_EVENT and pack.SIGN_EVENT not in events
+    target = folder / "packs" / p.snapshot
+    before = {f: (target / f).read_bytes() for f in os.listdir(target)}
     with pytest.raises(pack.SignOffRefused) as e:
         pack.sign_off(folder, case_id, p.snapshot, "Bob")
     msg = str(e.value)
-    assert f"case log entry {len(events)}" in msg and "sign-off was not recorded" in msg
-    assert "already signed off" not in msg and _events(folder) == events
+    assert f"case log entry {len(events)}" in msg and "sign-off was not recorded" in msg and "Ann" in msg
+    assert _events(folder) == events
+    signed = pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    assert signed.completed and signed.name == "Ann" and signed.pack == target
+    assert _events(folder) == [*events, pack.SIGN_EVENT]
+    assert {f: (target / f).read_bytes() for f in os.listdir(target)} == before
+    evidence = json.loads(before["evidence.json"])
+    entry = caselog.for_case(folder).entries()[-1].data
+    assert {k: entry[k] for k in ("name", "os_user", "at", "snapshot")} == \
+        {k: evidence["sign_off"][k] for k in ("name", "os_user", "at", "snapshot")}
     assert caselog.for_case(folder).verify().ok
+    with pytest.raises(pack.SignOffRefused, match="already signed off"):
+        pack.sign_off(folder, case_id, p.snapshot, "Ann")
+
+
+def test_r42_a_sign_off_entry_not_recorded_can_be_recorded_again(home, tmp_path, monkeypatch):
+    """verify-251's schedule: the pack write is recorded, the sign-off append fails as not
+    recorded. The next sign-off, from the same preview or a fresh one, records it."""
+    case_id, folder = _case(tmp_path)
+    p = pack.build_preview(folder, case_id)
+    real = caselog.CaseLog.append
+
+    def second_fails(self, event, data, *, expected):
+        if event == pack.SIGN_EVENT:
+            raise caselog.SaveNotRecorded("the disk is full; the save was not recorded")
+        return real(self, event, data, expected=expected)
+
+    with monkeypatch.context() as m:
+        m.setattr(caselog.CaseLog, "append", second_fails)
+        with pytest.raises(caselog.SaveNotRecorded):
+            pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    assert _events(folder)[-1] == pack.PACK_EVENT
+    again = pack.build_preview(folder, case_id)
+    assert again.snapshot == p.snapshot
+    signed = pack.sign_off(folder, case_id, again.snapshot, "Ann")
+    assert signed.completed and _events(folder)[-1] == pack.SIGN_EVENT
+    assert caselog.for_case(folder).verify().ok
+    # through the CLI too
+    case2, folder2 = _case(tmp_path)
+    p2 = pack.build_preview(folder2, case2)
+    with monkeypatch.context() as m:
+        m.setattr(caselog.CaseLog, "append", second_fails)
+        r = CliRunner().invoke(app, ["case", "sign", case2, "--snapshot", p2.snapshot], input="Ann\ny\n")
+        assert r.exit_code == 4
+    r = CliRunner().invoke(app, ["case", "sign", case2, "--snapshot", p2.snapshot], input="Ann\ny\n")
+    assert r.exit_code == 0 and "now recorded" in r.output and "not rewritten" in r.output
+
+
+def test_r42_a_recorded_pack_whose_files_changed_is_refused(home, tmp_path, monkeypatch):
+    case_id, folder = _case(tmp_path)
+    p = pack.build_preview(folder, case_id)
+    with monkeypatch.context() as m:
+        _die_at(m, pack.SIGN_EVENT)
+        with pytest.raises(_Died):
+            pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    (folder / "packs" / p.snapshot / "memo.md").write_text("edited", encoding="utf-8")
+    events = _events(folder)
+    with pytest.raises(pack.SignOffRefused, match="not the ones that entry recorded"):
+        pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    assert _events(folder) == events
+    os.rename(folder / "packs" / p.snapshot, folder / "aside")
+    with pytest.raises(pack.SignOffRefused, match="put the pack back"):
+        pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    assert _events(folder) == events
+
+
+def test_r23_a_refused_sign_off_leaves_a_crash_leftover_in_place(home, tmp_path):
+    case_id, folder = _case(tmp_path)
+    p = pack.build_preview(folder, case_id)
+    leftover = folder / "packs" / (pack.PART + "x")
+    leftover.mkdir(parents=True)
+    (leftover / "memo.md").write_text("half", encoding="utf-8")
+    overrides.add_override(folder, "L2", "revenue_transfer", reason="customer", name="Ann")
+    with pytest.raises(pack.SignOffRefused):
+        pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    assert (leftover / "memo.md").read_text(encoding="utf-8") == "half"
+
+
+def test_workspace_sign_off_names_a_bad_configuration_file(home, tmp_path, monkeypatch):
+    from cma import policy
+    from cma.review import signoff
+
+    case_id, folder = _case(tmp_path)
+    p = pack.build_preview(folder, case_id)
+
+    def bad(*a, **k):
+        raise policy.PolicyError("the policy file is not valid YAML")
+
+    monkeypatch.setattr(pack, "sign_off", bad)
+    status, reply = signoff.answer(folder, case_id, "sign", {"snapshot": p.snapshot, "name": "Ann"})
+    assert status == 409 and "not valid YAML" in reply["refused"] and "Nothing was signed off" in reply["refused"]

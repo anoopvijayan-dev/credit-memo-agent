@@ -23,7 +23,12 @@ from urllib.parse import urlencode
 
 from .. import case as caselog
 from .. import pack, store
-from ..metrics import ReconciliationError
+from ..categorise import RulesetError
+from ..firm import FirmConfigError
+from ..indicators import ThresholdsError
+from ..ingest import StatementError
+from ..metrics import AmountError, ReconciliationError
+from ..policy import PolicyError
 
 PREVIEW_KEYS = frozenset({"back"})
 SIGN_KEYS = frozenset({"snapshot", "name", "back"})
@@ -46,6 +51,8 @@ def _refusal(e: Exception) -> tuple[int, dict[str, Any]] | None:
                                 "recorded; try again in a moment.")}
     if isinstance(e, caselog.LogConflict):
         return 409, {"refused": "The case changed while this was being recorded; reload the case and try again."}
+    if isinstance(e, (PolicyError, ThresholdsError, RulesetError, AmountError, StatementError, FirmConfigError)):
+        return 409, {"refused": f"{str(e).rstrip('.')}. Nothing was signed off or written."}
     if isinstance(e, (pack.SignOffRefused, pack.FieldMapError, pack.PreviewError, store.CaseStoreError)):
         reply: dict[str, Any] = {"refused": f"{str(e).rstrip('.')}."}
         if isinstance(e, pack.SignOffRefused) and e.changed:
@@ -76,7 +83,7 @@ def answer(folder: Path, case_id: str, kind: str, fields: dict[str, Any]) -> tup
         if refused is None:
             raise
         return refused
-    return 200, {"signed": True, "snapshot": s.snapshot, "name": s.name, "os_user": s.os_user, "at": s.at,
+    return 200, {"signed": True, "completed": s.completed, "snapshot": s.snapshot, "name": s.name, "os_user": s.os_user, "at": s.at,
                  "pack": f"{pack.PACKS}/{s.snapshot}", "files": s.files, "position": s.position}
 
 
@@ -116,7 +123,9 @@ def html(kind: str, status: int, reply: dict[str, Any], token: str) -> str:
         return ('<section id="signed-off"><h2>Figures signed off</h2>'
                 f'<p>Signed off by {_e(reply["name"])} (operating-system user {_e(reply["os_user"])}) at '
                 f'{_e(reply["at"])}, bound to snapshot <code>{_e(reply["snapshot"])}</code>.</p>'
-                f'<p>The pack was written once to <code>{_e(reply["pack"])}</code>: {files}. It is never '
+                + ('<p>The pack was already written; this recorded its sign-off, which had not been '
+                   'recorded. The pack was not rewritten.</p>' if reply.get("completed") else "")
+                + f'<p>The pack was written once to <code>{_e(reply["pack"])}</code>: {files}. It is never '
                 'overwritten. The recommendation and every judgement field are left blank for you.</p>'
                 + _reload(token) + "</section>")
     findings = "".join(f'<li>account {_e(f["account"])}: {_e(f["number"] or "-")}: {_e(f["why"])}</li>'

@@ -470,6 +470,7 @@ class Signed:
     pack: Path
     files: dict[str, str]  # file name -> sha256
     position: int  # the case log position of the sign-off entry
+    completed: bool = False  # True when this recorded the sign-off of a pack already written
 
 
 def changed_inputs(signed: dict[str, Any], now: dict[str, Any]) -> list[str]:
@@ -640,7 +641,6 @@ def sign_off(folder: Path, case_id: str, snapshot: str, name: str) -> Signed:
         head = log.require_intact()  # R43: the whole log, judged while holding the case
         entries = log.entries()
         written = {e.data.get("snapshot"): n for n, e in enumerate(entries, start=1) if e.event == PACK_EVENT}
-        _remove_leftovers(packs)
         signed = _preview_entry(entries, snapshot)
         if signed is None:
             raise SignOffRefused(f"no preview of this case has snapshot {snapshot}; preview the case "
@@ -648,11 +648,8 @@ def sign_off(folder: Path, case_id: str, snapshot: str, name: str) -> Signed:
         if any(e.event == SIGN_EVENT and e.data.get("snapshot") == snapshot for e in entries):
             raise SignOffRefused(f"the figures of snapshot {snapshot} are already signed off and its pack written "
                                  f"({PACKS}/{snapshot}); a pack is never overwritten")
-        if snapshot in written:  # the tool stopped between the pack write and its sign-off entry
-            raise SignOffRefused(f"the pack for snapshot {snapshot} is written ({PACKS}/{snapshot}, case log entry "
-                                 f"{written[snapshot]}) but its sign-off was not recorded: the tool stopped between "
-                                 "the two. The sign-off it was written for is in its evidence.json; a pack is never "
-                                 "overwritten, so no second sign-off is taken for this snapshot")
+        if snapshot in written:  # the pack write is recorded and its sign-off entry is not
+            return _complete(log, packs, entries, head, case_id, snapshot, name, written[snapshot])
         if (packs / snapshot).exists() or (packs / snapshot).is_symlink():
             # Not a pack the log records: most likely the tool stopped between renaming the pack
             # into place and recording it. It is never removed or replaced here (R26).
@@ -677,6 +674,7 @@ def sign_off(folder: Path, case_id: str, snapshot: str, name: str) -> Signed:
         evidence = json.dumps(_evidence(p, signoff, firm.load()), indent=2, sort_keys=True, ensure_ascii=False)
         files = {"memo.md": p.text.encode("utf-8"), "evidence.json": (evidence + "\n").encode("utf-8")}
         shas = {k: hashlib.sha256(v).hexdigest() for k, v in files.items()}
+        _remove_leftovers(packs)  # only once the sign-off is taken, so a refusal changes nothing
         target = _write_pack(packs, snapshot, files)
         try:
             log.append(PACK_EVENT, {"snapshot": snapshot, "pack": f"{PACKS}/{snapshot}", "files": shas},
@@ -689,3 +687,50 @@ def sign_off(folder: Path, case_id: str, snapshot: str, name: str) -> Signed:
         entry = log.append(SIGN_EVENT, {k: signoff[k] for k in ("name", "os_user", "at", "snapshot")}
                            | {"pack": f"{PACKS}/{snapshot}", "files": shas}, expected=head.position + 1)
     return Signed(case_id, snapshot, name, signoff["os_user"], signoff["at"], target, shas, entry.seq)
+
+
+def _complete(log, packs: Path, entries, head, case_id: str, snapshot: str, name: str, position: int) -> Signed:
+    """Record the sign-off of a pack whose write the case log records and whose sign-off entry
+    it does not: the second append failed (a full disk, a refused lock re-check, a stop). The
+    pack is never rewritten: the sign-off recorded is the one its evidence.json carries, once
+    the pack's files are the ones the pack-write entry hashed, and only for the same typed name
+    (R22, R26, R42). The snapshot is the one the pack was written from, so this records what was
+    signed then, whatever the case holds now."""
+    data = entries[position - 1].data
+    shas = data.get("files") if isinstance(data.get("files"), dict) else {}
+    target = packs / snapshot
+    if not target.is_dir() or target.is_symlink():
+        raise SignOffRefused(f"the pack for snapshot {snapshot} is recorded as written (case log entry {position}) "
+                             f"but its sign-off was not recorded, and {PACKS}/{snapshot} is not there to finish "
+                             "recording it; put the pack back to sign off its figures")
+    found = {}
+    for fname in shas:
+        f = target / fname
+        found[fname] = hashlib.sha256(f.read_bytes()).hexdigest() if f.is_file() and not f.is_symlink() else None
+    if not shas or found != shas:
+        raise SignOffRefused(f"the pack for snapshot {snapshot} is recorded as written (case log entry {position}) "
+                             f"but its sign-off was not recorded, and the files in {PACKS}/{snapshot} are not the "
+                             "ones that entry recorded; a pack is never overwritten")
+    try:
+        signoff = json.loads((target / "evidence.json").read_text(encoding="utf-8")).get("sign_off")
+    except (ValueError, AttributeError):
+        signoff = None
+    if not isinstance(signoff, dict) or not all(isinstance(signoff.get(k), str)
+                                                for k in ("name", "os_user", "at", "snapshot")) \
+            or signoff["snapshot"] != snapshot:
+        raise SignOffRefused(f"the pack for snapshot {snapshot} is recorded as written (case log entry {position}) "
+                             "but its evidence.json holds no sign-off for that snapshot")
+    if signoff["name"] != name:
+        raise SignOffRefused(f"the pack for snapshot {snapshot} is written (case log entry {position}) but its "
+                             f"sign-off was not recorded. The pack was signed off as {signoff['name']}; sign off "
+                             "again under that name to record it. A pack is never overwritten, so no other "
+                             "sign-off is taken for this snapshot")
+    from .overrides import _now
+
+    entry = log.append(SIGN_EVENT, {k: signoff[k] for k in ("name", "os_user", "at", "snapshot")}
+                       | {"pack": f"{PACKS}/{snapshot}", "files": shas,
+                          "recorded": {"os_user": store._os_user(), "at": _now(),
+                                       "after_pack_entry": position}},
+                       expected=head.position)
+    return Signed(case_id, snapshot, signoff["name"], signoff["os_user"], signoff["at"], target, dict(shas),
+                  entry.seq, completed=True)
