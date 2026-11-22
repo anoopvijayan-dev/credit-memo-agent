@@ -414,7 +414,8 @@ def judgement_queue(statement: Statement, indicators: list[Indicator],
                     possible_own_account: list[list[str]] | None = None) -> list[QueueEntry]:
     """The lines a person has to decide (R15): every unexplained credit, ambiguous ones among
     them with their candidates; every line of a possible own-account transfer, when the case
-    has any (R9: a debit and each credit it could pair with, given as one group); and every
+    has any (R9: a debit and each credit it could pair with, given as one group, whose lines
+    in other accounts are named in pairs_with by their case ids, not listed); and every
     line an indicator flagged, which includes each cash deposit at or above the single-deposit
     limit. One entry per line, largest amount first (by size, either way), and statement
     order between equal amounts. The statement and the indicators are read, never changed."""
@@ -440,8 +441,10 @@ def judgement_queue(statement: Statement, indicators: list[Indicator],
                 reason(e, "ambiguous")
                 e["candidates"] = candidates
     for group in possible_own_account or []:
-        ids = [i for i in dict.fromkeys(group) if i in by_id]
+        ids = list(dict.fromkeys(group))  # a line of another account of the case is named, not listed
         for i in ids:
+            if i not in by_id:
+                continue
             e = entry(i)
             reason(e, "possible_own_account_transfer")
             e["pairs_with"] += [j for j in ids if j != i and j not in e["pairs_with"]]

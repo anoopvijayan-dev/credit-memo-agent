@@ -47,6 +47,7 @@ import yaml
 
 from . import firm, guard, overrides, policy, store
 from .categorise import active_ruleset
+from .metrics import case_line_id
 from .models import GuardResult, Metric, PolicyResult, RuleResult, format_value
 
 DEFAULT_FIELD_MAP_NAME = "memo_fields.yaml"
@@ -616,7 +617,10 @@ def _evidence(p: Preview, signoff: dict[str, Any], config: firm.FirmConfig, entr
             "monthly_summary": [r.model_dump(mode="json") for r in f.monthly] if f else [],
             "thresholds": thresholds,
             "indicators": [i.model_dump(mode="json") for i in a.indicators],
-            "judgement_queue": ([e.model_dump(mode="json") for e in ind.judgement_queue(f.statement, a.indicators)]
+            "judgement_queue": ([e.model_dump(mode="json") for e in ind.judgement_queue(
+                f.statement, a.indicators,
+                [[line if x == a.account else case_line_id(x, line) for x, line in g]
+                 for g in f.possible_pairs])]
                                 if f else []),
             "policy": a.policy.evidence_dump(mode="json") if a.policy else None,
             "guard": {**a.guard.model_dump(mode="json"), "grounded": _grounded(a.guard)} if a.guard else None,
