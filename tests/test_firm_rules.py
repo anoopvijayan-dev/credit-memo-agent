@@ -286,3 +286,37 @@ def test_cli_refuses_a_malformed_firm_rules_file_naming_its_line_without_a_trace
     assert "Refused." in got.output and "line 2" in got.output and "missing pattern" in got.output
     assert "Traceback" not in got.output
     assert got.exception is None or isinstance(got.exception, SystemExit)
+
+
+# One line of each kind R21 names, with the category the built-in table gives it, written out
+# here rather than read from the table's protected flags, so the guard is checked against R21's
+# own list and not against itself.
+R21_LINES = [
+    ("FPS CREDIT DIRECTOR LOAN J DOE", 400.0, Category.DIRECTOR_FUNDING),      # director
+    ("CAPITAL INTRODUCED J DOE", 400.0, Category.DIRECTOR_FUNDING),            # capital
+    ("SHAREHOLDER LOAN J DOE", 400.0, None),                                   # shareholder
+    ("IWOCA LOAN ADVANCE", 400.0, Category.LOAN_DRAWDOWN),                     # lender, money in
+    ("FUNDING CIRCLE", -400.0, Category.LOAN_REPAYMENT),                       # lender, money out
+    ("HMRC VAT REPAYMENT", 400.0, Category.HMRC_REPAYMENT),                    # HMRC, money in
+    ("HMRC PAYE", -400.0, Category.HMRC_PAYE),                                 # HMRC, money out
+    ("UNPAID DD", 400.0, Category.RETURNED_DD),                                # returned payment
+]
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("table", ["v1", "v2"])
+@pytest.mark.parametrize("desc,amount,category", R21_LINES)
+def test_r21_each_named_kind_keeps_its_category_under_a_firm_rule_claiming_it(table, desc, amount, category):
+    ruleset = load_ruleset(table)
+    t = _t(desc, amount)
+    bare = classify(t, ruleset)
+    if table == "v2" and category is not None:
+        assert bare[0] == category, bare  # the line is the kind it is meant to be
+    if bare[1].endswith(":default"):
+        # v1, the previous release's table, has no pattern for some of these (FUNDING CIRCLE
+        # out): no built-in pattern matches, so R21 protects nothing; v2 has one for each.
+        assert table == "v1", bare
+        return
+    claim = Category.REVENUE_TRANSFER if amount > 0 else Category.SUPPLIER
+    rules = firm_rules.parse(_text(_rule("claim", desc, "in" if amount > 0 else "out", claim.value)), "r21").rules
+    assert classify(t, ruleset, firm_rules=list(rules)) == bare, (table, desc)
