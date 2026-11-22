@@ -191,7 +191,7 @@ def test_r3_reconciliation_failure_is_refused(home, tmp_path, monkeypatch):
     case_id, folder = _case(tmp_path)
     p = pack.build_preview(folder, case_id)
 
-    def unreconciled(_folder):
+    def unreconciled(_folder, **_kw):
         raise metrics.ReconciliationError(1, ["L2"])
 
     monkeypatch.setattr(overrides, "case_figures", unreconciled)

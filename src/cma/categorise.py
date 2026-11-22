@@ -1449,7 +1449,7 @@ def link_reversals(statement: Statement) -> Statement:
     return statement
 
 
-PAIRING_DAYS = 3  # the days apart a debit and a credit of a case's accounts may be and still pair (R8)
+PAIRING_DAYS = 3  # the days apart a debit and a credit may be and still pair (R8); a case reads firm.yaml's own_account_pairing_days
 PAIRING = "pairing"  # the rule a paired line records: "pairing:<account>:<line id>" of its other half
 
 
