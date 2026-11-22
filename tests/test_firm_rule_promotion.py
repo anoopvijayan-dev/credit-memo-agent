@@ -9,12 +9,14 @@ The workspace tests talk to a real server running in a thread, with the per-laun
 
 import http.client
 import json
+import threading
 from urllib.parse import urlencode
 
 import pytest
 import yaml
 
 from cma import case, firm, firm_rules, overrides, promotion, store
+from cma.review import promote as promote_page
 from cma.review import server as rs
 
 pytestmark = pytest.mark.contracts
@@ -176,6 +178,131 @@ def test_a_promotion_the_case_log_does_not_record_puts_the_rules_file_back(home,
         promotion.promote(folder, {"seq": seq, "pattern": "ACME TRUST", "name": "Pat", "reason": "r"},
                           shown=3, expected=n)
     assert not _rules_path().exists()
+
+
+def _two_cases(tmp_path):
+    """Two cases under one firm, each with an override to promote (A: ACME TRUST, B: J BLOGGS)."""
+    _, a, a_seq = _overridden(tmp_path)
+    _, b = _case(tmp_path, LATER, "later.csv")
+    b_seq = overrides.add_override(b, "N2", "other_explained_in", reason="gift", name="Sam").seq
+    return a, a_seq, b, b_seq
+
+
+def _promote_in_thread(folder, seq, pattern, done, errors, name=None, digest=True):
+    def run():
+        try:
+            n = len(case.for_case(folder).entries())
+            p = promotion.preview(folder, {"seq": seq, "pattern": pattern})
+            promotion.promote(folder, {"seq": seq, "pattern": pattern, "name": "Pat", "reason": "r"},
+                              shown=p.count, expected=n, seen=p.digest if digest else None)
+        except BaseException as e:  # handed back to the test
+            errors.append(e)
+        finally:
+            done.set()
+
+    t = threading.Thread(target=run, daemon=True, name=name)
+    t.start()
+    return t
+
+
+def test_two_cases_promoting_at_once_take_turns_and_keep_both_rules(home, tmp_path, monkeypatch):
+    """verify-268: the firm rules file is the firm's; a promotion paused between reading it and
+    writing it holds it, so another case's promotion waits, and neither rule is lost."""
+    a, a_seq, b, b_seq = _two_cases(tmp_path)
+    paused, go = threading.Event(), threading.Event()
+    real = store._restorer
+
+    def pausing(path, *args, **kwargs):
+        undo = real(path, *args, **kwargs)
+        if threading.current_thread().name == "A":
+            paused.set()
+            go.wait(10)
+        return undo
+
+    monkeypatch.setattr(store, "_restorer", pausing)
+    errors: list = []
+    a_done, b_done = threading.Event(), threading.Event()
+    ta = _promote_in_thread(a, a_seq, "ACME TRUST", a_done, errors, name="A")
+    assert paused.wait(10)
+    # B confirms by its count alone: with its digest, which names the rules file it was shown,
+    # it would be refused as stale once A's rule is in, and still lose nothing.
+    tb = _promote_in_thread(b, b_seq, "J BLOGGS", b_done, errors, digest=False)
+    assert not b_done.wait(0.5)  # B waits for A, which has read the file and not yet written it
+    go.set()
+    ta.join(10)
+    tb.join(10)
+    assert not errors
+    assert sorted(r.id for r in firm_rules.for_case().rules) == ["acme_trust", "j_bloggs"]
+    sha = firm_rules.for_case().sha256
+    a_last, b_last = case.for_case(a).entries()[-1], case.for_case(b).entries()[-1]
+    assert a_last.event == b_last.event == promotion.EVENT
+    assert b_last.data["firm_rules_sha256"] == sha  # B recorded the file that holds both rules
+
+
+def test_a_promotion_put_back_never_removes_another_cases_recorded_rule(home, tmp_path, monkeypatch):
+    """verify-268: A writes its rule and its case log then refuses it; B, promoting meanwhile,
+    waits until A has put the file back, so B's recorded rule stays."""
+    a, a_seq, b, b_seq = _two_cases(tmp_path)
+    paused, go = threading.Event(), threading.Event()
+    real = case.CaseLog.append
+
+    def append(self, event, data, *, expected):
+        if event == promotion.EVENT and threading.current_thread().name == "A":
+            paused.set()
+            go.wait(10)
+            raise case.LogConflict(expected, expected + 1)
+        return real(self, event, data, expected=expected)
+
+    monkeypatch.setattr(case.CaseLog, "append", append)
+    errors: list = []
+    a_done, b_done = threading.Event(), threading.Event()
+    ta = _promote_in_thread(a, a_seq, "ACME TRUST", a_done, errors, name="A")
+    assert paused.wait(10)
+    tb = _promote_in_thread(b, b_seq, "J BLOGGS", b_done, errors, digest=False)
+    assert not b_done.wait(0.5)
+    go.set()
+    ta.join(10)
+    tb.join(10)
+    assert [type(e) for e in errors] == [case.LogConflict]  # A's, refused by its log
+    assert [r.id for r in firm_rules.for_case().rules] == ["j_bloggs"]
+    assert case.for_case(b).entries()[-1].data["rule"] == "j_bloggs"
+    assert case.for_case(a).entries()[-1].event != promotion.EVENT
+
+
+PAIRED_A = ("id,date,description,amount,balance\n"
+            "A1,2026-01-05,CARD SETTLEMENT STRIPE,500.00,1500.00\n"
+            "A2,2026-01-06,FPS TO 12345678,-100.00,1400.00\n"
+            "A3,2026-01-20,CARD SETTLEMENT STRIPE,100.00,1500.00\n")
+PAIRED_B = ("id,date,description,amount,balance\n"
+            "B1,2026-01-05,CARD SETTLEMENT STRIPE,50.00,50.00\n"
+            "B2,2026-01-07,FPS CREDIT ACME TRUST,100.00,150.00\n"
+            "B3,2026-01-09,FPS CREDIT ACME TRUST REF,30.00,180.00\n"
+            "B4,2026-01-25,CARD SETTLEMENT STRIPE,10.00,190.00\n")
+
+
+def test_the_preview_reads_the_whole_case_so_a_pairing_the_rule_unmakes_is_shown(home, tmp_path):
+    """verify-268: a rule giving returned_dd takes a paired credit out of its pairing; the preview
+    says the rule sets that credit, and lists its debit partner, which the rule does not match,
+    as changing too; and the case, once the rule is saved, is what the preview said."""
+    case_id = store.new_case(label="t37")
+    folder = store.case_folder(case_id)
+    for account, body in (("a", PAIRED_A), ("b", PAIRED_B)):
+        src = tmp_path / f"{account}.csv"
+        src.write_text(body, encoding="utf-8")
+        store.import_file(folder, src, "csv", account=account)
+    assert _line(folder, "B2", "b").rule_id.startswith("pairing:")
+    seq = overrides.add_override(folder, "B3", "returned_dd", reason="bounced", name="Pat", account="b").seq
+    p = promotion.preview(folder, {"seq": seq, "pattern": "ACME TRUST", "direction": "in"})
+    by = {m.line.id: m for m in p.lines}
+    assert by["B2"].applies and by["B2"].why is None
+    assert [(a, t.id) for a, t, _now, _then in p.changed] == [("a", "A2")]
+    n = len(case.for_case(folder).entries())
+    promotion.promote(folder, {"seq": seq, "pattern": "ACME TRUST", "direction": "in", "name": "Pat",
+                               "reason": "r"}, shown=p.count, expected=n, seen=p.digest)
+    assert _line(folder, "B2", "b").rule_id == "firm:acme_trust"
+    _a, _t, now, then = p.changed[0]
+    assert now == "own_account_transfer" != then
+    assert _line(folder, "A2", "a").category.value == then
 
 
 # --- from the workspace ------------------------------------------------------------------
@@ -458,3 +585,17 @@ def test_a_firm_rules_file_in_another_layout_is_written_afresh_and_still_reads(h
     rules = firm_rules.for_case()
     assert [r.id for r in rules.rules] == ["landlord", "acme_trust"]
     assert rules.records[0]["reason"] == "rent" and rules.records[1]["by"] == "Pat"
+
+
+def test_the_preview_page_lists_the_lines_the_rule_changes_without_matching(home, tmp_path):
+    case_id = store.new_case(label="t37")
+    folder = store.case_folder(case_id)
+    for account, body in (("a", PAIRED_A.replace("FPS TO 12345678", "FPS TO <b>9</b>")), ("b", PAIRED_B)):
+        src = tmp_path / f"{account}.csv"
+        src.write_text(body, encoding="utf-8")
+        store.import_file(folder, src, "csv", account=account)
+    seq = overrides.add_override(folder, "B3", "returned_dd", reason="bounced", name="Pat", account="b").seq
+    status, reply = promote_page.answer(folder, case_id, {"seq": seq, "pattern": "ACME TRUST", "direction": "in"})
+    assert status == 200 and [x["id"] for x in reply["preview"]["changed"]] == ["A2"]
+    page = promote_page.html(status, reply, "tok", {})
+    assert 'class="lines changed"' in page and "FPS TO &lt;b&gt;9&lt;/b&gt;" in page and "<b>9</b>" not in page

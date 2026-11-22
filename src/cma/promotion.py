@@ -15,7 +15,9 @@ pattern, direction, category, the typed name, the UTC time and the reason) and r
 promotion in the case log (R42). The firm rules file is read as it stands by every case
 categorised afterwards (firm_rules.for_case), the open case included, so the rule applies
 from the next categorisation (R20). If the case log does not record the promotion, the file
-is put back as it was.
+is put back as it was. The firm rules file is shared by every case, so a promotion holds its
+lock (firm_rules.yaml.lock beside it) from reading the file until its case log records it or
+the file is put back: two cases promoting at once take turns, and neither loses the other's rule.
 
 The case log entry names the rule by id, its direction and category, the override it came
 from, the counts the preview showed, who promoted it and when, and the hash of the rules file
@@ -29,7 +31,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import time
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -44,7 +49,7 @@ from .categorise import (
     _firm_rules_for,
     _fold,
     active_ruleset,
-    classify,
+    categorise,
     names_pattern,
     pair_own_accounts,
     rule_matches,
@@ -52,6 +57,7 @@ from .categorise import (
 from .models import Category, Transaction
 
 EVENT = "firm_rule_promotion"
+LOCK_WAIT = 30.0  # seconds a promotion waits for another case's promotion to finish
 
 WHY = {
     "override": "an override sets this line's category",
@@ -83,6 +89,9 @@ class Preview:
     seq: int
     lines: list[Matched] = field(default_factory=list)
     firm_rules_sha256: str | None = None  # the firm rules file the preview read; None for none
+    # Lines the rule does not match whose category the rule still changes, through the
+    # case as a whole (an own-account pairing it unmakes, say): (account, line, now, then).
+    changed: list[tuple[str, Transaction, str, str]] = field(default_factory=list)
 
     @property
     def digest(self) -> str:
@@ -90,7 +99,8 @@ class Preview:
         and each matched line with whether the rule sets it and why not. Saving refuses when
         the preview built again gives another digest, even with the same number of lines."""
         shown = {"rule": self.rule, "seq": self.seq, "firm_rules": self.firm_rules_sha256,
-                 "lines": [[m.account, m.line.id, m.applies, m.why] for m in self.lines]}
+                 "lines": [[m.account, m.line.id, m.applies, m.why] for m in self.lines],
+                 "changed": [[a, t.id, now, then] for a, t, now, then in self.changed]}
         return hashlib.sha256(json.dumps(shown, sort_keys=True).encode("utf-8")).hexdigest()
 
     @property
@@ -141,9 +151,12 @@ def _override(records: list[dict[str, Any]], seq: Any) -> dict[str, Any]:
     return rec
 
 
-def _categorised(folder: Path, entries) -> tuple[dict[str, Any], list[dict[str, Any]], dict]:
+def _categorised(folder: Path, entries, rules: tuple[Rule, ...] | None = None
+                 ) -> tuple[dict[str, Any], list[dict[str, Any]], dict]:
     """Every account's statement as the case stands: overrides applied and, in a case of more
-    than one account, own-account pairs settled (overrides.case_figures' first steps)."""
+    than one account, own-account pairs settled (overrides.case_figures' first steps). With
+    `rules`, the statements are categorised with those firm rules in place of the file's: the
+    case as it will stand once a rule is saved, worked out whole, pairing included."""
     profile = store.load_profile(folder)
     accounts = overrides._accounts(entries)
     statements = {a: overrides._load(folder, a) for a in accounts}
@@ -151,7 +164,11 @@ def _categorised(folder: Path, entries) -> tuple[dict[str, Any], list[dict[str, 
     state = overrides._decide(records, statements)
     loaded = {a: v for a, v in statements.items() if v is not None}
     for account, (statement, sha) in loaded.items():
-        overrides._categorise(statement, sha, profile, state.applied.get(account, {}))
+        if rules is None:
+            overrides._categorise(statement, sha, profile, state.applied.get(account, {}))
+        else:
+            categorise(statement, active_ruleset(), overrides=state.applied.get(account, {}),
+                       profile=store.profile_names(profile), firm_rules=rules)
     if len(accounts) > 1:
         pair_own_accounts({a: v[0] for a, v in loaded.items()},
                           overridden={a: state.applied.get(a, {}).keys() for a in loaded},
@@ -176,7 +193,7 @@ def _why_not(t: Transaction, rule_now: str, ruleset, desc: str, candidate: Rule)
 
 
 def _build(folder: Path, entries, fields: dict[str, Any], existing: firm_rules.FirmRules) -> Preview:
-    loaded, records, profile = _categorised(folder, entries)
+    loaded, records, _profile = _categorised(folder, entries)
     rec = _override(records, fields.get("seq"))
     pattern = _text(fields.get("pattern"), "counterparty pattern")
     if not firm_rules._SEPARATOR_RUN.sub("", _fold(pattern)):
@@ -199,23 +216,30 @@ def _build(folder: Path, entries, fields: dict[str, Any], existing: firm_rules.F
     rid = _rule_id(fields.get("id"), pattern, {r.id for r in existing.rules})
     candidate = Rule(rid, re.compile(names_pattern([pattern])), direction, category)
     ruleset = active_ruleset()
-    names = store.profile_names(profile)
     with_rule = (*existing.rules, candidate)
+    # The case as it will stand with the rule saved, worked out whole: a line the rule takes
+    # can unmake an own-account pairing, so whether the rule sets a line, and what else moves,
+    # is read from the whole case, not from each line alone (verify-268).
+    after = {(a, t.id): t for a, (st, _sha) in _categorised(folder, entries, with_rule)[0].items()
+             for t in st.transactions}
     matched: list[Matched] = []
+    changed: list[tuple[str, Transaction, str, str]] = []
     for acct, (statement, _sha) in loaded.items():
         for t in statement.transactions:
+            now = t.category.value if t.category else ""
+            then_t = after.get((acct, t.id))
+            then = then_t.category.value if then_t is not None and then_t.category else ""
             desc = t.description.upper() if ruleset.frozen else _fold(t.description)
             if not rule_matches(candidate, desc, t.amount):
+                if then != now:
+                    changed.append((acct, t, now, then))
                 continue
             rule_now = t.rule_id or ""
-            if rule_now.startswith(("override:", PAIRING + ":")):
-                applies = False
-            else:
-                applies = classify(t, ruleset, profile=names, firm_rules=with_rule)[1] == f"firm:{rid}"
+            applies = then_t is not None and then_t.rule_id == f"firm:{rid}"
             why = None if applies else _why_not(t, rule_now, ruleset, desc, candidate)
-            matched.append(Matched(acct, t, t.category.value if t.category else "", rule_now or None, applies, why))
+            matched.append(Matched(acct, t, now, rule_now or None, applies, why))
     return Preview({"id": rid, "pattern": pattern, "direction": direction, "category": category.value},
-                   rec["seq"], matched, existing.sha256)
+                   rec["seq"], matched, existing.sha256, changed)
 
 
 def _firm_rules_now() -> tuple[Path, bytes | None, firm_rules.FirmRules]:
@@ -270,6 +294,32 @@ def _appended(before: bytes | None, existing: firm_rules.FirmRules, record: dict
     return full
 
 
+@contextmanager
+def _firm_rules_held(path: Path):
+    """Hold the firm rules file's lock (FILE.lock beside it) alone. The file is the firm's, shared
+    by every case, while a promotion holds only its own case; so two cases' promotions take
+    turns here, from reading the file to the case log recording the promotion or its undo
+    putting the file back, and neither writes over the other's rule (verify-268)."""
+    if not path.parent.is_dir():
+        raise store.CaseStoreError(f"the folder of the firm rules file {path.name} does not exist")
+    lock = path.with_name(path.name + ".lock")
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), store.FILE_MODE)
+    try:
+        deadline = time.monotonic() + LOCK_WAIT
+        while not caselog._try_exclusive(fd):
+            if time.monotonic() > deadline:
+                raise store.CaseStoreError("another case is saving a firm rule; try again in a moment; "
+                                           "nothing was saved")
+            time.sleep(0.05)
+        try:
+            yield
+        finally:
+            with suppress(OSError):
+                caselog._unlock(fd)
+    finally:
+        os.close(fd)
+
+
 def promote(folder: Path, fields: dict[str, Any], *, shown: Any, expected: int | None = None,
             seen: str | None = None) -> Promoted:
     """Save the rule the preview showed (R20): `shown` is the number of lines the preview the
@@ -284,7 +334,7 @@ def promote(folder: Path, fields: dict[str, Any], *, shown: Any, expected: int |
                                    "preview the rule first")
     name = _text(fields.get("name"), "name")
     reason = _text(fields.get("reason"), "reason")
-    with store._recorded(folder, EVENT) as save:
+    with _firm_rules_held(firm.load().firm_rules_path), store._recorded(folder, EVENT) as save:
         overrides._check_position(len(save.entries), expected)
         path, before, existing = _firm_rules_now()
         p = _build(folder, save.entries, fields, existing)
@@ -298,8 +348,6 @@ def promote(folder: Path, fields: dict[str, Any], *, shown: Any, expected: int |
         record = {**p.rule, "by": name, "at": at, "reason": reason}
         text = _appended(before, existing, record, path)
         firm_rules.parse(text, str(path))  # the file as it will be read: never written otherwise
-        if not path.parent.is_dir():
-            raise store.CaseStoreError(f"the folder of the firm rules file {path.name} does not exist")
         now = path.read_bytes() if path.is_file() else None
         if now != before:
             raise store.CaseStoreError("the firm rules file changed while the rule was being saved; preview it "

@@ -36,7 +36,8 @@ def _shown(p: promotion.Preview) -> dict[str, Any]:
     from .summary import _line
 
     return {"rule": p.rule, "seq": p.seq, "count": p.count, "applies": p.applies, "digest": p.digest,
-            "lines": [{"account": m.account, **_line(m.line), "applies": m.applies, "why": m.why} for m in p.lines]}
+            "lines": [{"account": m.account, **_line(m.line), "applies": m.applies, "why": m.why} for m in p.lines],
+            "changed": [{"account": a, **_line(t), "now": now, "then": then} for a, t, now, then in p.changed]}
 
 
 def answer(folder: Path, case_id: str, fields: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -149,6 +150,17 @@ def html(status: int, reply: dict[str, Any], token: str, fields: dict[str, Any])
         f'<tr><td>{_e(x["account"])}</td><td>{_e(x["id"])}</td><td>{_e(x["date"])}</td><td>{_e(x["description"])}</td>'
         f'<td class="money">{_e(x["amount"])}</td><td>{_e(x["category"])}</td>'
         f'<td>{"yes" if x["applies"] else _e("no: " + (x["why"] or ""))}</td></tr>' for x in p["lines"])
+    also = ""
+    if p.get("changed"):
+        also_rows = "".join(
+            f'<tr><td>{_e(x["account"])}</td><td>{_e(x["id"])}</td><td>{_e(x["date"])}</td>'
+            f'<td>{_e(x["description"])}</td><td class="money">{_e(x["amount"])}</td><td>{_e(x["now"])}</td>'
+            f'<td>{_e(x["then"])}</td></tr>' for x in p["changed"])
+        also = ('<p>The rule does not match these lines, but saving it changes their category, through the '
+                'case as a whole (an own-account pairing it unmakes, for example):</p>'
+                '<table class="lines changed"><thead><tr><th>Account</th><th>Line</th><th>Date</th>'
+                '<th>Description</th><th>Amount</th><th>Category now</th><th>Category then</th></tr></thead>'
+                f'<tbody>{also_rows}</tbody></table>')
     form = ""
     if reply.get("position") is not None:
         form = (f'<form class="promote-confirm" method="post" action="{_action(token)}">'
@@ -165,4 +177,4 @@ def html(status: int, reply: dict[str, Any], token: str, fields: dict[str, Any])
             f'{_e(p["applies"])}.</p>'
             '<table class="lines"><thead><tr><th>Account</th><th>Line</th><th>Date</th><th>Description</th>'
             '<th>Amount</th><th>Category now</th><th>Rule sets it</th></tr></thead>'
-            f'<tbody>{rows}</tbody></table>{form}{_reload(token)}</section>')
+            f'<tbody>{rows}</tbody></table>{also}{form}{_reload(token)}</section>')
