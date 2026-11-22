@@ -366,13 +366,14 @@ def _rests_on(a, b, lines: set[str]) -> bool:
     return bool(lines & set(a.evidence)) or a.value != b.value or a.evidence != b.evidence
 
 
-def case_figures(folder: Path) -> dict[str, CaseFigures]:
+def case_figures(folder: Path, *, pairing_days: int | None = None) -> dict[str, CaseFigures]:
     """Every account's figures, recomputed from its statement, the profile and the whole
     override log; stale overrides listed and not applied (R17, R19). In a case of more than
     one account, every account is categorised first and then a debit in one account is
     paired with the single credit of the same amount in another, within the configured days,
     both becoming own-account transfers, before any account's figures are computed; a debit
-    with more than one candidate stays unpaired and is listed with its candidates (R8, R9)."""
+    with more than one candidate stays unpaired and is listed with its candidates (R8, R9).
+    The days are `pairing_days`, or firm.yaml's own_account_pairing_days read now."""
     folder = Path(folder)
     entries = caselog.for_case(folder).entries()
     profile = store.load_profile(folder)
@@ -393,12 +394,17 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
         _categorise(statement, sha, profile, applied)
     groups: list[list[tuple[str, str]]] = []
     if several:  # R8, R9: across the accounts, once each is categorised
+        if pairing_days is None:
+            from . import firm
+
+            pairing_days = firm.load().own_account_pairing_days
         groups = pair_own_accounts({a: v[0] for a, v in loaded.items()},
-                                   overridden={a: state.applied.get(a, {}).keys() for a in loaded})
+                                   overridden={a: state.applied.get(a, {}).keys() for a in loaded},
+                                   days=pairing_days)
         if any_applied:
             for account, bare in bares.items():
                 _categorise(bare, loaded[account][1], profile, {})
-            pair_own_accounts(bares)
+            pair_own_accounts(bares, days=pairing_days)
     for account, (statement, sha) in loaded.items():
         applied = state.applied.get(account, {})
         pairs = _pairs(statement) if several else ()

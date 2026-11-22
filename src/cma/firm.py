@@ -2,6 +2,8 @@
 
     offline_lock: true          # default; no hosted model, no MCP server
     show_policy_verdict: true   # default; show the illustrative pass/refer/fail
+    own_account_pairing_days: 3 # default; the days apart a debit and a credit of a case's
+                                # accounts may be and still pair as an own-account transfer (R8)
     paths:                      # optional; relative paths are under the case root
       firm_rules: firm_rules.yaml
       thresholds: indicators.yaml
@@ -28,6 +30,9 @@ import yaml
 
 FILE_NAME = "firm.yaml"
 FLAGS = ("offline_lock", "show_policy_verdict")
+PAIRING_DAYS = "own_account_pairing_days"
+DEFAULT_PAIRING_DAYS = 3
+MAX_PAIRING_DAYS = 31
 DEFAULT_PATHS = {"firm_rules": "firm_rules.yaml", "thresholds": "indicators.yaml", "memo_fields": "memo_fields.yaml"}
 
 
@@ -67,6 +72,7 @@ class FirmConfig:
     root: Path
     offline_lock: bool = True
     show_policy_verdict: bool = True
+    own_account_pairing_days: int = DEFAULT_PAIRING_DAYS  # R8's configured number of days
     paths: tuple[tuple[str, str], ...] = tuple(DEFAULT_PATHS.items())
     named: tuple[str, ...] = ()  # the paths firm.yaml names itself, not left at their defaults
 
@@ -262,7 +268,7 @@ def _load(root: Path | None = None, data: bytes | None = None) -> FirmConfig:
         raise FirmConfigError(f"{path}: not a mapping")
 
     problems: list[str] = []
-    problems += [f"unknown key {k!r}" for k in data if k not in (*FLAGS, "paths")]
+    problems += [f"unknown key {k!r}" for k in data if k not in (*FLAGS, PAIRING_DAYS, "paths")]
     flags = {}
     for key in FLAGS:
         if key in data:
@@ -270,6 +276,12 @@ def _load(root: Path | None = None, data: bytes | None = None) -> FirmConfig:
                 flags[key] = data[key]
             else:
                 problems.append(f"{key} must be true or false")
+    if PAIRING_DAYS in data:
+        days = data[PAIRING_DAYS]
+        if type(days) is int and 0 <= days <= MAX_PAIRING_DAYS:  # a bool is not a number of days
+            flags[PAIRING_DAYS] = days
+        else:
+            problems.append(f"{PAIRING_DAYS} must be a whole number of days from 0 to {MAX_PAIRING_DAYS}")
     paths = dict(DEFAULT_PATHS)
     named: list[str] = []
     raw_paths = data.get("paths")
