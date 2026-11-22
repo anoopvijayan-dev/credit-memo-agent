@@ -161,7 +161,7 @@ def test_a_case_with_no_statement_shows_that_and_no_figures(home, serve):
     srv = serve(case_id)
     data = _api(srv)
     assert data["state"] == "empty" and data["accounts"] == []
-    page = _page(srv)
+    page = _page(srv).replace(srv.token, "")  # the random token can hold "M17" by chance
     assert "No statement has been imported" in page and "M17" not in page
 
 
