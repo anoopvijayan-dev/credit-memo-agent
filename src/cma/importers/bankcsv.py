@@ -306,7 +306,11 @@ def convert(src: Path, dst: Path, *, mapping: dict[str, Any], opening_balance: s
         raise BankCsvImportError(f"{src}: {e}") from None
     twice = sorted({h for h in header if h and header.count(h) > 1})
     if twice:
-        raise BankCsvImportError(f"{src}: column(s) named more than once: {', '.join(twice)}; keep one of each")
+        # Positions, never the names: a file with no header has a statement line on line 1, and
+        # a refusal never quotes a cell (T28; Antigravity re-review).
+        cols = ", ".join(" and ".join(str(i + 1) for i, h in enumerate(header) if h == name) for name in twice)
+        raise BankCsvImportError(f"{src}: line 1: columns {cols} have the same name; keep one of each, or the file has "
+                    "no header line")
     wanted = [c for role in ROLES if role in cols for c in (cols[role] if role == "description" else [cols[role]])]
     missing = [c for c in wanted if c not in header]
     if missing:
