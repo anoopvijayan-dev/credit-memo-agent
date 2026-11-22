@@ -370,6 +370,113 @@ def end_of_day_balances(txns: list[Transaction]) -> dict[date, tuple[int, str]]:
     return out
 
 
+# --- a case of more than one account (R41) ---------------------------------------------------
+
+CASE_ID_SEP = ":"  # an account key holds no colon, so "<account>:<line id>" names one line of a case
+NO_SHARED_DAYS = ("The case's accounts share no day: their statements' periods do not overlap, so there "
+                  "is no combined end-of-day balance.")
+
+
+def case_line_id(account: str, line_id: str) -> str:
+    """A line's id within a case of more than one account: its own id prefixed with its
+    account's key, so that ids are unique across the case (R41)."""
+    return f"{account}{CASE_ID_SEP}{line_id}"
+
+
+def split_case_line_id(case_id: str) -> tuple[str, str]:
+    """The account key and the line's own id that case_line_id joined."""
+    account, _, line_id = case_id.partition(CASE_ID_SEP)
+    return account, line_id
+
+
+def case_statement(statements: dict[str, Statement]) -> Statement:
+    """Every line of the case's accounts as one statement, each id (and the id of the debit a
+    returned payment undoes) prefixed with its account key, in date order, each account's own
+    order kept within a day and the accounts in the order given (R41). Each line keeps its own
+    account's running balance: a balance figure of the case reads case_closes(), never these."""
+    lines = []
+    for n, (account, s) in enumerate(statements.items()):
+        for i, t in enumerate(s.transactions):
+            lines.append(((t.date, n, i), t.model_copy(update={
+                "id": case_line_id(account, t.id), "account_key": account,
+                "reverses": case_line_id(account, t.reverses) if t.reverses else None})))
+    return Statement(account_name="+".join(statements), transactions=[t for _, t in sorted(lines, key=lambda x: x[0])])
+
+
+@dataclass(frozen=True)
+class CaseCloses:
+    """The combined end-of-day balance of a case's accounts (R41): on each day every account
+    covers (from the latest first line to the earliest last line), the sum of every account's
+    close, each carried over days with no lines, with the line of each account that set it.
+    When those days do not exist, no closes and the reason, which every balance figure of the
+    case gives as n/a."""
+
+    closes: dict[date, tuple[int, tuple[str, ...]]]
+    reason: str | None = None
+
+
+def case_closes(statements: dict[str, Statement]) -> CaseCloses:
+    """The combined end-of-day balance over the days every account of the case covers, the
+    setting lines named by their case ids (case_line_id)."""
+    eods = {a: end_of_day_balances(s.transactions) for a, s in statements.items()}
+    first, last = max(min(e) for e in eods.values()), min(max(e) for e in eods.values())
+    if first > last:
+        return CaseCloses({}, NO_SHARED_DAYS)
+    out: dict[date, tuple[int, tuple[str, ...]]] = {}
+    d = first
+    while True:
+        out[d] = (sum(e[d][0] for e in eods.values()),
+                  tuple(case_line_id(a, e[d][1]) for a, e in eods.items()))
+        if d == last:
+            break
+        d += timedelta(days=1)
+    return CaseCloses(out)
+
+
+def _closes_balance_figures(closes: CaseCloses, pos: dict[str, int]):
+    """M5, M6 and M27 of a case of more than one account, from its combined closes (R41):
+    each derived, citing the lines that set the closes it reads (P2); n/a with the reason when
+    the accounts share no day, or when no float carries a combined balance to the penny (R2)."""
+    def order(ids) -> list[str]:
+        return sorted(set(ids), key=pos.__getitem__)
+
+    if closes.reason is not None:
+        why = closes.reason
+        return ((None, why, []), (None, why, []), (None, why, []))
+    days = sorted(closes.closes)
+    low_day = min(days, key=lambda d: closes.closes[d][0])
+    low = closes.closes[low_day][0]
+    m5 = ((low / 100 if _whole_pence_exact(low / 100) == low else None),
+          ("Lowest combined end-of-day balance of the case's accounts, over the days every account covers."
+           if _whole_pence_exact(low / 100) == low else "The lowest combined end-of-day balance is too large "
+           "to report to the penny."), order(closes.closes[low_day][1]))
+    over = [d for d in days if closes.closes[d][0] < 0]
+    m6 = (len(over), ("Calendar days, of those every account covers, whose combined close was overdrawn, each "
+                      "account's balance carried over days with no transactions."),
+          order(i for d in over for i in closes.closes[d][1]))
+    avg = _div_half_even(sum(closes.closes[d][0] for d in days), len(days))
+    exact = _whole_pence_exact(avg / 100) == avg
+    m27 = ((avg / 100 if exact else None),
+           ("The combined closing balance of the case's accounts on every calendar day every account covers, "
+            "each carried over days with no transactions, averaged over those days." if exact
+            else "The average combined end-of-day balance is too large to report to the penny."),
+           order(i for d in days for i in closes.closes[d][1]))
+    return m5, m6, m27
+
+
+def compute_case(statements: dict[str, Statement], vat_stagger: int | None = None, proposed_repayment=None
+                 ) -> tuple[Statement, CaseCloses, list[Metric], list[MonthRow]]:
+    """The figures of a case of more than one account (R41), each account's statement already
+    categorised: line ids prefixed with the account key, flow figures across every account
+    (own-account transfers, from the profile or a pairing, out of trading receipts as for one
+    account), and balance figures on the combined end-of-day balance over the days every
+    account covers, n/a with the reason when they share none."""
+    statement = case_statement(statements)
+    closes = case_closes(statements)
+    return (statement, closes, compute(statement, vat_stagger, proposed_repayment, closes=closes),
+            monthly_summary(statement, closes=closes))
+
+
 def proposed_repayment_pence(proposed) -> int:
     """The proposed facility's monthly repayment in whole pence, read exactly from the text it
     is written as (a float from the repr it prints as), as a policy limit is (R2). Refused,
@@ -521,10 +628,13 @@ def vat_quarters(vat: list[Transaction], reversed_ids: set[str], stagger: int, s
     return out
 
 
-def compute(statement: Statement, vat_stagger: int | None = None, proposed_repayment=None) -> list[Metric]:
+def compute(statement: Statement, vat_stagger: int | None = None, proposed_repayment=None,
+            closes: CaseCloses | None = None) -> list[Metric]:
     """Every figure for the statement. `proposed_repayment` is the proposed facility's monthly
     repayment from the case profile (R13), in pounds, as text, a Decimal, an int or a float;
-    `cma run` has no case profile and gives none, so M28 is n/a with the reason there."""
+    `cma run` has no case profile and gives none, so M28 is n/a with the reason there.
+    `closes`, for a case of more than one account (compute_case), is the combined end-of-day
+    balance the balance figures M5, M6 and M27 are read from instead of the lines' own (R41)."""
     txns = statement.transactions
     # A debit with no category cannot be placed in any figure: refused, naming it. A credit
     # with none is in no bucket, so it is left to the reconciliation below, which names it
@@ -698,15 +808,22 @@ def compute(statement: Statement, vat_stagger: int | None = None, proposed_repay
     # lines carrying the close before it, averaged in whole pence (half to even), citing the line
     # that set each of those closes (P2: a derived figure). n/a with the reason when no float
     # carries those pence (R2).
-    closes = list(eod.values())
-    eod_avg_pence = _div_half_even(sum(bal for bal, _ in closes), len(closes))
+    day_closes = list(eod.values())
+    eod_avg_pence = _div_half_even(sum(bal for bal, _ in day_closes), len(day_closes))
     eod_avg: float | None = eod_avg_pence / 100
     eod_note = ("The closing balance of every calendar day in the period, carried over days with no "
                 "transactions, averaged over those days.")
     if _whole_pence_exact(eod_avg) != eod_avg_pence:
         eod_avg = None
         eod_note = "The average end-of-day balance is too large to report to the penny."
-    eod_setters = sorted({line_id for _, line_id in closes}, key=pos.__getitem__)
+    eod_setters = sorted({line_id for _, line_id in day_closes}, key=pos.__getitem__)
+
+    m5 = (_gbp(balance_pence(lowest)), "Lowest running balance after any transaction in the period.", [lowest.id])
+    m6 = (len(overdrawn), "Calendar days that closed overdrawn, carrying the balance over days with no transactions.",
+          overdrawn_evidence)
+    m27 = (eod_avg, eod_note, eod_setters)
+    if closes is not None:  # a case of more than one account: the combined closes (R41)
+        m5, m6, m27 = _closes_balance_figures(closes, pos)
 
     return [
         Metric(id="M1", name="Months covered", value=n_months, unit="months",
@@ -719,11 +836,8 @@ def compute(statement: Statement, vat_stagger: int | None = None, proposed_repay
                evidence=[t.id for t in rev]),
         Metric(id="M4", name="Revenue trend", value=trend, unit="pct", method=trend_note,
                evidence=[t.id for t in rev if _month(t.date) in whole[:3] + whole[-3:]] if trend is not None else []),
-        Metric(id="M5", name="Lowest balance", value=_gbp(balance_pence(lowest)), unit="GBP",
-               method="Lowest running balance after any transaction in the period.", evidence=[lowest.id]),
-        Metric(id="M6", name="Days overdrawn", value=len(overdrawn), unit="days",
-               method="Calendar days that closed overdrawn, carrying the balance over days with no transactions.",
-               evidence=overdrawn_evidence),
+        Metric(id="M5", name="Lowest balance", value=m5[0], unit="GBP", method=m5[1], evidence=m5[2]),
+        Metric(id="M6", name="Days overdrawn", value=m6[0], unit="days", method=m6[1], evidence=m6[2]),
         Metric(id="M7", name="Returned direct debits", value=len(returned), unit="count",
                method="Lines marked as unpaid direct debits.",
                evidence=[t.id for t in returned]),
@@ -764,14 +878,14 @@ def compute(statement: Statement, vat_stagger: int | None = None, proposed_repay
                method=("Unexplained money in (M25) as a share of money in less lending drawdowns, returned "
                        "direct debits and own-account transfers, the denominator M16 uses."),
                evidence=[t.id for t in inflows]),
-        Metric(id="M27", name="Average end-of-day balance", value=eod_avg, unit="GBP", method=eod_note,
-               evidence=eod_setters),
+        Metric(id="M27", name="Average end-of-day balance", value=m27[0], unit="GBP", method=m27[1],
+               evidence=m27[2]),
         Metric(id="M28", name="Debt service cover including the proposed facility", value=cover, unit="ratio",
                method=cover_note, evidence=[t.id for t in cover_lines] if cover is not None else []),
     ]
 
 
-def monthly_summary(statement: Statement) -> list[MonthRow]:
+def monthly_summary(statement: Statement, closes: CaseCloses | None = None) -> list[MonthRow]:
     """One row per calendar month in the period, oldest first (R11).
 
     Money in is every credit of the month and trading receipts the month's M2 lines, cash
@@ -779,7 +893,11 @@ def monthly_summary(statement: Statement) -> list[MonthRow]:
     penny (P12). Money out is an outflow figure, reported as a positive amount whose lines
     total it negated (P2, D220). The average and lowest end-of-day balance and the days
     overdrawn are derived from the close of every day of the month in the period, carried
-    over days with no lines, and cite the line that set each of those closes (P2, D225)."""
+    over days with no lines, and cite the line that set each of those closes (P2, D225).
+
+    For a case of more than one account (`closes`, compute_case), the balance and overdrawn-day
+    cells read the combined closes of the month's days every account covers, citing every
+    account's line that set them, and are n/a with the reason in a month with none (R41)."""
     txns = statement.transactions
     for t in txns:  # a fraction of a penny is refused, as in compute()
         pence(t)
@@ -801,15 +919,7 @@ def monthly_summary(statement: Statement) -> list[MonthRow]:
         first, last = max(date(y, m, 1), start), min(_month_end(y, m), end)
         # By (year, month), not by _month's text: strftime does not pad a year below 1000.
         lines = [t for t in txns if (t.date.year, t.date.month) == (y, m)]
-        days = [eod[d] for d in sorted(eod) if first <= d <= last]
-        closes = [bal for bal, _ in days]
-        setters = sorted({line_id for _, line_id in days}, key=pos.__getitem__)
-
-        avg_pence = _div_half_even(sum(closes), len(closes))
-        avg: float | None = avg_pence / 100
-        avg_note = None
-        if _whole_pence_exact(avg) != avg_pence:  # a derived figure: n/a with the reason (R2)
-            avg, avg_note = None, "The month's average end-of-day balance is too large to report to the penny."
+        balance_cells = _month_balance_cells(eod, closes, first, last, pos)
         rows.append(MonthRow(
             month=key,
             part_month=first != date(y, m, 1) or last != _month_end(y, m),
@@ -818,13 +928,48 @@ def monthly_summary(statement: Statement) -> list[MonthRow]:
             money_in=flow([t for t in lines if pence(t) > 0], "sum"),
             money_out=flow([t for t in lines if pence(t) < 0], "outflow"),
             trading_receipts=flow([t for t in lines if t.category in REVENUE_CATEGORIES], "sum"),
-            average_balance=MonthlyCell(value=avg, unit="GBP", kind="derived", evidence=setters, note=avg_note),
-            lowest_balance=MonthlyCell(value=_gbp(min(closes)), unit="GBP", kind="derived", evidence=setters),
-            days_overdrawn=MonthlyCell(value=sum(1 for b in closes if b < 0), unit="days", kind="derived",
-                                       evidence=setters),
+            **balance_cells,
         ))
         y, m = _add_months(y, m, 1)
     return rows
+
+
+NO_SHARED_DAYS_IN_MONTH = ("No day of this month is covered by every account of the case, so there is no "
+                           "combined end-of-day balance.")
+
+
+def _month_balance_cells(eod, closes: CaseCloses | None, first: date, last: date, pos) -> dict[str, MonthlyCell]:
+    """A month's average and lowest end-of-day balance and days overdrawn (derived cells):
+    from the account's own closes, or, for a case of more than one account, from the combined
+    closes of the month's days every account covers (R41)."""
+    if closes is None:
+        days = [(bal, (line_id,)) for d, (bal, line_id) in sorted(eod.items()) if first <= d <= last]
+    else:
+        days = [closes.closes[d] for d in sorted(closes.closes) if first <= d <= last]
+    if not days:
+        why = (closes.reason if closes is not None else None) or NO_SHARED_DAYS_IN_MONTH
+        return {key: MonthlyCell(value=None, unit=unit, kind="derived", note=why)
+                for key, unit in (("average_balance", "GBP"), ("lowest_balance", "GBP"), ("days_overdrawn", "days"))}
+    bals = [bal for bal, _ in days]
+    setters = sorted({i for _, ids in days for i in ids}, key=pos.__getitem__)
+    avg_pence = _div_half_even(sum(bals), len(bals))
+    avg: float | None = avg_pence / 100
+    avg_note = None
+    if _whole_pence_exact(avg) != avg_pence:  # a derived figure: n/a with the reason (R2)
+        avg, avg_note = None, "The month's average end-of-day balance is too large to report to the penny."
+    low_pence = min(bals)
+    if closes is None:
+        low, low_note = _gbp(low_pence), None
+    elif _whole_pence_exact(low_pence / 100) == low_pence:
+        low, low_note = low_pence / 100, None
+    else:  # a combined balance no float carries to the penny: n/a with the reason (R2, R41)
+        low, low_note = None, "The month's lowest combined end-of-day balance is too large to report to the penny."
+    return {
+        "average_balance": MonthlyCell(value=avg, unit="GBP", kind="derived", evidence=setters, note=avg_note),
+        "lowest_balance": MonthlyCell(value=low, unit="GBP", kind="derived", evidence=setters, note=low_note),
+        "days_overdrawn": MonthlyCell(value=sum(1 for b in bals if b < 0), unit="days", kind="derived",
+                                      evidence=setters),
+    }
 
 
 def _reconcile(credits, rev, buckets, money_in, trading, total, pos) -> None:
@@ -916,15 +1061,25 @@ def _share_parts(statement: Statement, metric_id: str, evidence: list[str]) -> t
     return None
 
 
+def _case_daily_closes(closes: CaseCloses, first: date | None = None, last: date | None = None
+                       ) -> list[tuple[date, int, str]]:
+    """daily_closes() for a case of more than one account: each combined close, with the
+    lines of every account that set it."""
+    return [(d, bal, ", ".join(ids)) for d, (bal, ids) in sorted(closes.closes.items())
+            if (first is None or d >= first) and (last is None or d <= last)]
+
+
 def derived_inputs(statement: Statement, metrics: list[Metric], metric_id: str,
-                   proposed_repayment=None, vat_stagger: int | None = None) -> dict:
+                   proposed_repayment=None, vat_stagger: int | None = None,
+                   closes: CaseCloses | None = None) -> dict:
     """What a derived figure is computed from, for the drill-down (R16): the figures it reads,
     the period, a share's numerator and denominator, and, for a figure read from end-of-day
-    balances, the close of every day it reads. Values are written as text, money to the penny."""
+    balances, the close of every day it reads. Values are written as text, money to the penny.
+    For a case of more than one account (`closes`), the balance figures read the combined
+    closes (R41)."""
     by = {m.id: m for m in metrics}
     m = by[metric_id]
     inputs: list[dict] = []
-    closes: list[tuple[date, int, str]] | None = None
     start, end = statement.start, statement.end
     days = (end - start).days + 1
     for fid in DERIVED_FROM.get(metric_id, ()):
@@ -937,7 +1092,11 @@ def derived_inputs(statement: Statement, metrics: list[Metric], metric_id: str,
         shown = ("not given" if proposed_repayment is None
                  else money_text(proposed_repayment_pence(proposed_repayment)))
         inputs.append({"label": "Proposed monthly repayment (case profile)", "figure": None, "display": shown})
-    if metric_id == "M5" and m.evidence:
+    if metric_id == "M5" and m.evidence and closes is not None:
+        day = min(closes.closes, key=lambda d: (closes.closes[d][0], d))
+        inputs.append({"label": f"Combined close on {day.isoformat()} (the lines below set each account's close)",
+                       "figure": None, "display": money_text(closes.closes[day][0])})
+    elif metric_id == "M5" and m.evidence:
         t = statement.by_id()[m.evidence[0]]
         inputs.append({"label": f"Running balance after line {t.id}", "figure": None,
                        "display": money_text(balance_pence(t))})
@@ -957,9 +1116,12 @@ def derived_inputs(statement: Statement, metrics: list[Metric], metric_id: str,
         inputs += _cash_flow_inputs(statement)
     if metric_id == "M13":
         inputs += _vat_inputs(statement, vat_stagger)
+    read = None
     if metric_id in FROM_CLOSES:
-        closes = daily_closes(statement)
-    return {"inputs": inputs, "closes": _closes_out(closes)}
+        read = daily_closes(statement) if closes is None else _case_daily_closes(closes)
+    if closes is not None and closes.reason is not None and metric_id in FROM_CLOSES | {"M5"}:
+        inputs.append({"label": "Days every account covers", "figure": None, "display": "none"})
+    return {"inputs": inputs, "closes": _closes_out(read)}
 
 
 def _trend_inputs(statement: Statement) -> list[dict]:
@@ -1014,12 +1176,18 @@ def _vat_inputs(statement: Statement, vat_stagger: int | None) -> list[dict]:
         for q in vat_quarters(vat, reversed_ids, vat_stagger, statement.start, statement.end)]
 
 
-def cell_inputs(statement: Statement, row: MonthRow) -> dict:
+def cell_inputs(statement: Statement, row: MonthRow, closes: CaseCloses | None = None) -> dict:
     """A monthly balance or overdrawn-day cell's inputs: the close of every day of the month in
-    the period, with the line that set it (P2, R11)."""
-    return {"inputs": [{"label": "Days of the month in the period", "figure": None,
-                        "display": f"{row.start.isoformat()} to {row.end.isoformat()}"}],
-            "closes": _closes_out(daily_closes(statement, row.start, row.end))}
+    the period, with the line that set it (P2, R11); for a case of more than one account, the
+    combined close of every day of the month every account covers (R41)."""
+    if closes is None:
+        return {"inputs": [{"label": "Days of the month in the period", "figure": None,
+                            "display": f"{row.start.isoformat()} to {row.end.isoformat()}"}],
+                "closes": _closes_out(daily_closes(statement, row.start, row.end))}
+    read = _case_daily_closes(closes, row.start, row.end)
+    shown = f"{read[0][0].isoformat()} to {read[-1][0].isoformat()}" if read else "none"
+    return {"inputs": [{"label": "Days of the month every account covers", "figure": None, "display": shown}],
+            "closes": _closes_out(read)}
 
 
 def _closes_out(closes) -> list[dict] | None:

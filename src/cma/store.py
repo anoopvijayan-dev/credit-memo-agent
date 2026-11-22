@@ -674,6 +674,13 @@ def import_file(folder: Path, src: Path, fmt: str, *, account: str = "main",
                     f"account {account} overlaps account {same[0]} from {same[1]} to {same[2]} and "
                     f"shares {same[3]} of its {same[4]} (date, amount) pairs there: it is probably "
                     "the same account imported twice, so it was not added (R40)")
+            reached = _case_flows_at_limit(folder, save.entries, stmt)
+            if reached:
+                which = " and ".join(reached)
+                raise CaseStoreError(
+                    f"account {account} would bring the {which} of the case's accounts together to "
+                    f"£10,000,000,000,000 or more, each account counted in full before own-account pairs are "
+                    "removed, so no combined figure could be reported to the penny; it was not added (R41)")
             # Files left by an import whose entry is not in the log are replaced.
             for left in (folder / INPUTS).glob(sha + ".*"):
                 if left != inp and left.name.split(".", 1)[0] == sha:
@@ -744,6 +751,30 @@ def _same_account(folder: Path, entries, new) -> tuple[str, str, str, int, int] 
         if n and shared * 2 > n:
             return account, start.isoformat(), end.isoformat(), shared, n
     return None
+
+
+def _case_flows_at_limit(folder: Path, entries, new) -> list[str]:
+    """Which of money in and money out of the case's accounts together, with the new
+    statement's, each account's lines counted in full before own-account pairs are removed,
+    would reach R2's limit (R41). Read while the case is held, from the statements the log's
+    import entries name; the figures layer adds them up. A case of one account is held to the
+    limit by the statement loader already."""
+    from . import ingest, metrics
+
+    amounts = [metrics.pence(t) for t in new.transactions]
+    others = 0
+    for e in entries:
+        if e.event != "import":
+            continue
+        account = e.data.get("account")
+        path = folder / STATEMENTS / f"{account}.csv"
+        try:
+            old = ingest.load_csv(path, account_name=account, data=path.read_bytes())
+        except (OSError, ingest.StatementError):
+            continue  # a statement that cannot be read is refused when the case's figures are computed
+        amounts += [metrics.pence(t) for t in old.transactions]
+        others += 1
+    return metrics.flows_at_limit(amounts) if others else []
 
 
 # --- purge (R35) -----------------------------------------------------------------------

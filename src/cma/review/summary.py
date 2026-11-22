@@ -8,6 +8,10 @@ and render() turns into the page's HTML:
 - for each account, the money-in breakdown (trading receipts M2 with the cash inside it M18,
   then M19 to M25, adding up to total money in M17), every figure, and the monthly summary,
   money to the penny as every table shows it (R2);
+- for a case of more than one account, the same across all its accounts ("All accounts",
+  overrides.combined_figures): line ids prefixed with the account key, flow figures across
+  every account, and balance figures on the combined end-of-day balance over the days every
+  account covers, n/a with the reason when there are none (R41);
 - the judgement queue, listed first: every line a person has to decide, across the case's
   accounts, largest amount first (R15), each with why it is listed, the indicators that
   flagged it and, for an ambiguous credit, its candidates and the bucket each would give;
@@ -77,6 +81,10 @@ INDICATOR_TITLES = {
 REASON_TITLES = {"unexplained": "unexplained", "ambiguous": "ambiguous",
                  "possible_own_account_transfer": "possible own-account transfer", "indicator": "flagged"}
 UNIT_SUFFIX = {"pct": "%", "times": " times", "days": " days", "count": ""}
+COMBINED_BASIS = ("Across every account of the case: each line's id is its account key, a colon and its own id. "
+                  "Money in and out and the figures built on them count every account's lines (own-account "
+                  "transfers stay out of trading receipts); the balance figures read the combined end-of-day "
+                  "balance of the accounts over the days every account covers.")
 ILLUSTRATIVE = ("Thresholds marked illustrative are still at the values shipped with this tool; they are "
                 "not your firm's lending policy.")
 
@@ -258,7 +266,7 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
                            "state": "shown", "accounts": [], "queue": [], "thresholds": None,
                            "reconciliation": None, "refusal": None, "position": None, "stale": [],
                            "policy_check": {"shown": False}, "recommendation": None,  # left blank (R24)
-                           "demo": False}
+                           "demo": False, "combined": None}
     # The case log position the page is built at, read before anything else, so a save made
     # from this page is refused as a conflict once anything was recorded after it (R17).
     out["position"] = log_position(folder)
@@ -294,6 +302,15 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
     out["thresholds"] = {"source": thresholds.source, "sha256": thresholds.sha256,
                          "shipped": thresholds.sha256 == ind.shipped().sha256}
     out["accounts"] = accounts
+    try:  # R41: a case of more than one account, across all its accounts
+        both = overrides.combined_figures(figures)
+    except Exception as e:
+        refused = refusal(e)
+        if refused is None:
+            raise
+        out.update(refused)
+        return out
+    out["combined"] = None if both is None else {**_account(both, []), "basis": COMBINED_BASIS}
     if rules is not None and accounts:
         out["policy_check"] = {"shown": True, "label": policy.ILLUSTRATIVE_LABEL}
     queues = [(a, f.statement, ind.judgement_queue(f.statement, raised[a])) for a, f in figures.items()]
@@ -374,6 +391,10 @@ def _account_html(a: dict[str, Any], token: str | None = None,
     monthly = ('<table class="monthly"><thead><tr><th>Month</th>'
                + "".join(f'<th class="num">{_e(title)}</th>' for _, title in CELLS)
                + f'</tr></thead><tbody>{"".join(month_rows)}</tbody></table>')
+    if a.get("basis"):  # the case's figures across all its accounts (R41)
+        return (f'<section class="account combined" id="combined"><h2>All accounts</h2>'
+                f'<p class="period">{period}{_e(a["line_count"])} lines</p><p class="note">{_e(a["basis"])}</p>'
+                f'<h3>Money in</h3>{breakdown}<h3>Figures</h3>{figures}<h3>Monthly summary</h3>{monthly}</section>')
     return (f'<section class="account"><h2>Account {_e(a["account"])}</h2>'
             f'<p class="period">{period}{_e(a["line_count"])} lines</p>'
             f'<h3>Money in</h3>{breakdown}<h3>Figures</h3>{figures}<h3>Monthly summary</h3>{monthly}'
@@ -556,5 +577,6 @@ def render(summary: dict[str, Any], token: str | None = None) -> str:
         return head + '<section id="empty"><p>No statement has been imported into this case yet.</p></section>'
     from .signoff import preview_form
 
-    return (head + "".join(_account_html(a, token, summary.get("thresholds")) for a in summary["accounts"])
+    combined = _account_html(summary["combined"], token) if summary.get("combined") else ""  # R41
+    return (head + combined + "".join(_account_html(a, token, summary.get("thresholds")) for a in summary["accounts"])
             + _policy_checks_html(summary) + RECOMMENDATION_HTML + (preview_form(token) if token else ""))

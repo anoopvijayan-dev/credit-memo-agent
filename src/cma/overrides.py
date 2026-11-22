@@ -304,6 +304,7 @@ class CaseFigures:
     marked_cells: set[tuple[str, str]]  # (YYYY-MM, cell) of monthly cells that do
     vat_stagger: int | None = None          # the profile's, as these figures were computed with
     proposed_repayment: Any = None
+    closes: Any = None              # a case's combined figures: the combined end-of-day balance (R41)
 
 
 class CaseNotReconciled(ReconciliationError):
@@ -405,6 +406,34 @@ def case_figures(folder: Path) -> dict[str, CaseFigures]:
     if failed:  # R3: no figures for any account of the case
         raise CaseNotReconciled(failed)
     return out
+
+
+COMBINED = "*"  # the key of a case's combined figures: never an account key (store.ACCOUNT_KEY)
+
+
+def combined_figures(figures: dict[str, CaseFigures]) -> CaseFigures | None:
+    """The figures of a case of more than one account across all its accounts (R41), from each
+    account's statement as case_figures() categorised it, its overrides applied: line ids
+    prefixed with the account key, flow figures across every account, and balance figures on
+    the combined end-of-day balance over the days every account covers, n/a with the reason
+    when those days do not exist. None for a case of one account, whose figures are its
+    account's. A figure or cell is marked as resting on an override when an overridden line is
+    among its lines. The figures layer does every sum (metrics.compute_case)."""
+    from . import metrics
+
+    if len(figures) < 2:
+        return None
+    first = next(iter(figures.values()))
+    statement, closes, metrics_, monthly = metrics.compute_case(
+        {a: f.statement for a, f in figures.items()}, first.vat_stagger, first.proposed_repayment)
+    overridden = {metrics.case_line_id(a, line): r for a, f in figures.items() for line, r in f.overridden.items()}
+    lines = set(overridden)
+    return CaseFigures(
+        COMBINED, "+".join(f.statement_sha256 for f in figures.values()), statement, metrics_, monthly, overridden,
+        [s for f in figures.values() for s in f.stale],
+        {m.id for m in metrics_ if lines & set(m.evidence)},
+        {(r.month, cell) for r in monthly for cell in CELLS if lines & set(getattr(r, cell).evidence)},
+        first.vat_stagger, first.proposed_repayment, closes)
 
 
 def stale_overrides(folder: Path) -> list[Stale]:
