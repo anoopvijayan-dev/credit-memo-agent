@@ -1814,3 +1814,53 @@ def test_p5_a_custom_rules_limits_never_reach_the_prompt(home, tmp_path):
     custom["rules"][0] = {**custom["rules"][0], "threshold": 424242.0}
     user = draft_prompt(st, ms, policy.evaluate(ms, custom))
     assert "424242" not in user and "424,242" not in user and "(custom requirement)" in user
+
+
+@pytest.mark.invariants
+def test_r29_a_resume_after_a_draft_made_under_the_lock_stays_under_it(home, no_network, monkeypatch, tmp_path):
+    """Antigravity re-review of T17 / R29 revision 32: a run started unlocked, paused before its
+    draft, was drafted by a resume under the lock; once firm.yaml was unlocked again, the
+    finalising resume was treated as unlocked, keeping a LangSmith tracer. A resume is under the
+    lock if the lock was on when its draft was made."""
+    from langchain_core.tracers.langchain import LangChainTracer
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
+
+    names = []
+    monkeypatch.setattr(LangChainTracer, "_start_trace", lambda self, run: names.append(run.name), raising=False)
+    monkeypatch.setattr(LangChainTracer, "_persist_run", lambda self, run: names.append(run.name), raising=False)
+    monkeypatch.setattr(LangChainTracer, "_persist_run_single", lambda self, run: None, raising=False)
+    monkeypatch.setattr(LangChainTracer, "_update_run_single", lambda self, run: None, raising=False)
+    saver = InMemorySaver()
+    cfg = {"configurable": {"thread_id": "t"}}
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    first = build(llm.FakeLLM(), checkpointer=saver)
+    first.invoke({"statement_path": str(_statement(tmp_path))}, cfg)
+    first.update_state(cfg, {}, as_node="policy")  # paused again before its draft
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    build(llm.FakeLLM(), checkpointer=saver).invoke(None, cfg)  # drafted by a resume under the lock
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    tracer = LangChainTracer(client=types.SimpleNamespace())
+    final = build(llm.FakeLLM(), checkpointer=saver).invoke(
+        Command(resume={"approved": True, "reviewer": "A"}), {**cfg, "callbacks": [tracer]})
+    assert names == [] and no_network == []
+    egress = evidence_record({**final, "ruleset": None})["egress"]
+    assert egress["draft_resume_offline_lock"] is True and egress["resume_offline_lock"] is True
+
+
+@pytest.mark.invariants
+def test_r29_a_new_run_on_a_finished_thread_does_not_keep_the_last_resumes_lock(home, no_network, tmp_path):
+    """Antigravity re-review of T17: a fresh run on a thread whose last run had been resumed kept
+    that resume's lock in its state, so its evidence recorded a resume it never had."""
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
+
+    saver = InMemorySaver()
+    cfg = {"configurable": {"thread_id": "t"}}
+    (home / "firm.yaml").write_text("offline_lock: false\n")
+    build(llm.FakeLLM(), checkpointer=saver).invoke({"statement_path": str(_statement(tmp_path))}, cfg)
+    build(llm.FakeLLM(), checkpointer=saver).invoke(Command(resume={"approved": True, "reviewer": "A"}), cfg)
+    (home / "firm.yaml").write_text("offline_lock: true\n")
+    again = build(llm.FakeLLM(), checkpointer=saver).invoke({"statement_path": str(_statement(tmp_path))}, cfg)
+    egress = evidence_record({**again, "ruleset": None})["egress"]
+    assert "resume_offline_lock" not in egress and egress["offline_lock"] is True

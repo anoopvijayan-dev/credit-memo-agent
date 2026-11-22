@@ -522,6 +522,7 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
             "offline_lock": reading.offline_lock is not False,
             "run_offline_lock": None,
             "draft_resume_offline_lock": None,
+            "resume_offline_lock": None,  # a new run on a thread is not yet resumed (Antigravity re-review of T17)
             "egress": "offline" if isinstance(llm, FakeLLM) else f"{llm.name}:{getattr(llm, 'model', '-')}",
             # A run starts clean, even on a thread that has run before.
             "redrafts": 0,
@@ -794,9 +795,18 @@ _UNREAD = object()  # the stored lock is looked up by run_reading itself
 _LOOKUP_FAILED = object()  # the checkpoint's stored lock could not be looked up
 
 
+def _drafted_lock(values) -> bool | None:
+    """The lock the checkpoint's draft was made under: the run's own, or, for a draft a resume
+    made, that resume's when it was on (R29 revision 32: a resume is under the lock if the lock
+    was on when its draft was made; Antigravity re-review of T17)."""
+    if values.get("draft_resume_offline_lock") is True:
+        return True
+    return values.get("offline_lock")
+
+
 def _stored_lock(graph, config):
     try:
-        return graph.get_state(config).values.get("offline_lock")
+        return _drafted_lock(graph.get_state(config).values)
     except Exception:
         return _LOOKUP_FAILED
 
@@ -805,7 +815,7 @@ async def _astored_lock(graph, config):
     # An async checkpointer (AsyncSqliteSaver) refuses the synchronous lookup on its own event
     # loop: an async run looks the lock up the async way (T17 review 14).
     try:
-        return (await graph.aget_state(config)).values.get("offline_lock")
+        return _drafted_lock((await graph.aget_state(config)).values)
     except Exception:
         return _LOOKUP_FAILED
 
