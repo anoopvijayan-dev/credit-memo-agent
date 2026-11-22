@@ -523,12 +523,12 @@
       "depends_on": [
         "T28"
       ],
-      "status": "verify",
+      "status": "failed",
       "attempts": 1,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T29",
-      "evidence": null,
-      "escalation": null
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-256/evidence.json",
+      "escalation": "attempt 1 of 3 fail: R36 fail (Read src/cma/importers/openbanking.py against R36 and design.md:1224-1227. Booked only: convert() skips Status=Pending and counts it, and refuses any other status (openbanking.py:394-404). GBP only: _money refuses a non-GBP amount or balance (:183-186), which the design wants (design.md:1227). Provider ids kept: _id keeps TransactionId as the line id (:259-269), and per_line_balances.statement.golden shows T1..T5. Balance rebuilt from per-line balances or from --statement-balance/--at (:447-466), then contract.walk checks every per-line balance (contract.py:86-97), so a chain that breaks is refused. Paged duplicates are kept once when identical, else refused (:413-419). All 47 tests in tests/test_import_openbanking.py ran and passed in the runner's contracts tier (contracts-4.log). Gap: the search in _order that puts same-moment lines in order (:283-341) refuses some valid files whose balance chain does not break (finding 1), so R36's 'rebuild the running balance from per-line balances' fails for them.); major: The depth-first search in _order tries candidates in index order. Lines with no balance ('loose') are interchangeable, and the search walks every permutation of them before it reaches a balanced line that has to come first. With 8 or more balance-less lines booked at one moment ahead of such a line, it passes ORDER_STEPS (100,000) and returns None. convert() then refuses a valid file with 'no order of the transactions booked at the same time keeps the balance chain; the export may be missing transactions' (:431-434). This contradicts claim 1 ('Valid groups are ordered in about one step per line') and R36, which refuses only when the chain breaks. The producer's note (3) calls this pathological, but 8 lines at midnight in a date-only export is not. No test covers a mixed group of loose and balanced lines larger than 3. at src/cma/importers/openbanking.py:316; reviewer verdict fail"
     },
     {
       "id": "T30",

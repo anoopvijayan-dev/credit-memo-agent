@@ -1,0 +1,49 @@
+My verdict on T29 is `fail`: there is one major defect against R36, plus one minor one.
+
+I couldn't run any Python to reproduce either finding: running it was denied, as was writing `evidence.json` to the run directory. Both findings come from reading the code, and the step count below is worked out by hand. The runner's contracts log shows all 47 tests in `tests/test_import_openbanking.py` ran and passed.
+
+**What meets R36:**
+- **Booked only:** pending lines are left out and counted, and any other status is refused.
+- **GBP only:** a non-GBP line or balance refuses the account, which is what `design.md:1227` asks for.
+- **Provider ids:** the bank's `TransactionId` is kept as the line id.
+- **Balance:** it is rebuilt from the per-line balances or from `--statement-balance`/`--at`, and `contract.walk` checks every per-line balance, so a broken chain is refused.
+- **Paged repeats:** a repeated transaction is kept once when identical and refused when it differs.
+
+**Major: some valid files are refused** (`openbanking.py:316`). When transactions share a booking time, the search for their order tries every arrangement of the lines that have no balance before it tries a balanced line that has to come first. With 8 such lines ahead of that balanced line, it passes the 100,000-step cap after about 109,600 steps. The file is then refused with "the export may be missing transactions", though its balance chain holds. That contradicts the producer's claim that valid groups take about one step per line, and R36, which refuses only when the chain breaks. No test covers a mixed group larger than three lines.
+
+**Minor: the pending count can be too high** (`openbanking.py:394`). If a transaction shows as Pending on one page and Booked on another, it is kept as booked and also counted as left out.
+
+```json
+{
+  "task": "T29",
+  "criteria": [
+    {
+      "id": "R36",
+      "tier": "adversarial",
+      "check": "Read src/cma/importers/openbanking.py against R36 and design.md:1224-1227. Booked only: convert() skips Status=Pending and counts it, and refuses any other status (openbanking.py:394-404). GBP only: _money refuses a non-GBP amount or balance (:183-186), which the design wants (design.md:1227). Provider ids kept: _id keeps TransactionId as the line id (:259-269), and per_line_balances.statement.golden shows T1..T5. Balance rebuilt from per-line balances or from --statement-balance/--at (:447-466), then contract.walk checks every per-line balance (contract.py:86-97), so a chain that breaks is refused. Paged duplicates are kept once when identical, else refused (:413-419). All 47 tests in tests/test_import_openbanking.py ran and passed in the runner's contracts tier (contracts-4.log). Gap: the search in _order that puts same-moment lines in order (:283-341) refuses some valid files whose balance chain does not break (finding 1), so R36's 'rebuild the running balance from per-line balances' fails for them.",
+      "result": "fail",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-253/contracts-4.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/importers/openbanking.py",
+      "line": 316,
+      "criterion": "R36",
+      "claim": "The depth-first search in _order tries candidates in index order. Lines with no balance ('loose') are interchangeable, and the search walks every permutation of them before it reaches a balanced line that has to come first. With 8 or more balance-less lines booked at one moment ahead of such a line, it passes ORDER_STEPS (100,000) and returns None. convert() then refuses a valid file with 'no order of the transactions booked at the same time keeps the balance chain; the export may be missing transactions' (:431-434). This contradicts claim 1 ('Valid groups are ordered in about one step per line') and R36, which refuses only when the chain breaks. The producer's note (3) calls this pathological, but 8 lines at midnight in a date-only export is not. No test covers a mixed group of loose and balanced lines larger than 3.",
+      "repro": "File (oldest first): E0, Credit 1.00, 2026-05-01T00:00:00Z, balance 100.00 (so walked=100 before the next group). Then nine transactions at 2026-05-02T00:00:00Z, in this order: L0..L7, each Credit 1.00 with no Balance, then A, Credit 1.00 with balance 101.00. The only valid order is A first, then the 8 loose lines (100 -> 101 -> ... -> 109), and that chain holds. In _order, candidates(100) = sorted([8] + [0..7]), so loose line 0 is tried first. After any loose line, A (balance before it 100) is never a candidate again, so each of the 8 loose roots explores every ordering of the remaining 7 loose lines: 13,700 steps each, 109,600 in total, which passes ORDER_STEPS before A is tried at the root. _order returns None and convert() refuses the file. To reproduce: openbanking.convert on that file, built with _txn from tests/test_import_openbanking.py."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/importers/openbanking.py",
+      "line": 394,
+      "criterion": "R36",
+      "claim": "The pending count checks a pending transaction's id only against other pending ids, never against booked ones. A paged export fetched while a transaction settled can show the same TransactionId as Pending on one page and Booked on another. The importer keeps the booked line and also counts it as one pending transaction left out, so the import message and the log entry's 'pending' overstate what was left out.",
+      "repro": "_write(tmp_path, [_txn('K1','1.00',balance='101.00'), _txn('X','5.00',status='Pending')], [_txn('X','5.00',balance='106.00',when='2026-05-01T11:00:00+00:00')]). convert gives rows=2 (X is kept as booked) and pending=1, so the CLI prints 'left out 1 pending transaction' although nothing was left out."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {"seat": "reviewer", "adapter": "claude-code", "model": "claude-opus-5-5"}
+}
+```
