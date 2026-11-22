@@ -346,3 +346,39 @@ def test_case_import_refuses_the_wrong_balance_option_and_names_the_file_not_its
     assert r.exit_code != 0
     assert "import refused" in _flat(r.output) and SENTINEL not in r.output
     assert not (store.case_folder(cid) / "statements" / "main.csv").exists()
+
+
+# --- hardening: the hints file's access, rollback and leftovers ---------------------------
+
+
+@pytest.mark.contracts
+def test_the_hints_file_is_readable_by_its_owner_only(home):
+    import stat
+    folder = store.case_folder(store.new_case())
+    store.import_file(folder, GOLDEN / "running_balance.json", "truelayer")
+    path = folder / "statements" / f"main{store.HINTS_SUFFIX}"
+    assert stat.S_IMODE(path.stat().st_mode) == store.FILE_MODE == 0o600
+
+
+@pytest.mark.contracts
+def test_an_import_the_log_refuses_leaves_no_hints(home, monkeypatch):
+    from cma import case
+    folder = store.case_folder(store.new_case())
+
+    def refuse(self, *a, **k):
+        raise case.SaveNotRecorded("refused for the test; the save was not recorded")
+
+    monkeypatch.setattr(case.CaseLog, "append", refuse)
+    with pytest.raises(case.SaveNotRecorded):
+        store.import_file(folder, GOLDEN / "running_balance.json", "truelayer")
+    assert list((folder / "statements").iterdir()) == [] and list((folder / "inputs").iterdir()) == []
+
+
+@pytest.mark.contracts
+def test_a_leftover_hints_file_is_removed_by_the_next_import_into_its_account(home):
+    folder = store.case_folder(store.new_case())
+    leftover = folder / "statements" / f"main{store.HINTS_SUFFIX}"
+    leftover.write_text(json.dumps({"tl-002": "INCOME"}), encoding="utf-8")  # an import whose entry never landed
+    store.import_file(folder, GOLDEN / "running_balance.statement.golden", "csv")
+    assert not leftover.exists()
+    assert all(t.provider_hint is None for t in overrides.case_figures(folder)["main"].statement.transactions)
