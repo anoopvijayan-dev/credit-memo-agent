@@ -1,0 +1,64 @@
+Waiting for the full suite to finish.
+
+Running the whole suite (no `-x`) to catch any other test that pins the page's forms.
+
+I've built sign-off for T27, from both `cma case sign` and the workspace's preview page. The full suite passes (2398 tests), and ruff and compileall are clean. The separate run of only the invariants-marked tests was still going when I wrote the claim; those tests were part of the full run that passed.
+
+**How a sign-off works.** It holds the case for the whole sign-off and checks the whole log first. If the chain is broken or the last entry is incomplete, it is refused naming the first bad entry (exit 3 in the CLI).
+
+It then finds the preview the underwriter signed by its snapshot, reads the case's inputs again and compares them with what that preview recorded. Any change is refused, saying what changed, for example "the override log (it held 0 entries, it now holds 1)" or "the statement for account main changed". It also refuses when the figures don't reconcile, when the text fails the grounding guard, or when that snapshot's pack is already written.
+
+**What it writes.** `memo.md` (exactly the preview's text) and `evidence.json` are written into a temporary `packs/.part-*` folder, synced, then renamed to `packs/<snapshot>`. The pack is never overwritten. Two log entries, `pack_written` then `signed_off`, are appended only after the rename. Leftover `.part-*` folders from a crash are removed at the start of the next sign-off.
+
+**Wording.** Both places say "Sign off the figures" and state that this does not approve the loan. `cma case sign` asks for a typed name and a confirmation and has no `--yes`. The workspace has a "Preview the pack" button, a preview page with the sign-off form, and matching data endpoints.
+
+Things to know:
+- **Second log entry not recorded.** If the file system fails between the two log entries, the pack stays with `pack_written` recorded but no `signed_off`. A retry for that snapshot is then refused as already written, and the underwriter has to preview again to get a new snapshot.
+- **`evidence.json` is a first version.** T25 owns the full evidence schema and `monthly.csv`; T26 owns `record.html`.
+- **I changed an existing test.** The escaping test helper in `tests/test_workspace_summary.py` lists which form targets the page may contain. I added `/preview` to that list, since the new button is meant to be there.
+- **The sign-off is not in `memo.md`.** The name and time would put numbers in the memo that the grounding guard would reject. They are in `evidence.json` and the case log instead.
+
+The code is mainly in `src/cma/pack.py`, the new `src/cma/review/signoff.py`, and `src/cma/cli.py`; the tests are in `tests/test_signoff.py`.
+
+```json
+{
+  "task": "T27",
+  "claims": [
+    {"text": "Full suite passes, with ruff and compileall clean, after the change.", "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q -p no:cacheprovider", "proof_output": "All checks passed!\n2398 passed in 282.42s (0:04:42)"},
+    {"text": "R22/R24/R26: pack.sign_off binds a typed name, OS user and UTC time to the preview's snapshot and writes memo.md (the preview text exactly) and evidence.json (snapshot, inputs, accounts' lines, metrics, monthly, policy, guard, egress offline, sign_off) once to packs/<snapshot>, 0700/0600; the wording is signing off figures, never approving the loan.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_signoff.py -k writes_memo_and_evidence", "proof_output": "1 passed"},
+    {"text": "R23: a sign-off whose snapshot is stale is refused naming what changed (override log, profile, a statement, a new account, the memo field map, show_policy_verdict), and a snapshot no preview recorded is refused; nothing is written or recorded.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_signoff.py -k \"stale or no_preview\"", "proof_output": "9 passed, 17 deselected in 4.07s"},
+    {"text": "R43: a broken hash chain or an incomplete last entry refuses the sign-off naming the first bad entry (CLI exit 3, 'entry 2'); no pack is written.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_signoff.py -k \"broken or incomplete\"", "proof_output": "2 passed, 24 deselected in 2.31s"},
+    {"text": "R3/R28: a guard failure and a reconciliation failure each refuse the sign-off with nothing written.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_signoff.py -k \"guard or reconcil\"", "proof_output": "2 passed, 24 deselected in 2.41s"},
+    {"text": "R26/R42: a second sign-off is refused and the pack never overwritten (also a folder already at the path); a crash-leftover packs/.part-* folder is removed and a crash at the rename leaves no pack and no entry; the pack_written and signed_off entries are appended only after the rename, and a refused pack_written entry removes the pack.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_signoff.py -k \"second or crash or after_the_rename\"", "proof_output": "3 passed, 23 deselected in 2.66s"},
+    {"text": "R42: every Tier 1 event kind (case_created, import, profile_changed, override, preview, pack_written, signed_off) is in the case log of a signed case, and the log verifies.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_signoff.py -k tier1", "proof_output": "1 passed, 25 deselected in 2.47s"},
+    {"text": "cma case sign is interactive (typed name + confirm, no --yes option; declining writes nothing) and the workspace offers a preview button, a preview page with the sign-off form, /api/preview and /api/sign, refusing stale previews with 409 naming what changed and escaping the typed name.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_signoff.py -k \"cli or workspace\"", "proof_output": "5 passed, 21 deselected in 4.41s"},
+    {"text": "All T27 tests are marked contracts and run under that tier.", "proof_cmd": "python -m pytest -q -p no:cacheprovider -m contracts tests/test_signoff.py", "proof_output": "26 passed in 6.91s"}
+  ],
+  "files_changed": ["src/cma/pack.py", "src/cma/cli.py", "src/cma/review/signoff.py", "src/cma/review/server.py", "src/cma/review/summary.py", "tests/test_signoff.py", "tests/test_workspace_summary.py", "README.md"],
+  "notes": "Design choices: (1) The pack write and the sign-off are two case-log entries (pack_written, then signed_off), both appended after the rename inside one writer hold. If the log refuses pack_written, the renamed pack is removed. If pack_written is recorded but signed_off is not (a file-system failure between the two appends), the pack stays and a retry for that snapshot is refused as already written; the person previews again for a new snapshot. (2) memo.md is exactly the guarded preview text. The sign-off is recorded in evidence.json and the log, not in memo.md, so the memo still passes the guard (P14). (3) evidence.json here is a first version; T25 owns the full evidence v1 schema and monthly.csv, and T26 owns record.html. (4) Leftover packs/.part-* folders are removed at the start of each sign-off, while the case is held. (5) tests/test_workspace_summary.py's P8 helper allow-listed the page's form actions; I added /preview, the new form, to that list. Nothing else in that test changed. (6) The invariants tier on its own was still running when I wrote this; it is part of the full-suite run above, which passed."
+}
+```
+
+The invariants-only run has now finished and passed: 977 tests. I added it to `claim.json` as its own claim and removed the note saying it was still running. Everything else in the earlier report stands. The final claim:
+
+```json
+{
+  "task": "T27",
+  "claims": [
+    {"text": "Full suite passes, with ruff and compileall clean, after the change.", "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q -p no:cacheprovider", "proof_output": "All checks passed!\n2398 passed in 282.42s (0:04:42)"},
+    {"text": "R22/R24/R26: pack.sign_off binds a typed name, OS user and UTC time to the preview's snapshot and writes memo.md (the preview text exactly) and evidence.json (snapshot, inputs, accounts' lines, metrics, monthly, policy, guard, egress offline, sign_off) once to packs/<snapshot>, 0700/0600; the wording is signing off figures, never approving the loan.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_signoff.py -k writes_memo_and_evidence", "proof_output": "1 passed"},
+    {"text": "R23: a sign-off whose snapshot is stale is refused naming what changed (override log, profile, a statement, a new account, the memo field map, show_policy_verdict), and a snapshot no preview recorded is refused; nothing is written or recorded.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_signoff.py -k \"stale or no_preview\"", "proof_output": "9 passed, 17 deselected in 4.07s"},
+    {"text": "R43: a broken hash chain or an incomplete last entry refuses the sign-off naming the first bad entry (CLI exit 3, 'entry 2'); no pack is written.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_signoff.py -k \"broken or incomplete\"", "proof_output": "2 passed, 24 deselected in 2.31s"},
+    {"text": "R3/R28: a guard failure and a reconciliation failure each refuse the sign-off with nothing written.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_signoff.py -k \"guard or reconcil\"", "proof_output": "2 passed, 24 deselected in 2.41s"},
+    {"text": "R26/R42: a second sign-off is refused and the pack never overwritten (also a folder already at the path); a crash-leftover packs/.part-* folder is removed and a crash at the rename leaves no pack and no entry; the pack_written and signed_off entries are appended only after the rename, and a refused pack_written entry removes the pack.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_signoff.py -k \"second or crash or after_the_rename\"", "proof_output": "3 passed, 23 deselected in 2.66s"},
+    {"text": "R42: every Tier 1 event kind (case_created, import, profile_changed, override, preview, pack_written, signed_off) is in the case log of a signed case, and the log verifies.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_signoff.py -k tier1", "proof_output": "1 passed, 25 deselected in 2.47s"},
+    {"text": "cma case sign is interactive (typed name + confirm, no --yes option; declining writes nothing) and the workspace offers a preview button, a preview page with the sign-off form, /api/preview and /api/sign, refusing stale previews with 409 naming what changed and escaping the typed name.", "proof_cmd": "python -m pytest -q -p no:cacheprovider tests/test_signoff.py -k \"cli or workspace\"", "proof_output": "5 passed, 21 deselected in 4.41s"},
+    {"text": "All T27 tests are marked contracts and run under that tier.", "proof_cmd": "python -m pytest -q -p no:cacheprovider -m contracts tests/test_signoff.py", "proof_output": "26 passed in 6.91s"},
+    {"text": "The invariants tier passes with the change.", "proof_cmd": "python -m pytest -q -p no:cacheprovider -m invariants", "proof_output": "977 passed, 1421 deselected in 123.66s (0:02:03)"}
+  ],
+  "files_changed": ["src/cma/pack.py", "src/cma/cli.py", "src/cma/review/signoff.py", "src/cma/review/server.py", "src/cma/review/summary.py", "tests/test_signoff.py", "tests/test_workspace_summary.py", "README.md"],
+  "notes": "Design choices: (1) The pack write and the sign-off are two case-log entries (pack_written, then signed_off), both appended after the rename inside one writer hold. If the log refuses pack_written, the renamed pack is removed. If pack_written is recorded but signed_off is not (a file-system failure between the two appends), the pack stays and a retry for that snapshot is refused as already written; the person previews again for a new snapshot. (2) memo.md is exactly the guarded preview text. The sign-off is recorded in evidence.json and the log, not in memo.md, so the memo still passes the guard (P14). (3) evidence.json here is a first version; T25 owns the full evidence v1 schema and monthly.csv, and T26 owns record.html. (4) Leftover packs/.part-* folders are removed at the start of each sign-off, while the case is held. (5) tests/test_workspace_summary.py's P8 helper allow-listed the page's form actions; I added /preview, the new form, to that list. Nothing else in that test changed."
+}
+```
+
+A leftover background watcher hit its time limit and was stopped. It was only waiting on the first test run, which had already finished, so I'm not restarting it. Nothing changes: the full suite (2398 tests) and the invariants tier (977 tests) both passed, and `claim.json` is final.
