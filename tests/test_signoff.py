@@ -469,3 +469,69 @@ def test_cli_case_sign_reports_a_save_not_recorded_and_leaves_no_pack(home, tmp_
     r = CliRunner().invoke(app, ["case", "sign", case_id, "--snapshot", p.snapshot], input="Ann\ny\n")
     assert r.exit_code == 4 and "not recorded" in r.output.lower()
     assert not (folder / "packs" / p.snapshot).exists()
+
+
+class _Died(BaseException):
+    """The process stops here: no cleanup of ours runs after it."""
+
+
+def _die_at(monkeypatch, event):
+    """Stop the process when the case log is asked to record `event`, and let no folder be
+    removed on the way out, as a killed process removes none."""
+    import shutil
+
+    real = caselog.CaseLog.append
+
+    def append(self, ev, data, *, expected):
+        if ev == event:
+            raise _Died()
+        return real(self, ev, data, expected=expected)
+
+    monkeypatch.setattr(caselog.CaseLog, "append", append)
+    monkeypatch.setattr(shutil, "rmtree", lambda *a, **k: None)
+
+
+def test_r26_a_pack_the_tool_stopped_before_recording_is_refused_as_unrecorded_never_removed(home, tmp_path,
+                                                                                           monkeypatch):
+    """The tool stops after renaming the pack into place and before recording it: the log holds
+    no pack write and no sign-off. Signing off again says so (not that the figures are signed
+    off), leaves the folder as it is, and signs off once it is moved aside."""
+    case_id, folder = _case(tmp_path)
+    p = pack.build_preview(folder, case_id)
+    with monkeypatch.context() as m:
+        _die_at(m, pack.PACK_EVENT)
+        with pytest.raises(_Died):
+            pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    target = folder / "packs" / p.snapshot
+    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md"]
+    assert pack.PACK_EVENT not in _events(folder) and pack.SIGN_EVENT not in _events(folder)
+    events = _events(folder)
+    for snapshot in (p.snapshot, pack.build_preview(folder, case_id).snapshot):  # the same preview, or a new one
+        with pytest.raises(pack.SignOffRefused) as e:
+            pack.sign_off(folder, case_id, snapshot, "Ann")
+        msg = str(e.value)
+        assert "records no pack written" in msg and "move that folder aside" in msg and "already signed off" not in msg
+    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md"]  # never removed or replaced
+    assert _events(folder)[: len(events)] == events and pack.SIGN_EVENT not in _events(folder)
+    os.rename(target, folder / "aside")
+    signed = pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    assert signed.pack == target and _events(folder)[-2:] == [pack.PACK_EVENT, pack.SIGN_EVENT]
+
+
+def test_r26_a_pack_whose_sign_off_was_not_recorded_is_refused_naming_its_entry(home, tmp_path, monkeypatch):
+    """The tool stops between recording the pack write and the sign-off: signing off again says
+    the pack is written, at which log entry, and that its sign-off was not recorded."""
+    case_id, folder = _case(tmp_path)
+    p = pack.build_preview(folder, case_id)
+    with monkeypatch.context() as m:
+        _die_at(m, pack.SIGN_EVENT)
+        with pytest.raises(_Died):
+            pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    events = _events(folder)
+    assert events[-1] == pack.PACK_EVENT and pack.SIGN_EVENT not in events
+    with pytest.raises(pack.SignOffRefused) as e:
+        pack.sign_off(folder, case_id, p.snapshot, "Bob")
+    msg = str(e.value)
+    assert f"case log entry {len(events)}" in msg and "sign-off was not recorded" in msg
+    assert "already signed off" not in msg and _events(folder) == events
+    assert caselog.for_case(folder).verify().ok

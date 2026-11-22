@@ -526,7 +526,8 @@ def _preview_entry(entries, snapshot: str) -> dict[str, Any] | None:
 
 def _remove_leftovers(packs: Path) -> None:
     """Remove pack folders a crash left half-written: they were never renamed into place, so
-    nothing refers to them."""
+    nothing refers to them. A folder at a snapshot's path is never removed, even one the case
+    log does not record (sign_off refuses it, saying so)."""
     import shutil
 
     if not packs.is_dir():
@@ -638,15 +639,27 @@ def sign_off(folder: Path, case_id: str, snapshot: str, name: str) -> Signed:
     with log.writer():
         head = log.require_intact()  # R43: the whole log, judged while holding the case
         entries = log.entries()
+        written = {e.data.get("snapshot"): n for n, e in enumerate(entries, start=1) if e.event == PACK_EVENT}
         _remove_leftovers(packs)
         signed = _preview_entry(entries, snapshot)
         if signed is None:
             raise SignOffRefused(f"no preview of this case has snapshot {snapshot}; preview the case "
                                  "(cma case preview) and sign off that preview")
-        if (packs / snapshot).exists() or any(e.event == SIGN_EVENT and e.data.get("snapshot") == snapshot
-                                              for e in entries):
+        if any(e.event == SIGN_EVENT and e.data.get("snapshot") == snapshot for e in entries):
             raise SignOffRefused(f"the figures of snapshot {snapshot} are already signed off and its pack written "
                                  f"({PACKS}/{snapshot}); a pack is never overwritten")
+        if snapshot in written:  # the tool stopped between the pack write and its sign-off entry
+            raise SignOffRefused(f"the pack for snapshot {snapshot} is written ({PACKS}/{snapshot}, case log entry "
+                                 f"{written[snapshot]}) but its sign-off was not recorded: the tool stopped between "
+                                 "the two. The sign-off it was written for is in its evidence.json; a pack is never "
+                                 "overwritten, so no second sign-off is taken for this snapshot")
+        if (packs / snapshot).exists() or (packs / snapshot).is_symlink():
+            # Not a pack the log records: most likely the tool stopped between renaming the pack
+            # into place and recording it. It is never removed or replaced here (R26).
+            raise SignOffRefused(f"{PACKS}/{snapshot} is already there but the case log records no pack written "
+                                 "for it, most likely because the tool stopped after writing it and before "
+                                 "recording it. Nothing was signed off; a pack is never overwritten, so move that "
+                                 "folder aside and sign off again")
         p = _build(folder, case_id, entries)  # R3: refused when the buckets do not reconcile
         if p.snapshot != snapshot:
             what = changed_inputs(signed.get("inputs") or {}, p.inputs)
