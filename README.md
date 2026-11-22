@@ -112,6 +112,12 @@ cma case preview <id>
 # workspace (`cma review`) offers the same preview and sign-off from the case page.
 cma case sign <id>
 
+# Drop an entry the case log holds past its recorded entries that a crash, a full disk or a
+# lost power left unfinished, once you confirm it with your typed name; the drop is itself
+# recorded. Refused, changing nothing, when nothing is torn or the log is broken before it
+# (exit 3). Then sign off or save again what the entry held.
+cma case repair <id>
+
 # Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
 # first entry that was changed, removed, reordered or left half written.
 cma case check private/cma/cases/<id>

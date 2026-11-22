@@ -736,3 +736,60 @@ def test_r42_a_failed_folder_sync_after_the_rename_leaves_no_unrecorded_pack(hom
     assert not (folder / "packs" / p.snapshot).exists() and pack.PACK_EVENT not in _events(folder)
     signed = pack.sign_off(folder, case_id, p.snapshot, "Ann")
     assert not signed.completed and _events(folder)[-1] == pack.SIGN_EVENT
+
+
+def test_r42_r43_a_sign_off_line_cut_short_by_a_full_disk_is_repaired_and_then_recorded(home, tmp_path,
+                                                                                        monkeypatch):
+    """verify-252's major, its partly written case: the disk fills after part of the sign-off
+    line is on disk. The log reads torn past the recorded pack write; `cma case repair` drops
+    the part once confirmed, and the next sign-off records the pack's own sign-off."""
+    import errno
+
+    case_id, folder = _case(tmp_path)
+    p = pack.build_preview(folder, case_id)
+    real_append, real_write = caselog.CaseLog.append, os.write
+    state = {"armed": False, "calls": 0}
+
+    def append(self, ev, data, *, expected):
+        state["armed"] = ev == pack.SIGN_EVENT
+        try:
+            return real_append(self, ev, data, expected=expected)
+        finally:
+            state["armed"] = False
+
+    def write(fd, data):
+        if state["armed"] and len(data) > 10:
+            state["calls"] += 1
+            if state["calls"] == 1:
+                return real_write(fd, bytes(data[:10]))
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_write(fd, data)
+
+    with monkeypatch.context() as m:
+        m.setattr(caselog.CaseLog, "append", append)
+        m.setattr(caselog.os, "write", write)
+        with pytest.raises(caselog.SaveNotRecorded, match="not recorded"):
+            pack.sign_off(folder, case_id, p.snapshot, "Ann")
+    assert state["calls"] == 2  # ten bytes of the line on disk, then the disk was full
+    check = caselog.for_case(folder).verify()
+    assert check.torn and check.entries[-1].event == pack.PACK_EVENT
+    runner = CliRunner()
+    r = runner.invoke(app, ["case", "sign", case_id, "--snapshot", p.snapshot], input="Ann\ny\n")
+    assert r.exit_code == 3 and "cma case repair" in " ".join(r.output.split())
+    r = runner.invoke(app, ["case", "repair", case_id], input="Ann\ny\n")
+    assert r.exit_code == 0, r.output
+    r = runner.invoke(app, ["case", "sign", case_id, "--snapshot", p.snapshot], input="Ann\ny\n")
+    assert r.exit_code == 0 and "now recorded" in r.output, r.output
+    assert _events(folder)[-1] == pack.SIGN_EVENT and caselog.for_case(folder).verify().ok
+
+
+def test_r42_case_repair_refuses_a_broken_log_that_is_not_torn(home, tmp_path):
+    """A changed recorded entry is tampering, not a torn save: repair changes nothing, exit 3."""
+    case_id, folder = _case(tmp_path)
+    log = folder / caselog.LOG_NAME
+    lines = log.read_bytes().splitlines(keepends=True)
+    lines[1] = lines[1].replace(b'"import"', b'"imporT"')
+    log.write_bytes(b"".join(lines))
+    before = log.read_bytes()
+    r = CliRunner().invoke(app, ["case", "repair", case_id], input="Ann\ny\n")
+    assert r.exit_code == 3 and "entry 2" in r.output and log.read_bytes() == before
