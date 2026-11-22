@@ -354,3 +354,26 @@ def test_an_available_balance_is_not_read_as_the_booked_balance(tmp_path):
     _refused(tmp_path, src, "no per-line balances")
     r, _ = _convert(tmp_path, src, statement_balance="101.00", at="2026-05-01")
     assert r.opening_balance == 100.0
+
+
+def _chain(n, when="2026-01-01"):
+    return [_txn(f"S{i}", "1.00", when=when, balance=f"{101 + i}.00") for i in range(n)]
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("n, reverse", [(1500, False), (1500, True), (500, True)])
+def test_a_large_group_booked_at_one_moment_is_ordered_whatever_order_the_file_wrote(tmp_path, n, reverse):
+    # A date-only export puts a whole day at midnight; such a group chains in one order.
+    lines = _chain(n)
+    src = _write(tmp_path, lines[::-1] if reverse else lines)
+    r, out = _convert(tmp_path, src)
+    assert r.rows == n
+    assert [t.id for t in ingest.load_csv(out).transactions] == [f"S{i}" for i in range(n)]
+
+
+@pytest.mark.contracts
+def test_a_large_group_that_no_order_chains_is_refused_not_crashed(tmp_path):
+    lines = _chain(1500)
+    lines[700]["Balance"]["Amount"]["Amount"] = "99999.00"
+    src = _write(tmp_path, lines)
+    _refused(tmp_path, src, "no order of the transactions booked at the same time keeps the balance chain")

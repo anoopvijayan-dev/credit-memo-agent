@@ -262,26 +262,57 @@ def _order(group: list[tuple], before: int | None) -> list[tuple] | None:
     `before` (the walked balance before them, None if not yet known); None if no order does."""
     if len(group) == 1 or all(x.balance is None for _, x in group):
         return group
+    # A depth-first search without recursion (a group can hold thousands of lines, as a
+    # date-only export puts a whole day at midnight). The lines that may come next after a
+    # balance are those with no balance and those whose balance before them is that balance,
+    # looked up rather than scanned, and tried in file order, so a group that chains is
+    # ordered in about one step per line whichever order the file wrote it in.
+    n = len(group)
+    by_before: dict[int, list[int]] = {}
+    loose: list[int] = []
+    for i, (_, x) in enumerate(group):
+        if x.balance is None:
+            loose.append(i)
+        else:
+            by_before.setdefault(x.balance - x.amount, []).append(i)
+    used = [False] * n
+    afters = {x.balance for _, x in group if x.balance is not None}
+    # With no balance known yet, a line whose balance before it is no other line's balance
+    # after it is where the chain starts, so such lines are tried first.
+    heads = [i for b, ids in by_before.items() if b not in afters for i in ids]
+
+    def candidates(bal):
+        if bal is None:
+            first = sorted(i for i in heads if not used[i])
+            taken = set(first)
+            return first + [i for i in range(n) if not used[i] and i not in taken]
+        return sorted(i for i in [*by_before.get(bal, ()), *loose] if not used[i])
+
+    order: list[int] = []
+    frames = [[candidates(before), 0, before]]  # one more frame than lines chosen
     steps = 0
-
-    def search(rest, bal, done):
-        nonlocal steps
-        if not rest:
-            return done
-        for k, (key, x) in enumerate(rest):
-            steps += 1
-            if steps > ORDER_STEPS:
-                return None
-            after = None if bal is None else bal + x.amount
-            if x.balance is not None and after is not None and x.balance != after:
-                continue
-            nxt = x.balance if x.balance is not None else after
-            found = search(rest[:k] + rest[k + 1:], nxt, [*done, (key, x)])
-            if found is not None:
-                return found
-        return None
-
-    return search(group, before, [])
+    while frames:
+        if len(order) == n:
+            return [group[i] for i in order]
+        frame = frames[-1]
+        cands, k, bal = frame
+        if k >= len(cands):
+            frames.pop()
+            if order:
+                used[order.pop()] = False
+            continue
+        frame[1] += 1
+        steps += 1
+        if steps > ORDER_STEPS:
+            return None
+        i = cands[k]
+        x = group[i][1]
+        after = None if bal is None else bal + x.amount
+        nxt = x.balance if x.balance is not None else after
+        used[i] = True
+        order.append(i)
+        frames.append([candidates(nxt), 0, nxt])
+    return None
 
 
 def _first_break(group: list[tuple], before: int | None) -> contract.Line:
