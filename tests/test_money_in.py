@@ -729,7 +729,7 @@ def test_a_money_column_named_twice_is_refused_not_overwritten(tmp_path, column)
     src = tmp_path / "m.csv"
     src.write_text("Transaction ID,Date,Time,Type,Name,Amount,Currency,Balance,Amount\n"
                    "tx_1,01/01/2026,09:00:00,Faster payment,ACME,10000000000000.00,GBP,90.00,-10.00\n")
-    with pytest.raises(monzo.MonzoImportError, match="named more than once: Amount"):
+    with pytest.raises(monzo.MonzoImportError, match="line 1: columns 6 and 9 have the same name"):
         monzo.convert(src, tmp_path / "o.csv")
 
 

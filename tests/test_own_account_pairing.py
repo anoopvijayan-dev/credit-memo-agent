@@ -285,3 +285,31 @@ def test_zero_pairing_days_pairs_only_same_day_moves_in_either_order(home, tmp_p
     sav = _csv([("S1", D0 + timedelta(days=1), "FPS FROM 87654321", 100_00)])
     _, same_day = _case(tmp_path, {"main": main, "savings": sav})
     assert _rules(same_day)["main:M2"] == "pairing:savings:S1"
+
+
+# --- overriding a paired line (Antigravity re-review of T16) -----------------------------------
+
+
+@pytest.mark.contracts
+def test_a_paired_line_can_be_overridden_back_to_what_the_table_gave_it(home, tmp_path):
+    # A Stripe payout that the pairing took for the other half of a transfer: moving it back to
+    # card receipts was read as no change, since the line's category was looked up unpaired.
+    main = _csv([("M1", D0, "CARD SETTLEMENT STRIPE", 500_00), ("M2", D0 + timedelta(days=1), "FPS TO 12345678", -100_00)])
+    sav = _csv([("S1", D0, "CARD SETTLEMENT STRIPE", 30_00), ("S2", D0 + timedelta(days=2), "CARD SETTLEMENT STRIPE", 100_00)])
+    _, folder = _case(tmp_path, {"main": main, "savings": sav})
+    assert _rules(folder)["savings:S2"] == "pairing:main:M2"
+    added = overrides.add_override(folder, "S2", "revenue_card_settlement", reason="a real payout", name="Pat",
+                                   account="savings")
+    assert added.recorded and added.old == "own_account_transfer" and added.new == "revenue_card_settlement"
+    rules = _rules(folder)
+    assert rules["savings:S2"] == "override:1" and not (rules["main:M2"] or "").startswith(PAIRING)
+
+
+@pytest.mark.contracts
+def test_overriding_a_paired_line_to_an_own_account_transfer_changes_nothing(home, tmp_path):
+    main = _csv([("M1", D0, "CARD SETTLEMENT STRIPE", 500_00), ("M2", D0 + timedelta(days=1), "FPS TO 12345678", -100_00)])
+    sav = _csv([("S1", D0, "CARD SETTLEMENT STRIPE", 30_00), ("S2", D0 + timedelta(days=2), "FPS FROM 87654321", 100_00)])
+    _, folder = _case(tmp_path, {"main": main, "savings": sav})
+    added = overrides.add_override(folder, "S2", "own_account_transfer", reason="r", name="Pat", account="savings")
+    assert not added.recorded
+    assert _rules(folder)["main:M2"] == "pairing:savings:S2"

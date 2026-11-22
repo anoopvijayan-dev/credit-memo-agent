@@ -375,3 +375,22 @@ def test_p3_p4_hold_across_stale_confirmed_and_dropped_overrides(home, tmp_path,
     fresh = overrides.case_figures(folder)
     assert _snapshot(step) == _snapshot(fresh) == _snapshot(overrides.case_figures(folder))
     assert _lines(fresh) == before and not fresh["main"].stale
+
+
+@pytest.mark.contracts
+def test_case_figures_that_do_not_reconcile_are_refused_without_a_traceback(home, tmp_path, monkeypatch):
+    # Antigravity re-review of T16: a ReconciliationError from the figures layer reached the
+    # user as a traceback; it is a refusal with exit 6, as `cma run` gives (R3).
+    from typer.testing import CliRunner
+
+    from cma.cli import app
+    from cma.metrics import ReconciliationError
+
+    case_id = store.new_case(label="t16")
+
+    def refuse(folder, **kw):
+        raise ReconciliationError(1, ["L1"])
+
+    monkeypatch.setattr(overrides, "case_figures", refuse)
+    r = CliRunner().invoke(app, ["case", "figures", case_id])
+    assert r.exit_code == 6 and "no figures shown" in r.output and "Traceback" not in r.output
