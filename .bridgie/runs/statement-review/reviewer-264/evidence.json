@@ -1,0 +1,51 @@
+{
+  "task": "T36",
+  "criteria": [
+    {
+      "id": "R21",
+      "tier": "adversarial",
+      "check": "Read src/cma/categorise.py classify (1286-1333) and _classify_credit (1384-1415): under v2 a debit matched by any protected rule returns at the ruleset.protected loop (1303-1305) before firm rules; a credit with a protected or ambiguous verdict returns before firm rules, and _firm_rules_for (1355-1370) withholds every firm rule when any protected v2 rule with a category (returned_dd, own_pots_savings, hmrc_*, returned_payment, refunds, lender_*, loan_*, director_funding, owner_drawings; src/cma/rules/v2.yaml 63-248) matches the line anywhere. Under v1 the guard uses _v1_protected (1341-1352). The case pipeline passes firm rules in overrides._categorise (overrides.py:213-225), used by case_figures, pack._build (pack.py:385) and the workspace; caches are keyed on the firm rules sha (overrides.py:217, 364). An override still changes a protected line (test_p16_an_override_still_changes_a_protected_line). Runner invariants log lines 389-408 show test_p16_* and test_r21_* PASSED.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P16",
+      "tier": "adversarial",
+      "check": "tests/test_firm_rules.py::test_p16_no_protected_line_changes_category_through_any_firm_rule[v1,v2] runs every v2 listed name plus R21 wording against a firm rule claiming every category in each direction, with and without a profile, with a positive control; test_r21_each_named_kind_* checks R21's own list without relying on the protected flags; test_p16_the_case_pipeline_* checks through overrides.case_figures. All PASSED in the runner's invariants tier (invariants-5.log 389-408) and the full suite (specified-3.log, 2859 passed). Reading the code found no path where a protected v2 rule matches and a firm rule is still consulted.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/categorise.py",
+      "line": 1336,
+      "criterion": "R21",
+      "claim": "Under CMA_RULESET=v1 the only built-in capital pattern is non_trading_in's bare \\bCAPITAL\\b (src/cma/rules/v1.yaml), but _V1_PROTECTED_IN protects only CAPITAL INTRODUCED|INJECTED|CONTRIBUTED. So a firm rule can reclassify a v1 line that the built-in capital pattern matches, including moving a merchant cash advance into trading receipts. The protected-verdict term ('capital introduced' wording) supports this reading, but it is a money-risk reading of R21's 'capital pattern' that the owner has not confirmed.",
+      "repro": "With CMA_RULESET=v1 and a firm rule {id: s, pattern: STRIPE, direction: in, category: revenue_card_settlement}, classify(Transaction(description='STRIPE CAPITAL', amount=500), load_ruleset('v1'), firm_rules=rules) returns (revenue_card_settlement, 'firm:s'); without the firm rule it returns (other, 'v1:non_trading_in'). The P16 test's _protected helper reuses _v1_protected, so it counts this line as 'applied', not 'checked'."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/pack.py",
+      "line": 363,
+      "criterion": "R21",
+      "claim": "The preview computes figures with firm rules read inside overrides.case_figures (pack.py:385, via firm_rules.for_case at overrides.py:217/364, read again per account and per _bare_key call) and then hashes the firm rules file separately in snapshot_inputs (pack.py:363). An edit to firm_rules.yaml between those reads binds the new file's hash to figures computed with the old rules, or splits accounts across two versions, so the R22/R23 staleness check accepts a sign-off whose figures do not match the recorded firm rules. The claim that the snapshot hash makes a firm-rule edit stale holds only outside that window.",
+      "repro": "Wrap firm_rules.for_case so it rewrites firm_rules.yaml after its first read (or write the file while `cma case preview` runs). The preview records the new file's firm_rules_sha256 while its figures carry the old firm:<id> categories, and a sign-off then sees an unchanged snapshot."
+    },
+    {
+      "severity": "minor",
+      "file": null,
+      "line": null,
+      "criterion": null,
+      "claim": "The performance claim (10,000 lines with 50 firm rules in 1.08 s, within R52's 2 s) rests on an ad-hoc scratchpad script the runner did not run. The runner's R52 tests (test_r52_* in contracts-4.log) run with no firm rules file, so the claim is not proven.",
+      "repro": "No runner tier writes firm_rules.yaml before test_r52_an_override_on_a_10000_line_case_comes_back_recomputed_within_2_seconds; a variant of that test that writes 50 firm rules first would prove the claim."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

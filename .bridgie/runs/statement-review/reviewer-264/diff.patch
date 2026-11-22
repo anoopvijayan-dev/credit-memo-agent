@@ -1,0 +1,653 @@
+diff --git a/src/cma/categorise.py b/src/cma/categorise.py
+index 5f4b4a8..15115b3 100644
+--- a/src/cma/categorise.py
++++ b/src/cma/categorise.py
+@@ -1323,7 +1323,7 @@ def classify(
+         return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(candidates)
+     if kinds:
+         return kinds[0]
+-    for rule in firm_rules:
++    for rule in _firm_rules_for(ruleset, desc, t.amount, firm_rules):
+         if rule_matches(rule, desc, t.amount):
+             return rule.category, f"firm:{rule.id}"
+     for rule in ruleset.unprotected:
+@@ -1352,6 +1352,24 @@ def _v1_protected(rule: Rule, desc: str, amount: float) -> bool:
+     return rule.id in _V1_PROTECTED
+ 
+ 
++def _firm_rules_for(ruleset: Ruleset, desc: str, amount: float, firm_rules: Sequence[Rule]) -> Sequence[Rule]:
++    """The firm rules that may apply to a line: none when a protected built-in pattern matches
++    it, wherever in the line and whatever else the line holds (R21, P16). A firm rule never
++    reclassifies a director, capital, shareholder, lender, HMRC or returned-payment line, nor
++    any other protected verdict's; only a per-line override can. Under v2 those are the rules
++    the table marks protected; v1 marks none, so its protected wording is _v1_protected's. A
++    payment-method cue gives no verdict, so it protects nothing. The line then takes what it
++    would take with no firm rule at all."""
++    if not firm_rules:
++        return ()
++    if ruleset.frozen:
++        if any(_v1_protected(r, desc, amount) for r in ruleset.rules):
++            return ()
++    elif any(r.category is not None and rule_matches(r, desc, amount) for r in ruleset.protected):
++        return ()
++    return firm_rules
++
++
+ def _profile_matches(t: Transaction, desc: str, profile: ProfileNames | None) -> list[tuple[Category, str]]:
+     """Every kind of case-profile name the line's wording matches, director first."""
+     found: list[tuple[Category, str]] = []
+@@ -1388,7 +1406,7 @@ def _classify_credit(t: Transaction, desc: str, ruleset: Ruleset, profile: Profi
+         return Category.OTHER, f"{ruleset.id}:conflict:" + "+".join(candidates)
+     if kinds:
+         return kinds[0]
+-    for rule in firm_rules:
++    for rule in _firm_rules_for(ruleset, desc, t.amount, firm_rules):
+         if rule_matches(rule, desc, t.amount):
+             return rule.category, f"firm:{rule.id}"
+     if verdict is not None:
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index 9949a90..ce1a757 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -515,7 +515,7 @@ def _case_errors():
+     except (case.CaseLocked, case.LogConflict) as e:
+         console.print(f"[red]Not recorded.[/red] {escape(str(e))}")
+         raise typer.Exit(code=4) from None
+-    except FirmConfigError as e:
++    except (FirmConfigError, RulesetError) as e:  # a malformed firm.yaml or firm_rules.yaml (R20, R21)
+         console.print(f"[red]Refused.[/red] {escape(str(e))}")
+         raise typer.Exit(code=2) from None
+     except OSError as e:
+diff --git a/src/cma/firm_rules.py b/src/cma/firm_rules.py
+new file mode 100644
+index 0000000..6999a38
+--- /dev/null
++++ b/src/cma/firm_rules.py
+@@ -0,0 +1,208 @@
++"""The firm's own rules: firm_rules.yaml at the case root (or where firm.yaml's paths name it).
++
++    rules:
++      - id: acme_trust                 # letters, digits, _ . - ; the line's rule is firm:<id>
++        pattern: ACME TRUST            # the counterparty, matched as a listed name is
++        direction: in                  # in (credits), out (debits) or any
++        category: other_explained_in   # a category the direction can take (R18)
++        by: Pat Underwriter            # who promoted it (R20)
++        at: 2026-11-20T10:00:00Z       # when, UTC
++        reason: trust distributions    # why
++
++A pattern is a counterparty's name, not a regular expression: it matches as a name on the
++maintained lists does, whole words only, whatever spaces, hyphens, dots or dashes stand
++between its characters (design C1, whole words and separators). So a firm rule can carry no
++exception, anchor or lookaround that hides another list's wording (R4).
++
++A missing file at its default place means no firm rules; a file firm.yaml names itself must
++exist. A malformed file (not UTF-8, not YAML, a key unknown, missing or given twice, a rule id
++given twice, a value of the wrong kind, a category its direction cannot take) is refused with
++FirmRulesError naming the line of the file the problem is on, so no case opens with silently
++different categories. FirmRulesError is a RulesetError, so every caller that refuses a bad rule
++table refuses a bad firm rules file the same way.
++
++Firm rules are applied by the categoriser at design C1's precedence step 6: below an override,
++a protected verdict, an own-account pairing, an ambiguous verdict and a case-profile name, and
++above the table's unprotected rules. A line that a protected built-in pattern matches never
++takes a firm rule, whatever the file says (R21, P16; categorise.classify).
++"""
++
++from __future__ import annotations
++
++import hashlib
++import re
++from dataclasses import dataclass
++from datetime import datetime
++from pathlib import Path
++from typing import Any
++
++import yaml
++
++from .categorise import (
++    _MONEY_IN_ONLY,
++    _SEPARATOR_RUN,
++    RESERVED_RULE_IDS,
++    Rule,
++    RulesetError,
++    _fold,
++    names_pattern,
++)
++from .models import CREDIT_BUCKET, Category
++
++FILE_KEYS = ("rules",)
++RULE_KEYS = ("id", "pattern", "direction", "category", "by", "at", "reason")
++DIRECTIONS = ("in", "out", "any")
++_ID = re.compile(r"[A-Za-z0-9_.-]+")
++MAX_TEXT = 1000
++
++
++class FirmRulesError(RulesetError):
++    """firm_rules.yaml is malformed; no line should be categorised with it."""
++
++
++@dataclass(frozen=True)
++class FirmRules:
++    source: str
++    sha256: str | None  # of the file's bytes; None when there is no file
++    rules: tuple[Rule, ...]
++    records: tuple[dict[str, Any], ...]  # each rule as the file gives it, for showing and promotion
++
++
++NONE = FirmRules(source="", sha256=None, rules=(), records=())
++
++
++def _categories_for(direction: str) -> frozenset[Category]:
++    """The categories a rule for `direction` may give: a credit's has a money-in bucket, a
++    debit's is never one only money in has, and `any` matches both (overrides.valid_categories)."""
++    credit = frozenset(CREDIT_BUCKET)
++    debit = frozenset(c for c in Category if c not in _MONEY_IN_ONLY)
++    return {"in": credit, "out": debit, "any": credit & debit}[direction]
++
++
++def parse(text: str, source: str) -> FirmRules:
++    """Validate a firm rules file's text, refusing it naming the line of the first problem."""
++    def refuse(line: int, problem: str):
++        raise FirmRulesError(f"{source}: line {line}: {problem}")
++
++    def line(node) -> int:
++        return node.start_mark.line + 1
++
++    try:
++        root = yaml.compose(text, Loader=yaml.SafeLoader)
++    except yaml.MarkedYAMLError as e:
++        mark = e.problem_mark or e.context_mark
++        refuse(min(mark.line + 1, max(1, len(text.splitlines()))) if mark else 1,
++               f"not valid YAML ({e.problem or e.__class__.__name__})")
++    except yaml.YAMLError as e:
++        refuse(1, f"not valid YAML ({e.__class__.__name__})")
++    sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
++    if root is None:
++        return FirmRules(source=source, sha256=sha, rules=(), records=())
++    if not isinstance(root, yaml.MappingNode):
++        refuse(line(root), "the file must be a mapping with one key, rules")
++    top = _mapping(root, FILE_KEYS, "key", refuse, line)
++    if "rules" not in top:
++        refuse(line(root), "missing rules")
++    rules_node = top["rules"][1]
++    if not isinstance(rules_node, yaml.SequenceNode):
++        refuse(line(rules_node), "rules must be a list of rules")
++    built: list[Rule] = []
++    records: list[dict[str, Any]] = []
++    seen: set[str] = set()
++    for node in rules_node.value:
++        if not isinstance(node, yaml.MappingNode):
++            refuse(line(node), "each rule must be a mapping of " + ", ".join(RULE_KEYS))
++        given = _mapping(node, RULE_KEYS, "key of a rule", refuse, line)
++        for key in RULE_KEYS:
++            if key not in given:
++                refuse(line(node), f"a rule is missing {key}")
++        values: dict[str, Any] = {}
++        for key in RULE_KEYS:
++            _, v = given[key]
++            if key == "at" and isinstance(v, yaml.ScalarNode) and v.tag.endswith(":timestamp"):
++                stamp = yaml.safe_load(yaml.serialize(v))  # an unquoted YAML timestamp
++                values[key] = stamp.isoformat() if isinstance(stamp, datetime) else str(stamp)
++                continue
++            if not isinstance(v, yaml.ScalarNode) or not v.tag.endswith(":str"):
++                refuse(line(v), f"{key} must be text")
++            text_value = v.value.strip()
++            if not any(ch.isalnum() for ch in text_value):
++                refuse(line(v), f"{key} must have at least one letter or digit")
++            if len(text_value) > MAX_TEXT:
++                refuse(line(v), f"{key} is longer than {MAX_TEXT} characters")
++            values[key] = text_value
++        rid = values["id"]
++        if not _ID.fullmatch(rid):
++            refuse(line(given["id"][1]), "id may hold only letters, digits, _, . and -")
++        if rid in RESERVED_RULE_IDS:
++            refuse(line(given["id"][1]), f"id {rid} is reserved for the categoriser's own provenance")
++        if rid in seen:
++            refuse(line(given["id"][1]), f"rule {rid} is given more than once")
++        seen.add(rid)
++        if not _SEPARATOR_RUN.sub("", _fold(values["pattern"])):
++            refuse(line(given["pattern"][1]), "pattern must have at least one letter or digit")
++        direction = values["direction"]
++        if direction not in DIRECTIONS:
++            refuse(line(given["direction"][1]), f"direction must be one of {', '.join(DIRECTIONS)}")
++        try:
++            category = Category(values["category"])
++        except ValueError:
++            refuse(line(given["category"][1]), f"unknown category {values['category']!r}")
++        if category not in _categories_for(direction):
++            side = "for money in" if category in _MONEY_IN_ONLY else "for money out"
++            refuse(line(given["category"][1]),
++                   f"category {category.value} is {side}, so a rule for direction {direction} cannot give it")
++        built.append(Rule(rid, re.compile(names_pattern([values["pattern"]])), direction, category))
++        records.append(values)
++    return FirmRules(source=source, sha256=sha, rules=tuple(built), records=tuple(records))
++
++
++def _mapping(node, allowed: tuple[str, ...], what: str, refuse, line) -> dict[str, tuple]:
++    out: dict[str, tuple] = {}
++    for k, v in node.value:
++        if not isinstance(k, yaml.ScalarNode):
++            refuse(line(k), f"a {what} must be a name")
++        if k.value in out:
++            refuse(line(k), f"{k.value} is given more than once")
++        if k.value not in allowed:
++            refuse(line(k), f"unknown {what} {k.value!r}; expected one of {', '.join(allowed)}")
++        out[k.value] = (k, v)
++    return out
++
++
++_MEMO: dict[tuple[str, str], FirmRules] = {}
++
++
++def read(path: Path, *, required: bool) -> FirmRules:
++    """The rules of the file at `path`, validated; no rules when it is absent and not required."""
++    source = str(path)
++    try:
++        data = Path(path).read_bytes()
++    except FileNotFoundError as e:
++        if not required:
++            return NONE
++        raise FirmRulesError(f"{source}: no such file (firm.yaml names it)") from e
++    except OSError as e:
++        raise FirmRulesError(f"{source}: cannot be read ({e.__class__.__name__})") from e
++    key = (source, hashlib.sha256(data).hexdigest())
++    got = _MEMO.get(key)
++    if got is None:
++        try:
++            text = data.decode("utf-8")
++        except UnicodeDecodeError as e:
++            raise FirmRulesError(f"{source}: line 1: not UTF-8") from e
++        got = parse(text, source)
++        if len(_MEMO) > 16:
++            _MEMO.clear()
++        _MEMO[key] = got
++    return got
++
++
++def for_case(config=None) -> FirmRules:
++    """The firm rules every case is categorised with now: the file firm.yaml names, or
++    firm_rules.yaml at the case root, read as it stands (R20: applied to every case
++    categorised afterwards)."""
++    from . import firm
++
++    config = config or firm.load()
++    return read(config.firm_rules_path, required=config.names_path("firm_rules"))
+diff --git a/src/cma/overrides.py b/src/cma/overrides.py
+index 03a20e9..f8258d4 100644
+--- a/src/cma/overrides.py
++++ b/src/cma/overrides.py
+@@ -51,7 +51,7 @@ from pathlib import Path
+ from typing import Any
+ 
+ from . import case as caselog
+-from . import store
++from . import firm_rules, store
+ from .categorise import (
+     _MONEY_IN_ONLY,
+     PAIRING,
+@@ -206,21 +206,23 @@ class _Memo:
+ 
+ 
+ _PARSED = _Memo(8)  # (account, statement sha) -> the statement as load_csv parsed it, never categorised
+-_BARE = _Memo(8)    # (statement sha, ruleset, profile) -> figures with no overrides
+-_CLASSES = _Memo(8)  # (statement sha, ruleset, profile) -> each line's category with no override
++_BARE = _Memo(8)    # (statement sha, ruleset, profile, pairs, firm rules) -> figures with no overrides
++_CLASSES = _Memo(8)  # (statement sha, ruleset, profile, firm rules) -> each line's category with no override
+ 
+ 
+ def _categorise(statement: Statement, sha: str, profile: dict[str, Any], applied: dict[str, LineOverride]) -> None:
+     """categorise() with the overrides in force; the lines with none take the categories
+     kept for this statement, rule table and profile, which classify would give them again."""
+     ruleset = active_ruleset()
+-    key = (sha, ruleset.id, ruleset.sha256, _profile_key(profile))
++    rules = firm_rules.for_case()  # the firm's rules as the file stands now (R20, R21)
++    key = (sha, ruleset.id, ruleset.sha256, _profile_key(profile), rules.sha256)
+     names = store.profile_names(profile)
+     classes = _CLASSES.get(key)
+     if classes is None or len(classes) != len(statement.transactions):
+-        classes = classify_lines(statement, ruleset, profile=names)
++        classes = classify_lines(statement, ruleset, profile=names, firm_rules=rules.rules)
+         _CLASSES.put(key, classes)
+-    categorise(statement, ruleset, overrides=applied, profile=names, unoverridden=classes)
++    categorise(statement, ruleset, overrides=applied, profile=names, firm_rules=rules.rules,
++               unoverridden=classes)
+ 
+ 
+ def _profile_key(profile: dict[str, Any]) -> str:
+@@ -359,7 +361,7 @@ def _bare_figures(statement: Statement, sha: str, profile: dict[str, Any]):
+ 
+ def _bare_key(sha: str, profile: dict[str, Any], pairs: tuple = ()) -> tuple:
+     ruleset = active_ruleset()
+-    return (sha, ruleset.id, ruleset.sha256, _profile_key(profile), pairs)
++    return (sha, ruleset.id, ruleset.sha256, _profile_key(profile), pairs, firm_rules.for_case().sha256)
+ 
+ 
+ def _rests_on(a, b, lines: set[str]) -> bool:
+diff --git a/tests/test_firm_rules.py b/tests/test_firm_rules.py
+new file mode 100644
+index 0000000..cd7764f
+--- /dev/null
++++ b/tests/test_firm_rules.py
+@@ -0,0 +1,322 @@
++"""firm_rules.yaml: its format and validation, its place in the categoriser's precedence, and
++the case pipeline that applies it (R21, P16; design C1 precedence step 6).
++
++A firm rule names a counterparty, a direction and a category, with who promoted it, when and
++why (R20). It is applied below a protected verdict, an ambiguous verdict and a case-profile
++name, and above the table's unprotected rules. A line that a protected built-in pattern
++matches (director, capital, shareholder, lender, HMRC, returned payment and the other
++protected verdicts) never takes a firm rule's category (R21)."""
++
++import re
++from importlib import resources
++from pathlib import Path
++
++import pytest
++import yaml
++
++from cma import firm_rules, overrides, store
++from cma.categorise import (
++    ProfileNames,
++    Rule,
++    Ruleset,
++    _v1_protected,
++    classify,
++    load_ruleset,
++    rule_matches,
++)
++from cma.models import CREDIT_BUCKET, Category, Transaction
++
++C = Category
++
++
++def _t(desc: str, amount: float, tid: str = "T1") -> Transaction:
++    from datetime import date
++
++    return Transaction(id=tid, date=date(2026, 1, 5), description=desc, amount=amount, balance=1000.0)
++
++
++def _rule(rid="acme_trust", pattern="ACME TRUST", direction="in", category="other_explained_in", **extra):
++    r = {"id": rid, "pattern": pattern, "direction": direction, "category": category,
++         "by": "A Underwriter", "at": "2026-11-20T10:00:00Z", "reason": "trust distributions"}
++    r.update(extra)
++    return r
++
++
++def _text(*rules) -> str:
++    return yaml.safe_dump({"rules": list(rules)}, sort_keys=False)
++
++
++# --- format and validation --------------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_a_valid_file_loads_each_rule_with_its_record():
++    got = firm_rules.parse(_text(_rule(), _rule("s", "SPARES LTD", "out", "supplier")), "f.yaml")
++    assert [r.id for r in got.rules] == ["acme_trust", "s"]
++    assert got.rules[0].direction == "in" and got.rules[0].category == C.OTHER_EXPLAINED_IN
++    assert got.records[0]["by"] == "A Underwriter" and got.records[0]["reason"] == "trust distributions"
++    assert len(got.sha256) == 64
++
++
++@pytest.mark.contracts
++def test_an_empty_or_rule_free_file_has_no_rules():
++    assert firm_rules.parse("rules: []\n", "f.yaml").rules == ()
++    assert firm_rules.parse("", "f.yaml").rules == ()
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("text, problem", [
++    ("rules: [\n", "not valid YAML"),
++    ("- a\n", "a mapping"),
++    ("rules: []\nother: 1\n", "unknown key 'other'"),
++    ("rules: []\nrules: []\n", "rules is given more than once"),
++    ("rules: x\n", "rules must be a list"),
++    ("rules:\n  - x\n", "must be a mapping"),
++    (_text(_rule(colour="red")), "'colour'"),
++    (_text({k: v for k, v in _rule().items() if k != "reason"}), "missing reason"),
++    (_text(_rule(rid="a+b")), "id"),
++    (_text(_rule(rid="conflict")), "reserved"),
++    (_text(_rule(), _rule()), "acme_trust is given more than once"),
++    (_text(_rule(pattern="---")), "letter or digit"),
++    (_text(_rule(pattern=["ACME"])), "pattern must be text"),
++    (_text(_rule(direction="sideways")), "direction"),
++    (_text(_rule(category="rocket")), "unknown category"),
++    (_text(_rule(direction="out", category="revenue_transfer")), "for money in"),
++    (_text(_rule(direction="any", category="hmrc_repayment")), "for money in"),
++    (_text(_rule(direction="in", category="payroll")), "for money out"),
++    (_text(_rule(reason="")), "reason"),
++])
++def test_a_malformed_file_is_refused_naming_its_line(text, problem):
++    with pytest.raises(firm_rules.FirmRulesError) as e:
++        firm_rules.parse(text, "f.yaml")
++    assert problem in str(e.value)
++    assert re.search(r"^f\.yaml: line \d+: ", str(e.value))
++
++
++@pytest.mark.contracts
++def test_a_refusal_never_quotes_the_rule_pattern_beyond_its_line():
++    with pytest.raises(firm_rules.FirmRulesError) as e:
++        firm_rules.parse(_text(_rule(rid="x y")), "f.yaml")
++    assert "line 2" in str(e.value)
++
++
++@pytest.mark.contracts
++def test_a_firm_rule_matches_whole_words_whatever_separators(v2):
++    rule = firm_rules.parse(_text(_rule(pattern="ACME TRUST")), "f").rules[0]
++    assert classify(_t("FPS CREDIT ACME-TRUST REF 9", 50.0), v2, firm_rules=[rule]) == \
++        (C.OTHER_EXPLAINED_IN, "firm:acme_trust")
++    assert classify(_t("FPS CREDIT ACMETRUSTEES", 50.0), v2, firm_rules=[rule])[1] != "firm:acme_trust"
++
++
++# --- loading for a case -----------------------------------------------------------------
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    monkeypatch.delenv("CMA_RULESET", raising=False)
++    return root
++
++
++@pytest.fixture
++def v2():
++    return load_ruleset("v2")
++
++
++@pytest.mark.contracts
++def test_no_file_means_no_firm_rules(home):
++    assert firm_rules.for_case().rules == ()
++
++
++@pytest.mark.contracts
++def test_a_file_firm_yaml_names_must_exist(home):
++    home.mkdir(parents=True)
++    (home / "firm.yaml").write_text("paths:\n  firm_rules: mine.yaml\n")
++    with pytest.raises(firm_rules.FirmRulesError, match="no such file"):
++        firm_rules.for_case()
++
++
++@pytest.mark.contracts
++def test_a_firm_rules_error_is_a_ruleset_error_so_every_caller_refuses_it():
++    from cma.categorise import RulesetError
++
++    assert issubclass(firm_rules.FirmRulesError, RulesetError)
++
++
++# --- the case pipeline ------------------------------------------------------------------
++
++
++BODY = ("id,date,description,amount,balance\n"
++        "L1,2026-01-05,FPS CREDIT ACME TRUST,500.00,1500.00\n"
++        "L2,2026-01-06,HMRC VAT REPAYMENT ACME TRUST,300.00,1800.00\n"
++        "L3,2026-01-07,FPS CREDIT DIRECTOR ACME TRUST,200.00,2000.00\n"
++        "L4,2026-01-08,UNPAID DD ACME TRUST,100.00,2100.00\n"
++        "L5,2026-01-09,HMRC PAYE ACME TRUST,-100.00,2000.00\n"
++        "L6,2026-01-10,IWOCA ACME TRUST,-50.00,1950.00\n"
++        "L7,2026-01-11,DD ACME TRUST,-25.00,1925.00\n")
++
++
++def _case(tmp_path) -> Path:
++    folder = store.case_folder(store.new_case(label="t36"))
++    src = tmp_path / "statement.csv"
++    src.write_text(BODY)
++    store.import_file(folder, src, "csv")
++    return folder
++
++
++def _lines(folder) -> dict[str, tuple[str, str]]:
++    view = overrides.case_figures(folder)
++    return {t.id: (t.category.value, t.rule_id) for f in view.values() for t in f.statement.transactions}
++
++
++@pytest.mark.invariants
++def test_p16_the_case_pipeline_applies_firm_rules_but_never_to_protected_lines(home, tmp_path):
++    folder = _case(tmp_path)
++    before = _lines(folder)
++    assert before["L1"] == ("other", "v2:default")
++    (home / "firm_rules.yaml").write_text(_text(
++        _rule("trust_in", "ACME TRUST", "in", "revenue_transfer"),
++        _rule("trust_out", "ACME TRUST", "out", "supplier")))
++    after = _lines(folder)
++    assert after["L1"] == ("revenue_transfer", "firm:trust_in")  # applied to the case (R20)
++    assert after["L7"] == ("supplier", "firm:trust_out")  # a debit too, where nothing protects it
++    for line in ("L2", "L3", "L4", "L5", "L6"):  # HMRC, director, returned payment, lender (R21)
++        assert after[line] == before[line], line
++        assert not after[line][1].startswith("firm:"), line
++
++
++@pytest.mark.invariants
++def test_p16_an_override_still_changes_a_protected_line(home, tmp_path):
++    folder = _case(tmp_path)
++    (home / "firm_rules.yaml").write_text(_text(_rule("trust_in", "ACME TRUST", "in", "revenue_transfer")))
++    assert _lines(folder)["L2"] == ("hmrc_repayment", "v2:hmrc_repayment")
++    overrides.add_override(folder, "L2", "revenue_transfer", reason="checked the remittance", name="Pat")
++    assert _lines(folder)["L2"] == ("revenue_transfer", "override:1")  # only a per-line override (R21)
++
++
++@pytest.mark.contracts
++def test_a_malformed_firm_rules_file_stops_the_case_figures(home, tmp_path):
++    folder = _case(tmp_path)
++    (home / "firm_rules.yaml").write_text("rules:\n  - id: x\n")
++    with pytest.raises(firm_rules.FirmRulesError, match="line 2"):
++        overrides.case_figures(folder)
++
++
++@pytest.mark.contracts
++def test_editing_the_firm_rules_file_recategorises_the_case(home, tmp_path):
++    folder = _case(tmp_path)
++    (home / "firm_rules.yaml").write_text(_text(_rule("t", "ACME TRUST", "in", "revenue_transfer")))
++    assert _lines(folder)["L1"] == ("revenue_transfer", "firm:t")
++    (home / "firm_rules.yaml").write_text(_text(_rule("t", "ACME TRUST", "in", "other_explained_in")))
++    assert _lines(folder)["L1"] == ("other_explained_in", "firm:t")
++    (home / "firm_rules.yaml").unlink()
++    assert _lines(folder)["L1"] == ("other", "v2:default")
++
++
++# --- P16, the property ------------------------------------------------------------------
++
++
++def _protected(ruleset: Ruleset, desc: str, amount: float) -> bool:
++    """Whether a protected built-in pattern matches the line (R21's patterns and the cues)."""
++    if ruleset.frozen:
++        return any(_v1_protected(r, desc, amount) for r in ruleset.rules)
++    return any(r.protected and r.category is not None and rule_matches(r, desc, amount) for r in ruleset.rules)
++
++
++def _listed_names(table: str) -> list[str]:
++    data = yaml.safe_load(resources.files("cma.rules").joinpath(f"{table}.yaml").read_bytes())
++    return sorted({n for r in data["rules"] for n in r.get("names", ())})
++
++
++WORDING = ["HMRC VAT", "HMRC REFUND", "UNPAID DD", "RETURNED DD", "DIRECTOR LOAN", "DIRECTOR", "SHAREHOLDER",
++           "CAPITAL INTRODUCED", "CAPITAL INJECTED", "IWOCA", "FUNDING CIRCLE", "LOAN", "FINANCE", "REFUND",
++           "REVERSAL", "TO SAVINGS", "FROM POT", "POT TRANSFER", "OWNER DRAWINGS", "DIVIDEND", "HMRC PAYE",
++           "STRIPE CAPITAL", "SUMUP CASH ADVANCE"]
++
++
++def _firm_rules_for(word: str) -> list[Rule]:
++    """A firm rules file that claims `word` for every category each direction can take."""
++    text = _text(*(
++        _rule(f"r{i}", word, direction, cat.value)
++        for i, (direction, cat) in enumerate(
++            [("in", c) for c in CREDIT_BUCKET] + [("out", c) for c in Category if c not in CREDIT_BUCKET]
++            + [("any", C.OWN_ACCOUNT_TRANSFER), ("any", C.OTHER)])))
++    return list(firm_rules.parse(text, "p16").rules)
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("table", ["v1", "v2"])
++def test_p16_no_protected_line_changes_category_through_any_firm_rule(table):
++    """For any firm rules file (here: every category in every direction, first in the file),
++    no line a protected built-in pattern matches takes a firm rule's category or its rule,
++    with or without a case profile, in either direction. Positive control: unprotected lines
++    the same rules match do take them, so the guard is not a rule that never applies."""
++    ruleset = load_ruleset(table)
++    words = sorted(set(WORDING) | set(_listed_names("v2")))
++    profiles = (None, ProfileNames(directors=("Jane Doe",), own_accounts=("ACME HOLDINGS",)))
++    checked = applied = 0
++    for word in words:
++        firm = _firm_rules_for(word)
++        for amount in (75.0, -75.0):
++            for desc in (word, f"FPS CREDIT {word} REF 42", f"{word} JANE DOE", f"CARD {word} LTD"):
++                for profile in profiles:
++                    t = _t(desc, amount)
++                    folded = desc.upper()
++                    with_firm = classify(t, ruleset, profile=profile, firm_rules=firm)
++                    if _protected(ruleset, folded, amount):
++                        checked += 1
++                        assert with_firm == classify(t, ruleset, profile=profile), (table, desc, amount)
++                        assert not with_firm[1].startswith("firm:"), (table, desc, amount)
++                    elif with_firm[1].startswith("firm:"):
++                        applied += 1
++    assert checked > 200 and applied > 50, (checked, applied)
++
++
++@pytest.mark.contracts
++def test_cli_refuses_a_malformed_firm_rules_file_naming_its_line_without_a_traceback(home, tmp_path):
++    from typer.testing import CliRunner
++
++    from cma.cli import app
++
++    folder = _case(tmp_path)
++    (home / "firm_rules.yaml").write_text("rules:\n  - id: x\n")
++    got = CliRunner().invoke(app, ["case", "figures", folder.name], terminal_width=400)
++    assert got.exit_code == 2, got.output
++    assert "Refused." in got.output and "line 2" in got.output and "missing pattern" in got.output
++    assert "Traceback" not in got.output
++    assert got.exception is None or isinstance(got.exception, SystemExit)
++
++
++# One line of each kind R21 names, with the category the built-in table gives it, written out
++# here rather than read from the table's protected flags, so the guard is checked against R21's
++# own list and not against itself.
++R21_LINES = [
++    ("FPS CREDIT DIRECTOR LOAN J DOE", 400.0, Category.DIRECTOR_FUNDING),      # director
++    ("CAPITAL INTRODUCED J DOE", 400.0, Category.DIRECTOR_FUNDING),            # capital
++    ("SHAREHOLDER LOAN J DOE", 400.0, None),                                   # shareholder
++    ("IWOCA LOAN ADVANCE", 400.0, Category.LOAN_DRAWDOWN),                     # lender, money in
++    ("FUNDING CIRCLE", -400.0, Category.LOAN_REPAYMENT),                       # lender, money out
++    ("HMRC VAT REPAYMENT", 400.0, Category.HMRC_REPAYMENT),                    # HMRC, money in
++    ("HMRC PAYE", -400.0, Category.HMRC_PAYE),                                 # HMRC, money out
++    ("UNPAID DD", 400.0, Category.RETURNED_DD),                                # returned payment
++]
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("table", ["v1", "v2"])
++@pytest.mark.parametrize("desc,amount,category", R21_LINES)
++def test_r21_each_named_kind_keeps_its_category_under_a_firm_rule_claiming_it(table, desc, amount, category):
++    ruleset = load_ruleset(table)
++    t = _t(desc, amount)
++    bare = classify(t, ruleset)
++    if table == "v2" and category is not None:
++        assert bare[0] == category, bare  # the line is the kind it is meant to be
++    if bare[1].endswith(":default"):
++        # v1, the previous release's table, has no pattern for some of these (FUNDING CIRCLE
++        # out): no built-in pattern matches, so R21 protects nothing; v2 has one for each.
++        assert table == "v1", bare
++        return
++    claim = Category.REVENUE_TRANSFER if amount > 0 else Category.SUPPLIER
++    rules = firm_rules.parse(_text(_rule("claim", desc, "in" if amount > 0 else "out", claim.value)), "r21").rules
++    assert classify(t, ruleset, firm_rules=list(rules)) == bare, (table, desc)
