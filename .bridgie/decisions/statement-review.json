@@ -6719,12 +6719,12 @@
         "kill task"
       ],
       "allow_free_text": true,
-      "status": "pending",
-      "answer": null,
-      "free_text": null,
-      "decided_by": null,
-      "decided_at": null,
-      "effect": null,
+      "status": "answered",
+      "answer": "retry with guidance",
+      "free_text": "Recommended option (standing approval 2026-11-19). R41's clause 'after removing paired own-account transfers' needs R8/R9 pairing, which the plan put in T34 though T34 depends on T33. Build the own-account pairing in the case pipeline now: pair a debit in one of the case's accounts with a credit of the same amount in another account within the configured days (R8), marking both lines as own-account transfers before compute_case merges the accounts; a debit with more than one candidate credit stays unpaired with every candidate listed for judgement (R9). Combined flows then leave paired transfers out (R41). Add a test where an inter-account transfer that no rule or profile name catches is removed from combined money in, and one where two equal candidates leave it unpaired. T34 keeps its own tests and edge cases on top of this.",
+      "decided_by": "Claude",
+      "decided_at": "2026-11-22T12:39:15.685Z",
+      "effect": "task T33 gets one more attempt",
       "created_at": "2026-11-22T12:38:42.365Z"
     }
   ]
