@@ -1,0 +1,78 @@
+{
+  "task": "T27",
+  "criteria": [
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "sign_off rebuilds the preview inside log.writer() via _build (pack.py:373-379, overrides.case_figures raises ReconciliationError); CLI maps it to exit 2 'do not reconcile' (cli.py case_sign), workspace to 409 (signoff.py _refusal). test_r3_reconciliation_failure_is_refused PASSED (specified-3.log).",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R22",
+      "tier": "adversarial",
+      "check": "_signer requires a typed name with a letter or digit, <=200 chars (pack.py _signer); signoff dict holds name, store._os_user(), UTC _now(), snapshot, preview_position, and is written into evidence.json and the signed_off entry. The snapshot covers every R22 input: statements, ruleset, firm rules, profile, override log position, thresholds, memo field map, policy hash, show_policy_verdict, package version (pack.py:348-367). test_sign_off_writes_memo_and_evidence_once_bound_to_the_snapshot and test_r22_a_sign_off_needs_a_typed_name PASSED.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R23",
+      "tier": "adversarial",
+      "check": "p.snapshot != snapshot is refused with changed_inputs naming accounts and inputs by title (pack.py changed_inputs, sign_off); CLI exit 2 and workspace 409 carry a 'changed' list. Six parametrised stale cases plus the CLI and workspace stale tests PASSED.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R24",
+      "tier": "adversarial",
+      "check": "SIGN_WORDING (pack.py:441-442), the CLI prompt 'Sign off the figures of snapshot ...', and the workspace button 'Sign off these figures' are worded as signing off figures and say it does not approve the loan. JUDGEMENT_FIELDS stay blank (pack.py:61, 172). test_cli_case_sign_is_interactive_and_worded_as_signing_off_figures and test_workspace_preview_page_offers_the_sign_off_form_and_escapes_the_text PASSED; there is no --yes (exit 2).",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R28",
+      "tier": "adversarial",
+      "check": "sign_off refuses when not p.grounded, before anything is written (pack.py sign_off); the preview page offers no form when not grounded (signoff.py html). test_r28_guard_failure_is_refused PASSED.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R42",
+      "tier": "adversarial",
+      "check": "pack_written and signed_off are appended after os.rename in _write_pack (pack.py sign_off). A pack-write append that fails removes the pack, except SaveNotConfirmed. _complete records a missing sign-off from evidence.json under the same name. The verify-252 dead end is closed: cli.case_repair calls CaseLog.drop_torn_entry (cli.py case_repair -> case.py:1060), which re-verifies under writer() and refuses a non-torn broken log. The partly written and whole-line torn signed_off cases, the torn pack_written case, the failed folder sync, and the Tier 1 event-kind test all PASSED with the real append (specified-3.log, 46 test_signoff PASSED, 0 not passed).",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R43",
+      "tier": "adversarial",
+      "check": "require_intact runs under log.writer() and judges the whole log (pack.py sign_off; case.py:763-775). A hand-changed entry 2 and a torn tail are refused naming first_bad: CLI exit 3, workspace 409 with first_bad. The torn remedy (TORN_REMEDY / repair hint) leads to a working production repair, tested end to end from refusal through repair to a recorded sign-off. All PASSED.",
+      "result": "pass",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/pack.py",
+      "line": 692,
+      "criterion": "R23",
+      "claim": "_complete records the pack's earlier sign-off without checking that the snapshot still matches the case. The CLI still asks the person to type a name and confirm 'Sign off the figures of snapshot X' now, so a confirmation given after the case changed is accepted silently. The recorded entry carries the original 'at', so this is arguably not a new sign-off, but the person is never told that the case has since changed.",
+      "repro": "Kill the process at the SIGN_EVENT append (as _die_at does in the tests), then overrides.add_override(folder, 'L2', ...). Run `cma case sign <id> --snapshot <old>` and enter Ann/y: exit 0, 'now recorded', and nothing mentions that the override log changed."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 802,
+      "criterion": "R42",
+      "claim": "case_repair shows the torn entry from a verify() taken outside the writer lock. drop_torn_entry then re-checks only that the head position matches `expected`, not that the torn tail is the one the person was shown. A different torn tail at the same position, left by another writer between the prompt and the drop, is dropped under this person's confirmation.",
+      "repro": "Start `cma case repair` on a log torn at entry N, and wait at the name prompt. A second process takes the case, its append also fails, and it leaves a different tail at N. Answer the prompts: drop_torn_entry(expected=N-1) drops the second tail, which the person never saw."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

@@ -416,12 +416,12 @@
         "T22",
         "T21"
       ],
-      "status": "verify",
+      "status": "passed",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T27",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-252/evidence.json",
-      "escalation": "attempt 2 of 3 fail: R42 fail (Both entries are appended after os.rename (pack.py:678-688); the Tier 1 event-kind test PASSED. The escalation's partial-failure fix (_complete, pack.py:692-736) needs an intact log, but a signed_off append that fails after part of its line is written (case.py:1220-1272, the full-disk or lock-replaced cases the escalation names) leaves a torn entry, and no production code calls drop_torn_entry. The snapshot stays permanently unsignable.); R43 not_proven (require_intact is called under log.writer() (pack.py:647-648); a broken chain and a torn last entry are refused naming first_bad, CLI exit 3, workspace 409 with first_bad (tests PASSED, specified-3.log:2150-2151, 2167). The refusal is correct, but its only remedy (a confirmed repair, R42) has no caller, so the requirement is not shown to work end to end for a torn entry the sign-off itself leaves.); major: The fix for verify-251 finding 1 covers only a signed_off append that writes no bytes. When it fails after part of its line is on disk (disk full, a lock file replaced mid-write, the head record's staging failing; case.py:1220-1272 raise SaveNotRecorded and keep the torn tail saying 'the next holder confirms dropping it'), the log is torn past the recorded pack_written. Every later sign_off then fails at require_intact (pack.py:648) with CaseLogBroken, and no CLI or workspace path calls CaseLog.drop_torn_entry (grep finds only its definition, case.py:1060). The pack stays with an evidence.json sign-off the log never records, and the snapshot cannot be signed off with the tool: the same dead end the escalation named for 'SaveNotRecorded from a full disk'. The new test test_r42_a_sign_off_entry_not_recorded_can_be_recorded_again replaces CaseLog.append outright, so it never covers a partly written line, and the claim's 'not_reproduced' disposition overreaches. at src/cma/pack.py:687; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-253/evidence.json",
+      "escalation": null
     },
     {
       "id": "T25",
