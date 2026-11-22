@@ -1,0 +1,127 @@
+{
+  "task": "T27",
+  "criteria": [
+    {
+      "id": "R3",
+      "tier": "adversarial",
+      "check": "sign_off rebuilds through _build (pack.py:664), which raises ReconciliationError; CLI exit 2 (cli.py case_sign) and workspace 409 (signoff.py _refusal). test_r3_reconciliation_failure_is_refused PASSED in specified-3.log:2153.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R22",
+      "tier": "adversarial",
+      "check": "_signer requires a typed name (pack.py _signer); signoff dict records name, store._os_user(), _now() UTC and the snapshot (pack.py:671); snapshot_inputs (pack.py:348-367) covers statement hashes, ruleset, firm rules, profile, override log position, thresholds, field map, policy hash, show_policy_verdict and package version. Tests test_sign_off_writes_memo_and_evidence_once_bound_to_the_snapshot and test_r22_a_sign_off_needs_a_typed_name[*] PASSED (specified-3.log:2137-2149).",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R23",
+      "tier": "adversarial",
+      "check": "p.snapshot != snapshot raises SignOffRefused with changed_inputs naming what changed (pack.py:665-669); parametrised stale tests, CLI and workspace stale tests PASSED (specified-3.log:2159, 2161).",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R24",
+      "tier": "adversarial",
+      "check": "SIGN_WORDING, the CLI prompt and the workspace form say 'sign off the figures' and 'does not approve the loan'; memo.md is the T24 preview text with judgement fields blank. test_cli_case_sign_is_interactive_and_worded_as_signing_off_figures and the workspace page test PASSED.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R28",
+      "tier": "adversarial",
+      "check": "if not p.grounded, refuse (pack.py:670); test_r28_guard_failure_is_refused PASSED (specified-3.log:2152).",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "R42",
+      "tier": "adversarial",
+      "check": "Both entries are appended after os.rename (pack.py:678-688); the Tier 1 event-kind test PASSED. The escalation's partial-failure fix (_complete, pack.py:692-736) needs an intact log, but a signed_off append that fails after part of its line is written (case.py:1220-1272, the full-disk or lock-replaced cases the escalation names) leaves a torn entry, and no production code calls drop_torn_entry. The snapshot stays permanently unsignable.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "R43",
+      "tier": "adversarial",
+      "check": "require_intact is called under log.writer() (pack.py:647-648); a broken chain and a torn last entry are refused naming first_bad, CLI exit 3, workspace 409 with first_bad (tests PASSED, specified-3.log:2150-2151, 2167). The refusal is correct, but its only remedy (a confirmed repair, R42) has no caller, so the requirement is not shown to work end to end for a torn entry the sign-off itself leaves.",
+      "result": "not_proven",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-252/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-252/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-252/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-252/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-252/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-252/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-252/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/pack.py",
+      "line": 687,
+      "criterion": "R42",
+      "claim": "The fix for verify-251 finding 1 covers only a signed_off append that writes no bytes. When it fails after part of its line is on disk (disk full, a lock file replaced mid-write, the head record's staging failing; case.py:1220-1272 raise SaveNotRecorded and keep the torn tail saying 'the next holder confirms dropping it'), the log is torn past the recorded pack_written. Every later sign_off then fails at require_intact (pack.py:648) with CaseLogBroken, and no CLI or workspace path calls CaseLog.drop_torn_entry (grep finds only its definition, case.py:1060). The pack stays with an evidence.json sign-off the log never records, and the snapshot cannot be signed off with the tool: the same dead end the escalation named for 'SaveNotRecorded from a full disk'. The new test test_r42_a_sign_off_entry_not_recorded_can_be_recorded_again replaces CaseLog.append outright, so it never covers a partly written line, and the claim's 'not_reproduced' disposition overreaches.",
+      "repro": "Build a case and preview; make the head record's staging write raise OSError(ENOSPC) only during the signed_off append (for example, patch os.open on the head's temporary file once pack_written is recorded); call pack.sign_off: SaveNotRecorded, and caselog.for_case(folder).verify() reports a torn entry at the signed_off position. Call pack.sign_off again with the same name: CaseLogBroken(torn=True). `cma case sign` exits 3, the workspace answers 409 'Nothing can be signed off until it is resolved', and no command resolves it."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/pack.py",
+      "line": 604,
+      "criterion": "R42",
+      "claim": "_sync_dir(packs) runs after os.rename and outside the try/except that removes the pack folder, so a failed folder fsync leaves packs/<snapshot> in place with no pack_written entry. The OSError reaches _case_errors, which prints 'nothing was recorded in the case', and the next sign-off asks the user to move the folder aside by hand. This contradicts the module's stated rule that the log and the folder agree.",
+      "repro": "Patch pack._sync_dir so it raises OSError(EIO) when called with the packs folder (the second call); call sign_off: OSError, packs/<snapshot> exists, and no pack_written entry is logged; a second sign_off raises SignOffRefused '... records no pack written for it ... move that folder aside'."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

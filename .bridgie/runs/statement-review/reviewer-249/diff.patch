@@ -1,0 +1,1353 @@
+diff --git a/README.md b/README.md
+index cb5969b..3bb4135 100644
+--- a/README.md
++++ b/README.md
+@@ -102,6 +102,16 @@ cma review <id>                                   # --no-browser to only print t
+ # file, only a preview entry in the case log. Exit 1 when the text fails the guard.
+ cma case preview <id>
+ 
++# Sign off the figures of the latest preview (or --snapshot <hash>): it asks for your typed
++# name and confirms, records it with your operating-system user and the UTC time, and writes
++# memo.md and evidence.json once to packs/<snapshot> in the case folder. Signing off the
++# figures does not approve the loan. Refused, writing nothing, when the case changed since
++# the preview (it names what), when the case log is broken (exit 3, naming the first bad
++# entry), when the figures do not reconcile or the text fails the guard, or when that
++# snapshot's pack is already written; a pack is never overwritten. There is no --yes. The
++# workspace (`cma review`) offers the same preview and sign-off from the case page.
++cma case sign <id>
++
+ # Check a case's hash-chained log (log.jsonl) against its head file. Exit 3 names the
+ # first entry that was changed, removed, reordered or left half written.
+ cma case check private/cma/cases/<id>
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index c5c7a0f..3ae4042 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -707,6 +707,59 @@ def case_preview(case_id: str = typer.Argument(..., metavar="CASE", help="The ca
+         raise typer.Exit(code=1)
+ 
+ 
++@case_app.command("sign")
++def case_sign(
++    case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
++    snapshot: str | None = typer.Option(
++        None, "--snapshot", help="The snapshot `cma case preview` printed; the latest preview's if not given."),
++):
++    """Sign off the figures of a preview, with your typed name, and write the pack once to
++    packs/<snapshot> (R22, R24, R26). Interactive only: it asks for your name and confirms.
++    Signing off the figures does not approve the loan. Refused, writing nothing, when the case
++    changed since the preview (naming what), when the case log is broken (naming the first bad
++    entry), when the figures do not reconcile or the text fails the grounding guard, or when
++    the snapshot's pack is already written. Exit 2 refused, 3 broken log, 4 not recorded."""
++    from . import case as caselog
++    from . import pack, store
++
++    with _case_errors():
++        folder = store.case_folder(case_id)
++        if snapshot is None:
++            latest = pack.latest_preview(caselog.for_case(folder).entries())
++            if latest is None:
++                console.print("[red]Refused.[/red] this case has no preview yet: run `cma case preview` "
++                              "first, read it, then sign off its figures.")
++                raise typer.Exit(code=2)
++            snapshot = latest[1]["snapshot"]
++        console.print(f"Preview snapshot {escape(snapshot)}")
++        console.print(pack.SIGN_WORDING)
++        name = typer.prompt("Your name, to sign off the figures")
++        if not typer.confirm(f"Sign off the figures of snapshot {snapshot[:12]} as {name}?", default=False):
++            console.print("Not signed off; nothing was written.")
++            raise typer.Exit(code=1)
++        try:
++            s = pack.sign_off(folder, case_id, snapshot, name)
++        except pack.SignOffRefused as e:
++            console.print(f"[red]Refused.[/red] {escape(str(e))}; nothing was written.")
++            raise typer.Exit(code=2) from None
++        except ReconciliationError as e:  # R3
++            console.print(f"[red]Refused.[/red] {escape(str(e))}; nothing was written.")
++            raise typer.Exit(code=2) from None
++        except (pack.FieldMapError, pack.PreviewError, StatementError, AmountError, RulesetError,
++                ThresholdsError, PolicyError, FirmConfigError) as e:
++            console.print(f"[red]Refused.[/red] {escape(str(e))}; nothing was written.")
++            raise typer.Exit(code=2) from None
++    if s.completed:
++        console.print(f"The pack for snapshot {s.snapshot} was already written; its sign-off by {escape(s.name)} "
++                      f"(operating-system user {escape(s.os_user)}) at {s.at} was not recorded, and is now "
++                      f"recorded as case log entry {s.position}. The pack was not rewritten.", soft_wrap=True)
++        return
++    console.print(f"Figures signed off by {escape(s.name)} (operating-system user {escape(s.os_user)}) "
++                  f"at {s.at}, bound to snapshot {s.snapshot}.", soft_wrap=True)
++    console.print(f"Pack written once to {escape(str(s.pack))}: {', '.join(s.files)}; recorded as case log "
++                  f"entry {s.position}.", soft_wrap=True)
++
++
+ @case_app.command("purge")
+ def case_purge(
+     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
+diff --git a/src/cma/pack.py b/src/cma/pack.py
+index 1ac858c..9bf93a7 100644
+--- a/src/cma/pack.py
++++ b/src/cma/pack.py
+@@ -20,6 +20,11 @@
+   the firm rules file, the profile, the override log position, the thresholds, the memo field
+   map, the packaged policy's hash, the show_policy_verdict setting and the package version.
+ 
++`cma case sign` and the workspace's sign-off form (sign_off, below) sign off the figures of
++one such preview, bound to its snapshot, and write memo.md and evidence.json once to
++packs/<snapshot>, appending the pack write and the sign-off to the case log after the rename
++(R22, R23, R24, R26, R28, R42, R43).
++
+ Nothing here does arithmetic on money: figures come from overrides.case_figures and the
+ outcome from policy.evaluate. The preview writes no file; it appends one `preview` entry to
+ the case log, holding the snapshot and the hashes it is made of (R42), while it holds the
+@@ -70,6 +75,8 @@ class FieldMapError(ValueError):
+ class PreviewError(ValueError):
+     """The case cannot be previewed (no statement yet); nothing was recorded."""
+ 
++# (SignOffRefused, for a sign-off, is defined with sign_off below.)
++
+ 
+ # --- the memo field map -----------------------------------------------------------------
+ 
+@@ -242,6 +249,7 @@ class AccountPreview:
+     sentences: dict[str, str]  # field id -> its sentence, for the fields figures map to
+     policy_lines: list[str]
+     guard: GuardResult | None = None
++    figures: overrides.CaseFigures | None = None  # what the figures were computed from, for the pack
+ 
+ 
+ @dataclass
+@@ -383,7 +391,7 @@ def _build(folder: Path, case_id: str, entries) -> Preview:
+         accounts.append(AccountPreview(
+             a, f.statement_sha256, start, end, f.metrics, result,
+             {mf.id: field_sentence(mf, f.metrics, start, end) for mf in field_map.fields if mf.figures},
+-            [rule_sentence(r, by_id) for r in result.rules] if result else []))
++            [rule_sentence(r, by_id) for r in result.rules] if result else [], figures=f))
+         if result:
+             accounts[-1].policy_lines.insert(0, f"Overall outcome: {result.overall.value}.")
+     inputs = snapshot_inputs(folder, entries, every, profile, config, field_map, thresholds.sha256,
+@@ -405,3 +413,324 @@ def build_preview(folder: Path, case_id: str) -> Preview:
+         save.data = {"snapshot": p.snapshot, "inputs": p.inputs, "grounded": p.grounded,
+                      "policy_check": "shown" if p.policy_shown else "hidden"}
+     return p
++
++
++# --- sign-off ------------------------------------------------------------------------------
++#
++# The underwriter signs off the figures of a preview they saw, never the loan (R24). A
++# sign-off holds the case as a writer from start to end, so it judges the whole log (R43):
++#
++# 1. the case log is checked whole; a broken or incomplete log is refused naming the first
++#    bad entry (CaseLogBroken), and nothing is written;
++# 2. a pack folder a crash left half-written (packs/.part-*) is removed;
++# 3. the preview the underwriter signed is found in the log by its snapshot; the case's
++#    inputs are read again and compared with the ones that preview recorded, and any change
++#    is refused naming what changed (R23); reconciliation runs again (R3) and the text is
++#    checked by the guard again (R28);
++# 4. a pack already written for the snapshot is never overwritten (R26);
++# 5. memo.md and evidence.json are made in full in packs/.part-<random>, synced, and the
++#    folder is renamed to packs/<snapshot>; only then are the pack write and the sign-off
++#    appended to the case log (R42). If the log refuses the pack write, the folder is
++#    removed again, so the log and the folder agree.
++
++PACKS = "packs"
++PART = ".part-"  # a pack folder being written; never a pack
++PACK_FILES = ("memo.md", "evidence.json")
++PACK_EVENT, SIGN_EVENT = "pack_written", "signed_off"
++MAX_NAME = 200
++SIGN_WORDING = ("Sign off the figures: you confirm these figures and their lines were checked. This does not "
++                "approve the loan; the recommendation and every judgement field stay blank for you.")
++INPUT_TITLES = {
++    "ruleset": "the ruleset",
++    "firm_rules_sha256": "the firm rules file",
++    "profile_sha256": "the case profile",
++    "thresholds_sha256": "the indicator thresholds",
++    "memo_field_map_sha256": "the memo field map",
++    "policy_sha256": "the policy file",
++    "show_policy_verdict": "the show_policy_verdict setting",
++    "package_version": "the package version",
++}
++
++
++class SignOffRefused(ValueError):
++    """The sign-off was refused; no pack was written and nothing was recorded."""
++
++    def __init__(self, message: str, changed: list[str] | None = None):
++        super().__init__(message)
++        self.changed = changed or []
++
++
++@dataclass(frozen=True)
++class Signed:
++    case: str
++    snapshot: str
++    name: str
++    os_user: str
++    at: str  # UTC
++    pack: Path
++    files: dict[str, str]  # file name -> sha256
++    position: int  # the case log position of the sign-off entry
++    completed: bool = False  # True when this recorded the sign-off of a pack already written
++
++
++def changed_inputs(signed: dict[str, Any], now: dict[str, Any]) -> list[str]:
++    """What differs between the inputs a preview recorded and the case's inputs now, in words:
++    accounts by key, and every other input by what it is (R23). Never a name or a value."""
++    out = []
++    old_s, new_s = signed.get("statements") or {}, now.get("statements") or {}
++    for a in sorted(set(old_s) | set(new_s)):
++        if a not in old_s:
++            out.append(f"a statement was imported for account {a}")
++        elif a not in new_s:
++            out.append(f"the statement for account {a} is no longer in the case")
++        elif old_s[a] != new_s[a]:
++            out.append(f"the statement for account {a} changed")
++    old_o, new_o = signed.get("override_log") or {}, now.get("override_log") or {}
++    if old_o != new_o:
++        if old_o.get("position") != new_o.get("position"):
++            out.append(f"the override log (it held {old_o.get('position')} entries, it now holds "
++                       f"{new_o.get('position')})")
++        else:
++            out.append("the override log")
++    for key, title in INPUT_TITLES.items():
++        if signed.get(key) != now.get(key):
++            out.append(title)
++    if not out and signed != now:  # an input this release does not know by name
++        out.append("the case's inputs")
++    return out
++
++
++def _signer(name: Any) -> str:
++    if not isinstance(name, str) or not any(ch.isalnum() for ch in name):
++        raise SignOffRefused("a sign-off needs your name, typed: at least one letter or digit")
++    name = " ".join(name.split())
++    if len(name) > MAX_NAME:
++        raise SignOffRefused(f"the name is longer than {MAX_NAME} characters")
++    return name
++
++
++def latest_preview(entries) -> tuple[int, dict[str, Any]] | None:
++    """The case log position and data of the last preview entry, or None."""
++    for n in range(len(entries), 0, -1):
++        e = entries[n - 1]
++        if e.event == EVENT and isinstance(e.data.get("snapshot"), str):
++            return n, e.data
++    return None
++
++
++def _preview_entry(entries, snapshot: str) -> dict[str, Any] | None:
++    for e in reversed(entries):
++        if e.event == EVENT and e.data.get("snapshot") == snapshot:
++            return e.data
++    return None
++
++
++def _remove_leftovers(packs: Path) -> None:
++    """Remove pack folders a crash left half-written: they were never renamed into place, so
++    nothing refers to them. A folder at a snapshot's path is never removed, even one the case
++    log does not record (sign_off refuses it, saying so)."""
++    import shutil
++
++    if not packs.is_dir():
++        return
++    for child in packs.iterdir():
++        if child.name.startswith(PART) and child.is_dir() and not child.is_symlink():
++            shutil.rmtree(child, ignore_errors=True)
++
++
++def _evidence(p: Preview, signoff: dict[str, Any], config: firm.FirmConfig) -> dict[str, Any]:
++    """The pack's evidence: ids, figures, hashes and the sign-off; no description."""
++    from . import __version__
++    from .models import EVIDENCE_SCHEMA_VERSION
++
++    rules = policy.load_policy()
++    accounts = []
++    for a in p.accounts:
++        f = a.figures
++        lines = [{"id": t.id, "category": t.category.value if t.category else None, "rule_id": t.rule_id}
++                 for t in f.statement.transactions] if f else []
++        accounts.append({
++            "account": a.account, "statement_sha256": a.statement_sha256, "start": a.start, "end": a.end,
++            "transactions": len(lines), "lines": lines, "overridden": dict(f.overridden) if f else {},
++            "metrics": [m.model_dump(mode="json") for m in a.metrics],
++            "monthly_summary": [r.model_dump(mode="json") for r in f.monthly] if f else [],
++            "policy": a.policy.evidence_dump(mode="json") if a.policy else None,
++            "guard": {**a.guard.model_dump(mode="json"), "grounded": _grounded(a.guard)} if a.guard else None,
++        })
++    return {
++        "schema_version": EVIDENCE_SCHEMA_VERSION,
++        "case": p.case,
++        "snapshot": p.snapshot,
++        "inputs": p.inputs,
++        "ruleset": p.inputs["ruleset"],
++        "demo": p.demo,
++        "memo_field_map": {"name": p.field_map.name, "sha256": p.field_map.sha256},
++        "memo_fields": p.fields,
++        "accounts": accounts,
++        "policy_check": ({"shown": True, "label": policy.ILLUSTRATIVE_LABEL, "policy": rules.get("name"),
++                          "policy_sha256": p.inputs["policy_sha256"]} if p.policy_shown
++                         else {"shown": False, "policy_sha256": p.inputs["policy_sha256"]}),
++        "grounded": p.grounded,
++        "egress": {"destination": "offline", "offline_lock": config.offline_lock is not False,
++                   "recorded": "the pack is written from the figures layer; no model is asked"},
++        "sign_off": signoff,
++        "package_version": __version__,
++    }
++
++
++def _write_pack(packs: Path, snapshot: str, files: dict[str, bytes]) -> Path:
++    """Make every file of the pack in a folder of its own, sync it, and rename the folder to
++    packs/<snapshot>: a reader sees no pack or the whole pack, never part of one."""
++    import os
++    import shutil
++    import tempfile
++
++    packs.mkdir(mode=store.DIR_MODE, exist_ok=True)
++    target = packs / snapshot
++    part = Path(tempfile.mkdtemp(prefix=PART, dir=packs))
++    try:
++        os.chmod(part, store.DIR_MODE)
++        for name, data in files.items():
++            fd = os.open(part / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, store.FILE_MODE)
++            with os.fdopen(fd, "wb") as fh:
++                fh.write(data)
++                fh.flush()
++                os.fsync(fh.fileno())
++        _sync_dir(part)
++        if target.exists() or target.is_symlink():  # held as a writer, so no tool of ours races this
++            raise SignOffRefused(f"a pack is already written for snapshot {snapshot} ({PACKS}/{snapshot}); "
++                                 "a pack is never overwritten")
++        os.rename(part, target)
++    except BaseException:
++        shutil.rmtree(part, ignore_errors=True)
++        raise
++    _sync_dir(packs)
++    return target
++
++
++def _sync_dir(path: Path) -> None:
++    import os
++
++    if os.name == "nt":  # a folder cannot be opened to sync on Windows
++        return
++    fd = os.open(path, os.O_RDONLY)
++    try:
++        os.fsync(fd)
++    finally:
++        os.close(fd)
++
++
++def sign_off(folder: Path, case_id: str, snapshot: str, name: str) -> Signed:
++    """Sign off the figures of the preview whose snapshot is `snapshot`, as `name`, and write
++    its pack once. Refused, writing nothing, when the log is broken (CaseLogBroken, naming the
++    first bad entry), when no preview has that snapshot, when anything in the snapshot has
++    changed since (naming what), when the buckets do not reconcile (ReconciliationError),
++    when the text fails the guard, or when the snapshot's pack is already written."""
++    import shutil
++
++    from . import case as caselog
++    from .overrides import _now
++
++    folder = Path(folder)
++    name = _signer(name)
++    if not isinstance(snapshot, str) or not re.fullmatch(r"[0-9a-f]{64}", snapshot):
++        raise SignOffRefused("name the preview you sign off by its snapshot (64 hex characters)")
++    log = caselog.for_case(folder)
++    packs = folder / PACKS
++    with log.writer():
++        head = log.require_intact()  # R43: the whole log, judged while holding the case
++        entries = log.entries()
++        written = {e.data.get("snapshot"): n for n, e in enumerate(entries, start=1) if e.event == PACK_EVENT}
++        signed = _preview_entry(entries, snapshot)
++        if signed is None:
++            raise SignOffRefused(f"no preview of this case has snapshot {snapshot}; preview the case "
++                                 "(cma case preview) and sign off that preview")
++        if any(e.event == SIGN_EVENT and e.data.get("snapshot") == snapshot for e in entries):
++            raise SignOffRefused(f"the figures of snapshot {snapshot} are already signed off and its pack written "
++                                 f"({PACKS}/{snapshot}); a pack is never overwritten")
++        if snapshot in written:  # the pack write is recorded and its sign-off entry is not
++            return _complete(log, packs, entries, head, case_id, snapshot, name, written[snapshot])
++        if (packs / snapshot).exists() or (packs / snapshot).is_symlink():
++            # Not a pack the log records: most likely the tool stopped between renaming the pack
++            # into place and recording it. It is never removed or replaced here (R26).
++            raise SignOffRefused(f"{PACKS}/{snapshot} is already there but the case log records no pack written "
++                                 "for it, most likely because the tool stopped after writing it and before "
++                                 "recording it. Nothing was signed off; a pack is never overwritten, so move that "
++                                 "folder aside and sign off again")
++        p = _build(folder, case_id, entries)  # R3: refused when the buckets do not reconcile
++        if p.snapshot != snapshot:
++            what = changed_inputs(signed.get("inputs") or {}, p.inputs)
++            raise SignOffRefused("the case has changed since that preview was built: " + "; ".join(what)
++                                 + ". Nothing was signed off; preview the case again and sign off the new "
++                                 "preview", changed=what)
++        if not p.grounded:
++            raise SignOffRefused("the preview's text fails the grounding guard (R28); no pack can be "
++                                 "signed off from it")
++        signoff = {"name": name, "os_user": store._os_user(), "at": _now(), "snapshot": snapshot,
++                   "preview_position": next(n for n in range(len(entries), 0, -1)
++                                            if entries[n - 1].event == EVENT
++                                            and entries[n - 1].data.get("snapshot") == snapshot),
++                   "wording": SIGN_WORDING}
++        evidence = json.dumps(_evidence(p, signoff, firm.load()), indent=2, sort_keys=True, ensure_ascii=False)
++        files = {"memo.md": p.text.encode("utf-8"), "evidence.json": (evidence + "\n").encode("utf-8")}
++        shas = {k: hashlib.sha256(v).hexdigest() for k, v in files.items()}
++        _remove_leftovers(packs)  # only once the sign-off is taken, so a refusal changes nothing
++        target = _write_pack(packs, snapshot, files)
++        try:
++            log.append(PACK_EVENT, {"snapshot": snapshot, "pack": f"{PACKS}/{snapshot}", "files": shas},
++                       expected=head.position)
++        except caselog.SaveNotConfirmed:
++            raise  # its entry may be in the log: the pack stays, and `cma case check` says
++        except BaseException:
++            shutil.rmtree(target, ignore_errors=True)  # not recorded: no pack without its entry
++            raise
++        entry = log.append(SIGN_EVENT, {k: signoff[k] for k in ("name", "os_user", "at", "snapshot")}
++                           | {"pack": f"{PACKS}/{snapshot}", "files": shas}, expected=head.position + 1)
++    return Signed(case_id, snapshot, name, signoff["os_user"], signoff["at"], target, shas, entry.seq)
++
++
++def _complete(log, packs: Path, entries, head, case_id: str, snapshot: str, name: str, position: int) -> Signed:
++    """Record the sign-off of a pack whose write the case log records and whose sign-off entry
++    it does not: the second append failed (a full disk, a refused lock re-check, a stop). The
++    pack is never rewritten: the sign-off recorded is the one its evidence.json carries, once
++    the pack's files are the ones the pack-write entry hashed, and only for the same typed name
++    (R22, R26, R42). The snapshot is the one the pack was written from, so this records what was
++    signed then, whatever the case holds now."""
++    data = entries[position - 1].data
++    shas = data.get("files") if isinstance(data.get("files"), dict) else {}
++    target = packs / snapshot
++    if not target.is_dir() or target.is_symlink():
++        raise SignOffRefused(f"the pack for snapshot {snapshot} is recorded as written (case log entry {position}) "
++                             f"but its sign-off was not recorded, and {PACKS}/{snapshot} is not there to finish "
++                             "recording it; put the pack back to sign off its figures")
++    found = {}
++    for fname in shas:
++        f = target / fname
++        found[fname] = hashlib.sha256(f.read_bytes()).hexdigest() if f.is_file() and not f.is_symlink() else None
++    if not shas or found != shas:
++        raise SignOffRefused(f"the pack for snapshot {snapshot} is recorded as written (case log entry {position}) "
++                             f"but its sign-off was not recorded, and the files in {PACKS}/{snapshot} are not the "
++                             "ones that entry recorded; a pack is never overwritten")
++    try:
++        signoff = json.loads((target / "evidence.json").read_text(encoding="utf-8")).get("sign_off")
++    except (ValueError, AttributeError):
++        signoff = None
++    if not isinstance(signoff, dict) or not all(isinstance(signoff.get(k), str)
++                                                for k in ("name", "os_user", "at", "snapshot")) \
++            or signoff["snapshot"] != snapshot:
++        raise SignOffRefused(f"the pack for snapshot {snapshot} is recorded as written (case log entry {position}) "
++                             "but its evidence.json holds no sign-off for that snapshot")
++    if signoff["name"] != name:
++        raise SignOffRefused(f"the pack for snapshot {snapshot} is written (case log entry {position}) but its "
++                             f"sign-off was not recorded. The pack was signed off as {signoff['name']}; sign off "
++                             "again under that name to record it. A pack is never overwritten, so no other "
++                             "sign-off is taken for this snapshot")
++    from .overrides import _now
++
++    entry = log.append(SIGN_EVENT, {k: signoff[k] for k in ("name", "os_user", "at", "snapshot")}
++                       | {"pack": f"{PACKS}/{snapshot}", "files": shas,
++                          "recorded": {"os_user": store._os_user(), "at": _now(),
++                                       "after_pack_entry": position}},
++                       expected=head.position)
++    return Signed(case_id, snapshot, signoff["name"], signoff["os_user"], signoff["at"], target, dict(shas),
++                  entry.seq, completed=True)
+diff --git a/src/cma/review/server.py b/src/cma/review/server.py
+index 88d016e..c7a89d3 100644
+--- a/src/cma/review/server.py
++++ b/src/cma/review/server.py
+@@ -18,8 +18,9 @@ renders what the figures layer computed; it computes no money. Its request log i
+ Refusals say only that the request was refused, never what the case holds.
+ 
+ Every page and data path is GET only. The override form and the stale overrides' forms (R17,
+-R19; edit.py) are the only writes: POST to /override and /stale from the page, or to
+-/api/override and /api/stale for data, each with the token and the workspace's own Origin,
++R19; edit.py), and the preview and sign-off forms (R22, R26; signoff.py) are the only writes:
++POST to /override, /stale, /preview and /sign from the page, or to /api/override, /api/stale,
++/api/preview and /api/sign for data, each with the token and the workspace's own Origin,
+ a body of at most MAX_BODY bytes with its Content-Length (never chunked), and a form or JSON
+ content type.
+ """
+@@ -60,7 +61,10 @@ TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf
+ INDEX = "index.html"
+ REFUSED = b"Refused: this workspace answers only the URL it printed when it started.\n"
+ WRITES = {"/override": ("override", "page"), "/stale": ("stale", "page"),
+-          "/api/override": ("override", "data"), "/api/stale": ("stale", "data")}
++          "/api/override": ("override", "data"), "/api/stale": ("stale", "data"),
++          "/preview": ("preview", "page"), "/sign": ("sign", "page"),
++          "/api/preview": ("preview", "data"), "/api/sign": ("sign", "data")}
++PACK_WRITES = frozenset({"preview", "sign"})  # answered with a page of their own, never a redirect
+ MAX_BODY = 16 * 1024  # bytes: a form or JSON body is far smaller
+ FORM = "application/x-www-form-urlencoded"
+ 
+@@ -227,6 +231,8 @@ class _Handler(BaseHTTPRequestHandler):
+             status, reply = 500, {"error": "The change could not be saved."}
+         if shape == "data":
+             self._send(status, json.dumps(reply, ensure_ascii=False).encode("utf-8"), "application/json")
++        elif kind in PACK_WRITES:
++            self._send(status, self.server.pack_html(kind, status, reply), "text/html; charset=utf-8")
+         elif status == 200:
+             self.send_response(303)
+             for key, value in SECURITY_HEADERS.items():
+@@ -305,6 +311,7 @@ class ReviewServer:
+         self.httpd.lines_html = self._lines_html
+         self.httpd.save = self._save
+         self.httpd.outcome_html = self._outcome_html
++        self.httpd.pack_html = self._pack_html
+         self._thread: threading.Thread | None = None
+ 
+     @property
+@@ -341,10 +348,18 @@ class ReviewServer:
+     def _save(self, kind: str, fields: dict, recompute: bool = True) -> tuple[int, dict]:
+         """One write from the workspace: its status and reply, the recomputed case included for
+         a data path (R17, R52); a page form is sent back to the page, which is built afresh."""
+-        from . import edit
++        from . import edit, signoff
+ 
++        if kind in PACK_WRITES:
++            return signoff.answer(self.folder, self.case_id, kind, fields)
+         return edit.answer(self.folder, self.case_id, kind, fields, recompute=recompute)
+ 
++    def _pack_html(self, kind: str, status: int, reply: dict) -> bytes:
++        from . import signoff
++
++        html = signoff.html(kind, status, reply, self.token)
++        return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
++
+     def _outcome_html(self, status: int, reply: dict) -> bytes:
+         from . import edit
+ 
+diff --git a/src/cma/review/signoff.py b/src/cma/review/signoff.py
+new file mode 100644
+index 0000000..e57da82
+--- /dev/null
++++ b/src/cma/review/signoff.py
+@@ -0,0 +1,148 @@
++"""The workspace's preview and sign-off (C5, C6; R22, R23, R24, R26, R28, R43).
++
++From the case page the underwriter builds a preview (POST /preview, or /api/preview for
++data): the pack's memo-ready text, the grounding guard's verdict and the snapshot hash, and
++one preview entry in the case log, nothing else (pack.build_preview). The preview page then
++offers one form, worded as signing off the figures, never as approving the loan (R24): a
++typed name and the preview's snapshot. POST /sign (or /api/sign) signs off that snapshot
++through pack.sign_off, which refuses, writing nothing, when the case changed since the
++preview (naming what), when the case log is broken (naming the first bad entry), when the
++figures do not reconcile or the text fails the guard, and when the snapshot's pack is
++already written.
++
++The preview's text is the case's own figures and labels; it is shown escaped, as text
++(R34). Messages name entries by number and inputs by what they are, never by their content.
++"""
++
++from __future__ import annotations
++
++from html import escape
++from pathlib import Path
++from typing import Any
++from urllib.parse import urlencode
++
++from .. import case as caselog
++from .. import pack, store
++from ..categorise import RulesetError
++from ..firm import FirmConfigError
++from ..indicators import ThresholdsError
++from ..ingest import StatementError
++from ..metrics import AmountError, ReconciliationError
++from ..policy import PolicyError
++
++PREVIEW_KEYS = frozenset({"back"})
++SIGN_KEYS = frozenset({"snapshot", "name", "back"})
++
++
++def _refusal(e: Exception) -> tuple[int, dict[str, Any]] | None:
++    if isinstance(e, ReconciliationError):
++        return 409, {"refused": f"{str(e).rstrip('.')}. The figures do not reconcile (R3); nothing was "
++                                "signed off or written."}
++    if isinstance(e, caselog.CaseLogBroken):
++        return 409, {"refused": (f"The case log is broken at entry {e.first_bad}: {e.reason}. Nothing can be "
++                                 "signed off until it is resolved."), "first_bad": e.first_bad}
++    if isinstance(e, caselog.SaveNotConfirmed):
++        return 500, {"not_confirmed": (f"Whether this is in the case log is not confirmed ({e}). Check the case "
++                                       "(cma case check) before anything else.")}
++    if isinstance(e, caselog.SaveNotRecorded):
++        return 503, {"not_recorded": f"Nothing was recorded ({e}). Reload the case and try again."}
++    if isinstance(e, caselog.CaseLocked):
++        return 409, {"locked": ("The case is held: another window or command is writing to it. Nothing was "
++                                "recorded; try again in a moment.")}
++    if isinstance(e, caselog.LogConflict):
++        return 409, {"refused": "The case changed while this was being recorded; reload the case and try again."}
++    if isinstance(e, (PolicyError, ThresholdsError, RulesetError, AmountError, StatementError, FirmConfigError)):
++        return 409, {"refused": f"{str(e).rstrip('.')}. Nothing was signed off or written."}
++    if isinstance(e, (pack.SignOffRefused, pack.FieldMapError, pack.PreviewError, store.CaseStoreError)):
++        reply: dict[str, Any] = {"refused": f"{str(e).rstrip('.')}."}
++        if isinstance(e, pack.SignOffRefused) and e.changed:
++            reply["changed"] = e.changed
++        return (409 if isinstance(e, pack.SignOffRefused) else 400), reply
++    if isinstance(e, OSError):
++        return 500, {"refused": f"A file of the case could not be read or written ({e.strerror or type(e).__name__}); "
++                                "nothing was signed off."}
++    return None
++
++
++def answer(folder: Path, case_id: str, kind: str, fields: dict[str, Any]) -> tuple[int, dict[str, Any]]:
++    """Build a preview ('preview') or sign one off ('sign'), and the HTTP status and reply."""
++    folder = Path(folder)
++    allowed = PREVIEW_KEYS if kind == "preview" else SIGN_KEYS
++    if extra := sorted(k for k in fields if k not in allowed):
++        return 400, {"refused": f"{', '.join(extra)} is not part of a {kind}; nothing was recorded."}
++    try:
++        if kind == "preview":
++            p = pack.build_preview(folder, case_id)
++            return 200, {"snapshot": p.snapshot, "grounded": p.grounded, "text": p.text, "position": p.position,
++                         "policy_check": "shown" if p.policy_shown else "hidden",
++                         "findings": [{"account": a, "number": n, "why": w} for a, n, w in p.findings()],
++                         "wording": pack.SIGN_WORDING}
++        s = pack.sign_off(folder, case_id, fields.get("snapshot"), fields.get("name"))
++    except Exception as e:
++        refused = _refusal(e)
++        if refused is None:
++            raise
++        return refused
++    return 200, {"signed": True, "completed": s.completed, "snapshot": s.snapshot, "name": s.name, "os_user": s.os_user, "at": s.at,
++                 "pack": f"{pack.PACKS}/{s.snapshot}", "files": s.files, "position": s.position}
++
++
++# --- HTML ----------------------------------------------------------------------------------
++
++
++def _e(value: Any) -> str:
++    return escape("" if value is None else str(value), quote=True)
++
++
++def preview_form(token: str) -> str:
++    """The case page's button to build a preview of the pack."""
++    action = _e("/preview?" + urlencode({"token": token}))
++    return ('<section id="preview-pack"><h2>Preview and sign off</h2>'
++            '<p>Build the pack\'s memo sections from the figures as they are now. Nothing is written but a '
++            'preview entry in the case log.</p>'
++            f'<form class="preview" method="post" action="{action}"><input type="hidden" name="back" value="/">'
++            '<button type="submit">Preview the pack</button></form></section>')
++
++
++def _reload(token: str) -> str:
++    return f'<p><a href="{_e("/?" + urlencode({"token": token}))}">Back to the case</a></p>'
++
++
++def html(kind: str, status: int, reply: dict[str, Any], token: str) -> str:
++    """The page's main element for a preview, a sign-off, or why either was refused."""
++    if status != 200:
++        text = next((reply[k] for k in ("refused", "locked", "not_recorded", "not_confirmed") if k in reply),
++                    "This could not be done.")
++        changed = "".join(f"<li>{_e(c)}</li>" for c in reply.get("changed") or [])
++        title = "Not signed off" if kind == "sign" else "No preview"
++        return (f'<section class="refusal" id="{kind}-refused"><h2>{title}</h2><p>{_e(text)}</p>'
++                + (f'<p>What changed:</p><ul class="changed">{changed}</ul>' if changed else "")
++                + _reload(token) + "</section>")
++    if kind == "sign":
++        files = ", ".join(_e(f) for f in reply["files"])
++        return ('<section id="signed-off"><h2>Figures signed off</h2>'
++                f'<p>Signed off by {_e(reply["name"])} (operating-system user {_e(reply["os_user"])}) at '
++                f'{_e(reply["at"])}, bound to snapshot <code>{_e(reply["snapshot"])}</code>.</p>'
++                + ('<p>The pack was already written; this recorded its sign-off, which had not been '
++                   'recorded. The pack was not rewritten.</p>' if reply.get("completed") else "")
++                + f'<p>The pack was written once to <code>{_e(reply["pack"])}</code>: {files}. It is never '
++                'overwritten. The recommendation and every judgement field are left blank for you.</p>'
++                + _reload(token) + "</section>")
++    findings = "".join(f'<li>account {_e(f["account"])}: {_e(f["number"] or "-")}: {_e(f["why"])}</li>'
++                       for f in reply["findings"])
++    if reply["grounded"]:
++        verdict = "<p>Grounding guard: every number is a figure or a policy threshold, with its id.</p>"
++        action = _e("/sign?" + urlencode({"token": token}))
++        form = (f'<form class="sign" method="post" action="{action}">'
++                f'<input type="hidden" name="snapshot" value="{_e(reply["snapshot"])}">'
++                '<input type="hidden" name="back" value="/">'
++                f'<p class="wording">{_e(reply["wording"])}</p>'
++                '<input name="name" required maxlength="200" placeholder="Your name" aria-label="Your name"> '
++                '<button type="submit">Sign off these figures</button></form>')
++    else:
++        verdict = (f'<p class="refusal">The text fails the grounding guard; no pack can be signed off from this '
++                   f'preview (R28):</p><ul>{findings}</ul>')
++        form = ""
++    return ('<section id="pack-preview"><h2>Preview of the pack</h2>'
++            f'<p>Snapshot <code>{_e(reply["snapshot"])}</code>, recorded as case log entry {_e(reply["position"])}.</p>'
++            f'<pre class="memo">{_e(reply["text"])}</pre>{verdict}{form}{_reload(token)}</section>')
+diff --git a/src/cma/review/summary.py b/src/cma/review/summary.py
+index 1dbf225..1b5bd81 100644
+--- a/src/cma/review/summary.py
++++ b/src/cma/review/summary.py
+@@ -529,5 +529,7 @@ def render(summary: dict[str, Any], token: str | None = None) -> str:
+                 f'<p>{_e(summary["refusal"])}</p></section>')
+     if state == "empty":
+         return head + '<section id="empty"><p>No statement has been imported into this case yet.</p></section>'
++    from .signoff import preview_form
++
+     return (head + "".join(_account_html(a, token, summary.get("thresholds")) for a in summary["accounts"])
+-            + _policy_checks_html(summary) + RECOMMENDATION_HTML)
++            + _policy_checks_html(summary) + RECOMMENDATION_HTML + (preview_form(token) if token else ""))
+diff --git a/tests/test_signoff.py b/tests/test_signoff.py
+new file mode 100644
+index 0000000..1e2a822
+--- /dev/null
++++ b/tests/test_signoff.py
+@@ -0,0 +1,629 @@
++"""T27: sign-off from `cma case sign` and from the workspace preview (C6; R3, R22, R23, R24,
++R26, R28, R42, R43).
++
++The underwriter signs off the figures of a preview they saw, with a typed name; the sign-off
++records it with the operating-system user and the UTC time, bound to the preview's snapshot.
++It is refused, writing nothing, when the case changed since the preview (naming what), when
++the case log is broken (naming the first bad entry), when the figures do not reconcile or the
++text fails the guard. memo.md and evidence.json are written once to packs/<snapshot>, through
++a folder of their own renamed into place, never overwritten, and the pack write and the
++sign-off are appended to the case log after the rename."""
++
++import hashlib
++import http.client
++import json
++import os
++import stat
++from pathlib import Path
++
++import pytest
++from typer.testing import CliRunner
++
++from cma import case as caselog
++from cma import metrics, overrides, pack, store
++from cma.cli import app
++from cma.review import server as rs
++
++pytestmark = pytest.mark.contracts
++
++STATEMENT = ("id,date,description,amount,balance\n"
++             "L1,2026-01-05,CARD SETTLEMENT STRIPE,500.60,1500.60\n"
++             "L2,2026-01-06,FPS CREDIT J BLOGGS,300.25,1800.85\n"
++             "L3,2026-01-07,IWOCA LOAN REPAYMENT,-100.00,1700.85\n"
++             "L4,2026-02-02,CASH PAID IN,250.10,1950.95\n")
++OTHER = ("id,date,description,amount,balance\n"
++         "S1,2026-01-03,CARD SETTLEMENT SUMUP,900.00,900.00\n")
++# Every event a Tier 1 case records (R42): the case's creation, an import, a profile change,
++# an override, a preview, the pack write and the sign-off. A firm-rule promotion (R20) and the
++# sync-folder warning (R32) are Tier 2.
++TIER1_EVENTS = {"case_created", "import", "profile_changed", "override", "preview",
++                pack.PACK_EVENT, pack.SIGN_EVENT}
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    return root
++
++
++def _case(tmp_path, body=STATEMENT):
++    case_id = store.new_case(label="t27")
++    folder = store.case_folder(case_id)
++    src = tmp_path / "main.csv"
++    src.write_text(body, encoding="utf-8")
++    store.import_file(folder, src, "csv")
++    return case_id, folder
++
++
++def _events(folder):
++    return [e.event for e in caselog.for_case(folder).entries()]
++
++
++def _tree(folder: Path) -> dict:
++    """Every file of the case but the log's lock files, with its bytes."""
++    skip = {caselog.LOG_NAME + ".gate", caselog.LOG_NAME + ".lock"}
++    return {p.relative_to(folder): p.read_bytes() for p in folder.rglob("*") if p.is_file() and p.name not in skip}
++
++
++def test_sign_off_writes_memo_and_evidence_once_bound_to_the_snapshot(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    s = pack.sign_off(folder, case_id, p.snapshot, "  Ann   Smith ")
++    target = folder / "packs" / p.snapshot
++    assert s.pack == target and sorted(os.listdir(target)) == ["evidence.json", "memo.md"]
++    assert (target / "memo.md").read_text(encoding="utf-8") == p.text  # from the signed preview
++    ev = json.loads((target / "evidence.json").read_text(encoding="utf-8"))
++    assert ev["snapshot"] == p.snapshot and ev["inputs"] == p.inputs and ev["case"] == case_id
++    so = ev["sign_off"]
++    assert so["name"] == "Ann Smith" and so["os_user"] == store._os_user() and so["snapshot"] == p.snapshot
++    assert so["at"].endswith("Z") and so["at"] == s.at  # UTC
++    assert "approve the loan" not in so["wording"].replace("does not approve the loan", "")
++    assert ev["egress"]["destination"] == "offline"
++    # owner-only (R31)
++    assert stat.S_IMODE(target.stat().st_mode) == store.DIR_MODE
++    assert all(stat.S_IMODE((target / f).stat().st_mode) == store.FILE_MODE for f in pack.PACK_FILES)
++    # the pack write and then the sign-off, after the preview, with the files' hashes (R42)
++    entries = caselog.for_case(folder).entries()
++    assert [e.event for e in entries[-3:]] == ["preview", pack.PACK_EVENT, pack.SIGN_EVENT]
++    signed = entries[-1].data
++    assert signed["name"] == "Ann Smith" and signed["snapshot"] == p.snapshot and signed["at"] == s.at
++    assert signed["files"] == {f: hashlib.sha256((target / f).read_bytes()).hexdigest()
++                               for f in pack.PACK_FILES}
++    assert s.position == len(entries)
++    assert caselog.for_case(folder).verify().ok
++
++
++@pytest.mark.parametrize("change, named", [
++    ("override", "the override log"),
++    ("profile", "the case profile"),
++    ("statement", "the statement for account main changed"),
++    ("account", "a statement was imported for account other"),
++    ("field_map", "the memo field map"),
++    ("verdict", "the show_policy_verdict setting"),
++])
++def test_r23_stale_snapshot_is_refused_naming_what_changed(home, tmp_path, change, named):
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    if change == "override":
++        overrides.add_override(folder, "L2", "revenue_transfer", reason="customer", name="Ann")
++    elif change == "profile":
++        store.update_profile(folder, lambda cur: {**cur, "directors": ["Jane Doe"]})
++    elif change == "statement":
++        stmt = folder / store.STATEMENTS / "main.csv"
++        stmt.write_text(STATEMENT.replace("CASH PAID IN", "CASH PAID IN AT BRANCH"), encoding="utf-8")
++    elif change == "account":
++        src = tmp_path / "o.csv"
++        src.write_text(OTHER, encoding="utf-8")
++        store.import_file(folder, src, "csv", account="other")
++    elif change == "field_map":
++        (home / "memo_fields.yaml").write_text(pack.default_field_map_text() + "\n# firm\n", encoding="utf-8")
++    else:
++        (home / "firm.yaml").write_text("show_policy_verdict: false\n", encoding="utf-8")
++    before, events = _tree(folder), _events(folder)
++    with pytest.raises(pack.SignOffRefused) as e:
++        pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    assert named in str(e.value)
++    assert len(e.value.changed) == 1 and e.value.changed[0].startswith(named)
++    assert _tree(folder) == before and _events(folder) == events  # nothing written, nothing recorded
++    assert not (folder / "packs" / p.snapshot).exists()
++
++
++def test_r23_a_snapshot_no_preview_recorded_is_refused(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    pack.build_preview(folder, case_id)
++    with pytest.raises(pack.SignOffRefused, match="no preview of this case has snapshot"):
++        pack.sign_off(folder, case_id, "0" * 64, "Ann")
++    with pytest.raises(pack.SignOffRefused, match="snapshot"):
++        pack.sign_off(folder, case_id, "not-a-hash", "Ann")
++
++
++@pytest.mark.parametrize("name", ["", "   ", "---", None, "x" * 201])
++def test_r22_a_sign_off_needs_a_typed_name(home, tmp_path, name):
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    events = _events(folder)
++    with pytest.raises(pack.SignOffRefused):
++        pack.sign_off(folder, case_id, p.snapshot, name)
++    assert _events(folder) == events and not (folder / "packs").exists()
++
++
++def test_r43_broken_log_is_refused_naming_the_first_bad_entry(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    log = folder / caselog.LOG_NAME
++    lines = log.read_bytes().splitlines(keepends=True)
++    lines[1] = lines[1].replace(b'"import"', b'"imporT"')  # entry 2 changed by hand
++    log.write_bytes(b"".join(lines))
++    with pytest.raises(caselog.CaseLogBroken) as e:
++        pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    assert e.value.first_bad == 2
++    assert not (folder / "packs").exists()
++    r = CliRunner().invoke(app, ["case", "sign", case_id, "--snapshot", p.snapshot], input="Ann\ny\n")
++    assert r.exit_code == 3 and "entry 2" in r.output and not (folder / "packs").exists()
++
++
++def test_r43_incomplete_last_entry_is_refused(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    with (folder / caselog.LOG_NAME).open("ab") as f:
++        f.write(b'{"seq": 4, "event": "ov')  # a torn write a crash left
++    with pytest.raises(caselog.CaseLogBroken) as e:
++        pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    assert e.value.first_bad == 4 and not (folder / "packs").exists()
++
++
++def test_r28_guard_failure_is_refused(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    (home / "memo_fields.yaml").write_text(
++        "fields:\n  - id: a\n    title: A\n    figures: [M2]\n    template: 'Revenue {M2} over 12 months.'\n",
++        encoding="utf-8")
++    p = pack.build_preview(folder, case_id)
++    assert not p.grounded
++    events = _events(folder)
++    with pytest.raises(pack.SignOffRefused, match="grounding guard"):
++        pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    assert _events(folder) == events and not (folder / "packs").exists()
++
++
++def test_r3_reconciliation_failure_is_refused(home, tmp_path, monkeypatch):
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++
++    def unreconciled(_folder):
++        raise metrics.ReconciliationError(1, ["L2"])
++
++    monkeypatch.setattr(overrides, "case_figures", unreconciled)
++    events = _events(folder)
++    with pytest.raises(metrics.ReconciliationError):
++        pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    assert _events(folder) == events and not (folder / "packs").exists()
++    r = CliRunner().invoke(app, ["case", "sign", case_id], input="Ann\ny\n")
++    assert r.exit_code == 2 and "do not reconcile" in r.output
++
++
++def test_r26_second_sign_off_is_refused_and_the_pack_never_overwritten(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    before, events = _tree(folder), _events(folder)
++    with pytest.raises(pack.SignOffRefused, match="never overwritten"):
++        pack.sign_off(folder, case_id, p.snapshot, "Bob")
++    assert _tree(folder) == before and _events(folder) == events
++    # a folder already at the snapshot's path, whatever put it there, is never replaced
++    case2, folder2 = _case(tmp_path)
++    p2 = pack.build_preview(folder2, case2)
++    (folder2 / "packs" / p2.snapshot).mkdir(parents=True)
++    with pytest.raises(pack.SignOffRefused, match="never overwritten"):
++        pack.sign_off(folder2, case2, p2.snapshot, "Ann")
++    assert os.listdir(folder2 / "packs" / p2.snapshot) == []
++
++
++def test_r26_crash_leftover_is_removed_and_no_partial_pack_is_visible(home, tmp_path, monkeypatch):
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    leftover = folder / "packs" / (pack.PART + "crashed")
++    leftover.mkdir(parents=True)
++    (leftover / "memo.md").write_text("half", encoding="utf-8")
++    # a crash at the rename: no pack at the snapshot's path, nothing recorded
++    real = os.rename
++
++    def crash(src, dst):
++        raise OSError(5, "Input/output error")
++
++    monkeypatch.setattr(os, "rename", crash)
++    events = _events(folder)
++    with pytest.raises(OSError):
++        pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    assert not (folder / "packs" / p.snapshot).exists() and _events(folder) == events
++    assert [c.name for c in (folder / "packs").iterdir()] == []  # its own part removed, the old leftover too
++    # the next start removes a leftover and writes the pack
++    monkeypatch.setattr(os, "rename", real)
++    leftover.mkdir()
++    (leftover / "evidence.json").write_text("{", encoding="utf-8")
++    pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    assert [c.name for c in (folder / "packs").iterdir()] == [p.snapshot]
++
++
++def test_r42_entries_are_logged_after_the_rename_and_a_refused_entry_removes_the_pack(home, tmp_path, monkeypatch):
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    target = folder / "packs" / p.snapshot
++    seen = []
++    real = caselog.CaseLog.append
++
++    def watched(self, event, data, *, expected):
++        seen.append((event, target.is_dir() and sorted(os.listdir(target)) == ["evidence.json", "memo.md"]))
++        return real(self, event, data, expected=expected)
++
++    monkeypatch.setattr(caselog.CaseLog, "append", watched)
++    pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    assert seen == [(pack.PACK_EVENT, True), (pack.SIGN_EVENT, True)]
++    # the log refuses the pack write: the pack is removed, so no pack sits without its entry
++    case2, folder2 = _case(tmp_path)
++    p2 = pack.build_preview(folder2, case2)
++
++    def refused(self, event, data, *, expected):
++        raise caselog.SaveNotRecorded("the case lock file was replaced; the save was not recorded")
++
++    monkeypatch.setattr(caselog.CaseLog, "append", refused)
++    with pytest.raises(caselog.SaveNotRecorded):
++        pack.sign_off(folder2, case2, p2.snapshot, "Ann")
++    assert not (folder2 / "packs" / p2.snapshot).exists()
++
++
++def test_r42_every_tier1_event_kind_is_in_the_case_log(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    store.update_profile(folder, lambda cur: {**cur, "business_name": "Acme Cafe"})
++    overrides.add_override(folder, "L2", "revenue_transfer", reason="customer", name="Ann")
++    p = pack.build_preview(folder, case_id)
++    pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    assert set(_events(folder)) >= TIER1_EVENTS
++    assert caselog.for_case(folder).verify().ok
++
++
++# --- cma case sign ----------------------------------------------------------------------
++
++
++def test_cli_case_sign_is_interactive_and_worded_as_signing_off_figures(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    runner = CliRunner()
++    r = runner.invoke(app, ["case", "sign", case_id], input="Ann\ny\n")
++    assert r.exit_code == 2 and "no preview" in r.output  # preview first
++    p = pack.build_preview(folder, case_id)
++    r = runner.invoke(app, ["case", "sign", case_id, "--yes"], input="Ann\ny\n")
++    assert r.exit_code == 2 and not (folder / "packs").exists()  # there is no --yes
++    r = runner.invoke(app, ["case", "sign", case_id], input="Ann\nn\n")
++    assert r.exit_code == 1 and "nothing was written" in r.output and not (folder / "packs").exists()
++    r = runner.invoke(app, ["case", "sign", case_id], input="Ann Smith\ny\n")
++    assert r.exit_code == 0, r.output
++    out = " ".join(r.output.split())
++    assert "Sign off the figures" in out and "does not approve the loan" in out
++    assert "Figures signed off by Ann Smith" in out and p.snapshot in out.replace(" ", "")
++    assert "approve the loan?" not in out.lower()
++    assert (folder / "packs" / p.snapshot / "memo.md").read_text(encoding="utf-8") == p.text
++    r = runner.invoke(app, ["case", "sign", case_id], input="Ann\ny\n")
++    assert r.exit_code == 2 and "never overwritten" in " ".join(r.output.split())
++
++
++def test_cli_case_sign_stale_names_what_changed(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    pack.build_preview(folder, case_id)
++    overrides.add_override(folder, "L2", "revenue_transfer", reason="customer", name="Ann")
++    r = CliRunner().invoke(app, ["case", "sign", case_id], input="Ann\ny\n")
++    assert r.exit_code == 2 and "the override log" in " ".join(r.output.split())
++    assert not (folder / "packs").exists()
++
++
++# --- the workspace ------------------------------------------------------------------------
++
++
++@pytest.fixture
++def serve():
++    servers = []
++
++    def start(case_id):
++        srv = rs.start(store.case_folder(case_id), case_id, port=0)
++        srv.serve_in_thread()
++        servers.append(srv)
++        return srv
++
++    yield start
++    for srv in servers:
++        srv.close()
++
++
++def _post(srv, path, body, kind="application/json"):
++    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
++    try:
++        data = json.dumps(body).encode() if kind == "application/json" else body.encode()
++        headers = {"Host": f"127.0.0.1:{srv.port}", "Content-Type": kind, "Origin": f"http://127.0.0.1:{srv.port}"}
++        if "token=" not in path:  # the page's forms carry it in the URL, data calls in the header
++            headers["X-CMA-Token"] = srv.token
++        conn.request("POST", path, body=data, headers=headers)
++        r = conn.getresponse()
++        return r.status, r.read().decode("utf-8")
++    finally:
++        conn.close()
++
++
++def _get(srv, path):
++    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
++    try:
++        conn.request("GET", path, headers={"Host": f"127.0.0.1:{srv.port}", "X-CMA-Token": srv.token})
++        r = conn.getresponse()
++        return r.status, r.read().decode("utf-8")
++    finally:
++        conn.close()
++
++
++def test_workspace_preview_then_sign_off(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    status, page = _get(srv, "/")
++    assert status == 200 and 'action="/preview?token=' in page
++    status, body = _post(srv, "/api/preview", {})
++    assert status == 200
++    pv = json.loads(body)
++    assert pv["grounded"] and "Sign off the figures" in pv["wording"]
++    status, body = _post(srv, "/api/sign", {"snapshot": pv["snapshot"], "name": "Ann"})
++    assert status == 200, body
++    s = json.loads(body)
++    assert s["signed"] and s["name"] == "Ann" and s["pack"] == f"packs/{pv['snapshot']}"
++    assert (folder / s["pack"] / "memo.md").read_text(encoding="utf-8") == pv["text"]
++    status, body = _post(srv, "/api/sign", {"snapshot": pv["snapshot"], "name": "Ann"})
++    assert status == 409 and "never overwritten" in json.loads(body)["refused"]
++
++
++def test_workspace_sign_off_refuses_a_stale_preview_naming_what_changed(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    pv = json.loads(_post(srv, "/api/preview", {})[1])
++    overrides.add_override(folder, "L2", "revenue_transfer", reason="customer", name="Ann")
++    status, body = _post(srv, "/api/sign", {"snapshot": pv["snapshot"], "name": "Ann"})
++    reply = json.loads(body)
++    assert status == 409 and "the override log" in reply["refused"]
++    assert any("override log" in c for c in reply["changed"]) and not (folder / "packs").exists()
++    status, body = _post(srv, "/api/sign", {"snapshot": pv["snapshot"], "name": "Ann", "amount": "1"})
++    assert status == 400
++
++
++def test_workspace_preview_page_offers_the_sign_off_form_and_escapes_the_text(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    store.update_profile(folder, lambda cur: {**cur, "demo": True})
++    srv = serve(case_id)
++    status, page = _post(srv, f"/preview?token={srv.token}", "back=%2F", kind="application/x-www-form-urlencoded")
++    assert status == 200 and 'id="pack-preview"' in page
++    assert 'action="/sign?token=' in page and "Sign off these figures" in page
++    assert "Approve" not in page and "approve the loan" not in page.replace("does not approve the loan", "")
++    snapshot = pack.latest_preview(caselog.for_case(folder).entries())[1]["snapshot"]
++    assert f'name="snapshot" value="{snapshot}"' in page
++    status, page = _post(srv, f"/sign?token={srv.token}", f"snapshot={snapshot}&name=Ann+%3Cb%3E&back=%2F",
++                         kind="application/x-www-form-urlencoded")
++    assert status == 200 and 'id="signed-off"' in page and "Ann &lt;b&gt;" in page and "<b>" not in page
++    assert (folder / "packs" / snapshot / "evidence.json").exists()
++
++
++# --- hardening: authz on the new entry points, and refusals the workspace and CLI report ---
++
++
++def _raw(srv, method, path, body=b"", headers=None):
++    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
++    try:
++        conn.request(method, path, body=body, headers=headers or {})
++        r = conn.getresponse()
++        return r.status, r.read()
++    finally:
++        conn.close()
++
++
++@pytest.mark.parametrize("path", ["/sign", "/api/sign", "/preview", "/api/preview"])
++def test_workspace_sign_and_preview_need_the_token_host_and_origin(home, tmp_path, serve, path):
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    srv = serve(case_id)
++    body = json.dumps({"snapshot": p.snapshot, "name": "Ann"}).encode()
++    good = {"Host": f"127.0.0.1:{srv.port}", "Content-Type": "application/json",
++            "Origin": f"http://127.0.0.1:{srv.port}"}
++    events = _events(folder)
++    cases = [
++        ("POST", path, {**good}),  # no token
++        ("POST", path, {**good, "X-CMA-Token": "wrong"}),
++        ("POST", path, {**good, "X-CMA-Token": srv.token, "Origin": "http://evil.example"}),
++        ("POST", path, {**good, "X-CMA-Token": srv.token, "Host": "evil.example"}),
++    ]
++    for method, target, headers in cases:
++        status, _ = _raw(srv, method, target, body, headers)
++        assert status == 403, (target, headers)
++    status, _ = _raw(srv, "GET", path, b"", {"Host": good["Host"], "X-CMA-Token": srv.token})
++    assert status == 405  # a write is POST only
++    assert _events(folder) == events and not (folder / "packs").exists()
++
++
++def test_workspace_sign_off_on_a_broken_log_names_the_first_bad_entry(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    srv = serve(case_id)
++    log = folder / caselog.LOG_NAME
++    lines = log.read_bytes().splitlines(keepends=True)
++    lines[1] = lines[1].replace(b'"import"', b'"imporT"')
++    log.write_bytes(b"".join(lines))
++    status, body = _post(srv, "/api/sign", {"snapshot": p.snapshot, "name": "Ann"})
++    reply = json.loads(body)
++    assert status == 409 and reply["first_bad"] == 2 and "entry 2" in reply["refused"]
++    assert not (folder / "packs").exists()
++    status, page = _post(srv, f"/sign?token={srv.token}", f"snapshot={p.snapshot}&name=Ann&back=%2F",
++                         kind="application/x-www-form-urlencoded")
++    assert status == 409 and 'id="sign-refused"' in page and "entry 2" in page
++
++
++def test_cli_case_sign_reports_a_save_not_recorded_and_leaves_no_pack(home, tmp_path, monkeypatch):
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++
++    def refused(self, event, data, *, expected):
++        raise caselog.SaveNotRecorded("the case lock file was replaced; the save was not recorded")
++
++    monkeypatch.setattr(caselog.CaseLog, "append", refused)
++    r = CliRunner().invoke(app, ["case", "sign", case_id, "--snapshot", p.snapshot], input="Ann\ny\n")
++    assert r.exit_code == 4 and "not recorded" in r.output.lower()
++    assert not (folder / "packs" / p.snapshot).exists()
++
++
++class _Died(BaseException):
++    """The process stops here: no cleanup of ours runs after it."""
++
++
++def _die_at(monkeypatch, event):
++    """Stop the process when the case log is asked to record `event`, and let no folder be
++    removed on the way out, as a killed process removes none."""
++    import shutil
++
++    real = caselog.CaseLog.append
++
++    def append(self, ev, data, *, expected):
++        if ev == event:
++            raise _Died()
++        return real(self, ev, data, expected=expected)
++
++    monkeypatch.setattr(caselog.CaseLog, "append", append)
++    monkeypatch.setattr(shutil, "rmtree", lambda *a, **k: None)
++
++
++def test_r26_a_pack_the_tool_stopped_before_recording_is_refused_as_unrecorded_never_removed(home, tmp_path,
++                                                                                           monkeypatch):
++    """The tool stops after renaming the pack into place and before recording it: the log holds
++    no pack write and no sign-off. Signing off again says so (not that the figures are signed
++    off), leaves the folder as it is, and signs off once it is moved aside."""
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    with monkeypatch.context() as m:
++        _die_at(m, pack.PACK_EVENT)
++        with pytest.raises(_Died):
++            pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    target = folder / "packs" / p.snapshot
++    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md"]
++    assert pack.PACK_EVENT not in _events(folder) and pack.SIGN_EVENT not in _events(folder)
++    events = _events(folder)
++    for snapshot in (p.snapshot, pack.build_preview(folder, case_id).snapshot):  # the same preview, or a new one
++        with pytest.raises(pack.SignOffRefused) as e:
++            pack.sign_off(folder, case_id, snapshot, "Ann")
++        msg = str(e.value)
++        assert "records no pack written" in msg and "move that folder aside" in msg and "already signed off" not in msg
++    assert sorted(os.listdir(target)) == ["evidence.json", "memo.md"]  # never removed or replaced
++    assert _events(folder)[: len(events)] == events and pack.SIGN_EVENT not in _events(folder)
++    os.rename(target, folder / "aside")
++    signed = pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    assert signed.pack == target and _events(folder)[-2:] == [pack.PACK_EVENT, pack.SIGN_EVENT]
++
++
++def test_r42_a_sign_off_the_tool_stopped_before_recording_is_recorded_on_the_next_sign_off(home, tmp_path,
++                                                                                           monkeypatch):
++    """The tool stops between recording the pack write and the sign-off: signing off again
++    under another name is refused, naming the entry and the name the pack carries; signing off
++    under that name records the pack's own sign-off, once, without rewriting the pack."""
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    with monkeypatch.context() as m:
++        _die_at(m, pack.SIGN_EVENT)
++        with pytest.raises(_Died):
++            pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    events = _events(folder)
++    assert events[-1] == pack.PACK_EVENT and pack.SIGN_EVENT not in events
++    target = folder / "packs" / p.snapshot
++    before = {f: (target / f).read_bytes() for f in os.listdir(target)}
++    with pytest.raises(pack.SignOffRefused) as e:
++        pack.sign_off(folder, case_id, p.snapshot, "Bob")
++    msg = str(e.value)
++    assert f"case log entry {len(events)}" in msg and "sign-off was not recorded" in msg and "Ann" in msg
++    assert _events(folder) == events
++    signed = pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    assert signed.completed and signed.name == "Ann" and signed.pack == target
++    assert _events(folder) == [*events, pack.SIGN_EVENT]
++    assert {f: (target / f).read_bytes() for f in os.listdir(target)} == before
++    evidence = json.loads(before["evidence.json"])
++    entry = caselog.for_case(folder).entries()[-1].data
++    assert {k: entry[k] for k in ("name", "os_user", "at", "snapshot")} == \
++        {k: evidence["sign_off"][k] for k in ("name", "os_user", "at", "snapshot")}
++    assert caselog.for_case(folder).verify().ok
++    with pytest.raises(pack.SignOffRefused, match="already signed off"):
++        pack.sign_off(folder, case_id, p.snapshot, "Ann")
++
++
++def test_r42_a_sign_off_entry_not_recorded_can_be_recorded_again(home, tmp_path, monkeypatch):
++    """verify-251's schedule: the pack write is recorded, the sign-off append fails as not
++    recorded. The next sign-off, from the same preview or a fresh one, records it."""
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    real = caselog.CaseLog.append
++
++    def second_fails(self, event, data, *, expected):
++        if event == pack.SIGN_EVENT:
++            raise caselog.SaveNotRecorded("the disk is full; the save was not recorded")
++        return real(self, event, data, expected=expected)
++
++    with monkeypatch.context() as m:
++        m.setattr(caselog.CaseLog, "append", second_fails)
++        with pytest.raises(caselog.SaveNotRecorded):
++            pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    assert _events(folder)[-1] == pack.PACK_EVENT
++    again = pack.build_preview(folder, case_id)
++    assert again.snapshot == p.snapshot
++    signed = pack.sign_off(folder, case_id, again.snapshot, "Ann")
++    assert signed.completed and _events(folder)[-1] == pack.SIGN_EVENT
++    assert caselog.for_case(folder).verify().ok
++    # through the CLI too
++    case2, folder2 = _case(tmp_path)
++    p2 = pack.build_preview(folder2, case2)
++    with monkeypatch.context() as m:
++        m.setattr(caselog.CaseLog, "append", second_fails)
++        r = CliRunner().invoke(app, ["case", "sign", case2, "--snapshot", p2.snapshot], input="Ann\ny\n")
++        assert r.exit_code == 4
++    r = CliRunner().invoke(app, ["case", "sign", case2, "--snapshot", p2.snapshot], input="Ann\ny\n")
++    assert r.exit_code == 0 and "now recorded" in r.output and "not rewritten" in r.output
++
++
++def test_r42_a_recorded_pack_whose_files_changed_is_refused(home, tmp_path, monkeypatch):
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    with monkeypatch.context() as m:
++        _die_at(m, pack.SIGN_EVENT)
++        with pytest.raises(_Died):
++            pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    (folder / "packs" / p.snapshot / "memo.md").write_text("edited", encoding="utf-8")
++    events = _events(folder)
++    with pytest.raises(pack.SignOffRefused, match="not the ones that entry recorded"):
++        pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    assert _events(folder) == events
++    os.rename(folder / "packs" / p.snapshot, folder / "aside")
++    with pytest.raises(pack.SignOffRefused, match="put the pack back"):
++        pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    assert _events(folder) == events
++
++
++def test_r23_a_refused_sign_off_leaves_a_crash_leftover_in_place(home, tmp_path):
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++    leftover = folder / "packs" / (pack.PART + "x")
++    leftover.mkdir(parents=True)
++    (leftover / "memo.md").write_text("half", encoding="utf-8")
++    overrides.add_override(folder, "L2", "revenue_transfer", reason="customer", name="Ann")
++    with pytest.raises(pack.SignOffRefused):
++        pack.sign_off(folder, case_id, p.snapshot, "Ann")
++    assert (leftover / "memo.md").read_text(encoding="utf-8") == "half"
++
++
++def test_workspace_sign_off_names_a_bad_configuration_file(home, tmp_path, monkeypatch):
++    from cma import policy
++    from cma.review import signoff
++
++    case_id, folder = _case(tmp_path)
++    p = pack.build_preview(folder, case_id)
++
++    def bad(*a, **k):
++        raise policy.PolicyError("the policy file is not valid YAML")
++
++    monkeypatch.setattr(pack, "sign_off", bad)
++    status, reply = signoff.answer(folder, case_id, "sign", {"snapshot": p.snapshot, "name": "Ann"})
++    assert status == 409 and "not valid YAML" in reply["refused"] and "Nothing was signed off" in reply["refused"]
+diff --git a/tests/test_workspace_summary.py b/tests/test_workspace_summary.py
+index 8ce709d..199029f 100644
+--- a/tests/test_workspace_summary.py
++++ b/tests/test_workspace_summary.py
+@@ -218,10 +218,12 @@ def test_the_page_shows_the_breakdown_the_figures_and_the_monthly_summary(home,
+     # Only the case's own figures: nothing computed in the page; no script or style inline.
+     scripts = [a for t, a in p.tags if t == "script"]
+     assert len(scripts) == 1 and dict(scripts[0])["src"].startswith("/static/app.js")
+-    # A form is the workspace's own: it posts only to its override or stale-override path (R17, R19).
++    # A form is the workspace's own: it posts only to its override, stale-override or preview
++    # path (R17, R19, R22; the preview form is T27's).
+     for t, a in p.tags:
+         if t == "form":
+-            assert dict(a)["method"] == "post" and dict(a)["action"].startswith(("/override?token=", "/stale?token="))
++            assert dict(a)["method"] == "post" and dict(a)["action"].startswith(
++                ("/override?token=", "/stale?token=", "/preview?token="))
+     assert not any(k == "style" or k.startswith("on") for _, a in p.tags for k, _ in a)
+ 
+ 
+@@ -365,10 +367,12 @@ def _assert_only_escaped(page: str, texts: list[str], *, shown: bool) -> None:
+     for t, a in p.tags:
+         if t == "a":
+             assert [k for k, _ in a] == ["href"] and dict(a)["href"].startswith(("/lines?token=", "/?token="))
+-    # A form is the workspace's own: it posts only to its override or stale-override path (R17, R19).
++    # A form is the workspace's own: it posts only to its override, stale-override or preview
++    # path (R17, R19, R22; the preview form is T27's).
+     for t, a in p.tags:
+         if t == "form":
+-            assert dict(a)["method"] == "post" and dict(a)["action"].startswith(("/override?token=", "/stale?token="))
++            assert dict(a)["method"] == "post" and dict(a)["action"].startswith(
++                ("/override?token=", "/stale?token=", "/preview?token="))
+     assert not any(k == "style" or k.startswith("on") for _, a in p.tags for k, _ in a)
+     assert [t for t, _ in p.tags].count("script") == 1
+     page_text = "".join(p.text)
