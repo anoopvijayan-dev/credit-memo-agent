@@ -1,0 +1,37 @@
+I couldn't reproduce the major finding from the last review: the fix is already on the T27 branch at commit 236f5c1, so I changed no code in this pass.
+
+The finding was that if the pack write was recorded but the sign-off entry then failed to record, every later sign-off for that snapshot was refused. Now the next sign-off checks the pack's files against the hashes the pack-write entry recorded. It then records the sign-off that `evidence.json` already carries and does not rewrite the pack. It is refused under a different typed name, if the files changed, or if the folder is gone. A test fails the second log append on purpose and then signs off again, both directly and through `cma case sign` (exit 4 first, then exit 0 "now recorded"). It passes, and the case log checks out afterwards.
+
+Test results:
+- **Sign-off tests:** all 38 pass.
+- **Contracts tests:** 785 pass.
+- **ruff and compileall:** both clean.
+
+Four gaps for the owner, none of which I fixed because each needs a decision rather than code:
+1. **Stale-case check skipped when finishing:** finishing an unrecorded sign-off records it even if the case has changed since. It records what was signed at that snapshot, but the usual "stale snapshot" refusal doesn't apply on that path. The owner should confirm that's the intended reading of R23.
+2. **Extra files not detected:** only the files the pack-write entry hashed are compared, so an extra file added to `packs/<snapshot>` goes unnoticed.
+3. **Manual step after "not confirmed":** if the pack-write append answers "not confirmed" and its entry is in fact missing from the log, the next sign-off tells the underwriter to move the folder aside by hand.
+4. **Windows lock path:** it is still covered only by the planned Windows run (Rollout step 3), not by CI.
+
+I wrote `claim.json` to the run directory; the same content is below.
+
+```json
+{
+ "task": "T27",
+ "claims": [
+  {"text": "Failure modes / partial failure (finding 1): a recorded pack_written followed by a failed signed_off append is repairable. The next sign-off, from the same or a fresh preview with the same snapshot, checks the pack's files against the hashes the pack_written entry recorded and appends the signed_off entry evidence.json already carries. It never rewrites the pack. It is refused under any other typed name, or when the files changed or the folder is gone.", "proof_cmd": "python -m pytest tests/test_signoff.py -q -k 'not_recorded_can_be_recorded_again or stopped_before_recording or files_changed'", "proof_output": "covered in: 23 passed, 15 deselected in 6.33s (selected subset); full file: 38 passed in 8.32s"},
+  {"text": "Idempotency: a second sign-off of a signed snapshot is refused and the pack is never overwritten. A folder already at packs/<snapshot> that the log does not record is refused and never removed. Finishing a sign-off whose entry was not recorded appends exactly once, and a further attempt is refused as already signed off.", "proof_cmd": "python -m pytest tests/test_signoff.py -q", "proof_output": "38 passed in 8.32s"},
+  {"text": "Partial failure: the pack is staged in packs/.part-*, fsynced and renamed. A crash at the rename leaves no pack, and the next taken sign-off removes leftovers. A refused sign-off leaves leftovers untouched. If the log refuses the pack_written append, the pack is removed so no pack sits without its entry.", "proof_cmd": "python -m pytest tests/test_signoff.py -q -k 'crash_leftover or entries_are_logged_after or leaves_a_crash_leftover'", "proof_output": "included in 38 passed in 8.32s"},
+  {"text": "Security / authz: /sign, /api/sign, /preview and /api/preview refuse requests that lack the token, carry a wrong token, a foreign Origin or a foreign Host (403). GET is refused (405). Typed names are escaped on the page.", "proof_cmd": "python -m pytest tests/test_signoff.py -q -k 'need_the_token or escapes_the_text'", "proof_output": "included in 38 passed in 8.32s"},
+  {"text": "Refusals: a stale snapshot names what changed, a broken or incomplete log names the first bad entry (CLI exit 3), and a guard or reconciliation failure is refused with nothing written or recorded. Every Tier 1 event kind is in the log.", "proof_cmd": "python -m pytest -q -m contracts", "proof_output": "785 passed, 1625 deselected in 129.39s"},
+  {"text": "Lint and compile clean.", "proof_cmd": "ruff check src tests && python -m compileall -q src", "proof_output": "All checks passed!\ncompiled"},
+  {"text": "Data/migration: not applicable to a schema. The change only adds files (packs/<snapshot>, two case-log event kinds). It has no migration and alters no existing stored format. Rollback is the previous wheel: older code ignores packs/ and the new events, which hash-chain like any entry.", "proof_cmd": "git diff --stat 247f3ee -- src/cma/models.py src/cma/case.py | wc -l", "proof_output": "0 (T27 since the T24 merge changes neither models.py nor case.py; sign-off uses the existing CaseLog.append)"},
+  {"text": "Observability: the case log entries pack_written and signed_off (snapshot, file hashes, name, OS user, UTC time) are the record that the behaviour ran. No remote alerting exists, by design (design: Observability); `cma case check` exit 3 is the signal for a broken log.", "proof_cmd": "python -m pytest tests/test_signoff.py -q -k 'writes_memo_and_evidence_once'", "proof_output": "included in 38 passed in 8.32s"}
+ ],
+ "files_changed": [],
+ "dispositions": [
+  {"finding": "verify-251 finding 1 (major, R42): a failed signed_off append after a recorded pack_written leaves the snapshot permanently unsignable", "disposition": "not_reproduced", "evidence": "At 236f5c1, pack.sign_off routes a snapshot whose pack_written entry exists and whose signed_off entry does not to _complete (src/cma/pack.py). _complete verifies the files against the recorded hashes and appends the evidence.json sign-off. test_r42_a_sign_off_entry_not_recorded_can_be_recorded_again injects SaveNotRecorded on the second append and re-signs from a fresh preview with the same snapshot, through pack.sign_off and the CLI (exit 4, then exit 0 'now recorded'). It passes, and the log verifies intact."}
+ ],
+ "notes": "No code changed in this pass; the producer's 236f5c1 already answers finding 1, and the evidence above re-proves it. Gaps for the owner, none of which needs code within scope. (1) _complete records the pack's original sign-off even when the case has changed since. It records what was signed at that snapshot, but R23's 'stale' refusal does not apply on that path, and the owner should confirm that reading. (2) _complete compares only the files the pack_written entry hashed, so an extra file added to packs/<snapshot> is not detected. (3) If the pack_written append answers SaveNotConfirmed, the pack is kept. If its entry is not in fact in the log, the next sign-off is refused with 'move that folder aside', a manual step. (4) The P15/Windows lock path is still covered only by Rollout step 3, not CI."
+}
+```

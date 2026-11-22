@@ -1,0 +1,49 @@
+{
+  "task": "T27",
+  "claims": [
+    {
+      "text": "R42: when the pack_written entry is recorded and the signed_off append fails (SaveNotRecorded, or the process stops), the next sign-off of that snapshot, from the same preview or a fresh one, records the sign-off the pack's evidence.json carries. It does so once, only after checking that the pack's files match the hashes in the pack_written entry, without rewriting the pack, and only under the same typed name. A different name is refused, naming the log entry and the name the pack carries. A changed or missing pack is refused and nothing is recorded. The CLI and the workspace say that the sign-off was recorded and the pack not rewritten.",
+      "proof_cmd": "python -m pytest tests/test_signoff.py -q -k \"r42 or r23_a_refused or bad_configuration\"",
+      "proof_output": "7 passed, 31 deselected in 2.68s"
+    },
+    {
+      "text": "R23 (minor): leftover packs/.part-* folders are removed only after the preview, stale-snapshot, already-signed and guard checks pass, so a refused sign-off leaves the case folder unchanged (test_r23_a_refused_sign_off_leaves_a_crash_leftover_in_place). test_r26_crash_leftover_is_removed_and_no_partial_pack_is_visible still passes.",
+      "proof_cmd": "python -m pytest tests/test_signoff.py -q",
+      "proof_output": "38 passed in 8.53s"
+    },
+    {
+      "text": "R22 (minor): the workspace's _refusal maps PolicyError, ThresholdsError, RulesetError, AmountError, StatementError and FirmConfigError to 409 with the named reason, and cma case sign now also catches FirmConfigError (test_workspace_sign_off_names_a_bad_configuration_file).",
+      "proof_cmd": "python -m pytest tests/test_signoff.py -q -k bad_configuration",
+      "proof_output": "included in the 7 passed above"
+    },
+    {
+      "text": "Lint, compile, the full suite, the contracts, invariants and dual_run tiers, and the evals all pass.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q; python -m pytest -q -m contracts; python -m pytest -q -m invariants; python -m pytest -q -m dual_run; python evals/run_evals.py",
+      "proof_output": "All checks passed! / 2410 passed in 275.14s / 785 passed, 1625 deselected / 977 passed, 1433 deselected / 84 passed, 2326 deselected / 9/9 featured cases match truth"
+    }
+  ],
+  "files_changed": [
+    "src/cma/pack.py",
+    "src/cma/cli.py",
+    "src/cma/review/signoff.py",
+    "tests/test_signoff.py"
+  ],
+  "dispositions": [
+    {
+      "finding": "major R42 src/cma/pack.py:689: the sign-off is recorded in two separate appends; if pack_written is recorded and signed_off fails, the pack carries a sign-off the log never recorded and every retry for that snapshot is refused.",
+      "disposition": "reproduced",
+      "evidence": "Reproduced with the reviewer's schedule: append raises SaveNotRecorded only for signed_off. Fix: sign_off no longer refuses when the snapshot has a pack_written entry and no signed_off entry. It calls pack._complete, which checks that packs/<snapshot> exists and that its files match the sha256s in the pack_written entry. It reads the sign_off from evidence.json, requires the same typed name, and appends signed_off with that name, os_user, at and snapshot, plus who recorded it late and when. It returns Signed(completed=True). New tests: test_r42_a_sign_off_entry_not_recorded_can_be_recorded_again (the reviewer's repro, through the API with a fresh preview and through the CLI, exit 4 then 0); test_r42_a_sign_off_the_tool_stopped_before_recording_is_recorded_on_the_next_sign_off (replaces the earlier refusal test: another name is refused naming the entry and 'Ann', 'Ann' records it, the pack bytes are unchanged, the log verifies, and a third sign-off is refused as already signed off); test_r42_a_recorded_pack_whose_files_changed_is_refused."
+    },
+    {
+      "finding": "minor R22 src/cma/review/signoff.py:32: _refusal does not map PolicyError, ThresholdsError, RulesetError, AmountError, StatementError or FirmConfigError, so the workspace returns a generic 500.",
+      "disposition": "reproduced",
+      "evidence": "Added these to _refusal as 409 with the error's own reason and 'Nothing was signed off or written.', and added FirmConfigError to cma case sign's handled errors. Test: test_workspace_sign_off_names_a_bad_configuration_file."
+    },
+    {
+      "finding": "minor R23 src/cma/pack.py:643: _remove_leftovers deletes packs/.part-* before the refusal checks, so a refused sign-off still changes the case folder.",
+      "disposition": "reproduced",
+      "evidence": "Moved _remove_leftovers to just before _write_pack, after every refusal check. Test: test_r23_a_refused_sign_off_leaves_a_crash_leftover_in_place (a stale preview is refused and the .part-x leftover is unchanged)."
+    }
+  ],
+  "notes": "Design choice for the major finding: the sign-off is not merged into one entry, because R42 asks for a pack-write entry and a sign-off entry, and the Tier 1 event-kind test checks both. Instead the gap is closed on the next sign-off. Recording the late sign-off does not re-check that the snapshot is still current: it records what was signed when the pack was written, and that pack is immutable. It is also refused under any name but the one in the pack's evidence.json, so a sign-off is never attributed to someone who did not sign it. If the signed_off append is SaveNotConfirmed, the next attempt either finds the entry (already signed off) or records it. Signed gained an optional field, completed (default False)."
+}
