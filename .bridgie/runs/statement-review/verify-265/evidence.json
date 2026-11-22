@@ -1,0 +1,99 @@
+{
+  "task": "T34",
+  "criteria": [
+    {
+      "id": "R8",
+      "tier": "adversarial",
+      "check": "pair_own_accounts (src/cma/categorise.py:1471-1521) pairs a debit with the single same-pence credit in another account within `days` (abs date diff <= days, line 1506) and marks both OWN_ACCOUNT_TRANSFER naming each other (1517-1518). The configured days come from firm.yaml own_account_pairing_days (src/cma/firm.py:279-284, int 0..31, bool refused) via overrides.case_figures (src/cma/overrides.py:396-407); the preview passes the same config value and binds it into the snapshot (src/cma/pack.py:370,385,459). Runner rows specified-3/contracts-4 show test_pairing_days_default_to_three, test_pairing_follows_the_days_configured_in_firm_yaml, test_zero_pairing_days_..., test_the_preview_snapshot_binds_the_pairing_days and test_r23_stale_snapshot...[pairing_days] PASSED.",
+      "result": "pass",
+      "artifact": "specified-3.log"
+    },
+    {
+      "id": "R9",
+      "tier": "adversarial",
+      "check": "A debit with >1 candidate (or whose credit another debit also wants) is not paired and is returned as a group, debit first, with every candidate (categorise.py:1511-1520). The groups reach the workspace queue via summary.py:326 (_pair_groups -> ind.judgement_queue) and the pack's evidence queue (pack.py:620-625). Runner shows test_the_configured_days_change_the_workspace_queue, test_two_debits_with_the_same_single_candidate_are_both_unpaired_and_listed and test_p11_a_debit_with_two_candidates_is_unpaired_and_listed_with_every_candidate[0-7] PASSED, asserting each line's pairs_with holds every other line of its group.",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "P11",
+      "tier": "adversarial",
+      "check": "tests/test_own_account_pairing.py:_p11_structure checks that each pair is one debit and one credit of equal pence in different accounts within the days, each naming the other (so no line is in two pairs). test_p11_generated_cases_pair_moves_and_leave_outside_money[0-11] checks M17-M19 == outside credits. All 20 p11 tests PASSED in invariants-5.log. The property is proven only on generated cases whose outside amounts never coincide with a move's (see finding).",
+      "result": "pass",
+      "artifact": "invariants-5.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-265/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-265/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-265/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-265/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-265/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-265/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python -c \"import subprocess,sys;r=subprocess.call([sys.executable,*sys.argv[1:]]);sys.exit(0 if r==5 else r)\" -m pytest -v -m dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-265/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "tests/test_own_account_pairing.py",
+      "line": 138,
+      "criterion": "P11",
+      "claim": "P11's 'for any multi-account case' is proven only on cases whose generator draws every amount distinct except a move's two halves, so the test never meets an outside credit equal in amount to a debit in another account. On such a case the code (per R8's literal text) pairs them as an own-account transfer, and total money in less own-account transfers in no longer equals the credits from outside. This is a spec tension between R8 and P11 that the test sidesteps rather than exposes.",
+      "repro": "Two-account case: main has 'DD COUNCIL' -50.00 on 2026-03-02; savings has 'CARD SETTLEMENT STRIPE' +50.00 on 2026-03-04 and no other inflow. overrides.case_figures pairs main's debit with savings' credit (both rule pairing:...). Combined M17-M19 = 0 while the outside credit is 50.00, violating P11's third clause."
+    },
+    {
+      "severity": "minor",
+      "file": null,
+      "line": null,
+      "criterion": null,
+      "claim": "claim.json's files_changed lists only tests/test_own_account_pairing.py, tests/test_signoff.py and README.md, but the task diff also changes src/cma/firm.py, src/cma/overrides.py, src/cma/pack.py and src/cma/categorise.py.",
+      "repro": "Compare claim.json files_changed with the file headers in diff.patch."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

@@ -1,0 +1,32 @@
+I found no blocker or major defect in T34. R8, R9 and P11 each pass, and my verdict is **pass**, with two minor findings.
+
+**What I checked**
+- **R8 (pairing within the configured days):** `firm.py` reads `own_account_pairing_days`. It defaults to 3, accepts whole numbers from 0 to 31 and refuses a true/false value. `overrides.py` passes the value into the pairing code, and `pack.py` uses the same value for the preview and records it in the preview's snapshot.
+- **R9 (a debit with more than one candidate):** such a debit is not paired. It comes back as a group with every candidate, and that group reaches both the workspace queue and the pack's queue.
+- **P11:** the 20 invariant tests named `p11` all ran and passed in the runner's logs.
+- **Edge cases I tried:**
+  - Two debits wanting the same single credit are both left unpaired.
+  - A window of 0 days pairs same-day moves only.
+  - Changing the days after a preview makes sign-off refuse it, naming the setting.
+  - A bad value refuses the figures in the workspace and in `cma case figures`.
+  - Which lines pair does not depend on the order the accounts are given in.
+  - An overridden line, a protected line, a returned direct debit or a reversal is never paired.
+
+**Minor findings**
+1. **P11 is proven only on cases where no amounts coincide** (`tests/test_own_account_pairing.py:138`). The test's own generator gives every line a distinct amount, except a move's two halves. A £50.00 card settlement into one account and a £50.00 council direct debit from another, two days apart, would be paired as an own-account transfer. That is what R8's literal wording asks for. But then total money in less own-account transfers in no longer equals the outside credits, so P11's third clause fails. That is a conflict between R8 and P11, which the owner should settle in the spec. A test exercising it would also make it visible.
+2. **`files_changed` in claim.json is incomplete.** It lists only two test files and the README. The diff also changes `src/cma/firm.py`, `src/cma/overrides.py`, `src/cma/pack.py` and `src/cma/categorise.py`.
+
+```json
+{
+  "criteria": [
+    {"id": "R8", "tier": "adversarial", "check": "pair_own_accounts (src/cma/categorise.py:1471-1521) pairs a debit with the single same-pence credit in another account within `days` (abs date diff <= days, line 1506) and marks both OWN_ACCOUNT_TRANSFER naming each other (1517-1518). The configured days come from firm.yaml own_account_pairing_days (src/cma/firm.py:279-284, int 0..31, bool refused) via overrides.case_figures (src/cma/overrides.py:396-407); the preview passes the same config value and binds it into the snapshot (src/cma/pack.py:370,385,459). Runner rows specified-3/contracts-4 show test_pairing_days_default_to_three, test_pairing_follows_the_days_configured_in_firm_yaml, test_zero_pairing_days_..., test_the_preview_snapshot_binds_the_pairing_days and test_r23_stale_snapshot...[pairing_days] PASSED.", "result": "pass", "artifact": "specified-3.log"},
+    {"id": "R9", "tier": "adversarial", "check": "A debit with >1 candidate (or whose credit another debit also wants) is not paired and is returned as a group, debit first, with every candidate (categorise.py:1511-1520). The groups reach the workspace queue via summary.py:326 (_pair_groups -> ind.judgement_queue) and the pack's evidence queue (pack.py:620-625). Runner shows test_the_configured_days_change_the_workspace_queue, test_two_debits_with_the_same_single_candidate_are_both_unpaired_and_listed and test_p11_a_debit_with_two_candidates_is_unpaired_and_listed_with_every_candidate[0-7] PASSED, asserting each line's pairs_with holds every other line of its group.", "result": "pass", "artifact": "invariants-5.log"},
+    {"id": "P11", "tier": "adversarial", "check": "tests/test_own_account_pairing.py:_p11_structure checks that each pair is one debit and one credit of equal pence in different accounts within the days, each naming the other (so no line is in two pairs). test_p11_generated_cases_pair_moves_and_leave_outside_money[0-11] checks M17-M19 == outside credits. All 20 p11 tests PASSED in invariants-5.log. The property is proven only on generated cases whose outside amounts never coincide with a move's (see finding).", "result": "pass", "artifact": "invariants-5.log"}
+  ],
+  "findings": [
+    {"severity": "minor", "file": "tests/test_own_account_pairing.py", "line": 138, "criterion": "P11", "claim": "P11's 'for any multi-account case' is proven only on cases whose generator draws every amount distinct except a move's two halves, so the test never meets an outside credit equal in amount to a debit in another account. On such a case the code (per R8's literal text) pairs them as an own-account transfer, and total money in less own-account transfers in no longer equals the credits from outside. This is a spec tension between R8 and P11 that the test sidesteps rather than exposes.", "repro": "Two-account case: main has 'DD COUNCIL' -50.00 on 2026-03-02; savings has 'CARD SETTLEMENT STRIPE' +50.00 on 2026-03-04 and no other inflow. overrides.case_figures pairs main's debit with savings' credit (both rule pairing:...). Combined M17-M19 = 0 while the outside credit is 50.00, violating P11's third clause."},
+    {"severity": "minor", "file": null, "line": null, "criterion": null, "claim": "claim.json's files_changed lists only tests/test_own_account_pairing.py, tests/test_signoff.py and README.md, but the task diff also changes src/cma/firm.py, src/cma/overrides.py, src/cma/pack.py and src/cma/categorise.py.", "repro": "Compare claim.json files_changed with the file headers in diff.patch."}
+  ],
+  "verdict": "pass"
+}
+```
