@@ -260,9 +260,12 @@ def raise_indicators(statement: Statement, thresholds: Thresholds | None = None)
     pos = {t.id: i for i, t in enumerate(txns)}
     found: list[tuple[str, list[tuple[str, str]], list[str], str]] = []
 
-    def fire(kind: str, keys: list[tuple[str, str]], lines: list[Transaction] | list[str], reason: str):
+    def fire(kind: str, keys: list[tuple[str, str]], lines: list[Transaction] | list[str], reason: str,
+             also: tuple[tuple[str, str], ...] = ()):
+        # `also`: thresholds the indicator rests on but does not show (a list of names), counted
+        # when saying whether it fired on a value still as shipped (R14).
         ids = [x if isinstance(x, str) else x.id for x in lines]
-        found.append((kind, keys, sorted(dict.fromkeys(ids), key=pos.__getitem__), reason))
+        found.append((kind, keys, sorted(dict.fromkeys(ids), key=pos.__getitem__), reason, also))
 
     credits = [t for t in txns if amt[t.id] > 0]
     trading = [t for t in credits if t.category in REVENUE_CATEGORIES]
@@ -324,7 +327,8 @@ def raise_indicators(statement: Statement, thresholds: Thresholds | None = None)
     for t in txns:
         if amt[t.id] < 0 and -amt[t.id] >= least and operators.search(_fold(t.description)):
             fire("gambling", [("gambling", "amount_at_least")], [t],
-                 f"A payment of {_money(amt[t.id])} to a listed gambling operator.")
+                 f"A payment of {_money(amt[t.id])} to a listed gambling operator.",
+                 also=(("gambling", "operators"),))
 
     # Returned direct debits.
     returned = [t for t in txns if t.category == Category.RETURNED_DD]
@@ -367,11 +371,12 @@ def raise_indicators(statement: Statement, thresholds: Thresholds | None = None)
                   f"the median of its {n} credits in the period.")
 
     out = []
-    for n, (kind, keys, evidence, reason) in enumerate(found, start=1):
+    for n, (kind, keys, evidence, reason, also) in enumerate(found, start=1):
         ths = [IndicatorThreshold(key=f"{s}.{k}", value=_shown(t_.value(s, k), SPEC[s][k]), unit=SPEC[s][k],
                                   illustrative=t_.illustrative(s, k)) for s, k in keys]
         out.append(Indicator(id=f"I{n}", kind=kind, thresholds=ths, evidence=evidence, reason=reason,
-                             illustrative=any(th.illustrative for th in ths)))
+                             illustrative=any(th.illustrative for th in ths)
+                             or any(t_.illustrative(s, k) for s, k in also)))
     return out
 
 

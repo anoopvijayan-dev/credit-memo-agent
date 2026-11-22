@@ -413,3 +413,15 @@ def test_a_round_trip_tolerance_with_more_digits_than_a_decimal_holds_is_compare
                     ("W1", date(2026, 1, 2), "CASH WITHDRAWAL", -100.00),
                     ("D1", date(2026, 1, 3), "CASH PAID IN", 90.00)])
     assert _of("cash_round_trip", raise_indicators(s, t)) == []
+
+
+@pytest.mark.contracts
+def test_a_gambling_indicator_on_the_shipped_operator_list_is_illustrative_whatever_the_amount(tmp_path):
+    # Antigravity re-review of T08: with only the amount changed, the operator list the payment
+    # matched is still the shipped one, so the indicator is still illustrative (R14).
+    t = _thresholds(tmp_path, gambling__amount_at_least="10.00")
+    s = _statement([("L0", date(2026, 1, 1), "STRIPE PAYOUT", 500.00),
+                    ("L1", date(2026, 1, 2), "CARD BET365", -20.00)])
+    (found,) = _of("gambling", raise_indicators(s, t))
+    assert [th.key for th in found.thresholds] == ["gambling.amount_at_least"]
+    assert found.thresholds[0].illustrative is False and found.illustrative is True
