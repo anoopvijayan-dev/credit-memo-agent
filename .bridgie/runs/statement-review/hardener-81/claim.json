@@ -1,0 +1,94 @@
+{
+  "task": "T40",
+  "claims": [
+    {
+      "text": "Failure modes: every case that cannot be read (an exception from case_summary, a case.yaml lost after listing, a statement that cannot be read) is reported as refused, with traced and reconciled not known. The other cases are still reported, and the exit code is 1. A refusal's own words never reach the output (src/cma/report.py case_report).",
+      "proof_cmd": "python -m pytest -q tests/test_report.py -k 'failing_case_does_not_hide or gone_while_listed or unreadable_statement'",
+      "proof_output": "3 passed (part of: 13 passed in 3.53s for tests/test_report.py)"
+    },
+    {
+      "text": "Failure modes: the override log and the case log are read in separate try blocks. If one cannot be read, it shows as not known (None), and the figures' answer and the sign-off flag are left as they are.",
+      "proof_cmd": "python -m pytest -q tests/test_report.py::test_r50_an_unreadable_statement_does_not_hide_the_sign_off",
+      "proof_output": "passed; signed_off stays True when the statement is unreadable"
+    },
+    {
+      "text": "Idempotency and partial failure: cma report only reads. It makes no file or folder and changes no mode, because ensure_root/case_folder are no longer called and _root only runs check_not_in_git. Running it twice leaves every byte and mode under the case root unchanged.",
+      "proof_cmd": "python -m pytest -q tests/test_report.py::test_r50_report_writes_nothing_and_changes_no_mode",
+      "proof_output": "passed"
+    },
+    {
+      "text": "Security, authz at the new entry point: cma report runs the same R31 git-ignore check as every case command, through store.check_not_in_git, inside the CLI's `with _case_errors()`. A case root that git does not ignore is refused with exit 2 and no traceback.",
+      "proof_cmd": "python -m pytest -q tests/test_report.py::test_r50_report_refuses_a_case_root_git_does_not_ignore",
+      "proof_output": "passed"
+    },
+    {
+      "text": "Security and PII (R50): the text and --json output hold no sentinel from a name, business name, own account, label, description, override reason or typed name. They hold no amount and no £, and nothing that reads as a duration (clock time, time unit, ISO timestamp, duration/elapsed/took).",
+      "proof_cmd": "python -m pytest -q tests/test_report.py::test_r50_report_output_holds_no_sentinel_and_no_duration",
+      "proof_output": "passed"
+    },
+    {
+      "text": "Correctness of the traced flag, false positive fixed: a valid case with vat_stagger set and no HMRC VAT line has M13 >= 1 with no lines, and is traced, with exit 0.",
+      "proof_cmd": "python -m pytest -q tests/test_report.py::test_r50_a_missed_vat_payment_with_no_vat_line_is_traced",
+      "proof_output": "passed"
+    },
+    {
+      "text": "Correctness of the traced flag, false negatives fixed: a zero-valued derived figure with no lines (M26) is untraced, a zero days_overdrawn monthly cell with no lines is untraced, and an n/a monthly cell with no note is untraced. Each gives exit 1.",
+      "proof_cmd": "python -m pytest -q tests/test_report.py -k 'zero_valued_derived or zero_or_na_monthly'",
+      "proof_output": "2 passed"
+    },
+    {
+      "text": "Non-zero exit on untraced or unreconciled cases, and exit 0 with 'no cases' on an empty root.",
+      "proof_cmd": "python -m pytest -q tests/test_report.py -k 'unreconciled or untraced_case or no_cases'",
+      "proof_output": "3 passed"
+    },
+    {
+      "text": "Performance: the report reuses the workspace's case_summary once per case and adds no query or loop over money. The output is one row per case. It is not paginated, which suits a local CLI over a few cases.",
+      "proof_cmd": "python -m pytest -q tests/test_report.py",
+      "proof_output": "13 passed in 3.53s"
+    },
+    {
+      "text": "Observability: the report is itself the signal the design names (traced 100%, reconciled, M26, queue size and overrides per case). Its non-zero exit is the 'what fires' the design's Observability section asks of cma report.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_report.py",
+      "proof_output": "13 passed in 3.11s"
+    },
+    {
+      "text": "Docs: README documents cma report, what it holds and leaves out, --json, and exit 1.",
+      "proof_cmd": "git diff HEAD~3 -- README.md | grep -c 'cma report'",
+      "proof_output": "README.md:164-168 adds the cma report block"
+    },
+    {
+      "text": "No regression: lint, compile and the full suite pass.",
+      "proof_cmd": "ruff check src/cma/report.py src/cma/cli.py tests/test_report.py && python -m compileall -q src && python -m pytest -q",
+      "proof_output": "All checks passed!; compiled; 3011 passed in 376.63s"
+    }
+  ],
+  "files_changed": [],
+  "dispositions": [
+    {
+      "finding": "major: false-positive untraced flag and exit 1 on M13 with vat_stagger and missed VAT payments",
+      "disposition": "reproduced",
+      "evidence": "Fixed at 3e0e02e (ABSENCE_COUNTS: M13 must cite only at 0). test_r50_a_missed_vat_payment_with_no_vat_line_is_traced passes and asserts M13>=1, lines==0, traced, exit 0."
+    },
+    {
+      "finding": "major: false-negative traced for zero-valued derived figures/cells and n/a monthly cells without a reason",
+      "disposition": "reproduced",
+      "evidence": "Fixed: CITES_WHENEVER_VALUED (M1, M4, M5, M10, M15, M16, M26, M27, M28), and _cell_untraced checks the note and the derived kind. M9 is left out on purpose: with no revenue and no transfers it is legitimately 0 with nothing to cite. The two tests pass. A local probe (debit-only, single-credit, and overdrawn with vat_stagger and a proposed repayment) gave traced True with no false positives."
+    },
+    {
+      "finding": "major: unhandled crashes on partial failure or refused case roots, and chmod side effect on read",
+      "disposition": "reproduced",
+      "evidence": "Fixed: case_report catches per case, cli wraps report() in _case_errors(), and _root no longer calls ensure_root/case_folder. Tests gone_while_listed, refuses_a_case_root_git_does_not_ignore and writes_nothing_and_changes_no_mode all pass."
+    },
+    {
+      "finding": "minor: unproven read-only claim",
+      "disposition": "reproduced",
+      "evidence": "Now proven by test_r50_report_writes_nothing_and_changes_no_mode (bytes and st_mode of every path compared before and after)."
+    },
+    {
+      "finding": "minor: coupled _overrides/entries error handling losing signed_off",
+      "disposition": "reproduced",
+      "evidence": "Split into separate try blocks. test_r50_an_unreadable_statement_does_not_hide_the_sign_off passes."
+    }
+  ],
+  "notes": "Hardener made no code changes; the implementer's 3e0e02e already addresses every verify-273 finding, and the evidence above is from this run. Not applicable, and why: there is no migration or data change (a read-only command with no stored data), no feature flag (a new opt-in command; rollback is not running it or reinstalling), and no remote alert (the design keeps every signal local; the non-zero exit is the alert). No new dependency. Gaps for the owner: (1) traced detection is a per-figure table in report.py (CITES_WHENEVER_VALUED, ABSENCE_COUNTS). It duplicates knowledge the figures layer owns, so a new figure added to metrics without updating this table would be judged as a sum (zero needs no lines). A figure-kind field on Metric would remove the duplication, but that is a design change outside T40. (2) An unreadable cases folder raises CaseStoreError (exit 2) rather than being reported per case, which seems right but is not tested. (3) The edge-case probe ran from the scratchpad, not the runner, so it is noted here and not claimed."
+}
