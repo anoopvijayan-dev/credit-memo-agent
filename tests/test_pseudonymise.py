@@ -294,3 +294,56 @@ def test_p10_a_name_holding_recognised_wording_keeps_only_that_wording(business,
         if word not in recognised:
             assert word not in out.upper(), word
     _figures_equal(data, prof, result)
+
+
+@pytest.mark.invariants
+def test_p10_recognised_wording_inside_a_longer_word_keeps_only_that_part():
+    # T39 attempt 2: v1's FINANCE\b and PAYROLL match inside GREENFINANCE, SMITHFINANCE and
+    # BRIGHTPAYROLL, and the whole word was kept, so the names survived (R46). Only the part a
+    # rule reads stays now; the rest of the word becomes a token, in the profile as well.
+    prof = _profile(business_name="Greenfinance Ltd", directors=["Peter Smithfinance"])
+    data = _statement([("2026-03-02", "FPS CREDIT GREENFINANCE LTD INV 12", 50_000),
+                       ("2026-03-03", "FPS DEBIT BRIGHTPAYROLL SERVICES", -10_000),
+                       ("2026-03-04", "FPS CREDIT PETER SMITHFINANCE", 20_000),
+                       ("2026-03-05", "FPS CREDIT GREENFINANCE LTD INV 13", 50_000),
+                       ("2026-03-06", "CARD SETTLEMENT STRIPE", 30_000)])
+    result = ps.pseudonymise_statement(data, prof)
+    out = result.statement.decode() + json.dumps(result.profile)
+    for secret in ("GREENFINANCE", "SMITHFINANCE", "BRIGHTPAYROLL", "GREEN", "SMITH", "BRIGHT", "PETER"):
+        assert secret not in out.upper(), secret
+    rows = _rows(result.statement)
+    assert rows[0]["description"].split()[2] == rows[3]["description"].split()[2]  # one payer, one token
+    _figures_equal(data, prof, result)
+
+
+@pytest.mark.invariants
+def test_p10_a_profile_name_spelt_with_a_run_of_spaces_is_one_payer():
+    # T39 attempt 2: ROSE  BAKERY and ROSE BAKERY are one payer to the counterparty normaliser,
+    # but got two tokens, so M15 split and the copy was refused.
+    prof = _profile(business_name="Rose Bakery")
+    data = _statement([("2026-03-02", "FPS CREDIT ROSE  BAKERY INV 1", 50_000),
+                       ("2026-03-03", "FPS CREDIT ROSE BAKERY INV 2", 50_000),
+                       ("2026-03-04", "FPS CREDIT BOB INV 3", 60_000)])
+    result = ps.pseudonymise_statement(data, prof)
+    assert "ROSE" not in result.statement.decode().upper()
+    _figures_equal(data, prof, result)
+
+
+@pytest.mark.contracts
+def test_cli_defaults_to_the_firm_thresholds(tmp_path, monkeypatch):
+    # T39 attempt 2: without --thresholds the copy was checked against the packaged thresholds,
+    # so a gambling operator only the firm lists was tokenised and its indicator lost.
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("CMA_HOME", str(home))
+    from cma.indicators import default_thresholds_text
+    text = default_thresholds_text()
+    assert "operators:" in text
+    text = text.replace("operators:", "operators:\n    - LOCALBOOKIE", 1)
+    (home / "indicators.yaml").write_text(text)
+    src = tmp_path / "s.csv"
+    src.write_bytes(_statement([("2026-03-02", "CARD PAYMENT LOCALBOOKIE", -5_000),
+                                ("2026-03-03", "CARD SETTLEMENT STRIPE", 30_000)]))
+    r = CliRunner().invoke(app, ["pseudonymise", str(src), "--format", "csv", "--out", str(tmp_path / "o")])
+    assert r.exit_code == 0, r.output
+    assert "LOCALBOOKIE" in (tmp_path / "o" / "statement.csv").read_text()

@@ -22,7 +22,9 @@ built to do so, word by word:
   name the same counterparty only when they did before;
 - every other word becomes a token of its own: one per distinct word, letters for letters and
   digits for a word with a digit, so the counterparty normaliser (M9, M15, round trips,
-  reversal links) groups the lines as before.
+  reversal links) groups the lines as before. A word a matcher reads only in part (FINANCE in
+  GREENFINANCE, which v1's FINANCE\\b reads) keeps that part alone, and the rest of the word
+  becomes a token, so a name never survives inside a longer word.
 
 A profile name that holds recognised wording somewhere (a business called Greenfield Capital,
 a director named after a lender) keeps only that wording: its other words become their word
@@ -116,12 +118,15 @@ class _Tokens:
                 self.taken.add(tok)
                 return tok
 
-    def word(self, word: str) -> str:
+    def word(self, word: str, key: str | None = None) -> str:
+        """The token of `word`; `key`, when given, is what the token is kept consistent by
+        (a part of a longer word is keyed by the whole word and its place in it)."""
+        key = word if key is None else key
         if not any(ch.isdigit() for ch in word):
-            if word not in self.letters:
-                self.letters[word] = self.letter()
-            return self.letters[word]
-        if word not in self.digits:
+            if key not in self.letters:
+                self.letters[key] = self.letter()
+            return self.letters[key]
+        if key not in self.digits:
             pure = word.isdigit() and word.isascii()
             while True:
                 self._n_digits += 1
@@ -130,8 +135,27 @@ class _Tokens:
                 if tok not in self.taken and not self.blocked(tok):
                     break
             self.taken.add(tok)
-            self.digits[word] = tok
-        return self.digits[word]
+            self.digits[key] = tok
+        return self.digits[key]
+
+    def partly(self, word: str, kept: Sequence[tuple[int, int]]) -> str:
+        """`word` with only the parts inside `kept` (spans within the word) left as written and
+        every other part replaced by a token: recognised wording inside a longer word (FINANCE
+        in GREENFINANCE) stays, and the rest of the word, which may be a name, does not. The
+        tokens are keyed by the whole word and its kept parts, so one word is always written
+        the same way and two words never the same way."""
+        kept = _merge((max(s, 0), min(e, len(word))) for s, e in kept if min(e, len(word)) > max(s, 0))
+        if not kept:
+            return self.word(word)
+        if kept == [(0, len(word))]:
+            return word
+        out, pos = [], 0
+        for i, (s, e) in enumerate([*kept, (len(word), len(word))]):
+            if s > pos:
+                out.append(self.word(word[pos:s], f"{word}\x00{kept}\x00{i}"))
+            out.append(word[s:e])
+            pos = e
+        return "".join(out)
 
 
 def _rulesets() -> list[cat.Ruleset]:
@@ -244,23 +268,30 @@ def pseudonymise_statement(data: bytes, profile: dict[str, Any] | None = None, *
             return True
         return any(p.search(tok) for p in extra) or any(p.search(tok) for p in blockers)
 
-    keep_words: dict[str, set[str]] = {}
+    tokens = _Tokens(taken=set(originals), blocked=blocked)
+
+    def within(m: re.Match[str], spans: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
+        """The parts of word `m` that `spans` cover, as spans within the word."""
+        return [(s - m.start(), e - m.start()) for s, e in spans if _overlaps(m.span(), (s, e))]
+
+    # A kept name's words, as the descriptions write them (or, for a name no line holds, as its
+    # own wording reads); its profile entry is written with the same words (R46, P10).
+    name_words: dict[str, dict[str, str]] = {}
     for k in kept_names:
-        words: set[str] = set()
+        words: dict[str, str] = {}
         seen = False
         for i, d in enumerate(descs):
             for span in name_spans[k][i]:
                 seen = True
                 for m in _WORD.finditer(d, span[0], span[1]):
-                    if any(_overlaps(m.span(), f) for f in kept_by_line[i]):
-                        words.add(m.group())
+                    words.setdefault(m.group(), tokens.partly(m.group(), within(m, kept_by_line[i])))
         if not seen:
             folded = cat._fold(names[k])
             own = _kept_spans(folded, rulesets, extra)
-            words = {m.group() for m in _WORD.finditer(folded) if any(_overlaps(m.span(), f) for f in own)}
-        keep_words[k] = words
+            for m in _WORD.finditer(folded):
+                words.setdefault(m.group(), tokens.partly(m.group(), within(m, own)))
+        name_words[k] = words
 
-    tokens = _Tokens(taken=set(originals), blocked=blocked)
     name_token = {k: tokens.letter() for k in names if k not in kept_names}
     variants: dict[tuple[str, ...], dict[str, str]] = {}
 
@@ -278,17 +309,20 @@ def pseudonymise_statement(data: bytes, profile: dict[str, Any] | None = None, *
             found = sorted({(min(s[0] for kk, s in live if kk == k and _overlaps(s, region)), name_token[k])
                             for k, s in live if _overlaps(s, region)})
             toks = tuple(t for _, t in found)
-            text = d[region[0]:region[1]]
+            # A run of whitespace is one space to the counterparty normaliser, so it is one spelling.
+            text = " ".join(d[region[0]:region[1]].split())
             spellings = variants.setdefault(toks, {})
             if text not in spellings:
                 spellings[text] = "" if not spellings else tokens.letter()
             edits.append((*region, " ".join(toks + ((spellings[text],) if spellings[text] else ()))))
-        taken = fixed + regions
         for m in _WORD.finditer(d):
-            if any(_overlaps(m.span(), f) for f in taken):
+            if any(_overlaps(m.span(), f) for f in regions):
                 continue
-            edits.append((m.start(), m.end(), tokens.word(m.group())))
-            words_replaced += 1
+            # A word a rule reads only in part (FINANCE in GREENFINANCE) keeps that part alone.
+            new_word = tokens.partly(m.group(), within(m, fixed))
+            if new_word != m.group():
+                edits.append((m.start(), m.end(), new_word))
+                words_replaced += 1
         new = d
         for s, e, text in sorted(edits, reverse=True):
             new = new[:s] + text + new[e:]
@@ -305,7 +339,7 @@ def pseudonymise_statement(data: bytes, profile: dict[str, Any] | None = None, *
             if k not in kept_names:
                 return name_token[k]
             folded = cat._fold(n)
-            return _WORD.sub(lambda m: m.group() if m.group() in keep_words[k] else tokens.word(m.group()), folded)
+            return _WORD.sub(lambda m: name_words[k].get(m.group()) or tokens.word(m.group()), folded)
         new_profile = dict(profile)
         for f in store.LIST_FIELDS:
             new_profile[f] = [tok(n) for n in profile[f]]

@@ -672,7 +672,8 @@ def pseudonymise_cmd(
     opening_balance: str | None = typer.Option(None, help="Monzo or bank CSV only, as for `cma case import`."),
     statement_balance: str | None = typer.Option(None, help="Open Banking or TrueLayer only, as for `cma case import`."),
     at: str | None = typer.Option(None, "--at", help="Open Banking or TrueLayer only, with --statement-balance."),
-    thresholds: Path | None = typer.Option(None, help="Indicator thresholds YAML (R14); defaults to the packaged one."),
+    thresholds: Path | None = typer.Option(None, help="Indicator thresholds YAML (R14); defaults to the firm's, as "
+                                                      "a case's indicators are raised, or the packaged one."),
 ):
     """Write a copy of a statement, and of a case's profile, with personal and business names
     and account numbers replaced by consistent tokens; institutions and every id, date, amount
@@ -684,10 +685,16 @@ def pseudonymise_cmd(
     with _case_errors():
         profile = store.load_profile(store.case_folder(profile_case)) if profile_case else None
     try:
-        th = load_thresholds(thresholds)
+        # The copy is checked against the thresholds a case raises its indicators from, the
+        # firm's when the case root has them, so an operator only the firm lists is kept (P10).
+        if thresholds is not None:
+            th = load_thresholds(thresholds)
+        else:
+            from .review.summary import case_thresholds
+            th = case_thresholds()
         result, written = ps.pseudonymise_file(file, fmt, out, profile=profile, opening_balance=opening_balance,
                                                statement_balance=statement_balance, at=at, thresholds=th)
-    except (ps.PseudonymiseError, ThresholdsError) as e:
+    except (ps.PseudonymiseError, ThresholdsError, firm.FirmConfigError) as e:
         console.print(f"[red]Refused.[/red] {escape(str(e))}")
         raise typer.Exit(code=2) from None
     console.print(f"wrote {', '.join(p.name for p in written)} in {out}: {result.words_replaced} word(s) and "
