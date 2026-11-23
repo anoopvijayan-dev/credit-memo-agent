@@ -45,6 +45,7 @@ import hashlib
 import json
 import threading
 from collections import OrderedDict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -368,20 +369,32 @@ def _rests_on(a, b, lines: set[str]) -> bool:
     return bool(lines & set(a.evidence)) or a.value != b.value or a.evidence != b.evidence
 
 
-def case_figures(folder: Path, *, pairing_days: int | None = None) -> dict[str, CaseFigures]:
+def case_figures(folder: Path, *, pairing_days: int | None = None,
+                 override_position: int | None = None,
+                 accounts: Iterable[str] | None = None) -> dict[str, CaseFigures]:
     """Every account's figures, recomputed from its statement, the profile and the whole
     override log; stale overrides listed and not applied (R17, R19). In a case of more than
     one account, every account is categorised first and then a debit in one account is
     paired with the single credit of the same amount in another, within the configured days,
     both becoming own-account transfers, before any account's figures are computed; a debit
     with more than one candidate stays unpaired and is listed with its candidates (R8, R9).
-    The days are `pairing_days`, or firm.yaml's own_account_pairing_days read now."""
+    The days are `pairing_days`, or firm.yaml's own_account_pairing_days read now.
+    `override_position`: only the override log's first that many records count, as a signed
+    pack recorded the log (verify, R44); a log that holds fewer is refused. `accounts`: only
+    these accounts are the case's, as a signed pack recorded them (verify, P13), so an account
+    imported after the sign-off neither pairs with them nor is computed."""
     folder = Path(folder)
     entries = caselog.for_case(folder).entries()
     profile = store.load_profile(folder)
-    accounts = _accounts(entries)
+    accounts = sorted(set(accounts)) if accounts is not None else _accounts(entries)
     statements = {a: _load(folder, a) for a in accounts}
-    state = _decide(_read_records(folder, entries), statements)
+    records = _read_records(folder, entries)
+    if override_position is not None:
+        if len(records) < override_position:
+            raise store.CaseStoreError(f"{OVERRIDES} holds {len(records)} records; {override_position} were "
+                                       "recorded")
+        records = records[:override_position]
+    state = _decide(records, statements)
     out: dict[str, CaseFigures] = {}
     failed: list[ReconciliationError] = []
     missing = [a for a in accounts if statements[a] is None]
@@ -605,8 +618,21 @@ def add_override(folder: Path, line: str, category: str, *, reason: str, name: s
         profile = store.load_profile(folder)
         # The line's category now, with the overrides in force: categorised only, never the
         # figures, so a case that does not reconcile can still take the override that puts a
-        # line right (R3, R17).
-        _categorise(loaded[0], loaded[1], profile, state.applied.get(account, {}))
+        # line right (R3, R17). In a case of more than one account the own-account pairs are
+        # settled first, as case_figures settles them: a paired line is an own-account transfer
+        # now, so moving it back to what the table gave it is a change, not a no-op
+        # (Antigravity re-review of T16).
+        present = {a: v for a, v in statements.items() if v is not None}
+        if len(accounts) > 1:
+            for a, (st, sha) in present.items():
+                _categorise(st, sha, profile, state.applied.get(a, {}))
+            from . import firm
+
+            pair_own_accounts({a: v[0] for a, v in present.items()},
+                              overridden={a: state.applied.get(a, {}).keys() for a in present},
+                              days=firm.load().own_account_pairing_days)
+        else:
+            _categorise(loaded[0], loaded[1], profile, state.applied.get(account, {}))
         t = next((t for t in loaded[0].transactions if t.id == line), None)
         if t is None:
             raise store.CaseStoreError(f"no line {line} in account {account}")

@@ -356,3 +356,38 @@ def test_the_api_needs_the_session_token_to_read_the_profile(home, tmp_path, ser
     finally:
         conn.close()
     assert r.status in (401, 403) and b"Jane" not in body
+
+
+# --- the proposed repayment as typed (Antigravity re-review of T13) -------------------------
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("typed", ["1500,50", "1,50", "12,34.5", "1,5000.00", ",500"])
+def test_a_comma_that_does_not_group_thousands_is_refused_never_read_as_pence(typed):
+    # 1500,50 is a decimal comma: stripping it read it as £150,050.00, a hundred times the amount.
+    with pytest.raises(store.CaseStoreError, match="a comma may only separate thousands"):
+        store.validate_profile({"proposed_monthly_repayment": typed})
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("typed, stored", [("1,500.50", "1500.50"), ("£12,345,678.90", "12345678.90"),
+                                           ("1500.5", "1500.50")])
+def test_thousands_commas_and_a_pound_sign_are_read_as_typed(typed, stored):
+    assert store.validate_profile({"proposed_monthly_repayment": typed})["proposed_monthly_repayment"] == stored
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("number", ["1500.0000000000001", "9999999999999.991", "1500.001"])
+def test_a_yaml_number_with_fractional_pence_is_refused_not_rounded_by_a_float(home, tmp_path, number):
+    # YAML read an unquoted 1500.0000000000001 as the float 1500.0, so fractional pence passed.
+    folder = store.case_folder(store.new_case(label="t13"))
+    src = tmp_path / "profile.yaml"
+    src.write_text(f"proposed_monthly_repayment: {number}\n", encoding="utf-8")
+    with pytest.raises(store.CaseStoreError, match="at most two decimals"):
+        store.update_profile(folder, lambda old: {**old, **store.parse_profile(src.read_bytes())})
+
+
+@pytest.mark.contracts
+def test_an_unquoted_yaml_amount_with_pence_is_read_as_typed(home, tmp_path):
+    raw = store.parse_profile(b"proposed_monthly_repayment: 1500.5\n")
+    assert store.validate_profile(raw)["proposed_monthly_repayment"] == "1500.50"

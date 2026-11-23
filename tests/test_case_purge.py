@@ -265,3 +265,87 @@ def test_purges_finishing_together_record_the_case_once(tmp_path):
         t.join()
     lines = (root / store.PURGE_LEDGER).read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1 and '"case":"0123456789abcdef"' in lines[0]
+
+
+# --- Antigravity re-review of T15 --------------------------------------------------------------
+
+
+@pytest.mark.contracts
+def test_the_ledger_is_read_through_the_handle_that_holds_its_lock(home, tmp_path, monkeypatch):
+    # On Windows the ledger's lock is mandatory: another handle of the same process cannot read
+    # it while it is held, so every purge after the first failed. Reading the ledger by path
+    # while the lock is held now fails here as it would there.
+    from pathlib import Path
+
+    real = Path.read_text
+
+    def no_second_handle(self, *a, **k):
+        if self.name == store.PURGE_LEDGER:
+            raise PermissionError(13, "The process cannot access the file because another process has locked a "
+                                      "portion of the file")
+        return real(self, *a, **k)
+
+    (first, _), (second, _) = _full_case(home, tmp_path), _full_case(home, tmp_path)
+    store.purge_case(first)
+    monkeypatch.setattr(Path, "read_text", no_second_handle)
+    store.purge_case(second)
+    monkeypatch.setattr(Path, "read_text", real)
+    assert [line["case"] for line in _ledger(home)] == [first, second]
+
+
+@pytest.mark.contracts
+def test_a_short_write_to_the_ledger_is_continued_never_left_torn(home, tmp_path, monkeypatch):
+    (first, _), (second, _) = _full_case(home, tmp_path), _full_case(home, tmp_path)
+    real = os.write
+    monkeypatch.setattr(os, "write", lambda fd, data: real(fd, bytes(data[:7])))  # seven bytes at a time
+    store.purge_case(first)
+    store.purge_case(second)
+    monkeypatch.setattr(os, "write", real)
+    assert [line["case"] for line in _ledger(home)] == [first, second]
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("where", ["case", "purging"])
+def test_a_case_folder_that_is_a_symlink_is_refused_and_nothing_outside_is_deleted(home, tmp_path, where):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("not the case store's")
+    (outside / store.PROFILE).write_text("directors: []\n")
+    case_id = "0123456789abcdef"
+    cases = home / store.CASES
+    cases.mkdir(parents=True, exist_ok=True)
+    (cases / (case_id if where == "case" else f"{store.PURGING}{case_id}")).symlink_to(outside,
+                                                                                          target_is_directory=True)
+    with pytest.raises(store.CaseStoreError, match="symlink"):
+        store.purge_case(case_id)
+    assert (outside / "keep.txt").read_text() == "not the case store's" and (outside / store.PROFILE).exists()
+
+
+@pytest.mark.contracts
+def test_a_case_moved_away_by_another_purge_is_never_recreated(home, tmp_path, monkeypatch):
+    # The other purge renames the case between this purge's check of it and its lock: making the
+    # lock files used to recreate cases/<id> holding only them.
+    from pathlib import Path
+
+    case_id, folder = _full_case(home, tmp_path)
+    for lock in (case.for_case(folder).gate_path, case.for_case(folder).lock_path):
+        lock.unlink(missing_ok=True)  # a case whose lock files are made by the purge
+    real_is_file = Path.is_file
+    moved = []
+
+    seen = []
+
+    def other_purge_moves_it(self):
+        found = real_is_file(self)
+        if found and self == folder / store.PROFILE:
+            seen.append(1)
+            if len(seen) == 2 and not moved:  # after this purge's own check that the case is there
+                moved.append(1)
+                os.replace(folder, home / store.CASES / f"{store.PURGING}{case_id}")  # the other purge's rename
+        return found
+
+    monkeypatch.setattr(Path, "is_file", other_purge_moves_it)
+    store.purge_case(case_id)  # finishes what the other purge left, without recreating the folder
+    monkeypatch.setattr(Path, "is_file", real_is_file)
+    assert moved and not folder.exists() and not (home / store.CASES / f"{store.PURGING}{case_id}").exists()
+    assert [line["case"] for line in _ledger(home)] == [case_id]

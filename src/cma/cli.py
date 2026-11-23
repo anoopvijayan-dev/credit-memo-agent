@@ -546,6 +546,14 @@ def _case_errors():
     except (FirmConfigError, RulesetError) as e:  # a malformed firm.yaml or firm_rules.yaml (R20, R21)
         console.print(f"[red]Refused.[/red] {escape(str(e))}")
         raise typer.Exit(code=2) from None
+    except ReconciliationError as e:
+        # R3: no figures for a case whose buckets do not add up, with exit 6 as `cma run` says
+        # it, never a traceback (Antigravity re-review of T16).
+        console.print(f"[red]Refused, no figures shown.[/red] {escape(str(e))}")
+        raise typer.Exit(code=6) from None
+    except (StatementError, AmountError) as e:  # a statement the figures layer refuses, as `cma run`
+        console.print(f"[red]Refused.[/red] {escape(str(e))}")
+        raise typer.Exit(code=2) from None
     except OSError as e:
         # The file system refused a step outside a save (the case root cannot be made, a
         # file cannot be read). Said as a refusal, never a traceback; a save's own errors
@@ -925,6 +933,49 @@ def case_check(folder: Path = typer.Argument(..., help="The case folder (cases/<
     console.print(f"case log intact: {check.head.position} entries, head {check.head.hash[:12]}")
 
 
+def _yes_no(value) -> str:
+    return "not known" if value is None else ("yes" if value else "no")
+
+
+@app.command("report")
+def report_cases(
+    as_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
+):
+    """Summarise every case under the case root (R50): the judgement queue's lines, the
+    lines each indicator flagged, overrides by old and new category, the unexplained share
+    of money in, whether every figure was traced and whether the case was signed off. It
+    holds no applicant name, description or amount, and no time from the case log. Exit 1
+    when any case has a figure not traced, figures that do not reconcile, or cannot be read."""
+    from . import report
+
+    with _case_errors():  # a case root git does not ignore, or one that cannot be read
+        rows = report.report()
+    if as_json:
+        console.print_json(json.dumps(rows))
+    elif not rows:
+        console.print("no cases")
+    for r in [] if as_json else rows:
+        say = lambda text: console.print(text, markup=False, highlight=False, soft_wrap=True)  # noqa: E731
+        states = {"not_reconciled": "not reconciled", "refused": "could not be read", "empty": "no statement yet"}
+        say(f"case {r['case']}: {states.get(r['state'], 'figures shown')}, {r['accounts']} account(s)")
+        reasons = ", ".join(f"{k} {n}" for k, n in r["queue_by_reason"].items())
+        say(f"  judgement queue: {r['queue_lines']} lines" + (f" ({reasons})" if reasons else ""))
+        flagged = ", ".join(f"{k} {n}" for k, n in r["indicator_lines"].items()) or "none"
+        say(f"  lines flagged per indicator: {flagged}")
+        if r["overrides"] is None:
+            say("  overrides applied: not known")
+        else:
+            moved = ", ".join(f"{o['old']} -> {o['new']} {o['count']}" for o in r["overrides"]) or "none"
+            say(f"  overrides applied: {moved}" + (f"; {r['stale_overrides']} stale" if r["stale_overrides"] else ""))
+        say(f"  unexplained share of money in: {r['unexplained_share'] or 'n/a'}")
+        traced = _yes_no(r["traced"]) + (f" (untraced: {', '.join(r['untraced'])})" if r["untraced"] else "")
+        say(f"  every figure traced: {traced}")
+        say(f"  reconciled: {_yes_no(r['reconciled'])}")
+        say(f"  signed off: {_yes_no(r['signed_off'])}")
+    if any(report.failing(r) for r in rows):
+        raise typer.Exit(code=1)
+
+
 @app.command("review")
 def review_workspace(
     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
@@ -959,6 +1010,60 @@ def review_workspace(
     finally:
         srv.close()
     console.print("Review workspace stopped.")
+
+
+@app.command("verify")
+def verify_evidence(
+    evidence: Path = typer.Argument(..., metavar="EVIDENCE", help="An evidence JSON: a pack's evidence.json or "
+                                    "the .evidence.json `cma run` writes."),
+    case_id: str = typer.Option(None, "--case", metavar="CASE",
+                                help="A signed pack's case; by default the case the record names."),
+    statement: Path = typer.Option(None, "--statement",
+                                   help="A `cma run` record's statement file, if not at the path it records."),
+):
+    """Recompute every figure, bucket and monthly cell of an evidence record from the inputs it
+    recorded and report each mismatch, or that there is none (R44). A record made with a
+    ruleset other than the one installed is refused, naming the package version and ruleset
+    that made it (R45); a record with no schema_version (v0) is checked for M1 to M16 only.
+    Exit 0 with no mismatch, 1 with a mismatch, 2 when the record cannot be verified."""
+    from . import store
+    from . import verify as vf
+
+    def refused(msg: str):
+        console.print(f"[red]Refused.[/red] {escape(msg)}")
+        raise typer.Exit(code=2)
+
+    try:
+        record = json.loads(Path(evidence).read_bytes().decode("utf-8"))
+    except OSError as e:
+        refused(f"{evidence} cannot be read ({e.strerror or type(e).__name__})")
+    except (UnicodeDecodeError, ValueError):
+        refused(f"{evidence} is not a JSON evidence record")
+    folder = None
+    try:
+        if case_id is not None:
+            folder = store.case_folder(case_id)
+        with _case_errors():
+            result = vf.verify(record, case_folder=folder, base=Path(evidence).parent, statement=statement)
+    except vf.VerifyRefused as e:
+        refused(str(e))
+    except store.CaseStoreError as e:
+        refused(str(e))
+    c = result.checked
+    what = f"{c['figures']} figures, {c['buckets']} buckets and {c['monthly_cells']} monthly cells"
+    rs = result.ruleset
+    console.print(f"Recomputed {what} of this {result.kind} record under ruleset {escape(str(rs.get('id')))} "
+                  f"(sha256 {escape(str(rs.get('sha256')))}).")
+    if result.note:
+        console.print(f"[yellow]Note:[/yellow] {escape(result.note)}.")
+    if not result.mismatches:
+        console.print("[green]Verified:[/green] no mismatch.")
+        return
+    console.print(f"[red]{len(result.mismatches)} mismatches:[/red]")
+    for m in result.mismatches:  # ids, values and line ids only: never a description
+        console.print(f"- {escape(m.where)}: recorded {escape(json.dumps(m.recorded))}, recomputed "
+                      f"{escape(json.dumps(m.recomputed))}", soft_wrap=True, highlight=False)
+    raise typer.Exit(code=1)
 
 
 @app.command()

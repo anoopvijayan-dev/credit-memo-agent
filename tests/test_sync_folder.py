@@ -219,3 +219,29 @@ def test_the_warning_comes_before_the_case_root_itself_is_made(tmp_path, monkeyp
     case_id = store.new_case(warn=warn)
     assert seen and seen[0][1:] == (False, False) and "Dropbox" in seen[0][0]
     assert (root / store.CASES / case_id).is_dir()
+
+
+# --- Antigravity re-review of T14 -------------------------------------------------------------
+
+
+@pytest.mark.contracts
+def test_onedrive_variables_are_matched_whatever_their_case(tmp_path):
+    # Windows keeps environment names upper case, so os.environ holds ONEDRIVECOMMERCIAL, never
+    # OneDriveCommercial: a folder renamed by OneDrive was not seen.
+    root = tmp_path / "Work Files"
+    found = store.sync_folder(root / "cma", home=tmp_path, env={"ONEDRIVECOMMERCIAL": str(root)})
+    assert found is not None and found.client == "OneDrive"
+
+
+@pytest.mark.contracts
+def test_a_sync_root_reached_through_a_symlink_is_matched_where_it_points(tmp_path):
+    import json
+
+    real = tmp_path / "mnt" / "TeamSync"
+    (real / "cma").mkdir(parents=True)
+    link = tmp_path / "TeamSync"
+    link.symlink_to(real, target_is_directory=True)
+    (tmp_path / ".dropbox").mkdir()
+    (tmp_path / ".dropbox" / "info.json").write_text(json.dumps({"business": {"path": str(link)}}))
+    found = store.sync_folder((link / "cma").resolve(), home=tmp_path, env={})
+    assert found is not None and found.client == "Dropbox"

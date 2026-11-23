@@ -161,8 +161,17 @@ def test_a_missing_column_is_refused_naming_the_mapping_not_the_file(tmp_path):
 
 @pytest.mark.contracts
 def test_a_column_named_twice_is_refused(tmp_path):
-    with pytest.raises(contract.ImportRefused, match="named more than once: In"):
+    with pytest.raises(contract.ImportRefused, match="line 1: columns 3 and 6 have the same name"):
         _convert(tmp_path, ["01/03/2026,A,1.00,,1.00,"], header="Date,Details,In,Out,Balance,In")
+
+
+@pytest.mark.contracts
+def test_a_headerless_file_whose_first_line_repeats_a_cell_is_refused_without_quoting_it(tmp_path):
+    # Antigravity re-review of T28: line 1 of a file with no header is a statement line, and the
+    # refusal quoted its repeated cells (a counterparty's name); it names positions now.
+    with pytest.raises(contract.ImportRefused) as e:
+        _convert(tmp_path, ["01/03/2026,A,1.00,,1.00,"], header="01/03/2026,ACME SECRET,1.00,ACME SECRET,1.00")
+    assert "ACME SECRET" not in str(e.value) and "line 1: columns" in str(e.value) and "2 and 4" in str(e.value)
 
 
 @pytest.mark.contracts
