@@ -40,12 +40,12 @@
         "T01",
         "T02"
       ],
-      "status": "verify",
+      "status": "passed",
       "attempts": 6,
       "max_attempts": 6,
       "branch": "bridgie-task/statement-review/T03",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-41/evidence.json",
-      "escalation": "blocked after 6 attempts. Last verdict fail: R4 fail (The shipped tables cover own-account moves, HMRC, refunds and rails at src/cma/rules/v2.yaml:63–160, lenders and MCA providers at :162–241, cash deposits and explained credits at :253–280, and trading providers and cash withdrawals at :298–405. src/cma/categorise.py:495–559 filters contained phrases, applies the bank-code exception and evaluates both ambiguity stages. At :607–617, an unresolved conflict records all candidates and takes precedence over firm rules, but any profile-name occurrence in the description can settle it, including an occurrence in the payment reference of a different counterparty. src/cma/models.py:54–68 maps OTHER to unexplained and cash deposits to trading receipts. src/cma/graph.py:250–253 selects and applies the ruleset, and :210–224 exports line provenance. The runner logged 723 passed, including the table-driven lists, the two prior review regressions, CLI provenance, checkpoint compatibility, and offline evals under both rulesets. Source inspection covered repeated categorisation and duplicate input, concurrent updates, sign and text boundaries, currency and timezone dependencies, partial writes, authorisation, case isolation, rollback, and CLI, checkpoint and MCP consumers. No tests were run or files changed during review.); major: A director name in the payment reference can settle an ambiguous credit even when the payer is a different counterparty. The classifier searches the full description and discards the ambiguity and its candidates. at src/cma/categorise.py:595; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-126/evidence.json",
+      "escalation": null
     },
     {
       "id": "T04",
@@ -62,11 +62,11 @@
       "depends_on": [
         "T03"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 3,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T04",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-216/evidence.json",
       "escalation": null
     },
     {
@@ -81,11 +81,11 @@
       "depends_on": [
         "T04"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T06",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-217/evidence.json",
       "escalation": null
     },
     {
@@ -98,11 +98,11 @@
       "depends_on": [
         "T04"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T07",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-218/evidence.json",
       "escalation": null
     },
     {
@@ -116,11 +116,11 @@
         "T04",
         "T06"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T08",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-219/evidence.json",
       "escalation": null
     },
     {
@@ -132,11 +132,11 @@
       "depends_on": [
         "T08"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T09",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-220/evidence.json",
       "escalation": null
     },
     {
@@ -146,12 +146,12 @@
         "P15"
       ],
       "depends_on": [],
-      "status": "blocked",
+      "status": "passed",
       "attempts": 3,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T12",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-43/evidence.json",
-      "escalation": "blocked after 3 attempts. Last verdict fail: P15 fail (src/cma/case.py:196 and :257 check canonical bytes, chain links and recorded hashes. Lines 363–378 recognize the reader's own lock across folder aliases, lines 441–474 check head stability, and lines 519–588 enforce writer ownership and refuse inherited writers. Lines 631–635 reject stale duplicate submissions, and lines 710–721 write the log before advancing the head. The CLI at src/cma/cli.py:321 is the sole production consumer. Linux runner logs confirm the named tamper, rebuilt-chain, append-failure, lock contention, duplicate-submit, strict JSON, file permissions and CLI tests. Case folders have separate log and lock files, authorization uses filesystem permissions, timestamps use UTC, currency remains payload data, and there is no existing case-log format to migrate. P15 fails because the free or holding reader misclassifies an incomplete recorded last entry, the first-write race can return intact while a writer holds the case, and Windows checks can mistake another reader for a writer.); major: A recorded last entry with an incomplete line is reported as missing. The incomplete-tail branch requires the complete-entry count to equal the head count. at src/cma/case.py:309; major: After a missing-lock probe, a stable intact snapshot bypasses a second lock check even when a writer has since created and acquired the lock. at src/cma/case.py:397; major: On Windows, a reader takes an exclusive lock. A second reader that exhausts its retries treats that reader as a writer and can hide an incomplete tail. at src/cma/case.py:767; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-228/evidence.json",
+      "escalation": null
     },
     {
       "id": "T13",
@@ -162,11 +162,11 @@
       "depends_on": [
         "T12"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 2,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T13",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-230/evidence.json",
       "escalation": null
     },
     {
@@ -180,11 +180,11 @@
         "T13",
         "T04"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T16",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-233/evidence.json",
       "escalation": null
     },
     {
@@ -197,11 +197,11 @@
         "P18"
       ],
       "depends_on": [],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 3,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T17",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-226/evidence.json",
       "escalation": null
     },
     {
@@ -214,11 +214,11 @@
         "T13",
         "T17"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T18",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-234/evidence.json",
       "escalation": null
     },
     {
@@ -235,11 +235,11 @@
         "T07",
         "T13"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 2,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T19",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-238/evidence.json",
       "escalation": null
     },
     {
@@ -254,11 +254,11 @@
         "T19",
         "T03"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 2,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T05",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-240/evidence.json",
       "escalation": null
     },
     {
@@ -270,11 +270,11 @@
       "depends_on": [
         "T19"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 2,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T20",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-242/evidence.json",
       "escalation": null
     },
     {
@@ -288,11 +288,11 @@
         "T08",
         "T09"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 2,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T43",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-244/evidence.json",
       "escalation": null
     },
     {
@@ -306,11 +306,11 @@
         "T43",
         "T17"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T21",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-245/evidence.json",
       "escalation": null
     },
     {
@@ -327,11 +327,11 @@
         "T20",
         "T21"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T22",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-246/evidence.json",
       "escalation": null
     },
     {
@@ -345,11 +345,11 @@
         "T05",
         "T08"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T10",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-247/evidence.json",
       "escalation": null
     },
     {
@@ -367,11 +367,11 @@
         "T08",
         "T10"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T11",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-248/evidence.json",
       "escalation": null
     },
     {
@@ -392,11 +392,11 @@
         "T16",
         "T17"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 2,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T24",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-250/evidence.json",
       "escalation": null
     },
     {
@@ -416,11 +416,11 @@
         "T22",
         "T21"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 3,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T27",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-253/evidence.json",
       "escalation": null
     },
     {
@@ -434,11 +434,11 @@
       "depends_on": [
         "T27"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T25",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-254/evidence.json",
       "escalation": null
     },
     {
@@ -459,11 +459,11 @@
         "T19",
         "T21"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T26",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-255/evidence.json",
       "escalation": null
     },
     {
@@ -475,11 +475,11 @@
       "depends_on": [
         "T13"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T15",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-232/evidence.json",
       "escalation": null
     },
     {
@@ -491,11 +491,11 @@
       "depends_on": [
         "T13"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T14",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-231/evidence.json",
       "escalation": null
     },
     {
@@ -507,11 +507,11 @@
       "depends_on": [
         "T13"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T28",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-235/evidence.json",
       "escalation": null
     },
     {
@@ -523,11 +523,11 @@
       "depends_on": [
         "T28"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 3,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T29",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-258/evidence.json",
       "escalation": null
     },
     {
@@ -539,11 +539,11 @@
       "depends_on": [
         "T28"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T30",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-259/evidence.json",
       "escalation": null
     },
     {
@@ -555,11 +555,11 @@
       "depends_on": [
         "T28"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T31",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-260/evidence.json",
       "escalation": null
     },
     {
@@ -573,11 +573,11 @@
       "depends_on": [
         "T13"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T32",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-236/evidence.json",
       "escalation": null
     },
     {
@@ -591,11 +591,11 @@
         "T05",
         "T13"
       ],
-      "status": "todo",
-      "attempts": 0,
-      "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "status": "passed",
+      "attempts": 4,
+      "max_attempts": 4,
+      "branch": "bridgie-task/statement-review/T33",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-264/evidence.json",
       "escalation": null
     },
     {
@@ -610,11 +610,11 @@
         "T33",
         "T43"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T34",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-265/evidence.json",
       "escalation": null
     },
     {
@@ -629,11 +629,11 @@
         "T34",
         "T10"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T35",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-266/evidence.json",
       "escalation": null
     },
     {
@@ -648,11 +648,11 @@
         "T19",
         "T13"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T36",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-267/evidence.json",
       "escalation": null
     },
     {
@@ -666,11 +666,11 @@
         "T36",
         "T22"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 2,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T37",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-269/evidence.json",
       "escalation": null
     },
     {
@@ -685,11 +685,11 @@
       "depends_on": [
         "T26"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 2,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T38",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-271/evidence.json",
       "escalation": null
     },
     {
@@ -706,11 +706,11 @@
         "T08",
         "T13"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 3,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T39",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-279/evidence.json",
       "escalation": null
     },
     {
@@ -724,11 +724,11 @@
         "T16",
         "T43"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 2,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T40",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-274/evidence.json",
       "escalation": null
     },
     {
@@ -742,11 +742,11 @@
         "T22",
         "T06"
       ],
-      "status": "todo",
-      "attempts": 0,
+      "status": "passed",
+      "attempts": 1,
       "max_attempts": 3,
-      "branch": null,
-      "evidence": null,
+      "branch": "bridgie-task/statement-review/T41",
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-276/evidence.json",
       "escalation": null
     }
   ]
