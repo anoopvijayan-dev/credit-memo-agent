@@ -1,0 +1,101 @@
+{
+  "task": "T41",
+  "criteria": [
+    {
+      "id": "R51",
+      "tier": "adversarial",
+      "check": "Workspace entry for the underwriter's own figure: POST /compare and /api/compare go through the shared Host, Origin and token gate (src/cma/review/server.py:150, WRITES at :69-70) and are dispatched to compare.answer (server.py:367-368). The page renders the form at server.py:345 (compare.form_html). The difference is computed in the figures layer: metrics.comparison (src/cma/metrics.py:1267) uses whole pence for GBP (given_figure reads the text exactly via text_pence, refuses a fraction of a penny and the R2 limit; ours via float_pence), and Decimal for other units. It is n/a when the tool's figure is n/a. compare.py does no arithmetic. Listed lines come from indicators.comparison_lines (src/cma/indicators.py:484-513): cash deposits (Category.CASH_DEPOSIT), unexplained credits (pence>0 and Category.OTHER, the same test as judgement_queue at indicators.py:442, so ambiguous credits are included), possible own-account transfers (R9 groups from CaseFigures.possible_pairs, mapped per account or to case ids for the combined view, compare.py:66-71) and overridden lines (CaseFigures.overridden, whose combined keys are case ids at overrides.py:500). Lines are filtered to the period, the statement's for a memo field and row.start..row.end for a month (compare.py:118-131), and ordered largest absolute amount first. Runner: specified-3 and contracts-4 logs show all 31 tests/test_compare.py tests PASSED, including the memo-field, month, override, multi-account/combined and no-write tests.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-273/specified-3.log"
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-276/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-276/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs --tier-results",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-276/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python tools/tier_check.py contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-276/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python tools/tier_check.py invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-276/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-276/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python tools/tier_check.py dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-276/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/metrics.py",
+      "line": 1284,
+      "criterion": "R51",
+      "claim": "For a figure that is not money, the difference is computed as given - ours_d under the default Decimal context (28 significant digits), so it is rounded, not exact as the docstring and claim 5 ('Other units are compared exactly as decimals') say. The 40-character input cap allows inputs past 28 digits.",
+      "repro": "POST /api/compare {field: monthly_turnover, figure: M26, value: '0.00000000000000000000000000001%'}: Decimal('0.00000000000000000000000000001') - Decimal(repr(M26.value)) is rounded to 28 significant digits, so 'difference' is the negated M26 value with the tiny given part lost (for example, for 1.32 it gives -1.320000000000000000000000000). Money is unaffected, since it uses int pence."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/review/compare.py",
+      "line": 194,
+      "criterion": "R51",
+      "claim": "On a multi-account case, the page form offers the combined summary's months for every account in the account picker. If an account covers fewer months, choosing that account and a month outside its own period is refused with 'No such monthly cell.', although the page offered that option.",
+      "repro": "Case with main covering 2026-01..2026-03 and savings covering only 2026-03. On the page, pick account 'savings' and target 'month:2026-01:money_in', then submit. compare() finds no row for 2026-01 in savings' f.monthly and returns 400 'No such monthly cell.'"
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_compare.py",
+      "line": 174,
+      "criterion": "R51",
+      "claim": "Claim 5 says the difference is exact 'for any typed figure in ±£10,000,000,000,000' and that the listed lines match the oracle 'for each account and the combined case'. The proof does not cover either statement. The test draws pence from randrange(-10**13, 10**13), which is ±£100bn. The combined-case test checks only which lines carry the possible-own-account reason, not the full oracle, and no test covers overridden lines in the combined view. Reading the code, int arithmetic and case-id keys (overrides.py:500) are correct, so this is a proof gap, not a defect.",
+      "repro": "Read tests/test_compare.py:170-177 (range 10**13 pence) and :215-219 (combined: a set comparison on possible_own_account_transfer only)."
+    },
+    {
+      "severity": "minor",
+      "file": null,
+      "line": null,
+      "criterion": null,
+      "claim": "Claim 6, that one comparison on a 10,000-line case takes 0.33s, rests on a script in the producer's scratchpad that no runner tier ran. The claim's files_changed lists only server.py and tests/test_compare.py, but the diff also changes README.md, src/cma/indicators.py, src/cma/metrics.py, src/cma/review/compare.py and tests/test_workspace_summary.py.",
+      "repro": "No runner result row times /api/compare. Compare claim.json files_changed with the diff.patch file list."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}

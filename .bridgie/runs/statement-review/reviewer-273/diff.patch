@@ -1,0 +1,883 @@
+diff --git a/README.md b/README.md
+index 46a692d..b2c3bf4 100644
+--- a/README.md
++++ b/README.md
+@@ -116,6 +116,10 @@ cma case resolve-override <id> 3 --confirm --name "Pat"   # or --drop
+ # overrides are listed to confirm or drop. A save from a page older than the case log is
+ # refused as a conflict: reload and save again. Each save is appended to the case log and
+ # the page comes back with the figures, indicators and policy check recomputed.
++# "Compare with your own figure" takes your figure for a memo field or a month and shows
++# the difference from the tool's (to the penny for money), with that period's cash
++# deposits, unexplained lines, possible own-account transfers and overridden lines,
++# largest first. A comparison saves nothing.
+ cma review <id>                                   # --no-browser to only print the URL
+ 
+ # Preview the pack before sign-off: the memo-ready sections in the order of the memo field
+diff --git a/src/cma/indicators.py b/src/cma/indicators.py
+index c68692e..9102efa 100644
+--- a/src/cma/indicators.py
++++ b/src/cma/indicators.py
+@@ -477,3 +477,37 @@ def case_judgement_queue(accounts: list[tuple[str, Statement, list[QueueEntry]]]
+         rows += [(-abs(pence(by_id[e.line_id])), n, k, account, e) for k, e in enumerate(queue)]
+     rows.sort(key=lambda r: r[:3])
+     return [(account, e) for *_, account, e in rows]
++
++
++# The kinds of line the comparison entry lists (R51): lines whose bucket a person might read
++# differently, in the order a line's reasons are given.
++COMPARISON_REASONS = ("cash_deposit", "unexplained", "possible_own_account_transfer", "overridden")
++
++
++def comparison_lines(statement: Statement, first: date, last: date, overridden=(),
++                     possible_own_account: list[list[str]] | None = None) -> list[tuple[Transaction, list[str]]]:
++    """The lines dated from `first` to `last` whose bucket a person might read differently, for
++    the comparison entry (R51): every cash deposit, every unexplained credit (ambiguous ones
++    among them), every line of a possible own-account transfer (R9) and every overridden line,
++    each with why it is listed. Largest amount first (by size, either way), statement order
++    between equal amounts, as the judgement queue orders them. No money arithmetic: lines are
++    only ordered by their pence."""
++    overridden = set(overridden)
++    paired = {i for g in possible_own_account or [] for i in g}
++    out = []
++    for n, t in enumerate(statement.transactions):
++        if not first <= t.date <= last:
++            continue
++        reasons = []
++        if t.category == Category.CASH_DEPOSIT:
++            reasons.append("cash_deposit")
++        if pence(t) > 0 and t.category == Category.OTHER:
++            reasons.append("unexplained")
++        if t.id in paired:
++            reasons.append("possible_own_account_transfer")
++        if t.id in overridden:
++            reasons.append("overridden")
++        if reasons:
++            out.append((-abs(pence(t)), n, t, reasons))
++    out.sort(key=lambda r: r[:2])
++    return [(t, reasons) for *_, t, reasons in out]
+diff --git a/src/cma/metrics.py b/src/cma/metrics.py
+index aaab41f..008e123 100644
+--- a/src/cma/metrics.py
++++ b/src/cma/metrics.py
+@@ -1198,3 +1198,93 @@ def _closes_out(closes) -> list[dict] | None:
+         return None
+     return [{"date": d.isoformat(), "display": money_text(bal), "overdrawn": bal < 0, "line": line}
+             for d, bal, line in closes]
++
++
++# --- the comparison entry (R51) -------------------------------------------------------------
++
++UNIT_MARKS = {"pct": "%", "ratio": "x"}  # a mark the underwriter may write after a figure of that unit
++MAX_GIVEN_CHARS = 40  # an underwriter's figure is short; a longer text is refused, never parsed
++
++
++class ComparisonError(ValueError):
++    """An underwriter's figure that cannot be compared. Its message quotes nothing but the unit."""
++
++
++def _plain(text: str, unit: str) -> tuple[bool, str]:
++    """The underwriter's figure as a plain decimal: a leading minus, then for money an optional
++    £ and thousands commas, or for a share or ratio the unit's own mark after the number."""
++    s = text.strip()
++    negative = s.startswith("-")
++    if negative:
++        s = s[1:].lstrip()
++    if unit == "GBP":
++        s = s[1:] if s.startswith("£") else s
++        if "," in s:
++            whole, _, rest = s.partition(".")
++            groups = whole.split(",")
++            if not (groups[0] and len(groups[0]) <= 3 and all(len(g) == 3 for g in groups[1:])):
++                raise ComparisonError("Write money as pounds and pence, such as 55,000 or 55000.00")
++            s = "".join(groups) + ("." + rest if "." in s else "")
++    elif unit in UNIT_MARKS and s.endswith(UNIT_MARKS[unit]):
++        s = s[:-1].rstrip()
++    if not s or not all(c in "0123456789." for c in s) or s.count(".") > 1 or s == ".":
++        raise ComparisonError("Write the figure as a number" + (", such as 55,000 or 55000.00" if unit == "GBP" else ""))
++    return negative, s
++
++
++def given_figure(text: str, unit: str) -> int | Decimal:
++    """The underwriter's own figure, read exactly from what they typed: whole pence for money,
++    refused with a fraction of a penny or at the import limit (R2); the number itself, as a
++    decimal, for any other unit."""
++    if not isinstance(text, str) or not text.strip():
++        raise ComparisonError("Enter your figure")
++    if len(text) > MAX_GIVEN_CHARS:
++        raise ComparisonError("The figure is too long")
++    negative, s = _plain(text, unit)
++    if unit == "GBP":
++        p = text_pence(s)
++        if p is None:
++            raise ComparisonError("Money is compared to the penny: write at most two decimals")
++        if at_limit(p):
++            raise ComparisonError(f"An amount of {AT_LIMIT} cannot be compared to the penny")
++        return -p if negative else p
++    d = Decimal(s)
++    return -d if negative else d
++
++
++UNIT_WORDS = {"days": " days", "months": " months"}
++
++
++def _unit_text(d: Decimal, unit: str) -> str:
++    """A figure that is not money, as typed back: trailing zeros after the point dropped."""
++    text = format(d, "f")
++    if "." in text:
++        text = text.rstrip("0").rstrip(".")
++    text = "0" if text in ("", "-0") else text
++    return text + UNIT_MARKS.get(unit, UNIT_WORDS.get(unit, ""))
++
++
++def comparison(value: float | None, unit: str, given_text: str) -> dict:
++    """The underwriter's figure beside the tool's, and the difference, the underwriter's less the
++    tool's, computed here in the figures layer: in whole pence for money (R2), and exactly, as
++    decimals, for any other unit. When the tool's figure is n/a there is no difference."""
++    given = given_figure(given_text, unit)
++    if unit == "GBP":
++        ours = None if value is None else float_pence(value)
++        if value is not None and ours is None:
++            raise ComparisonError("The tool's figure is not a whole number of pence")
++        diff = None if ours is None else given - ours
++        return {"given": pounds_text(given), "given_display": money_text(given),
++                "ours": None if ours is None else pounds_text(ours),
++                "ours_display": "n/a" if ours is None else money_text(ours),
++                "difference_pence": diff,
++                "difference": None if diff is None else pounds_text(diff),
++                "difference_display": "n/a" if diff is None else money_text(diff)}
++    ours_d = None if value is None else Decimal(repr(value))
++    diff_d = None if ours_d is None else given - ours_d
++    return {"given": str(given), "given_display": _unit_text(given, unit),
++            "ours": None if ours_d is None else str(ours_d),
++            "ours_display": "n/a" if ours_d is None else _unit_text(ours_d, unit),
++            "difference_pence": None,
++            "difference": None if diff_d is None else str(diff_d),
++            "difference_display": "n/a" if diff_d is None else _unit_text(diff_d, unit)}
+diff --git a/src/cma/review/compare.py b/src/cma/review/compare.py
+new file mode 100644
+index 0000000..f0050a9
+--- /dev/null
++++ b/src/cma/review/compare.py
+@@ -0,0 +1,240 @@
++"""The workspace's comparison entry (C5; R51, R2, R34).
++
++The underwriter enters their own figure for a memo field (one of the figures the memo field
++map maps to it) or for a month (one cell of the monthly summary). The workspace shows:
++
++- the tool's figure beside theirs, and the difference, theirs less the tool's, which the
++  figures layer computes (metrics.comparison): in whole pence for money (R2), exactly for any
++  other unit, and n/a when the tool's figure is n/a;
++- the lines in that period whose bucket a person might read differently, largest first:
++  cash deposits, unexplained lines, possible own-account transfers and overridden lines,
++  each with why it is listed (indicators.comparison_lines). A memo field's period is the
++  statement's; a month's is the month's days in the period.
++
++Nothing is saved: a comparison writes nothing to the case or its log. The data path is
++POST /api/compare and the page path POST /compare, as the workspace's other forms are;
++this module computes no money, and its HTML escapes every piece of text from the case (R34).
++"""
++
++from __future__ import annotations
++
++from html import escape
++from pathlib import Path
++from typing import Any
++from urllib.parse import urlencode
++
++from .. import firm, metrics, overrides, pack
++from .. import indicators as ind
++from ..models import money_exact
++from . import summary
++from .drilldown import CELL_TITLES, account_title
++
++REASON_TITLES = {"cash_deposit": "cash deposit", "unexplained": "unexplained",
++                 "possible_own_account_transfer": "possible own-account transfer", "overridden": "overridden"}
++KEYS = ("account", "field", "figure", "month", "cell", "value", "target")
++
++
++class CompareError(ValueError):
++    """A comparison that names no memo field or month of the case, or a figure that cannot be
++    compared. Its message names only what was asked."""
++
++
++def _text(fields: dict, key: str) -> str | None:
++    v = fields.get(key)
++    if v is None or v == "":
++        return None
++    if isinstance(v, bool) or not isinstance(v, (str, int)):
++        raise CompareError(f"give {key} as text")
++    return str(v)
++
++
++def _field_target(fm: pack.FieldMap, field: str, figure: str | None) -> str:
++    f = next((x for x in fm.fields if x.id == field), None)
++    if f is None:
++        raise CompareError("no such memo field")
++    if not f.figures:
++        raise CompareError("no figure is mapped to this memo field")
++    if figure is None:
++        if len(f.figures) > 1:
++            raise CompareError("name the figure of this memo field")
++        return f.figures[0]
++    if figure not in f.figures:
++        raise CompareError("that figure is not mapped to this memo field")
++    return figure
++
++
++def _pair_ids(f: overrides.CaseFigures, account: str) -> list[list[str]]:
++    """The possible own-account transfers (R9) as this account's lines read them; the case's
++    combined figures name every account's lines by their case ids."""
++    if account == overrides.COMBINED:
++        return [[metrics.case_line_id(a, line) for a, line in g] for g in f.possible_pairs]
++    return [[line for a, line in g if a == account] for g in f.possible_pairs]
++
++
++def _line(t, reasons: list[str]) -> dict[str, Any]:
++    return {"id": t.id, "date": t.date.isoformat(), "description": t.description,
++            "amount": t.amount, "amount_display": money_exact(t.amount),
++            "category": t.category.value if t.category else None, "rule": t.rule_id,
++            "reasons": reasons}
++
++
++def compare(folder: Path, case_id: str, *, account: str | None = None, field: str | None = None,
++            figure: str | None = None, month: str | None = None, cell: str | None = None,
++            value: str | None = None) -> dict[str, Any]:
++    """The underwriter's figure for a memo field (`field`, and `figure` when the field maps
++    more than one) or a month (`month` and `cell`), against the tool's, with the lines of that
++    period a person might read differently (R51)."""
++    folder = Path(folder)
++    if (field is None) == (month is None) or (month is not None and (cell is None or figure is not None)) \
++            or (field is not None and cell is not None):
++        raise CompareError("name a memo field, or a month and a cell")
++    if value is None:
++        raise CompareError("enter your figure")
++    out: dict[str, Any] = {"case": case_id, "state": "shown", "refusal": None, "reconciliation": None}
++    figures, refused = summary.load_figures(folder)
++    if refused is not None:
++        out.update(refused)
++        return out
++    if account is None:
++        if len(figures) != 1:
++            raise CompareError("name the account")
++        account = next(iter(figures))
++    first = next(iter(figures.values()), None)
++    f = overrides.combined_figures(figures) if account == overrides.COMBINED else figures.get(account)
++    if f is None:
++        raise CompareError("no such account in this case")
++    if account == overrides.COMBINED and first is not None:
++        f.possible_pairs = first.possible_pairs  # the same list on every account of the case (R9)
++    statement = f.statement
++    if not statement.transactions:
++        raise CompareError("this account has no lines")
++    if field is not None:
++        try:
++            fm = pack.load_field_map(firm.load())
++        except (pack.FieldMapError, firm.FirmConfigError) as e:
++            out.update(state="refused", refusal=f"{str(e).rstrip('.')}. No comparison is shown.")
++            return out
++        figure = _field_target(fm, field, figure)
++        m = next((x for x in f.metrics if x.id == figure), None)
++        if m is None:
++            raise CompareError("no such figure")
++        title = next(x.title for x in fm.fields if x.id == field)
++        target = {"field": field, "figure": m.id}
++        name, unit, ours, note = f"{title}: {m.id} {m.name}", m.unit, m.value, (m.method if m.value is None else None)
++        period = (statement.start, statement.end)
++    else:
++        row = next((r for r in f.monthly if r.month == month), None)
++        if row is None or cell not in CELL_TITLES:
++            raise CompareError("no such monthly cell")
++        c = getattr(row, cell)
++        target = {"month": row.month, "cell": cell}
++        name = f"{CELL_TITLES[cell]}, {row.month}" + (" (part month)" if row.part_month else "")
++        unit, ours, note = c.unit, c.value, c.note
++        period = (row.start, row.end)
++    try:
++        result = metrics.comparison(ours, unit, value)
++    except metrics.ComparisonError as e:
++        raise CompareError(str(e).rstrip(".")) from None
++    listed = ind.comparison_lines(statement, period[0], period[1], f.overridden, _pair_ids(f, account))
++    out.update(account=account, target=target, name=name, unit=unit, note=note,
++               period={"start": period[0].isoformat(), "end": period[1].isoformat()}, **result,
++               lines=[_line(t, reasons) for t, reasons in listed])
++    return out
++
++
++def _fields_of(fields: dict) -> dict[str, str | None]:
++    args = {k: _text(fields, k) for k in KEYS}
++    target = args.pop("target")
++    if target is not None:  # the page's one select: "field:<id>:<figure>" or "month:<YYYY-MM>:<cell>"
++        kind, _, rest = target.partition(":")
++        first, _, second = rest.partition(":")
++        if kind == "field" and first and second and args["field"] is None and args["month"] is None:
++            args["field"], args["figure"] = first, second
++        elif kind == "month" and first and second and args["field"] is None and args["month"] is None:
++            args["month"], args["cell"] = first, second
++        else:
++            raise CompareError("name a memo field, or a month and a cell")
++    return args
++
++
++def answer(folder: Path, case_id: str, fields: dict) -> tuple[int, dict[str, Any]]:
++    """One comparison from the workspace: 200 with the comparison (or the refusal the case's
++    figures give), or 400 naming only what was asked. Nothing is written."""
++    unknown = sorted(k for k in fields if k not in KEYS and k != "back")
++    if unknown:
++        return 400, {"error": "Give only the account, the memo field or month and cell, and your figure."}
++    try:
++        return 200, compare(folder, case_id, **_fields_of(fields))
++    except CompareError as e:
++        return 400, {"error": f"{str(e)[:1].upper()}{str(e)[1:]}."}
++
++
++# --- HTML ----------------------------------------------------------------------------------
++
++
++def _e(value: Any) -> str:
++    return escape("" if value is None else str(value), quote=True)
++
++
++def _back(token: str) -> str:
++    return f'<p><a href="{_e("/?" + urlencode({"token": token}))}">Back to the case</a></p>'
++
++
++def form_html(s: dict[str, Any], token: str) -> str:
++    """The case page's comparison entry: pick a memo field's figure or a month's cell, enter
++    your own figure (R51)."""
++    if s.get("state") != "shown" or not s.get("accounts"):
++        return ""
++    try:
++        fm = pack.load_field_map(firm.load())
++        field_opts = [(f"field:{f.id}:{fig}", f"{f.title}: {fig}") for f in fm.fields for fig in f.figures]
++    except Exception:  # the field map's refusal is shown by the preview; months can still be compared
++        field_opts = []
++    accounts = ([overrides.COMBINED] if s.get("combined") else []) + [a["account"] for a in s["accounts"]]
++    monthly = (s["combined"] if s.get("combined") else s["accounts"][0])["monthly"]
++    month_opts = [(f"month:{r['month']}:{key}", f"{r['month']}: {title}") for r in monthly
++                  for key, title in CELL_TITLES.items()]
++    options = "".join(f'<option value="{_e(v)}">{_e(label)}</option>' for v, label in field_opts + month_opts)
++    pick = ""
++    if len(accounts) > 1:
++        pick = ('<select name="account" aria-label="Account">'
++                + "".join(f'<option value="{_e(a)}">{_e(account_title(a))}</option>' for a in accounts)
++                + "</select> ")
++    action = _e("/compare?" + urlencode({"token": token}))
++    return ('<section id="compare"><h2>Compare with your own figure</h2>'
++            '<p>Enter your figure for a memo field or a month. The tool shows the difference and the lines of '
++            'that period whose bucket you might read differently. Nothing is saved.</p>'
++            f'<form class="compare" method="post" action="{action}">{pick}'
++            f'<select name="target" required aria-label="Memo field or month">{options}</select> '
++            '<input name="value" required maxlength="40" placeholder="Your figure" aria-label="Your figure"> '
++            '<button type="submit">Compare</button></form></section>')
++
++
++def html(status: int, reply: dict[str, Any], token: str) -> str:
++    """The page's main element for a comparison, or why none is shown; every case text escaped (R34)."""
++    if status != 200:
++        return (f'<section class="refusal" id="compare-refused"><h2>No comparison</h2>'
++                f'<p>{_e(reply.get("error", "This could not be compared."))}</p>{_back(token)}</section>')
++    if reply["state"] != "shown":
++        return (f'<section class="refusal" id="compare-refused"><h2>No comparison</h2>'
++                f'<p>{_e(reply.get("refusal") or "The case figures do not reconcile, so none is shown.")}</p>'
++                f'{_back(token)}</section>')
++    note = f'<p class="note">{_e(reply["note"])}</p>' if reply.get("note") else ""
++    rows = "".join(
++        f'<tr><td>{_e(x["id"])}</td><td>{_e(x["date"])}</td><td>{_e(x["description"])}</td>'
++        f'<td class="num">{_e(x["amount_display"])}</td><td>{_e(x["category"])}</td>'
++        f'<td>{_e(", ".join(REASON_TITLES.get(r, r) for r in x["reasons"]))}</td></tr>' for x in reply["lines"])
++    lines = ('<p>No cash deposit, unexplained line, possible own-account transfer or overridden line in this '
++             'period.</p>' if not reply["lines"] else
++             '<table class="lines"><thead><tr><th>Line</th><th>Date</th><th>Description</th>'
++             '<th class="num">Amount</th><th>Category</th><th>Why listed</th></tr></thead>'
++             f'<tbody>{rows}</tbody></table>')
++    return (f'<section id="comparison"><h2>{_e(reply["name"])}</h2>'
++            f'<p>{_e(account_title(reply["account"]))}, {_e(reply["period"]["start"])} to '
++            f'{_e(reply["period"]["end"])}.</p>'
++            '<table class="comparison"><tbody>'
++            f'<tr><th>Your figure</th><td class="num">{_e(reply["given_display"])}</td></tr>'
++            f'<tr><th>The tool\'s figure</th><td class="num">{_e(reply["ours_display"])}</td></tr>'
++            f'<tr><th>Difference (yours less the tool\'s)</th><td class="num">{_e(reply["difference_display"])}'
++            '</td></tr></tbody></table>' + note
++            + '<h3>Lines a person might read differently, largest first</h3>' + lines + _back(token) + '</section>')
+diff --git a/src/cma/review/server.py b/src/cma/review/server.py
+index 522ec36..b512769 100644
+--- a/src/cma/review/server.py
++++ b/src/cma/review/server.py
+@@ -21,7 +21,8 @@ Every page and data path is GET only. The override form and the stale overrides'
+ R19; edit.py), the preview and sign-off forms (R22, R26; signoff.py) and the firm-rule
+ promotion form (R20; promote.py) are the only writes: POST to /override, /stale, /preview,
+ /sign and /promote from the page, or to /api/override, /api/stale, /api/preview, /api/sign
+-and /api/promote for data, each with the token and the workspace's own Origin,
++and /api/promote for data. The comparison entry (R51; compare.py) is posted the same way, to
++/compare or /api/compare, and writes nothing. Every POST carries the token and the workspace's own Origin,
+ a body of at most MAX_BODY bytes with its Content-Length (never chunked), and a form or JSON
+ content type.
+ """
+@@ -65,9 +66,10 @@ WRITES = {"/override": ("override", "page"), "/stale": ("stale", "page"),
+           "/api/override": ("override", "data"), "/api/stale": ("stale", "data"),
+           "/preview": ("preview", "page"), "/sign": ("sign", "page"),
+           "/api/preview": ("preview", "data"), "/api/sign": ("sign", "data"),
+-          "/promote": ("promote", "page"), "/api/promote": ("promote", "data")}
++          "/promote": ("promote", "page"), "/api/promote": ("promote", "data"),
++          "/compare": ("compare", "page"), "/api/compare": ("compare", "data")}
+ PACK_WRITES = frozenset({"preview", "sign"})
+-PAGE_WRITES = PACK_WRITES | {"promote"}  # answered with a page of their own, never a redirect
++PAGE_WRITES = PACK_WRITES | {"promote", "compare"}  # answered with a page of their own, never a redirect
+ MAX_BODY = 16 * 1024  # bytes: a form or JSON body is far smaller
+ FORM = "application/x-www-form-urlencoded"
+ 
+@@ -230,8 +232,9 @@ class _Handler(BaseHTTPRequestHandler):
+             return
+         try:
+             status, reply = self.server.save(kind, fields, shape == "data")
+-        except Exception:
+-            status, reply = 500, {"error": "The change could not be saved."}
++        except Exception:  # a comparison saves nothing, so its failure says so (R51)
++            status, reply = 500, {"error": "The figure could not be compared." if kind == "compare"
++                                  else "The change could not be saved."}
+         if shape == "data":
+             self._send(status, json.dumps(reply, ensure_ascii=False).encode("utf-8"), "application/json")
+         elif kind in PAGE_WRITES:
+@@ -336,9 +339,10 @@ class ReviewServer:
+ 
+     def _page_html(self) -> bytes:
+         """The page with the case summary rendered into it; every case text escaped (R34)."""
+-        from . import summary
++        from . import compare, summary
+ 
+-        html = summary.render(summary.case_summary(self.folder, self.case_id), token=self.token)
++        s = summary.case_summary(self.folder, self.case_id)
++        html = summary.render(s, token=self.token) + compare.form_html(s, self.token)  # R51
+         return self._shell(html)
+ 
+     def _lines_json(self, **target) -> bytes:
+@@ -358,8 +362,10 @@ class ReviewServer:
+     def _save(self, kind: str, fields: dict, recompute: bool = True) -> tuple[int, dict]:
+         """One write from the workspace: its status and reply, the recomputed case included for
+         a data path (R17, R52); a page form is sent back to the page, which is built afresh."""
+-        from . import edit, promote, signoff
++        from . import compare, edit, promote, signoff
+ 
++        if kind == "compare":  # nothing is saved: the figures layer compares (R51)
++            return compare.answer(self.folder, self.case_id, fields)
+         if kind == "promote":
+             return promote.answer(self.folder, self.case_id, fields)
+         if kind in PACK_WRITES:
+@@ -367,9 +373,11 @@ class ReviewServer:
+         return edit.answer(self.folder, self.case_id, kind, fields, recompute=recompute)
+ 
+     def _pack_html(self, kind: str, status: int, reply: dict, fields: dict | None = None) -> bytes:
+-        from . import promote, signoff
++        from . import compare, promote, signoff
+ 
+-        if kind == "promote":
++        if kind == "compare":
++            html = compare.html(status, reply, self.token)
++        elif kind == "promote":
+             html = promote.html(status, reply, self.token, fields or {})
+         else:
+             html = signoff.html(kind, status, reply, self.token)
+diff --git a/tests/test_compare.py b/tests/test_compare.py
+new file mode 100644
+index 0000000..9001633
+--- /dev/null
++++ b/tests/test_compare.py
+@@ -0,0 +1,364 @@
++"""T41: the comparison entry in the workspace (C5; R51, R2, R34).
++
++The underwriter enters their own figure for a memo field or a month. The workspace shows the
++difference from the tool's figure, computed in the figures layer (in whole pence for money),
++and lists, largest first, the lines in that period whose bucket a person might read
++differently: cash deposits, unexplained lines, possible own-account transfers and overridden
++lines. Nothing is saved.
++
++Each test talks to a real server running in a thread, through POST /api/compare and
++/compare, with the per-launch token."""
++
++import http.client
++import json
++import random
++from datetime import date, timedelta
++from decimal import Decimal
++from html import escape
++from urllib.parse import urlencode
++
++import pytest
++
++from cma import case, metrics, overrides, store
++from cma.models import Category
++from cma.review import server as rs
++
++RICH = ("id,date,description,amount,balance\n"
++        "L1,2026-01-05,CARD SETTLEMENT STRIPE,500.00,500.00\n"
++        "L2,2026-01-06,FPS CREDIT ACME LTD INV 12,300.25,800.25\n"
++        "L3,2026-01-07,CASH PAID IN,250.10,1050.35\n"
++        "L4,2026-01-08,FPS CREDIT DIRECTOR CAPITAL INTRODUCED,1000.00,2050.35\n"
++        "L5,2026-01-09,IWOCA LOAN,2000.00,4050.35\n"
++        "L6,2026-01-10,DD IWOCA LTD,-400.00,3650.35\n"
++        "L7,2026-01-11,XQZ <b>7</b>,61.00,3711.35\n"
++        "L8,2026-01-12,RENT,-2500.00,1211.35\n"
++        "L9,2026-02-03,XQZ 4471,80.00,1291.35\n"
++        "L10,2026-02-05,CASH PAID IN,3000.00,4291.35\n"
++        "L11,2026-02-11,FPS CREDIT BETA LTD INV 77,900.00,5191.35\n"
++        "L12,2026-02-20,CASH PAID IN,80.00,5271.35\n")
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    monkeypatch.setenv("CMA_RULESET", "v2")
++    return root
++
++
++def _case(tmp_path, accounts=None):
++    case_id = store.new_case(label="t41")
++    folder = store.case_folder(case_id)
++    for account, body in (accounts or {"main": RICH}).items():
++        src = tmp_path / f"{account}-{case_id}.csv"
++        src.write_text(body, encoding="utf-8")
++        store.import_file(folder, src, "csv", account=account)
++    return case_id, folder
++
++
++@pytest.fixture
++def serve():
++    servers = []
++
++    def start(case_id):
++        srv = rs.start(store.case_folder(case_id), case_id, port=0)
++        srv.serve_in_thread()
++        servers.append(srv)
++        return srv
++
++    yield start
++    for srv in servers:
++        srv.close()
++
++
++def _request(srv, method, path, body=None, *, kind="application/json"):
++    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
++    try:
++        h = {"Host": f"127.0.0.1:{srv.port}", "X-CMA-Token": srv.token}
++        data = None
++        if body is not None:
++            data = json.dumps(body).encode() if kind == "application/json" else body.encode()
++            h["Content-Type"] = kind
++        conn.request(method, path, body=data, headers=h)
++        r = conn.getresponse()
++        return r.status, r.getheader("Content-Type"), r.read()
++    finally:
++        conn.close()
++
++
++def _compare(srv, **body):
++    status, kind, raw = _request(srv, "POST", "/api/compare", body)
++    assert kind == "application/json", raw
++    return status, json.loads(raw)
++
++
++def _pence(v: float) -> int:
++    return int(Decimal(repr(v)) * 100)
++
++
++def _figures(folder, account="main"):
++    return overrides.case_figures(folder)[account]
++
++
++def _expected(f, first, last, pairs=()):
++    """The lines R51 lists, from the categorised statement: an oracle apart from the build."""
++    paired = {i for g in pairs for i in g}
++    rows = []
++    for n, t in enumerate(f.statement.transactions):
++        if not first <= t.date <= last:
++            continue
++        why = [r for r, ok in (("cash_deposit", t.category == Category.CASH_DEPOSIT),
++                               ("unexplained", t.amount > 0 and t.category == Category.OTHER),
++                               ("possible_own_account_transfer", t.id in paired),
++                               ("overridden", t.id in f.overridden)) if ok]
++        if why:
++            rows.append((-abs(_pence(t.amount)), n, t.id, why))
++    return [(i, why) for *_, i, why in sorted(rows)]
++
++
++def _entries(folder):
++    return [e.event for e in case.for_case(folder).entries()]
++
++
++# --- a memo field: the difference in pence, and the period's lines largest first ----------
++
++
++@pytest.mark.contracts
++def test_a_memo_field_figure_shows_the_difference_and_the_lines_of_the_period(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    f = _figures(folder)
++    m2 = next(m for m in f.metrics if m.id == "M2")
++    status, d = _compare(srv, field="monthly_turnover", figure="M2", value="£5,000.37")
++    assert status == 200 and d["state"] == "shown"
++    assert d["target"] == {"field": "monthly_turnover", "figure": "M2"} and d["unit"] == "GBP"
++    assert d["difference_pence"] == 500037 - _pence(m2.value)  # yours less the tool's, in pence (R2)
++    assert d["given_display"] == "£5,000.37" and d["ours_display"] == metrics.money_text(_pence(m2.value))
++    assert d["difference_display"] == metrics.money_text(500037 - _pence(m2.value))
++    assert d["period"] == {"start": "2026-01-05", "end": "2026-02-20"}
++    got = [(x["id"], x["reasons"]) for x in d["lines"]]
++    assert got == _expected(f, date(2026, 1, 5), date(2026, 2, 20))
++    # The fixture's lines R51 names: the cash deposits and the unexplained credits, largest first.
++    assert [i for i, _ in got] == ["L10", "L3", "L9", "L12", "L7"]
++    assert dict(got)["L10"] == ["cash_deposit"] and dict(got)["L9"] == ["unexplained"]
++    amounts = [abs(_pence(x["amount"])) for x in d["lines"]]
++    assert amounts == sorted(amounts, reverse=True)
++
++
++@pytest.mark.contracts
++def test_a_month_cell_is_compared_on_the_month_and_lists_only_its_lines(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    f = _figures(folder)
++    row = next(r for r in f.monthly if r.month == "2026-02")
++    status, d = _compare(srv, month="2026-02", cell="trading_receipts", value="4000")
++    assert status == 200
++    assert d["difference_pence"] == 400000 - _pence(row.trading_receipts.value)
++    assert d["period"] == {"start": row.start.isoformat(), "end": row.end.isoformat()}
++    got = [(x["id"], x["reasons"]) for x in d["lines"]]
++    assert got == _expected(f, row.start, row.end) and [i for i, _ in got] == ["L10", "L9", "L12"]
++    # The page's one select names the same target.
++    status, d2 = _compare(srv, target="month:2026-02:trading_receipts", value="4000")
++    assert status == 200 and d2["lines"] == d["lines"] and d2["difference_pence"] == d["difference_pence"]
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("seed", range(6))
++def test_the_difference_is_exact_to_the_penny_for_any_figure_typed(home, tmp_path, serve, seed):
++    rng = random.Random(seed)
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    f = _figures(folder)
++    by_id = {m.id: m for m in f.metrics}
++    for fid in ("M2", "M17", "M18", "M25"):
++        p = rng.randrange(-10**13, 10**13)
++        typed = metrics.pounds_text(p)
++        field = "monthly_turnover"
++        status, d = _compare(srv, field=field, figure=fid, value=typed)
++        assert status == 200 and d["difference_pence"] == p - _pence(by_id[fid].value)
++
++
++@pytest.mark.contracts
++def test_an_overridden_line_is_listed_as_overridden(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    position = len(case.for_case(folder).entries())
++    status, _, raw = _request(srv, "POST", "/api/override", {
++        "account": "main", "line": "L11", "category": "director_funding", "reason": "director's money",
++        "name": "Pat Jones", "expected": position})
++    assert status == 200, raw
++    f = _figures(folder)
++    assert "L11" in f.overridden
++    status, d = _compare(srv, month="2026-02", cell="money_in", value="4060")
++    assert status == 200
++    got = dict((x["id"], x["reasons"]) for x in d["lines"])
++    assert got["L11"] == ["overridden"]
++    assert [(x["id"], x["reasons"]) for x in d["lines"]] == _expected(f, date(2026, 2, 1), date(2026, 2, 28))
++
++
++def _csv(lines, opening=1000_00):
++    out, bal = ["id,date,description,amount,balance"], opening
++    for i, d, desc, p in lines:
++        bal += p
++        out.append(f"{i},{d.isoformat()},{desc},{p / 100:.2f},{bal / 100:.2f}")
++    return "\n".join(out) + "\n"
++
++
++@pytest.mark.contracts
++def test_possible_own_account_transfers_are_listed_for_each_account_and_across_the_case(home, tmp_path, serve):
++    d0 = date(2026, 3, 2)
++    main = _csv([("M1", d0, "CARD SETTLEMENT STRIPE", 500_00), ("M2", d0 + timedelta(days=1), "FPS TO 12345678", -100_00)])
++    res = _csv([("R1", d0, "CARD SETTLEMENT STRIPE", 321_45), ("R2", d0 + timedelta(days=1), "FPS TO 99998888", -100_00)])
++    sav = _csv([("S1", d0 + timedelta(days=2), "FPS FROM 87654321", 100_00)])
++    case_id, folder = _case(tmp_path, {"main": main, "reserve": res, "savings": sav})
++    srv = serve(case_id)
++    figures = overrides.case_figures(folder)
++    assert figures["main"].possible_pairs
++    status, d = _compare(srv, account="main", field="monthly_turnover", figure="M2", value="500")
++    assert status == 200 and d["difference_pence"] == 0
++    assert [(x["id"], x["reasons"]) for x in d["lines"]] == [("M2", ["possible_own_account_transfer"])]
++    status, d = _compare(srv, account="savings", month="2026-03", cell="money_in", value="0")
++    assert status == 200 and d["difference_pence"] == -100_00
++    # S1 is an unexplained credit as well as a possible own-account transfer.
++    assert [(x["id"], x["reasons"]) for x in d["lines"]] == [("S1", ["unexplained", "possible_own_account_transfer"])]
++    status, d = _compare(srv, account=overrides.COMBINED, field="monthly_turnover", figure="M17", value="921.45")
++    assert status == 200
++    listed = {x["id"]: x["reasons"] for x in d["lines"]}
++    assert {k for k, v in listed.items() if "possible_own_account_transfer" in v} == {"main:M2", "reserve:R2", "savings:S1"}
++    status, d = _compare(srv, field="monthly_turnover", figure="M2", value="1")
++    assert status == 400 and d["error"] == "Name the account."
++
++
++# --- other units, n/a, and refusals ----------------------------------------------------------
++
++
++@pytest.mark.contracts
++def test_a_figure_that_is_not_money_is_compared_exactly_and_an_na_figure_has_no_difference(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    by_id = {m.id: m for m in _figures(folder).metrics}
++    status, d = _compare(srv, field="monthly_turnover", figure="M26", value="12.5%")
++    assert status == 200 and d["unit"] == "pct" and d["difference_pence"] is None
++    assert Decimal(d["difference"]) == Decimal("12.5") - Decimal(repr(by_id["M26"].value))
++    m28 = by_id["M28"]
++    assert m28.value is None  # no proposed repayment in the profile: M28 is n/a (R13)
++    status, d = _compare(srv, field="affordability", figure="M28", value="1.5x")
++    assert status == 200 and d["ours_display"] == "n/a" and d["difference"] is None
++    assert d["difference_display"] == "n/a" and d["note"] == m28.method
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("body, error", [
++    ({"field": "monthly_turnover", "figure": "M2", "value": "100.001"},
++     "Money is compared to the penny: write at most two decimals."),
++    ({"field": "monthly_turnover", "figure": "M2", "value": "lots"}, "Write the figure as a number, such as 55,000 or 55000.00."),
++    ({"field": "monthly_turnover", "figure": "M2", "value": "10000000000000"},
++     "An amount of £10,000,000,000,000 or more cannot be compared to the penny."),
++    ({"field": "monthly_turnover", "figure": "M2", "value": 1.5}, "Give value as text."),
++    ({"field": "monthly_turnover", "value": "1"}, "Name the figure of this memo field."),
++    ({"field": "monthly_turnover", "figure": "M8", "value": "1"}, "That figure is not mapped to this memo field."),
++    ({"field": "key_risks", "value": "1"}, "No figure is mapped to this memo field."),
++    ({"field": "nope", "value": "1"}, "No such memo field."),
++    ({"month": "2030-01", "cell": "money_in", "value": "1"}, "No such monthly cell."),
++    ({"month": "2026-01", "cell": "nope", "value": "1"}, "No such monthly cell."),
++    ({"field": "monthly_turnover", "month": "2026-01", "cell": "money_in", "value": "1"},
++     "Name a memo field, or a month and a cell."),
++    ({"field": "monthly_turnover", "figure": "M2"}, "Enter your figure."),
++    ({"field": "monthly_turnover", "figure": "M2", "value": "1", "extra": "x"},
++     "Give only the account, the memo field or month and cell, and your figure."),
++])
++def test_a_comparison_that_cannot_be_made_is_refused_naming_only_what_was_asked(home, tmp_path, serve, body, error):
++    case_id, _ = _case(tmp_path)
++    srv = serve(case_id)
++    status, d = _compare(srv, **body)
++    assert status == 400 and d == {"error": error}
++
++
++@pytest.mark.contracts
++def test_a_comparison_writes_nothing_to_the_case(home, tmp_path, serve):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    before = (_entries(folder), sorted(p.name for p in folder.rglob("*")))
++    for _ in range(3):
++        assert _compare(srv, field="monthly_turnover", figure="M2", value="1")[0] == 200
++    assert (_entries(folder), sorted(p.name for p in folder.rglob("*"))) == before
++
++
++@pytest.mark.contracts
++def test_a_case_whose_figures_are_refused_shows_no_comparison(home, tmp_path, serve, monkeypatch):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    (folder / "statements" / "main.csv").write_text("not,a,statement\n", encoding="utf-8")
++    status, d = _compare(srv, field="monthly_turnover", figure="M2", value="1")
++    assert status == 200 and d["state"] != "shown" and "lines" not in d and "difference" not in d
++
++
++# --- the page: the entry form, and the comparison rendered with every case text escaped ------
++
++
++@pytest.mark.contracts
++def test_the_case_page_offers_the_comparison_entry(home, tmp_path, serve):
++    case_id, _ = _case(tmp_path)
++    srv = serve(case_id)
++    status, _, raw = _request(srv, "GET", "/")
++    page = raw.decode()
++    assert status == 200 and '<section id="compare">' in page
++    assert 'value="field:monthly_turnover:M2"' in page and 'value="month:2026-02:trading_receipts"' in page
++    assert f'action="/compare?{escape(urlencode({"token": srv.token}))}"' in page
++
++
++@pytest.mark.contracts
++def test_the_comparison_page_escapes_every_case_text(home, tmp_path, serve):
++    case_id, _ = _case(tmp_path)
++    srv = serve(case_id)
++    body = urlencode({"target": "field:monthly_turnover:M25", "value": "100"})
++    status, kind, raw = _request(srv, "POST", "/compare", body, kind="application/x-www-form-urlencoded")
++    page = raw.decode()
++    assert status == 200 and kind.startswith("text/html")
++    assert '<section id="comparison">' in page and "Difference (yours less the tool's)" in page
++    assert "XQZ &lt;b&gt;7&lt;/b&gt;" in page and "<b>7</b>" not in page
++    status, _, raw = _request(srv, "POST", "/compare", urlencode({"target": "field:nope:M2", "value": "1"}),
++                              kind="application/x-www-form-urlencoded")
++    assert status == 400 and "No such memo field." in raw.decode()
++
++
++# --- the entry point is the workspace's own (hardening: authz, method, failure) --------------
++
++
++@pytest.mark.contracts
++@pytest.mark.parametrize("path", ["/api/compare", "/compare"])
++def test_the_comparison_entry_refuses_a_request_without_the_token_or_from_another_origin(home, tmp_path, serve, path):
++    case_id, folder = _case(tmp_path)
++    srv = serve(case_id)
++    before = _entries(folder)
++    body = json.dumps({"field": "monthly_turnover", "figure": "M2", "value": "1"}).encode()
++    for headers in ({"Host": f"127.0.0.1:{srv.port}"},
++                    {"Host": f"127.0.0.1:{srv.port}", "X-CMA-Token": "wrong"},
++                    {"Host": f"127.0.0.1:{srv.port}", "X-CMA-Token": srv.token, "Origin": "http://evil.example"},
++                    {"Host": f"evil.example:{srv.port}", "X-CMA-Token": srv.token}):
++        conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
++        try:
++            conn.request("POST", path, body=body, headers={**headers, "Content-Type": "application/json"})
++            r = conn.getresponse()
++            raw = r.read()
++            assert r.status == 403 and b"M2" not in raw and b"difference" not in raw
++        finally:
++            conn.close()
++    status, _, _ = _request(srv, "GET", path)
++    assert status == 405
++    assert _entries(folder) == before
++
++
++@pytest.mark.contracts
++def test_a_comparison_that_fails_unforeseen_says_nothing_was_compared_not_saved(home, tmp_path, serve, monkeypatch):
++    from cma.review import compare as cmp
++
++    case_id, _ = _case(tmp_path)
++    srv = serve(case_id)
++
++    def boom(*a, **k):
++        raise RuntimeError("secret line text")
++
++    monkeypatch.setattr(cmp, "compare", boom)
++    status, d = _compare(srv, field="monthly_turnover", figure="M2", value="1")
++    assert status == 500 and d == {"error": "The figure could not be compared."}
+diff --git a/tests/test_workspace_summary.py b/tests/test_workspace_summary.py
+index f1d4c9f..18bcc63 100644
+--- a/tests/test_workspace_summary.py
++++ b/tests/test_workspace_summary.py
+@@ -219,11 +219,12 @@ def test_the_page_shows_the_breakdown_the_figures_and_the_monthly_summary(home,
+     scripts = [a for t, a in p.tags if t == "script"]
+     assert len(scripts) == 1 and dict(scripts[0])["src"].startswith("/static/app.js")
+     # A form is the workspace's own: it posts only to its override, stale-override or preview
+-    # path (R17, R19, R22; the preview form is T27's).
++    # path (R17, R19, R22; the preview form is T27's), or its comparison entry, which saves
++    # nothing (R51; T41).
+     for t, a in p.tags:
+         if t == "form":
+             assert dict(a)["method"] == "post" and dict(a)["action"].startswith(
+-                ("/override?token=", "/stale?token=", "/preview?token="))
++                ("/override?token=", "/stale?token=", "/preview?token=", "/compare?token="))
+     assert not any(k == "style" or k.startswith("on") for _, a in p.tags for k, _ in a)
+ 
+ 
+@@ -368,11 +369,12 @@ def _assert_only_escaped(page: str, texts: list[str], *, shown: bool) -> None:
+         if t == "a":
+             assert [k for k, _ in a] == ["href"] and dict(a)["href"].startswith(("/lines?token=", "/?token="))
+     # A form is the workspace's own: it posts only to its override, stale-override or preview
+-    # path (R17, R19, R22; the preview form is T27's).
++    # path (R17, R19, R22; the preview form is T27's), or its comparison entry, which saves
++    # nothing (R51; T41).
+     for t, a in p.tags:
+         if t == "form":
+             assert dict(a)["method"] == "post" and dict(a)["action"].startswith(
+-                ("/override?token=", "/stale?token=", "/preview?token="))
++                ("/override?token=", "/stale?token=", "/preview?token=", "/compare?token="))
+     assert not any(k == "style" or k.startswith("on") for _, a in p.tags for k, _ in a)
+     assert [t for t, _ in p.tags].count("script") == 1
+     page_text = "".join(p.text)
