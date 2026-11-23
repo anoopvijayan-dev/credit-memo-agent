@@ -1,0 +1,35 @@
+{
+  "task": "T41",
+  "claims": [
+    {
+      "text": "R51 through the workspace API: POST /api/compare takes the underwriter's figure for a memo field (field, and figure when the field maps several) or a month (month and cell) and returns the tool's figure, the underwriter's and the difference (theirs less the tool's), computed in the figures layer by metrics.comparison: whole pence for money (R2), exact decimals for other units, n/a when the tool's figure is n/a. It lists, largest first, that period's cash deposits, unexplained credits, possible own-account transfers (per account and across the case) and overridden lines, each with its reasons (indicators.comparison_lines). Refusals name only what was asked (400); nothing is written to the case. A form on the case page posts to /compare, whose page escapes every case text (R34). Tests: tests/test_compare.py, marked contracts.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_compare.py",
+      "proof_output": "28 passed in 16.79s"
+    },
+    {
+      "text": "The full suite passes, the existing P8 workspace test included, whose allow-list of form actions now names the comparison entry's /compare.",
+      "proof_cmd": "python -m pytest -q",
+      "proof_output": "3064 passed in 412.13s (0:06:52)"
+    },
+    {
+      "text": "The contracts and invariants marker tiers pass.",
+      "proof_cmd": "python -m pytest -q -m contracts; python -m pytest -q -m invariants",
+      "proof_output": "1263 passed, 1801 deselected in 211.57s (0:03:31)\n1154 passed, 1910 deselected in 167.39s (0:02:47)"
+    },
+    {
+      "text": "Lint and compile are clean.",
+      "proof_cmd": "ruff check src tests evals; python -m compileall -q src && echo compile-ok",
+      "proof_output": "All checks passed!\ncompile-ok"
+    }
+  ],
+  "files_changed": [
+    "src/cma/metrics.py",
+    "src/cma/indicators.py",
+    "src/cma/review/compare.py",
+    "src/cma/review/server.py",
+    "tests/test_compare.py",
+    "tests/test_workspace_summary.py",
+    "README.md"
+  ],
+  "notes": "Design choices the requirement left open. (1) A memo field's figure is one the memo field map maps to it; a field that maps several needs the figure named, and a judgement field with no figure is refused. Its period is the whole statement. A month is compared on one of its monthly-summary cells, over the month's days in the period. (2) The difference is the underwriter's figure less the tool's. (3) 'Unexplained lines' means unexplained credits (category other, ambiguous ones included), as the judgement queue reads them. A line can be listed for several reasons. (4) The comparison is a POST like the workspace's other forms, but it saves nothing and appends nothing to the case log; a test checks that. (5) For the combined 'All accounts' figures, the possible own-account groups are taken from the account figures, since combined_figures does not carry them, and named by case id. tests/test_workspace_summary.py's P8 allow-list of form actions gains /compare?token=. Committed as 2c05b03 on the task branch. Before testing I ran pip install -e for this worktree, because the cma package was not importable in this environment."
+}

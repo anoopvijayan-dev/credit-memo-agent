@@ -1,0 +1,71 @@
+I went through every checklist line for T41's comparison entry. The full suite passes (3067 tests, ruff clean), and I committed the hardening as d7ac9d8.
+
+**What I changed:**
+- **Two new tests (contracts tier):**
+  - A request to `/api/compare` or `/compare` gets 403 with no token, a wrong token, a foreign Origin or a foreign Host, and GET gets 405. The case log is unchanged afterwards.
+  - An unexpected failure returns a generic 500 that doesn't repeat the error's text.
+- **One wording fix:** that 500 used to say "The change could not be saved." even though a comparison saves nothing. It now says "The figure could not be compared." for comparisons; other writes keep the old message.
+
+**Gaps that need the owner (left in `notes`):**
+- **No paging of listed lines:** the response lists every flagged line in the period. On a 10,000-line case that was 6,666 lines, in 0.33 seconds. The drill-down doesn't page either, so whether and how to page belongs to the workspace as a whole.
+- **No log line or alert:** a comparison writes nothing and adds no case-log event, so nothing proves it ran. That fits the design's "nothing is saved", but whether a read-only action should leave a trace is a design question.
+- **Untested in-browser:** the full suite exercises the page and data paths through a real server, but nothing has been tried by hand in a browser.
+- **Timing not checked by the runner:** the 0.33-second figure comes from a script I ran myself, not from the test runner.
+
+```json
+{
+  "task": "T41",
+  "claims": [
+    {
+      "text": "Security / authz on every new entry point: POST /api/compare and /compare go through the workspace's shared Host, Origin and token check (server._handle before routing). A new test shows 403 for no token, a wrong token, a foreign Origin and a foreign Host, 405 for GET, and no case-log entry written.",
+      "proof_cmd": "python -m pytest -q tests/test_compare.py -k refuses_a_request_without_the_token",
+      "proof_output": "2 passed (parametrised over /api/compare and /compare)"
+    },
+    {
+      "text": "Security / input validated at the boundary: the underwriter's figure is read exactly (at most 40 characters, digits and one point only, pence for money with no fraction of a penny and below the £10,000,000,000,000 limit), extra keys are refused, and refusals echo no input. Case text is escaped in the HTML (R34). No new dependency, secret or interpolation.",
+      "proof_cmd": "python -m pytest -q tests/test_compare.py -k 'cannot_be_made or escapes_every_case_text'",
+      "proof_output": "14 passed"
+    },
+    {
+      "text": "Failure modes / idempotency: a comparison writes nothing. The case log and the file list are unchanged after three comparisons. A case whose figures are refused shows no comparison. An unexpected failure now answers 500 'The figure could not be compared.' (previously 'The change could not be saved.') and doesn't repeat the error's text.",
+      "proof_cmd": "python -m pytest -q tests/test_compare.py -k 'writes_nothing or figures_are_refused or fails_unforeseen'",
+      "proof_output": "3 passed"
+    },
+    {
+      "text": "Data / migrations: not applicable. The change adds no stored field, log event, file format or migration, because the comparison is read-only and computed on request.",
+      "proof_cmd": "git diff --stat e34f155..HEAD",
+      "proof_output": "README.md, src/cma/indicators.py, src/cma/metrics.py, src/cma/review/compare.py, src/cma/review/server.py, tests/test_compare.py, tests/test_workspace_summary.py; no stored schema or migration file touched"
+    },
+    {
+      "text": "Correctness (R51, R2): the difference (yours less the tool's) is exact to the penny for any typed figure in ±£10,000,000,000,000. Other units are compared exactly as decimals, and an n/a figure has no difference. Listed lines (cash deposits, unexplained, possible own-account transfers, overridden) match an oracle built separately from the build, largest first, for a memo field, a month, each account and the combined case.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_compare.py",
+      "proof_output": "31 passed in 18.21s"
+    },
+    {
+      "text": "Performance: comparison_lines is one pass over the statement, with no N+1 queries. I measured one comparison on a 10,000-line case at 0.33s, listing 6,666 lines, within R52's 2-second target. The runner does not time this; my own script measured it.",
+      "proof_cmd": "python <scratchpad>/perf.py",
+      "proof_output": "lines_listed=6666 seconds=0.33"
+    },
+    {
+      "text": "Whole suite and static checks after the hardening change.",
+      "proof_cmd": "ruff check src tests && python -m compileall -q src && python -m pytest -q -x",
+      "proof_output": "All checks passed! / compile-ok / 3067 passed in 394.58s (0:06:34)"
+    },
+    {
+      "text": "Docs: README describes the 'Compare with your own figure' entry and that it saves nothing. compare.py's module docstring and server.py's write-path docstring name /compare and /api/compare.",
+      "proof_cmd": "git show e34f155..HEAD -- README.md | grep -c Compare",
+      "proof_output": "1"
+    },
+    {
+      "text": "Operability / rollback: no flag is needed. The entry is a new read-only path, and rollback is a reinstall of the previous wheel, which leaves no data to repair since nothing is stored.",
+      "proof_cmd": "python -m pytest -q tests/test_compare.py -k writes_nothing",
+      "proof_output": "1 passed"
+    }
+  ],
+  "files_changed": [
+    "src/cma/review/server.py",
+    "tests/test_compare.py"
+  ],
+  "notes": "Gaps for the owner (design, not code): (1) Payload size / pagination: the comparison lists every flagged line in the period, 6,666 on a 10,000-line case. The design says workspace lines are paged, but the drill-down does not page either, so paging is a workspace-wide decision. (2) Observability: a comparison writes no case-log event and no structured log line, so no signal proves it ran. That matches 'nothing is saved'; whether read-only workspace actions should leave a trace is the owner's call. No alert applies because there is no remote alerting by design. (3) The 10,000-line timing is my own measurement, not a runner tier. (4) No manual browser run was done; the page and data paths are exercised through a real server in the tests."
+}
+```
