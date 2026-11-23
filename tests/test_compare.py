@@ -320,3 +320,45 @@ def test_the_comparison_page_escapes_every_case_text(home, tmp_path, serve):
     status, _, raw = _request(srv, "POST", "/compare", urlencode({"target": "field:nope:M2", "value": "1"}),
                               kind="application/x-www-form-urlencoded")
     assert status == 400 and "No such memo field." in raw.decode()
+
+
+# --- the entry point is the workspace's own (hardening: authz, method, failure) --------------
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("path", ["/api/compare", "/compare"])
+def test_the_comparison_entry_refuses_a_request_without_the_token_or_from_another_origin(home, tmp_path, serve, path):
+    case_id, folder = _case(tmp_path)
+    srv = serve(case_id)
+    before = _entries(folder)
+    body = json.dumps({"field": "monthly_turnover", "figure": "M2", "value": "1"}).encode()
+    for headers in ({"Host": f"127.0.0.1:{srv.port}"},
+                    {"Host": f"127.0.0.1:{srv.port}", "X-CMA-Token": "wrong"},
+                    {"Host": f"127.0.0.1:{srv.port}", "X-CMA-Token": srv.token, "Origin": "http://evil.example"},
+                    {"Host": f"evil.example:{srv.port}", "X-CMA-Token": srv.token}):
+        conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
+        try:
+            conn.request("POST", path, body=body, headers={**headers, "Content-Type": "application/json"})
+            r = conn.getresponse()
+            raw = r.read()
+            assert r.status == 403 and b"M2" not in raw and b"difference" not in raw
+        finally:
+            conn.close()
+    status, _, _ = _request(srv, "GET", path)
+    assert status == 405
+    assert _entries(folder) == before
+
+
+@pytest.mark.contracts
+def test_a_comparison_that_fails_unforeseen_says_nothing_was_compared_not_saved(home, tmp_path, serve, monkeypatch):
+    from cma.review import compare as cmp
+
+    case_id, _ = _case(tmp_path)
+    srv = serve(case_id)
+
+    def boom(*a, **k):
+        raise RuntimeError("secret line text")
+
+    monkeypatch.setattr(cmp, "compare", boom)
+    status, d = _compare(srv, field="monthly_turnover", figure="M2", value="1")
+    assert status == 500 and d == {"error": "The figure could not be compared."}

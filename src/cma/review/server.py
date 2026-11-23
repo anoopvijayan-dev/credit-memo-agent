@@ -232,8 +232,9 @@ class _Handler(BaseHTTPRequestHandler):
             return
         try:
             status, reply = self.server.save(kind, fields, shape == "data")
-        except Exception:
-            status, reply = 500, {"error": "The change could not be saved."}
+        except Exception:  # a comparison saves nothing, so its failure says so (R51)
+            status, reply = 500, {"error": "The figure could not be compared." if kind == "compare"
+                                  else "The change could not be saved."}
         if shape == "data":
             self._send(status, json.dumps(reply, ensure_ascii=False).encode("utf-8"), "application/json")
         elif kind in PAGE_WRITES:
