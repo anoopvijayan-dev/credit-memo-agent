@@ -469,3 +469,22 @@ def test_a_protected_credit_is_never_paired(home, tmp_path):
     assert lines["savings:S2"].category == metrics.Category.LOAN_DRAWDOWN
     assert not (lines["main:M2"].rule_id or "").startswith("pairing:")
     assert _by_id(both)["M21"].evidence == ["savings:S2"]
+
+
+@pytest.mark.contracts
+def test_combined_figures_that_do_not_reconcile_show_no_account_either(home, tmp_path, monkeypatch):
+    # Antigravity re-review of T19: when the figures across the accounts were refused, each
+    # account's own figures were still in the summary the page and /api/case are built from (R3).
+    from cma.metrics import ReconciliationError
+
+    case_id, folder = _case(tmp_path, ("main", MAIN), ("savings", SAVINGS))
+
+    def refuse(figures):
+        raise ReconciliationError(1, ["main:L1"])
+
+    monkeypatch.setattr(overrides, "combined_figures", refuse)
+    s = summary.case_summary(folder, case_id)
+    assert s["state"] == "not_reconciled" and s["accounts"] == [] and not s.get("combined")
+    import re
+
+    assert not re.search(r"\bM(?:2|17)\b", summary.render(s))  # no figure; M28 is only named in the profile
