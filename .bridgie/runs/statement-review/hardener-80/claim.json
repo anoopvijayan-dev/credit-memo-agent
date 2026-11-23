@@ -1,0 +1,46 @@
+{
+  "task": "T40",
+  "claims": [
+    {
+      "text": "Failure modes (defined behaviour on failure; partial failure): one case failing in a way no refusal foresees used to stop `cma report` with a traceback, so the other cases were never reported. Reproduced, then fixed: case_report now catches it, marks that case refused (traced, reconciled and signed_off all None, so it counts as failing), prints no exception text (which could quote a statement), and still reports every other case. The test below covers it.",
+      "proof_cmd": "python -m pytest -q tests/test_report.py::test_r50_report_one_failing_case_does_not_hide_the_others",
+      "proof_output": "Before the fix, scratchpad repro.py (case_summary raising RuntimeError for one of two cases) printed 'CRASH RuntimeError unforeseen'. After it: 6 passed in tests/test_report.py (this test included); exit 1, the bad case shown as 'could not be read', the good case shown traced and reconciled, and the sentinel in the exception text absent from the output."
+    },
+    {
+      "text": "Idempotency / data: `cma report` writes nothing. Two runs leave every file under the case root byte for byte unchanged. No migration and no stored format change; the command reads existing case files only.",
+      "proof_cmd": "PYTHONPATH=src python <scratchpad>/ro.py  (hashes every file under CMA_HOME, runs report.report() twice, hashes again)",
+      "proof_output": "unchanged"
+    },
+    {
+      "text": "Security / PII: the output holds no applicant name, business name, own-account name, label, override reason, typed sign-off name, description, amount, '£' or duration (clock time, time unit or ISO timestamp), in text and in --json. Rich markup is off for case-derived text (markup=False). report.py makes no network call and writes no file. The only entry point is a local CLI command, gated by the case root's owner-only permissions (R31), as every other case command is. Case ids are filtered by store.CASE_ID before use.",
+      "proof_cmd": "python -m pytest -q tests/test_report.py ; grep -n 'socket\\|http\\|requests\\|subprocess\\|open(.*w' src/cma/report.py",
+      "proof_output": "6 passed; grep: no network/write calls in report.py"
+    },
+    {
+      "text": "Observability: R50's non-zero exit. Exit 1 when any case is untraced (a non-zero figure or cell with no lines), not reconciled, or could not be read; exit 0 otherwise, including when there are no cases.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_report.py tests/test_cli.py",
+      "proof_output": "11 passed, 31 deselected"
+    },
+    {
+      "text": "Docs: README gains a `cma report` entry beside `cma case check`. It says what the report holds and what it never holds, gives the --json flag and the exit 1 conditions.",
+      "proof_cmd": "grep -n 'cma report' README.md",
+      "proof_output": "README.md: '# Summarise every case under the case root: ...' followed by 'cma report'"
+    },
+    {
+      "text": "Regression: the full suite, ruff over src/tests/evals and compileall pass with the change.",
+      "proof_cmd": "python -m pytest -q ; ruff check src tests evals ; python -m compileall -q src",
+      "proof_output": "3004 passed in 371.52s; All checks passed!; compileall-ok"
+    },
+    {
+      "text": "Not applicable: performance (no queries or indexes; the report runs the workspace's case_summary once per case, on local files, with no new hot path), feature flag and rollback (a new read-only command that runs only when invoked; rolling back is a reinstall, with no data to repair), alerts and runbook (local tool with no remote alerting, by design; the exit code is the signal), and new dependencies or secrets (none).",
+      "proof_cmd": "git diff HEAD --stat",
+      "proof_output": "README.md | 6 +, src/cma/report.py | 6 +-, tests/test_report.py | 23 + (no pyproject or lockfile change)"
+    }
+  ],
+  "files_changed": [
+    "src/cma/report.py",
+    "tests/test_report.py",
+    "README.md"
+  ],
+  "notes": "Gaps for the owner, not changed (design questions): (1) report.case_ids skips a folder under cases/ that has no case.yaml, so a case whose profile file was removed disappears from the report instead of showing as refused. Deciding whether that should fail the report needs the owner. (2) A case that is refused, whose log cannot be read, or that has no statement yet ('empty', traced vacuously) is treated this way: refused counts as failing (exit 1), empty does not. R50 names only untraced and unreconciled; confirm that refused should fail. (3) ruff over the whole tree reports 14 issues, all in .bridgie/runs/statement-review/implementer-02 and implementer-05 helper scripts, not in the worktree's code."
+}

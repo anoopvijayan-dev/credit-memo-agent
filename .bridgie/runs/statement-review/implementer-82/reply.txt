@@ -1,0 +1,52 @@
+I've added `cma report`, which prints one summary per case and exits 1 when any case is untraced, does not reconcile, or cannot be read. Lint is clean and the full test suite passes (3003 tests), including five new ones for the report.
+
+For each case it shows:
+- **Judgement queue:** how many lines it lists, broken down by why each is listed.
+- **Indicators:** how many lines each kind of indicator flagged.
+- **Overrides:** the applied ones counted by old and new category; stale ones are counted separately.
+- **Unexplained share of money in:** M26, taken across all accounts when a case has more than one.
+- **Flags:** whether every figure was traced, whether the figures reconcile, and whether the case was signed off.
+
+`--json` prints the same as JSON. The output carries only the random case id, counts, category and indicator names, yes/no flags and that share. It never prints names, the label or business name, descriptions, amounts, override reasons or typed names, refusal text, or any time from the case log. One test seeds all of those as sentinel strings and checks that none appears in either output, and that nothing reads as a duration.
+
+Three choices a reviewer may question:
+- **What counts as traced:** a figure or monthly cell passes if it has lines behind it, is n/a with its reason given, or is zero with no line to cite, such as an empty bucket. That follows the design's wording "every figure has evidence or an n/a reason". The zero case is my own addition.
+- **Cases that cannot be read:** a case whose log is broken, is being saved, or whose files are refused shows as "could not be read". Traced, reconciled and signed off all show "not known", and it makes the exit non-zero.
+- **How the failing-case tests work:** I couldn't build a real case that fails to reconcile or has an untraced figure. So those two exit-code tests force the state by monkeypatching `overrides.case_figures` and `metrics.compute`.
+
+The counts come from the workspace's case summary, so the report shows what the underwriter sees and does no money arithmetic. I haven't committed anything; the runner does that.
+
+Files changed:
+- `src/cma/report.py` (new)
+- `src/cma/cli.py`
+- `tests/test_report.py` (new)
+
+```json
+{
+  "task": "T40",
+  "claims": [
+    {
+      "text": "`cma report` (src/cma/report.py, called from cli.report_cases) summarises each case under the case root: judgement-queue lines by reason, lines flagged per indicator kind, applied overrides counted by old and new category (stale ones counted apart), the unexplained share M26 (combined across accounts when there are several), whether every figure and monthly cell is traced, whether it reconciles, and whether the case log holds a sign-off. Every count comes from review.summary.case_summary, so no money arithmetic is done in the report.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_report.py",
+      "proof_output": "5 passed in 2.56s"
+    },
+    {
+      "text": "The report's text and its --json output hold none of these sentinels: the director's or own account's name, the business name, the case label, a description, an override's reason or typed name, any line amount or balance, or a £ sign. They also hold no clock time, time unit, ISO timestamp, or the words duration, elapsed or took (test_r50_report_output_holds_no_sentinel_and_no_duration).",
+      "proof_cmd": "python -m pytest -q tests/test_report.py::test_r50_report_output_holds_no_sentinel_and_no_duration",
+      "proof_output": "included in: 5 passed in 2.56s (python -m pytest -q -m contracts tests/test_report.py)"
+    },
+    {
+      "text": "`cma report` exits 1 when any case does not reconcile (R3), has a non-zero figure or cell with no lines behind it, or cannot be read. It exits 0 when every case is traced and reconciled, and also when there are no cases.",
+      "proof_cmd": "python -m pytest -q -m contracts tests/test_report.py",
+      "proof_output": "5 passed in 2.56s"
+    },
+    {
+      "text": "Lint and the full suite pass with the change.",
+      "proof_cmd": "ruff check src tests && python -m pytest -q",
+      "proof_output": "All checks passed!\n3003 passed in 370.45s (0:06:10)"
+    }
+  ],
+  "files_changed": ["src/cma/report.py", "src/cma/cli.py", "tests/test_report.py"],
+  "notes": "How the report decides 'traced': a figure or monthly cell counts as traced if it has lines behind it, if it is n/a with its method saying why, or if it is zero with no line to cite (for example an empty bucket). That follows the design's Observability wording, 'every figure has evidence or an n/a reason'. A case that cannot be read (broken log, being saved, a refused file) is reported as 'could not be read', with traced, reconciled and signed-off all 'not known', and it makes the exit non-zero. The report never prints refusal text, the case label or business name, or any time from the case log. The unreconciled and untraced tests force those states by monkeypatching overrides.case_figures and metrics.compute, because a real case cannot be built that fails to reconcile. Not committed; the runner owns commits."
+}
+```
