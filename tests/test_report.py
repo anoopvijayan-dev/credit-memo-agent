@@ -149,3 +149,26 @@ def test_r50_report_with_no_cases(home):
     res = runner.invoke(app, ["report"])
     assert res.exit_code == 0 and "no cases" in res.output
     assert json.loads(runner.invoke(app, ["report", "--json"]).output) == []
+
+
+@pytest.mark.contracts
+def test_r50_report_one_failing_case_does_not_hide_the_others(home, tmp_path, monkeypatch):
+    bad_id, _ = _case(tmp_path)
+    good_id, _ = _case(tmp_path)
+    import cma.review.summary as summary
+
+    real = summary.case_summary
+
+    def unforeseen(folder, case_id):
+        if case_id == bad_id:
+            raise RuntimeError(f"unforeseen {DESC}")
+        return real(folder, case_id)
+
+    monkeypatch.setattr(summary, "case_summary", unforeseen)
+    res = runner.invoke(app, ["report"])
+    assert res.exit_code == 1, res.output
+    assert bad_id in res.output and "could not be read" in res.output
+    assert good_id in res.output and DESC not in res.output
+    rows = {r["case"]: r for r in report.report()}
+    assert rows[bad_id]["state"] == "refused" and rows[bad_id]["traced"] is None
+    assert rows[good_id]["traced"] is True and rows[good_id]["reconciled"] is True

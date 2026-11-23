@@ -75,7 +75,11 @@ def case_report(folder: Path, case_id: str) -> dict[str, Any]:
                            "queue_by_reason": {}, "indicator_lines": {}, "overrides": [],
                            "stale_overrides": 0, "unexplained_share": None, "traced": False,
                            "untraced": [], "reconciled": False, "signed_off": False}
-    s = case_summary(folder, case_id)
+    try:
+        s = case_summary(folder, case_id)
+    except Exception:  # a failure no refusal foresees: this case is refused, the others still reported
+        out.update(state="refused", traced=None, reconciled=None, signed_off=None)
+        return out
     out["state"] = s["state"]
     if s["state"] in ("shown", "empty"):
         out["accounts"] = len(s["accounts"])
