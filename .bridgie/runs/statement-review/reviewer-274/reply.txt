@@ -1,0 +1,73 @@
+**T39 fails review: P10 passes, R46 fails because of one major defect. I also found three minor issues.** I couldn't run probe scripts here (the permission was denied), so the repros below are traced through the code, not executed. Writing `evidence.json` to the run directory was also denied, so the evidence is in the block at the end.
+
+**P10 passes.** Before writing anything, `pseudonymise_statement` compares the copy with the original under both v1 and v2 (`differs()`, `pseudonymise.py:356-375`). It checks every line's category, rule and reversal link, every figure (buckets included), the monthly summary and the indicators, and refuses if anything differs. The runner's full run shows all `test_p10_*` tests passing, including the 18 synthetic archetype/risk/feature combinations (`specified-3.log:1914-1944`).
+
+**R46 fails.** The command is wired into the CLI, the profile is tokenised, the label is written into the copy, and ids, dates, amounts and balances are copied unchanged. But some business names survive:
+- At `pseudonymise.py:288`, any word that even partly overlaps text a rule reads is kept whole.
+- Several rule patterns can match inside a longer word, because they have no word boundary in front: `FINANCE\b` (v1 and v2), plus `PAYROLL|SALARIES` and `DIVIDEND` (v1 only).
+- So names like GREENFINANCE, SMITHFINANCE and BRIGHTPAYROLL come out unchanged, in the statement and in the profile (`keep_words`, line 308).
+- This is the same kind of defect as the earlier "Greenfield Capital Ltd kept whole" finding. The fix in f9351f5 only handled whole-word matches, and no test covers a match inside a word.
+- A fix that keeps P10 exists: a token like `QZAAAAAAFINANCE` would still be read the same way by both rule tables.
+
+**Minor findings:**
+- **Valid statements refused over spacing** (`pseudonymise.py:284`). Two spellings of a profile name that differ only in spacing get different tokens, but the figures treat them as one payer. With a business name on customer-transfer lines, the largest-payer share (M15) changes in the copy, so the command refuses and writes nothing.
+- **The firm's thresholds file is ignored by default** (`cli.py:687`). Without `--thresholds`, the copy is checked against the packaged thresholds, while the workspace uses the firm's file. A gambling operator the firm added gets tokenised, and that indicator disappears when the copy is opened in the firm's case.
+- **Unproven claims.** The "deterministic" and "about 5 ms per line" claims cite `scratchpad/perf.py`, which no runner tier ran. A test the runner did run covers determinism; the performance figure has no proof.
+
+```json
+{
+  "task": "T39",
+  "criteria": [
+    {
+      "id": "R46",
+      "tier": "adversarial",
+      "check": "cli.py:664-695 wires `cma pseudonymise` to pseudonymise.pseudonymise_file (production caller present). Profile tokenised (pseudonymise.py:298-317), label in PSEUDONYMISED.txt, case.yaml header and manifest (pseudonymise.py:432-446, test_cli_writes_a_labelled_copy_and_a_tokenised_profile ran and passed in specified-3.log:1937). Ids, dates, amounts and balances are copied unchanged (only `description` is rewritten, pseudonymise.py:292-293). But a word that only partly overlaps a span a rule reads is kept whole (pseudonymise.py:287-289), and v1/v2 patterns such as 'FINANCE\\b' and 'PAYROLL|SALARIES' (v1.yaml:37-41, 29; v2.yaml:218, 235) match inside a longer word, so a business name like GREENFINANCE survives in the statement and in the profile (keep_words, pseudonymise.py:247-261, 308). Business names are therefore not all replaced.",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "P10",
+      "tier": "adversarial",
+      "check": "pseudonymise_statement refuses unless differs() (pseudonymise.py:356-375) finds every line's category/rule/reversal, every metric (buckets included, via met.compute), the monthly summary and the indicators equal under v1 and v2, so a copy it writes keeps P10 by construction for the thresholds it was checked with. The runner's full run shows test_p10_pseudonymised_statement_and_profile_give_identical_figures across all 18 archetype/risk/feature combinations and the other test_p10_* tests PASSED (specified-3.log:1914-1944; invariants tier 1155 passed).",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-274/specified-3.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/pseudonymise.py",
+      "line": 288,
+      "criterion": "R46",
+      "claim": "A business or personal name that contains recognised wording only as part of a longer word is kept whole. The output loop skips any word that overlaps a kept span (`if any(_overlaps(m.span(), f) for f in taken): continue`), and several rule patterns have no leading word boundary: v1/v2 loan rules 'FINANCE\\b' (v1.yaml:37,41; v2.yaml:218,235), v1 'PAYROLL|SALARIES' (v1.yaml:29) and 'DIVIDEND' (v1.yaml:45). The kept span is just FINANCE inside GREENFINANCE, but the whole word GREENFINANCE is left as it is. For a profile name, keep_words (pseudonymise.py:247-261) collects the same whole word, and tok() (line 308) keeps it in the profile. This is the same kind of defect as the previous review's 'Greenfield Capital Ltd kept whole', which the fix at f9351f5 handled only for whole-word matches. It also contradicts the claim that 'none of the written files contains the original names'.",
+      "repro": "Statement lines: 'FPS CREDIT GREENFINANCE LTD INV 12' (+500.00), 'FPS DEBIT BRIGHTPAYROLL SERVICES' (-100.00). Profile business_name 'Greenfinance Ltd', director 'Peter Smithfinance'. Call ps.pseudonymise_statement(data, profile). v1's FINANCE\\b matches at the F inside GREENFINANCE and SMITHFINANCE, and PAYROLL inside BRIGHTPAYROLL, so _kept_spans returns those inner spans. At line 288 each whole word overlaps one, so GREENFINANCE, BRIGHTPAYROLL and SMITHFINANCE come out unchanged in statement.csv, and business_name/directors in case.yaml keep GREENFINANCE/SMITHFINANCE. P10 does not require this: a token such as QZAAAAAAFINANCE keeps v1 and v2 reading the word the same way. No test covers a match inside a word; the parametrised test at tests/test_pseudonymise.py:279-296 covers whole-word matches only."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/pseudonymise.py",
+      "line": 284,
+      "criterion": "R46",
+      "claim": "A profile name's region is compared as raw text, internal whitespace included, so two lines that differ only in a run of spaces get different tokens ('TOKB' vs 'TOKB TOKV'). counterparty() (categorise.py:1427-1434) treats them as one payer, because it joins on whitespace. When the name is on customer-transfer lines (business_name is pseudonymised but does not categorise), M15's by_payer (metrics.py:746-749) splits in the copy, differs() refuses, and no copy is written for a valid statement.",
+      "repro": "business_name 'Rose Bakery'. Lines 'FPS CREDIT ROSE  BAKERY INV 1' (500.00, two spaces), 'FPS CREDIT ROSE BAKERY INV 2' (500.00), 'FPS CREDIT BOB INV 3' (600.00). In the original, counterparty gives ROSE BAKERY=1000 and M15 top share is 62.5%. In the copy, the second spelling gets a variant token (line 284), payers split 500/500/600 and top share is 37.5%. pseudonymise_statement raises 'would change figure M15 under v1'. The loader strips descriptions but does not collapse internal whitespace (ingest.py:567)."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/cli.py",
+      "line": 687,
+      "criterion": "P10",
+      "claim": "Without --thresholds, the command checks the copy against the packaged thresholds (load_thresholds(None) -> shipped(), indicators.py:105-108). The workspace raises indicators from the firm's thresholds file (review/summary.py:145-154, firm.py:87). The gambling operators the pseudonymiser keeps come from the thresholds it uses (pseudonymise.py:206). So an operator the firm added to its indicators.yaml is tokenised, and the copy opened in the firm's case loses that gambling indicator, although the command reported the indicators identical.",
+      "repro": "Firm indicators.yaml adds operator 'LOCALBOOKIE' under gambling.operators. Run `cma pseudonymise s.csv --format csv --out o` on a statement with 'CARD PAYMENT LOCALBOOKIE' -50.00. The check passes under the shipped list. LOCALBOOKIE becomes QZ...., and importing o/statement.csv into a case under that firm raises no gambling indicator, where the original raised one."
+    },
+    {
+      "severity": "minor",
+      "file": null,
+      "line": null,
+      "criterion": null,
+      "claim": "Two claims cite proof the runner did not produce: 'deterministic: True' and 'about 5 ms per line' come from `scratchpad/perf.py`, which no runner tier ran and which is not in the repository. The determinism part is covered by test_the_copy_is_deterministic_owner_only_and_holds_no_token_mapping (specified-3.log:1940). The performance claim is not proven.",
+      "repro": "grep the runner logs for perf.py: no match. Proving it would need a committed benchmark run by a configured tier."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {"seat": "reviewer", "adapter": "claude-code", "model": "claude-opus-5-5"}
+}
+```
