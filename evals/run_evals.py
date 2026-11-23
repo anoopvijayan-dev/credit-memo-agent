@@ -121,14 +121,14 @@ def feature_mismatches(truth, csv_path: Path) -> list[str]:
         s = categorise.categorise(ingest.load_csv(path), v2, profile=profile)
         out += [f"{key}:category:{x.id}" for x in s.transactions if x.category.value != t["category_by_id"][x.id]]
         m = {x.id: x for x in metrics.compute(s, vat_stagger=synth.VAT_STAGGER)}
-        if not same(m["M17"].value, t["total_money_in"]):
+        if not same_pence(m["M17"].value, t["total_money_in"]):
             out.append(f"{key}:M17")
         for bucket, (mid, _, _) in [*metrics.BUCKET_METRICS.items(), (Bucket.TRADING_RECEIPTS, ("M2", "", ""))]:
             want = t["buckets"][bucket.value]
-            if not same(m[mid].value, want["amount"]) or sorted(m[mid].evidence) != sorted(want["ids"]):
+            if not same_pence(m[mid].value, want["amount"]) or sorted(m[mid].evidence) != sorted(want["ids"]):
                 out.append(f"{key}:{mid}")
         cash = t["cash_deposits"]
-        if not same(m["M18"].value, cash["amount"]) or sorted(m["M18"].evidence) != sorted(cash["ids"]):
+        if not same_pence(m["M18"].value, cash["amount"]) or sorted(m["M18"].evidence) != sorted(cash["ids"]):
             out.append(f"{key}:M18")
         got = [(i.kind, i.evidence) for i in indicators.raise_indicators(s)]
         if got != [(i["kind"], i["lines"]) for i in t["indicators"]]:
@@ -161,6 +161,14 @@ def same(got: float | None, expected: float | None) -> bool:
     if got is None or expected is None:
         return got is None and expected is None
     return abs(got - expected) < 0.01
+
+
+def same_pence(got: float | None, expected: float | None) -> bool:
+    """Money compared to the penny: a 1p difference is a mismatch. abs(a - b) < 0.01 in binary
+    floating point accepts some 1p differences (Antigravity re-review of T10)."""
+    if got is None or expected is None:
+        return got is None and expected is None
+    return round(got * 100) == round(expected * 100)
 
 
 if __name__ == "__main__":
