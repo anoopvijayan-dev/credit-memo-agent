@@ -692,9 +692,13 @@ def pseudonymise_cmd(
         else:
             from .review.summary import case_thresholds
             th = case_thresholds()
+        # ...and categorised with the firm's own rules, as every case is (R20, P10).
+        from . import firm_rules
+        rules = firm_rules.for_case().rules
         result, written = ps.pseudonymise_file(file, fmt, out, profile=profile, opening_balance=opening_balance,
-                                               statement_balance=statement_balance, at=at, thresholds=th)
-    except (ps.PseudonymiseError, ThresholdsError, firm.FirmConfigError) as e:
+                                               statement_balance=statement_balance, at=at, thresholds=th,
+                                               firm_rules=rules)
+    except (ps.PseudonymiseError, ThresholdsError, firm.FirmConfigError, RulesetError) as e:
         console.print(f"[red]Refused.[/red] {escape(str(e))}")
         raise typer.Exit(code=2) from None
     console.print(f"wrote {', '.join(p.name for p in written)} in {out}: {result.words_replaced} word(s) and "

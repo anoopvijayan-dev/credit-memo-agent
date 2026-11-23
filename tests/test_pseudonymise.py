@@ -347,3 +347,74 @@ def test_cli_defaults_to_the_firm_thresholds(tmp_path, monkeypatch):
     r = CliRunner().invoke(app, ["pseudonymise", str(src), "--format", "csv", "--out", str(tmp_path / "o")])
     assert r.exit_code == 0, r.output
     assert "LOCALBOOKIE" in (tmp_path / "o" / "statement.csv").read_text()
+
+
+_FIRM_RULE = ("rules:\n  - id: acme_trust\n    pattern: ACME TRUST\n    direction: in\n"
+              "    category: other_explained_in\n    by: Pat Underwriter\n    at: 2026-11-20T10:00:00Z\n"
+              "    reason: trust distributions\n")
+
+
+@pytest.mark.invariants
+def test_p10_every_column_beyond_the_five_is_pseudonymised(tmp_path):
+    # T39 attempt 3: only the description was rewritten, so a payee or account-number column
+    # (which the loader accepts) was copied with its names and numbers unchanged.
+    data = (b"id,date,description,amount,balance,payee,account_number,reference\n"
+            b"L1,2026-01-02,FPS CREDIT JANE DOE,200.00,1200.00,JANE DOE,12345678,STRIPE PAYOUT JANE\n"
+            b"L2,2026-01-03,CARD SETTLEMENT STRIPE,50.00,1250.00,JANE DOE,12345678,=HYPERLINK\n")
+    profile = _profile(directors=["JANE DOE"])
+    result = ps.pseudonymise_statement(data, profile)
+    text = result.statement.decode()
+    assert "JANE" not in text and "DOE" not in text and "12345678" not in text
+    rows = _rows(result.statement)
+    assert list(rows[0]) == ["id", "date", "description", "amount", "balance", "payee", "account_number",
+                             "reference"]
+    # ids, dates, amounts and balances kept; one payee, one token, everywhere; institutions kept.
+    assert [(r["id"], r["date"], r["amount"], r["balance"]) for r in rows] == [
+        ("L1", "2026-01-02", "200.00", "1200.00"), ("L2", "2026-01-03", "50.00", "1250.00")]
+    assert rows[0]["payee"] == rows[1]["payee"] == result.profile["directors"][0]
+    assert rows[0]["payee"] in rows[0]["description"]
+    assert rows[0]["account_number"] == rows[1]["account_number"] and rows[0]["account_number"].isdigit()
+    assert "STRIPE" in rows[0]["reference"] and not rows[1]["reference"].startswith("=")
+    _figures_equal(data, profile, result)
+
+
+@pytest.mark.contracts
+def test_a_header_with_spaces_around_its_names_is_pseudonymised(tmp_path):
+    # T39 attempt 3: the loader strips header cells, the pseudonymiser raised KeyError.
+    data = (b"id, date, description, amount, balance\n"
+            b"L1,2026-01-02,FPS CREDIT JANE DOE,200.00,1200.00\n")
+    contract.checked(data, "s")
+    result = ps.pseudonymise_statement(data)
+    assert "JANE" not in result.statement.decode()
+    src = tmp_path / "s.csv"
+    src.write_bytes(data)
+    r = CliRunner().invoke(app, ["pseudonymise", str(src), "--format", "csv", "--out", str(tmp_path / "o")])
+    assert r.exit_code == 0, r.output
+
+
+@pytest.mark.invariants
+def test_p10_the_firms_own_rules_categorise_the_copy_as_the_original(tmp_path, monkeypatch):
+    # T39 attempt 3: a counterparty a firm rule names was tokenised, and the self-check ran
+    # without firm rules, so a case of that firm got other buckets for the copy.
+    from cma import firm_rules
+    from cma.categorise import load_ruleset
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("CMA_HOME", str(home))
+    (home / "firm_rules.yaml").write_text(_FIRM_RULE)
+    data = _statement([("2026-01-02", "FPS CREDIT ACME TRUST", 50_000),
+                       ("2026-01-03", "FPS CREDIT JOHN SMITH", 20_000)])
+    src = tmp_path / "s.csv"
+    src.write_bytes(data)
+    r = CliRunner().invoke(app, ["pseudonymise", str(src), "--format", "csv", "--out", str(tmp_path / "o")])
+    assert r.exit_code == 0, r.output
+    copy = (tmp_path / "o" / ps.STATEMENT_FILE).read_bytes()
+    assert "ACME TRUST" in copy.decode() and "SMITH" not in copy.decode()
+    rules = firm_rules.for_case().rules
+    a, b = contract.checked(data, "a"), contract.checked(copy, "b")
+    for rid in ("v1", "v2"):
+        rs = load_ruleset(rid)
+        fa = ps.figures(a, None, ruleset=rs, firm_rules=rules)
+        fb = ps.figures(b, None, ruleset=rs, firm_rules=rules)
+        assert fa == fb
+        assert fa.lines[0][2] == "firm:acme_trust"
