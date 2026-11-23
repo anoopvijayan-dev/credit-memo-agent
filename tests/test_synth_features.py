@@ -182,3 +182,27 @@ def test_p17_a_cash_deposit_of_exactly_the_limit_is_flagged_and_a_penny_under_is
     truth = {i for x in main["indicators"] if x["kind"] == "single_cash_deposit" for i in x["lines"]}
     assert at[0] in flagged and at[0] in truth
     assert under[0] not in flagged and under[0] not in truth
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("archetype", synth.ARCHETYPES)
+def test_the_evals_report_a_one_penny_bucket_difference_whatever_the_amount(tmp_path, archetype):
+    """Antigravity re-review of T10: the evals compared bucket amounts by abs(a - b) < 0.01 in
+    binary floating point, which passes a 1p difference on about half of all amounts (£16,500.00
+    against £16,500.01 among them). Every bucket and total, one penny off, is now reported."""
+    sys.path.insert(0, str(ROOT / "evals"))
+    try:
+        import run_evals
+    finally:
+        sys.path.remove(str(ROOT / "evals"))
+    rows, truth = synth.generate(archetype, "stretched", end=END, features=synth.FEATURES)
+    csv_path, _ = synth.write(rows, truth, tmp_path, stem="case")
+    assert run_evals.feature_mismatches(truth, csv_path) == []
+    for bucket, want in truth.buckets.items():
+        if not want["amount"]:
+            continue
+        want["amount"] += 0.01
+        assert run_evals.feature_mismatches(truth, csv_path), (archetype, bucket)
+        want["amount"] -= 0.01
+    truth.total_money_in += 0.01
+    assert run_evals.feature_mismatches(truth, csv_path)
