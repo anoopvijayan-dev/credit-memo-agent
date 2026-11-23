@@ -172,3 +172,127 @@ def test_r50_report_one_failing_case_does_not_hide_the_others(home, tmp_path, mo
     rows = {r["case"]: r for r in report.report()}
     assert rows[bad_id]["state"] == "refused" and rows[bad_id]["traced"] is None
     assert rows[good_id]["traced"] is True and rows[good_id]["reconciled"] is True
+
+
+# --- verify-273 -----------------------------------------------------------------------
+
+VAT_FREE = ("id,date,description,amount,balance\n"
+            "L1,2026-01-05,CARD SETTLEMENT STRIPE,100.00,1100.00\n"
+            "L2,2026-06-15,CARD SETTLEMENT STRIPE,200.00,1300.00\n")
+
+
+def _tree(root):
+    """Every file's bytes and every path's mode under `root`."""
+    out = {}
+    for p in sorted(root.rglob("*")):
+        st = p.lstat()
+        out[str(p.relative_to(root))] = (st.st_mode, p.read_bytes() if p.is_file() else None)
+    out["."] = (root.lstat().st_mode, None)
+    return out
+
+
+@pytest.mark.contracts
+def test_r50_a_missed_vat_payment_with_no_vat_line_is_traced(home, tmp_path):
+    case_id, folder = _case(tmp_path, VAT_FREE)
+    store.update_profile(folder, lambda p: {**p, "vat_stagger": 1})
+    from cma.review.summary import case_summary
+
+    m13 = next(f for f in case_summary(folder, case_id)["accounts"][0]["figures"] if f["id"] == "M13")
+    assert m13["value"] and m13["value"] >= 1 and m13["lines"] == 0  # a missed payment has no line
+    r = report.report()[0]
+    assert r["traced"] is True and r["untraced"] == []
+    assert runner.invoke(app, ["report"]).exit_code == 0
+
+
+@pytest.mark.contracts
+def test_r50_a_zero_valued_derived_figure_with_no_lines_is_untraced(home, tmp_path, monkeypatch):
+    _case(tmp_path, VAT_FREE)  # no unexplained credit: M26 is 0%
+    real = metrics.compute
+
+    def bare(*a, **kw):
+        out = real(*a, **kw)
+        m26 = next(m for m in out if m.id == "M26")
+        assert m26.value == 0
+        m26.evidence = []
+        return out
+
+    monkeypatch.setattr(metrics, "compute", bare)
+    monkeypatch.setattr(overrides, "_BARE", overrides._Memo(8))
+    r = report.report()[0]
+    assert r["traced"] is False and r["untraced"] == ["main:M26"]
+    assert runner.invoke(app, ["report"]).exit_code == 1
+
+
+@pytest.mark.contracts
+def test_r50_a_zero_or_na_monthly_derived_cell_must_cite_or_say_why(home, tmp_path, monkeypatch):
+    _case(tmp_path, VAT_FREE)
+    real = metrics.monthly_summary
+
+    def bare(*a, **kw):
+        rows = real(*a, **kw)
+        assert rows[0].days_overdrawn.value == 0
+        rows[0].days_overdrawn.evidence = []
+        rows[1].average_balance.value, rows[1].average_balance.note = None, None
+        rows[1].average_balance.evidence = []
+        return rows
+
+    monkeypatch.setattr(metrics, "monthly_summary", bare)
+    monkeypatch.setattr(overrides, "_BARE", overrides._Memo(8))
+    r = report.report()[0]
+    assert r["traced"] is False
+    assert r["untraced"] == ["main:2026-01:days_overdrawn", "main:2026-02:average_balance"]
+    assert runner.invoke(app, ["report"]).exit_code == 1
+
+
+@pytest.mark.contracts
+def test_r50_report_writes_nothing_and_changes_no_mode(home, tmp_path):
+    _signed_case(tmp_path)
+    _case(tmp_path)
+    for p in [home, *home.rglob("*")]:
+        if p.is_dir():
+            p.chmod(0o755)
+    before = _tree(home)
+    for args in (["report"], ["report", "--json"]):
+        assert runner.invoke(app, args).exit_code == 0
+    assert _tree(home) == before
+
+
+@pytest.mark.contracts
+def test_r50_a_case_gone_while_listed_is_refused_and_the_others_reported(home, tmp_path, monkeypatch):
+    gone_id, gone = _case(tmp_path)
+    kept_id, _ = _case(tmp_path)
+    listed = report.case_ids()
+    (gone / store.PROFILE).unlink()  # purged between the listing and its report
+    monkeypatch.setattr(report, "case_ids", lambda root=None: listed)
+    rows = {r["case"]: r for r in report.report()}
+    assert rows[gone_id]["state"] == "refused" and rows[gone_id]["traced"] is None
+    assert rows[kept_id]["traced"] is True
+    res = runner.invoke(app, ["report"])
+    assert res.exit_code == 1 and "could not be read" in res.output and kept_id in res.output
+
+
+@pytest.mark.skipif(__import__("shutil").which("git") is None, reason="git is not installed")
+@pytest.mark.contracts
+def test_r50_report_refuses_a_case_root_git_does_not_ignore(tmp_path, monkeypatch):
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    root = repo / "cases-here"
+    (root / store.CASES / "0123456789abcdef").mkdir(parents=True)
+    (root / store.CASES / "0123456789abcdef" / store.PROFILE).write_text("label: x\n")
+    monkeypatch.setenv("CMA_HOME", str(root))
+    res = runner.invoke(app, ["report"])
+    assert res.exit_code == 2, res.output
+    assert "Refused" in res.output and "does not ignore" in " ".join(res.output.split())
+    assert "Traceback" not in res.output
+
+
+@pytest.mark.contracts
+def test_r50_an_unreadable_statement_does_not_hide_the_sign_off(home, tmp_path):
+    case_id, folder = _signed_case(tmp_path)
+    (folder / "statements" / "main.csv").write_text("bad")
+    r = report.case_report(folder, case_id)
+    assert r["state"] == "refused" and r["traced"] is None
+    assert r["signed_off"] is True

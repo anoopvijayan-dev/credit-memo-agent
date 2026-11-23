@@ -948,7 +948,8 @@ def report_cases(
     when any case has a figure not traced, figures that do not reconcile, or cannot be read."""
     from . import report
 
-    rows = report.report()
+    with _case_errors():  # a case root git does not ignore, or one that cannot be read
+        rows = report.report()
     if as_json:
         console.print_json(json.dumps(rows))
     elif not rows:
@@ -961,8 +962,11 @@ def report_cases(
         say(f"  judgement queue: {r['queue_lines']} lines" + (f" ({reasons})" if reasons else ""))
         flagged = ", ".join(f"{k} {n}" for k, n in r["indicator_lines"].items()) or "none"
         say(f"  lines flagged per indicator: {flagged}")
-        moved = ", ".join(f"{o['old']} -> {o['new']} {o['count']}" for o in r["overrides"]) or "none"
-        say(f"  overrides applied: {moved}" + (f"; {r['stale_overrides']} stale" if r["stale_overrides"] else ""))
+        if r["overrides"] is None:
+            say("  overrides applied: not known")
+        else:
+            moved = ", ".join(f"{o['old']} -> {o['new']} {o['count']}" for o in r["overrides"]) or "none"
+            say(f"  overrides applied: {moved}" + (f"; {r['stale_overrides']} stale" if r["stale_overrides"] else ""))
         say(f"  unexplained share of money in: {r['unexplained_share'] or 'n/a'}")
         traced = _yes_no(r["traced"]) + (f" (untraced: {', '.join(r['untraced'])})" if r["untraced"] else "")
         say(f"  every figure traced: {traced}")

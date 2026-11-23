@@ -4,7 +4,7 @@ For each case: how many lines the judgement queue lists, by why they are listed;
 lines each kind of indicator flagged; the overrides the case applies, counted by old and new
 category; the unexplained share of money in (M26, across every account for a case of more
 than one); whether every figure was traced (each figure and monthly cell has the lines behind
-it, is n/a with its reason, or is nothing, zero with no line to cite); whether its figures
+it that its rule cites at that value, or is n/a with its reason); whether its figures
 reconcile (R3); and whether it was signed off.
 
 Everything comes from the workspace's case summary (review.summary.case_summary), so the
@@ -27,24 +27,52 @@ from . import firm, overrides, pack, store
 SHARE = "M26"  # the unexplained share of money in
 
 
-def _nothing_to_cite(item: dict[str, Any]) -> bool:
-    return item["value"] is None or item["value"] == 0
+# Which figures cite lines at which values (P2, R10, R11, R12). A sum or outflow figure, or a
+# count of lines, is zero exactly when it has no line to cite, so only a non-zero one must
+# cite lines. These derived figures read lines whenever they have a value, zero included:
+# months covered (the first and last line), the trend (the quarters' revenue lines), the
+# lowest balance (the line that set it), debt service cover with and without the proposed
+# facility, the top customer share and the two shares of money in (their denominators'
+# credits), and the average end-of-day balance (the line that set each close). Its value
+# None, each is n/a with its reason. Late or missed VAT payments (M13) counts quarters with
+# no payment, an absence no line records: it cites the VAT payments it checked, which a
+# missed quarter can leave none of, so only a count of nought (every quarter paid) must cite.
+CITES_WHENEVER_VALUED = frozenset({"M1", "M4", "M5", "M10", "M15", "M16", "M26", "M27", "M28"})
+ABSENCE_COUNTS = frozenset({"M13"})
+
+
+def _figure_untraced(f: dict[str, Any]) -> bool:
+    if f["value"] is None:
+        return not f["method"]  # n/a says why in its method
+    if f["lines"]:
+        return False
+    if f["id"] in ABSENCE_COUNTS:
+        return f["value"] == 0
+    return f["id"] in CITES_WHENEVER_VALUED or f["value"] != 0
+
+
+def _cell_untraced(cell: dict[str, Any]) -> bool:
+    """A monthly cell: n/a with its note; a sum or outflow cell cites lines when non-zero; a
+    balance or overdrawn-day cell (derived) cites the line that set each close whenever it has
+    a value, a count of nought days included (R11, P2)."""
+    if cell["value"] is None:
+        return not cell.get("note")
+    if cell["lines"]:
+        return False
+    return cell.get("kind") == "derived" or cell["value"] != 0
 
 
 def _untraced(summary: dict[str, Any]) -> list[str]:
-    """Each figure or monthly cell with a value but no line behind it, as account:id or
-    account:month:cell. A figure that cannot be computed says why in its method (n/a)."""
+    """Each figure or monthly cell with no line behind it that its rule cites, or n/a without
+    its reason, as account:id or account:month:cell."""
     out = []
     accounts = list(summary["accounts"]) + ([summary["combined"]] if summary.get("combined") else [])
     for a in accounts:
         name = a["account"]
-        for f in a["figures"]:
-            no_lines = f["lines"] == 0 and not _nothing_to_cite(f)
-            if no_lines or (f["value"] is None and not f["method"]):  # n/a says why in its method
-                out.append(f"{name}:{f['id']}")
+        out += [f"{name}:{f['id']}" for f in a["figures"] if _figure_untraced(f)]
         for row in a["monthly"]:
             for key, cell in row.items():
-                if isinstance(cell, dict) and "lines" in cell and cell["lines"] == 0 and not _nothing_to_cite(cell):
+                if isinstance(cell, dict) and "lines" in cell and _cell_untraced(cell):
                     out.append(f"{name}:{row['month']}:{key}")
     return out
 
@@ -76,6 +104,8 @@ def case_report(folder: Path, case_id: str) -> dict[str, Any]:
                            "stale_overrides": 0, "unexplained_share": None, "traced": False,
                            "untraced": [], "reconciled": False, "signed_off": False}
     try:
+        if not (folder / store.PROFILE).is_file():  # purged, or its case.yaml lost, since it was listed
+            raise store.CaseStoreError("no such case")
         s = case_summary(folder, case_id)
     except Exception:  # a failure no refusal foresees: this case is refused, the others still reported
         out.update(state="refused", traced=None, reconciled=None, signed_off=None)
@@ -99,32 +129,43 @@ def case_report(folder: Path, case_id: str) -> dict[str, Any]:
     else:  # refused: the case could not be read; nothing is known about its figures
         out["reconciled"] = None
         out["traced"] = None
+    # The override log and the case log are read apart, so one that cannot be read leaves the
+    # other's answer, and the figures' answer, as they are: not known, never a guess.
     try:
         out["overrides"], out["stale_overrides"] = _overrides(folder)
-        entries = caselog.for_case(folder).entries()
-        out["signed_off"] = any(e.event == pack.SIGN_EVENT for e in entries)
-    except Exception:  # the log or the override log could not be read: the state says the case is refused
+    except Exception:
+        out["overrides"], out["stale_overrides"] = None, None
+    try:
+        out["signed_off"] = any(e.event == pack.SIGN_EVENT for e in caselog.for_case(folder).entries())
+    except Exception:
         out["signed_off"] = None
-        if out["state"] != "not_reconciled":
-            out["state"], out["traced"], out["reconciled"] = "refused", None, None
     return out
 
 
+def _root(root: Path | None) -> Path:
+    """The case root, checked against git as every case command checks it (R31), and only
+    read: the report makes nothing and changes no file's mode."""
+    root = Path(root).resolve() if root is not None else firm.case_root()
+    store.check_not_in_git(root)
+    return root
+
+
 def case_ids(root: Path | None = None) -> list[str]:
-    root = Path(root) if root is not None else firm.case_root()
-    cases = root / store.CASES
-    if not cases.is_dir():
-        return []
-    return sorted(p.name for p in cases.iterdir()
-                  if store.CASE_ID.fullmatch(p.name) and (p / store.PROFILE).is_file())
+    cases = _root(root) / store.CASES
+    try:
+        if not cases.is_dir():
+            return []
+        return sorted(p.name for p in cases.iterdir()
+                      if store.CASE_ID.fullmatch(p.name) and (p / store.PROFILE).is_file())
+    except OSError as e:
+        raise store.CaseStoreError(f"the case root's cases folder could not be read ({e.strerror})") from None
 
 
 def report(root: Path | None = None) -> list[dict[str, Any]]:
-    """Every case under the case root, in case id order."""
-    rows = []
-    for case_id in case_ids(root):
-        rows.append(case_report(store.case_folder(case_id, root), case_id))
-    return rows
+    """Every case under the case root, in case id order. One case that cannot be read is
+    reported as refused; the others are still reported."""
+    base = _root(root)
+    return [case_report(base / store.CASES / case_id, case_id) for case_id in case_ids(base)]
 
 
 def failing(row: dict[str, Any]) -> bool:
