@@ -1,0 +1,63 @@
+I reviewed T39 by reading the code; the runner already ran the tests. I tried one probe script but it was blocked in this read-only seat, so all three findings come from reading the code paths, not from a run. **Verdict: fail.**
+
+The attempt-1 finding is fixed: a name inside a longer word, like GREENFINANCE, no longer survives. `_Tokens.partly` keeps only the part a rule reads, and `test_p10_recognised_wording_inside_a_longer_word_keeps_only_that_part` ran and passed (specified-3.log:1945). All 34 pseudonymise tests ran and passed (specified-3.log:1914-1947).
+
+Three new defects:
+
+1. **Major (R46): extra columns are copied unchanged.** The statement loader accepts columns beyond the five it needs; it only refuses missing or repeated ones (`src/cma/ingest.py:499-511`). The pseudonymiser rewrites only `description` and writes every other column back as it was (`src/cma/pseudonymise.py:232`, `:332`, `:366-379`). A `payee` or `account_number` column therefore reaches the output with the real names and numbers in it, and the command reports success.
+2. **Major (P10): the firm's own rules are ignored.** A case is categorised with `firm_rules.for_case()` (`src/cma/overrides.py:218-225`). The pseudonymiser neither keeps the wording a firm rule matches (`_kept_spans` reads only v1, v2, gambling names and bank wording) nor uses firm rules in its own check (`figures`, `src/cma/pseudonymise.py:397`). With a firm rule for `ACME TRUST`, the copy turns that name into tokens. In a case of that firm the line then lands in unexplained money in instead of other explained money in, so the figures differ. The built-in check can't see this because neither side of its comparison uses firm rules. This is the same gap that was already fixed for the firm's thresholds.
+3. **Minor (R46): spaces in the header crash the command.** The loader strips spaces from header names (`src/cma/ingest.py:286`), but the pseudonymiser does not. A header like `id, date, description, amount, balance` passes the loader, then `r["description"]` raises a `KeyError` (`src/cma/pseudonymise.py:233`). The CLI only catches `PseudonymiseError`, `ThresholdsError` and `FirmConfigError` (`src/cma/cli.py:697`), so the user gets a traceback and no copy.
+
+```json
+{
+  "task": "T39",
+  "criteria": [
+    {
+      "id": "R46",
+      "tier": "adversarial",
+      "check": "cli.py:664-702 wires `cma pseudonymise` to pseudonymise.pseudonymise_file (production caller present). Label in PSEUDONYMISED.txt, profile header and manifest (pseudonymise.py _write_files); profile names tokenised (tok(), LIST_FIELDS and business_name, label replaced). Attempt-1 finding fixed: _Tokens.partly keeps only the part of a word a rule reads (test_p10_recognised_wording_inside_a_longer_word_keeps_only_that_part ran and passed, specified-3.log:1945). But only the `description` column is rewritten (pseudonymise.py:233, 332) while _rows/_write_rows (366-379) copy every other column verbatim, and the statement loader accepts extra columns (ingest.py:499-511 refuses only repeated or missing columns). Names and account numbers in any extra column survive. A header with spaces around column names is accepted by the loader (ingest.py:286 strips) but crashes the pseudonymiser with KeyError (pseudonymise.py:233).",
+      "result": "fail",
+      "artifact": null
+    },
+    {
+      "id": "P10",
+      "tier": "adversarial",
+      "check": "P10 tests ran and passed (specified-3.log:1914-1946, synthetic archetypes x risks x features, v1 and v2). The copy is self-checked by differs()/figures() (pseudonymise.py:383-425), but figures() categorises with no firm rules (pseudonymise.py:397), and _kept_spans (172-189) keeps no firm-rule wording. A case categorises with firm_rules.for_case() (overrides.py:218-225), so a firm with a firm rule on a counterparty gets different categories, buckets and figures for the pseudonymised statement than for the original, and the self-check cannot see it. The CLI already matches the firm's thresholds (cli.py case_thresholds) but not its rules.",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/pseudonymise.py",
+      "line": 332,
+      "criterion": "R46",
+      "claim": "Only the description column is pseudonymised; every other column of the five-column statement is written back verbatim (_rows/_write_rows, lines 366-379). The statement loader accepts columns beyond id,date,description,amount,balance (ingest.py:499-511 refuses only repeated or missing columns), so a payee, counterparty, reference or account-number column holding personal or business names and account numbers is copied unchanged into the 'pseudonymised' statement.csv. The command succeeds and the manifest claims the copy is pseudonymised. This contradicts R46 and the claim that no written file holds the original names or account numbers.",
+      "repro": "Write s.csv with header `id,date,description,amount,balance,payee,account_number` and row `L1,2026-01-02,FPS CREDIT JANE DOE,200.00,1200.00,JANE DOE,12345678`; contract.checked accepts it. Run `cma pseudonymise s.csv --format csv --out o`: o/statement.csv's description is tokenised, but its payee and account_number cells still read `JANE DOE` and `12345678`."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/pseudonymise.py",
+      "line": 397,
+      "criterion": "P10",
+      "claim": "The firm's own rules (R20, firm_rules.yaml) are ignored. _kept_spans (lines 172-189) keeps only v1, v2, gambling and bank wording, so a counterparty that a firm rule names is turned into tokens. figures() categorises with no firm_rules, so the P10 self-check in differs() compares two statements categorised without them and passes. A case of that firm categorises with firm_rules.for_case() (overrides.py:218-225): the original line takes the firm rule and the copied line does not, so the line's category, the money-in buckets, M16 and the unexplained share differ. P10 does not hold, and the CLI's claim that the copy gives the same figures is untrue for any firm that has firm rules. This is the same class of gap as the thresholds one already fixed by test_cli_defaults_to_the_firm_thresholds.",
+      "repro": "CMA_HOME=H with H/firm_rules.yaml holding a rule `id: acme_trust, pattern: ACME TRUST, direction: in, category: other_explained_in` (plus by/at/reason). Statement: `L1,2026-01-02,FPS CREDIT ACME TRUST,500.00,1500.00`. `cma pseudonymise s.csv --format csv --out o` succeeds and writes `FPS CREDIT QZ... QZ...`. Categorise both with cat.categorise(..., firm_rules=firm_rules.for_case().rules), as the case pipeline does: the original L1 is firm:acme_trust (other explained money in), the copy's L1 is unexplained, so the buckets and M16 differ."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/pseudonymise.py",
+      "line": 233,
+      "criterion": "R46",
+      "claim": "The statement loader strips the header's cells (ingest.py:286), so a header like `id, date, description, amount, balance` is accepted. _rows uses csv.DictReader's raw fieldnames, so r['description'] raises KeyError. pseudonymise_cmd catches only PseudonymiseError, ThresholdsError and FirmConfigError (cli.py:697), so the user gets a raw traceback and no copy, for a statement `cma case import` accepts.",
+      "repro": "s.csv = `id, date, description, amount, balance\\nL1, 2026-01-02, FPS CREDIT JANE DOE, 200.00, 1200.00\\n` (or any header cell with a surrounding space); `cma pseudonymise s.csv --format csv --out o` gives a KeyError: 'description' traceback."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "claude-opus-5-5"
+  }
+}
+```
