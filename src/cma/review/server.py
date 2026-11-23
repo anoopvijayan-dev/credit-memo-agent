@@ -21,7 +21,8 @@ Every page and data path is GET only. The override form and the stale overrides'
 R19; edit.py), the preview and sign-off forms (R22, R26; signoff.py) and the firm-rule
 promotion form (R20; promote.py) are the only writes: POST to /override, /stale, /preview,
 /sign and /promote from the page, or to /api/override, /api/stale, /api/preview, /api/sign
-and /api/promote for data, each with the token and the workspace's own Origin,
+and /api/promote for data. The comparison entry (R51; compare.py) is posted the same way, to
+/compare or /api/compare, and writes nothing. Every POST carries the token and the workspace's own Origin,
 a body of at most MAX_BODY bytes with its Content-Length (never chunked), and a form or JSON
 content type.
 """
@@ -65,9 +66,10 @@ WRITES = {"/override": ("override", "page"), "/stale": ("stale", "page"),
           "/api/override": ("override", "data"), "/api/stale": ("stale", "data"),
           "/preview": ("preview", "page"), "/sign": ("sign", "page"),
           "/api/preview": ("preview", "data"), "/api/sign": ("sign", "data"),
-          "/promote": ("promote", "page"), "/api/promote": ("promote", "data")}
+          "/promote": ("promote", "page"), "/api/promote": ("promote", "data"),
+          "/compare": ("compare", "page"), "/api/compare": ("compare", "data")}
 PACK_WRITES = frozenset({"preview", "sign"})
-PAGE_WRITES = PACK_WRITES | {"promote"}  # answered with a page of their own, never a redirect
+PAGE_WRITES = PACK_WRITES | {"promote", "compare"}  # answered with a page of their own, never a redirect
 MAX_BODY = 16 * 1024  # bytes: a form or JSON body is far smaller
 FORM = "application/x-www-form-urlencoded"
 
@@ -336,9 +338,10 @@ class ReviewServer:
 
     def _page_html(self) -> bytes:
         """The page with the case summary rendered into it; every case text escaped (R34)."""
-        from . import summary
+        from . import compare, summary
 
-        html = summary.render(summary.case_summary(self.folder, self.case_id), token=self.token)
+        s = summary.case_summary(self.folder, self.case_id)
+        html = summary.render(s, token=self.token) + compare.form_html(s, self.token)  # R51
         return self._shell(html)
 
     def _lines_json(self, **target) -> bytes:
@@ -358,8 +361,10 @@ class ReviewServer:
     def _save(self, kind: str, fields: dict, recompute: bool = True) -> tuple[int, dict]:
         """One write from the workspace: its status and reply, the recomputed case included for
         a data path (R17, R52); a page form is sent back to the page, which is built afresh."""
-        from . import edit, promote, signoff
+        from . import compare, edit, promote, signoff
 
+        if kind == "compare":  # nothing is saved: the figures layer compares (R51)
+            return compare.answer(self.folder, self.case_id, fields)
         if kind == "promote":
             return promote.answer(self.folder, self.case_id, fields)
         if kind in PACK_WRITES:
@@ -367,9 +372,11 @@ class ReviewServer:
         return edit.answer(self.folder, self.case_id, kind, fields, recompute=recompute)
 
     def _pack_html(self, kind: str, status: int, reply: dict, fields: dict | None = None) -> bytes:
-        from . import promote, signoff
+        from . import compare, promote, signoff
 
-        if kind == "promote":
+        if kind == "compare":
+            html = compare.html(status, reply, self.token)
+        elif kind == "promote":
             html = promote.html(status, reply, self.token, fields or {})
         else:
             html = signoff.html(kind, status, reply, self.token)

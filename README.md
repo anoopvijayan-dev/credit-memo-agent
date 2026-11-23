@@ -116,6 +116,10 @@ cma case resolve-override <id> 3 --confirm --name "Pat"   # or --drop
 # overrides are listed to confirm or drop. A save from a page older than the case log is
 # refused as a conflict: reload and save again. Each save is appended to the case log and
 # the page comes back with the figures, indicators and policy check recomputed.
+# "Compare with your own figure" takes your figure for a memo field or a month and shows
+# the difference from the tool's (to the penny for money), with that period's cash
+# deposits, unexplained lines, possible own-account transfers and overridden lines,
+# largest first. A comparison saves nothing.
 cma review <id>                                   # --no-browser to only print the URL
 
 # Preview the pack before sign-off: the memo-ready sections in the order of the memo field

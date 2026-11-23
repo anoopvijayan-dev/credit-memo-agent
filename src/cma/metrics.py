@@ -1198,3 +1198,93 @@ def _closes_out(closes) -> list[dict] | None:
         return None
     return [{"date": d.isoformat(), "display": money_text(bal), "overdrawn": bal < 0, "line": line}
             for d, bal, line in closes]
+
+
+# --- the comparison entry (R51) -------------------------------------------------------------
+
+UNIT_MARKS = {"pct": "%", "ratio": "x"}  # a mark the underwriter may write after a figure of that unit
+MAX_GIVEN_CHARS = 40  # an underwriter's figure is short; a longer text is refused, never parsed
+
+
+class ComparisonError(ValueError):
+    """An underwriter's figure that cannot be compared. Its message quotes nothing but the unit."""
+
+
+def _plain(text: str, unit: str) -> tuple[bool, str]:
+    """The underwriter's figure as a plain decimal: a leading minus, then for money an optional
+    £ and thousands commas, or for a share or ratio the unit's own mark after the number."""
+    s = text.strip()
+    negative = s.startswith("-")
+    if negative:
+        s = s[1:].lstrip()
+    if unit == "GBP":
+        s = s[1:] if s.startswith("£") else s
+        if "," in s:
+            whole, _, rest = s.partition(".")
+            groups = whole.split(",")
+            if not (groups[0] and len(groups[0]) <= 3 and all(len(g) == 3 for g in groups[1:])):
+                raise ComparisonError("Write money as pounds and pence, such as 55,000 or 55000.00")
+            s = "".join(groups) + ("." + rest if "." in s else "")
+    elif unit in UNIT_MARKS and s.endswith(UNIT_MARKS[unit]):
+        s = s[:-1].rstrip()
+    if not s or not all(c in "0123456789." for c in s) or s.count(".") > 1 or s == ".":
+        raise ComparisonError("Write the figure as a number" + (", such as 55,000 or 55000.00" if unit == "GBP" else ""))
+    return negative, s
+
+
+def given_figure(text: str, unit: str) -> int | Decimal:
+    """The underwriter's own figure, read exactly from what they typed: whole pence for money,
+    refused with a fraction of a penny or at the import limit (R2); the number itself, as a
+    decimal, for any other unit."""
+    if not isinstance(text, str) or not text.strip():
+        raise ComparisonError("Enter your figure")
+    if len(text) > MAX_GIVEN_CHARS:
+        raise ComparisonError("The figure is too long")
+    negative, s = _plain(text, unit)
+    if unit == "GBP":
+        p = text_pence(s)
+        if p is None:
+            raise ComparisonError("Money is compared to the penny: write at most two decimals")
+        if at_limit(p):
+            raise ComparisonError(f"An amount of {AT_LIMIT} cannot be compared to the penny")
+        return -p if negative else p
+    d = Decimal(s)
+    return -d if negative else d
+
+
+UNIT_WORDS = {"days": " days", "months": " months"}
+
+
+def _unit_text(d: Decimal, unit: str) -> str:
+    """A figure that is not money, as typed back: trailing zeros after the point dropped."""
+    text = format(d, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    text = "0" if text in ("", "-0") else text
+    return text + UNIT_MARKS.get(unit, UNIT_WORDS.get(unit, ""))
+
+
+def comparison(value: float | None, unit: str, given_text: str) -> dict:
+    """The underwriter's figure beside the tool's, and the difference, the underwriter's less the
+    tool's, computed here in the figures layer: in whole pence for money (R2), and exactly, as
+    decimals, for any other unit. When the tool's figure is n/a there is no difference."""
+    given = given_figure(given_text, unit)
+    if unit == "GBP":
+        ours = None if value is None else float_pence(value)
+        if value is not None and ours is None:
+            raise ComparisonError("The tool's figure is not a whole number of pence")
+        diff = None if ours is None else given - ours
+        return {"given": pounds_text(given), "given_display": money_text(given),
+                "ours": None if ours is None else pounds_text(ours),
+                "ours_display": "n/a" if ours is None else money_text(ours),
+                "difference_pence": diff,
+                "difference": None if diff is None else pounds_text(diff),
+                "difference_display": "n/a" if diff is None else money_text(diff)}
+    ours_d = None if value is None else Decimal(repr(value))
+    diff_d = None if ours_d is None else given - ours_d
+    return {"given": str(given), "given_display": _unit_text(given, unit),
+            "ours": None if ours_d is None else str(ours_d),
+            "ours_display": "n/a" if ours_d is None else _unit_text(ours_d, unit),
+            "difference_pence": None,
+            "difference": None if diff_d is None else str(diff_d),
+            "difference_display": "n/a" if diff_d is None else _unit_text(diff_d, unit)}
