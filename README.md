@@ -161,6 +161,12 @@ cma case repair <id>
 # first entry that was changed, removed, reordered or left half written.
 cma case check private/cma/cases/<id>
 
+# Summarise every case under the case root: judgement-queue lines, lines per indicator,
+# overrides by old and new category, the unexplained share, and whether every figure was
+# traced, reconciled and signed off. No names, descriptions, amounts or durations
+# (--json for JSON). Exit 1 when any case is untraced, unreconciled or cannot be read.
+cma report
+
 # Delete every file of a case (asks first; --yes skips the question). The case root's
 # purge_ledger.jsonl gains one line with only the case id, the UTC time and your
 # operating-system user. A purge stopped part-way is finished by running it again.
