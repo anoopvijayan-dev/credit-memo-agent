@@ -37,7 +37,11 @@ SHARE = "M26"  # the unexplained share of money in
 # None, each is n/a with its reason. Late or missed VAT payments (M13) counts quarters with
 # no payment, an absence no line records: it cites the VAT payments it checked, which a
 # missed quarter can leave none of, so only a count of nought (every quarter paid) must cite.
-CITES_WHENEVER_VALUED = frozenset({"M1", "M4", "M5", "M10", "M15", "M16", "M26", "M27", "M28"})
+# The proposed cover (M28) is not among them: its numerator is net operating cash flow and its
+# denominator the debt service plus the proposed repayment, so an account with no trading and
+# no debt (a reserve account) has a cover of 0.00x resting on no line, and only a non-zero
+# cover must cite lines (T40 pass: a generated two-account case flagged its reserve account).
+CITES_WHENEVER_VALUED = frozenset({"M1", "M4", "M5", "M10", "M15", "M16", "M26", "M27"})
 ABSENCE_COUNTS = frozenset({"M13"})
 
 

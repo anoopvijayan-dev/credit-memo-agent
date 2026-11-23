@@ -296,3 +296,43 @@ def test_r50_an_unreadable_statement_does_not_hide_the_sign_off(home, tmp_path):
     r = report.case_report(folder, case_id)
     assert r["state"] == "refused" and r["traced"] is None
     assert r["signed_off"] is True
+
+
+# --- every honest case reads as traced (T40 pass) ------------------------------------------
+
+
+@pytest.mark.invariants
+@pytest.mark.parametrize("seed", range(24))
+def test_a_generated_case_is_reported_traced_whatever_its_features(tmp_path, monkeypatch, seed):
+    """No false alarm: any generated case (one or two accounts, either ruleset, with or without
+    a VAT stagger, a proposed repayment and an override) has every figure and cell traced. The
+    reserve account of a two-account case, with no trading and no debt, has a proposed cover of
+    0.00x resting on no line, which is traced."""
+    import random
+    from datetime import date
+
+    from cma import overrides, report, store, synth
+
+    rng = random.Random(seed)
+    monkeypatch.setenv("CMA_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CMA_RULESET", rng.choice(["v1", "v2"]))
+    archetype, profile = rng.choice(list(synth.ARCHETYPES)), rng.choice(list(synth.PROFILES))
+    features = tuple(f for f in synth.FEATURES if rng.random() < 0.5)
+    rows, truth = synth.generate(archetype, profile, seed=seed, months=rng.choice([1, 3, 6, 12]),
+                                 end=date(2026, 9, 30), features=features)
+    if "two_accounts" in features:
+        case_id, folder = synth.to_case(rows, truth, tmp_path / "work")
+    else:
+        case_id = store.new_case(label="t40")
+        folder = store.case_folder(case_id)
+        src, _ = synth.write(rows, truth, tmp_path / "work")
+        store.import_file(folder, src, "csv")
+    store.update_profile(folder, lambda old: {**old, "vat_stagger": rng.choice([None, 1, 2, 3]),
+                                              "proposed_monthly_repayment": rng.choice([None, "750.00"])})
+    if rng.random() < 0.5:
+        figs = overrides.case_figures(folder)
+        account = next(iter(figs))
+        line = next(t for t in figs[account].statement.transactions if t.amount > 0)
+        overrides.add_override(folder, line.id, "other_explained_in", reason="r", name="A", account=account)
+    row = report.case_report(folder, case_id)
+    assert row["state"] in ("shown", "empty") and row["traced"] is True, row["untraced"]
