@@ -1,0 +1,74 @@
+I reviewed the T40 implementation in `/home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review` against requirement **R50**, the runner test logs (`mechanical-1.log`, `mechanical-2.log`, `specified-3.log`, `contracts-4.log`, `invariants-5.log`, `behavioural-6.log`, `dual_run-7.log`), `claim.json`, and the engineering attack list.
+
+### Summary of review
+
+- **What works**: [report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/report.py) and `cma report` in [cli.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/cli.py#L940-L972) summarise each case's judgement-queue counts, per-indicator flagged line counts (deduplicated per `(account, line_id)`), applied/stale overrides by `(old, new)` category, unexplained share (`M26`), traced/reconciled/signed-off flags, and omit applicant names, profile fields, descriptions, amounts, and log-derived durations. All 6 tests in [test_report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/tests/test_report.py) ran and passed in `contracts-4.log` (lines 716–721).
+- **Defects found (3 major, 2 minor)**:
+  1. **Major (`R50`) — False-positive untraced/exit-1 on valid cases with missed VAT (`M13`)**: [report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/report.py#L41-L44) flags any figure with `value != 0` and `lines == 0` as untraced. In [metrics.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/metrics.py#L758-L770) and [metrics.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/metrics.py#L861-L862), `M13` ("Late or missed VAT payments") legitimately has `value >= 1` and `evidence == []` whenever `vat_stagger` is set and no HMRC VAT payment lines exist in the period, causing `cma report` to falsely report `traced: false` (`untraced: ["main:M13"]`) and exit `1`.
+  2. **Major (`R50`) — False-negative traced/exit-0 on zero-valued figures/cells and reasonless `n/a` monthly cells**: [report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/report.py#L30-L31) excuses *every* figure and monthly cell with `value == 0` from having evidence, even derived figures/cells that must always cite lines when `0` (`M5`, `M27`, `M16`, `M26`, `M9`, `M10`, `M28`, `M4`, `M1`, and monthly `average_balance`, `lowest_balance`, `days_overdrawn` per R11/R12/P2). In addition, [report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/report.py#L45-L48) never checks that an `n/a` monthly cell (`value is None`) has a non-empty `note` reason (unlike line 43 for figures).
+  3. **Major (`R50`) — Unhandled partial-failure/root crashes and write side effects in `report()` / `cma report`**: [report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/report.py#L122-L127) calls `store.case_folder(case_id, root)` outside `case_report`'s error handling, and [cli.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/cli.py#L940-L972) omits `with _case_errors():`. A case purged or missing `case.yaml` between `case_ids()` and `store.case_folder()` aborts the entire report and hides all remaining cases; an unignored git root or unreadable/read-only root dumps an unhandled traceback; and `store.case_folder()` calls `store.ensure_root()` ([store.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/store.py#L260-L279)), which runs `os.chmod` on `root` and `root/cases` (and spawns `git check-ignore` once per case), violating the read-only claim.
+  4. **Minor (`R50`) — Unproven read-only/idempotency claim**: `claim.json` claim #2 cites an external `<scratchpad>/ro.py` script that is not in the repository and was not executed by any runner tier; [test_report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/tests/test_report.py) has no test proving `cma report` writes nothing.
+  5. **Minor (`R50`) — Coupled post-summary error handling and multi-read inconsistency**: In [report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/report.py#L102-L109), a corrupt statement CSV makes `_overrides(folder)` raise `StatementError` before `caselog.for_case(folder).entries()` runs, losing `signed_off` (`None` instead of `True`) even when `log.jsonl` is intact; conversely, a failure at lines 103–104 after a successful `case_summary` leaves `accounts`, `queue_lines`, `indicator_lines`, and `unexplained_share` populated on a `"refused"` row, and reading `caselog.entries()` separately across `case_summary`, `_overrides`, and line 104 lets a concurrent override or sign-off produce a mixed row.
+
+```json
+{
+  "task": "T40",
+  "criteria": [
+    {
+      "id": "R50",
+      "tier": "adversarial",
+      "check": "Checked R50 across src/cma/report.py:1-132, src/cma/cli.py:936-973, src/cma/review/summary.py:92-350, src/cma/metrics.py:758-975, src/cma/overrides.py:372-552, src/cma/store.py:260-280, tests/test_report.py:1-174, and runner logs (contracts-4.log:716-721). Found three major defects in traced detection (false-positive exit 1 on valid missed-VAT M13; false-negative exit 0 on zero-valued derived figures/cells and reasonless n/a monthly cells) and error/read-only handling (unhandled CaseStoreError/CaseRootInGit/OSError crashing cma report and hiding other cases, plus ensure_root chmod side effect), plus two minor findings (unproven read-only claim in claim.json and coupled _overrides/entries error handling losing signed_off).",
+      "result": "fail",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/cma/report.py",
+      "line": 42,
+      "criterion": "R50",
+      "claim": "False-positive untraced flag and exit 1 on valid cases with vat_stagger set and missed VAT payments: _untraced flags any figure with value != 0 and lines == 0, but metrics.compute produces M13 (Late or missed VAT payments) with value >= 1 and evidence == [] when no HMRC VAT payment lines exist in the statement (src/cma/metrics.py:758-770, 861-862).",
+      "repro": "Create a case with vat_stagger: 1 in case.yaml, import a valid statement covering 2026-01-01 to 2026-06-30 with no HMRC VAT payment lines (e.g. two STRIPE credits on 2026-01-05 and 2026-06-15), and run `cma report`. M13 has value=1 and evidence=[], so report.report()[0] returns traced=False, untraced=['main:M13'] and `cma report` exits with code 1 on a valid, fully traced case."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/report.py",
+      "line": 31,
+      "criterion": "R50",
+      "claim": "False-negative traced=True and exit 0 for zero-valued figures/cells that must cite lines and for n/a monthly cells without a reason: _nothing_to_cite treats value == 0 as needing no lines for every figure and monthly cell, missing untraced derived figures/cells that must always cite lines at zero (M5, M27, M16, M26, M9, M10, M28, M4, M1, and monthly average_balance, lowest_balance, days_overdrawn per R11/R12/P2); additionally line 47 never checks `cell['value'] is None and not cell.get('note')` for n/a monthly cells.",
+      "repro": "1) On a case using BODY from tests/test_report.py (where monthly days_overdrawn is 0) or a case with 0% unexplained share (M26=0.0), monkeypatch metrics.monthly_summary to set row.days_overdrawn.evidence = [] (or metrics.compute to set M26.evidence = []). `cma report` returns traced=True, untraced=[] and exits 0. 2) Monkeypatch metrics.monthly_summary to set a monthly cell's value=None, note=None, evidence=[]. `cma report` returns traced=True, untraced=[] and exits 0."
+    },
+    {
+      "severity": "major",
+      "file": "src/cma/report.py",
+      "line": 126,
+      "criterion": "R50",
+      "claim": "Unhandled crashes on partial failure or refused case roots, and filesystem mutation on read: report.report() calls store.case_folder(case_id, root) outside case_report's exception handler, and cli.py:951 omits `with _case_errors():`. A case purged or losing case.yaml between case_ids() and store.case_folder() aborts the report with CaseStoreError and hides all remaining cases; an unignored git case root or unreadable root dumps an unhandled traceback; and store.case_folder() calls store.ensure_root() on every case, running os.chmod(0o700) on root and root/cases (violating the read-only claim and failing on read-only mounts).",
+      "repro": "1) Create two cases A and B; delete A/case.yaml (or purge A) after case_ids() returns [A, B] and before store.case_folder(A) runs. report.report() raises CaseStoreError and never reports B. 2) Point CMA_HOME inside a git repo that does not ignore it, place a case folder under cases/<hex16>/case.yaml, and run `cma report`: it crashes with an unhandled CaseRootInGit traceback instead of a clean refusal. 3) `chmod 0o755` on CMA_HOME containing a case and run `cma report`: directory permissions are mutated back to 0o700."
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_report.py",
+      "line": 1,
+      "criterion": "R50",
+      "claim": "Unproven claim in claim.json: claim #2 ('cma report writes nothing. Two runs leave every file under the case root byte for byte unchanged') cites `PYTHONPATH=src python <scratchpad>/ro.py`, which is not in the repository and was not executed by any configured runner tier. No test in tests/test_report.py verifies that `cma report` leaves files and permissions under CMA_HOME unchanged.",
+      "repro": "Inspect claim.json claim #2 and tests/test_report.py:1-174; neither specified-3.log nor contracts-4.log contains a read-only/idempotency test for `cma report`. Prove by adding a `@pytest.mark.contracts` test in tests/test_report.py that hashes all files and records directory modes under CMA_HOME before and after two `cma report` invocations, and running `python -m pytest -v -rs --tier-results` and `python tools/tier_check.py contracts`."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/report.py",
+      "line": 103,
+      "criterion": "R50",
+      "claim": "Coupled post-summary error handling and multi-read race in case_report: _overrides(folder) and caselog.for_case(folder).entries() share one try block (lines 102-109), so a corrupt statement CSV causes overrides.listing(folder) to raise StatementError on line 103 before line 104 reads the intact case log, reporting signed_off=None instead of True. Conversely, if lines 103-104 fail after case_summary succeeded, state/traced/reconciled/signed_off are reset to refused/None while accounts, queue_lines, indicator_lines, and unexplained_share remain populated; separate entries() reads across case_summary, _overrides, and line 104 also allow concurrent writes to yield a mixed row.",
+      "repro": "Create and sign off a case as in tests/test_report.py:_signed_case, then overwrite folder/'statements'/'main.csv' with invalid CSV bytes ('bad'). Call report.case_report(folder, case_id): log.jsonl is intact with event 'signed_off', yet out['signed_off'] is None instead of True because _overrides(folder) raised StatementError at report.py:103."
+    }
+  ],
+  "verdict": "fail",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "antigravity",
+    "model": "Gemini 4 Neon (High)"
+  }
+}
+```
