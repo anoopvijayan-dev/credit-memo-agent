@@ -219,11 +219,12 @@ def test_the_page_shows_the_breakdown_the_figures_and_the_monthly_summary(home, 
     scripts = [a for t, a in p.tags if t == "script"]
     assert len(scripts) == 1 and dict(scripts[0])["src"].startswith("/static/app.js")
     # A form is the workspace's own: it posts only to its override, stale-override or preview
-    # path (R17, R19, R22; the preview form is T27's).
+    # path (R17, R19, R22; the preview form is T27's), or its comparison entry, which saves
+    # nothing (R51; T41).
     for t, a in p.tags:
         if t == "form":
             assert dict(a)["method"] == "post" and dict(a)["action"].startswith(
-                ("/override?token=", "/stale?token=", "/preview?token="))
+                ("/override?token=", "/stale?token=", "/preview?token=", "/compare?token="))
     assert not any(k == "style" or k.startswith("on") for _, a in p.tags for k, _ in a)
 
 
@@ -368,11 +369,12 @@ def _assert_only_escaped(page: str, texts: list[str], *, shown: bool) -> None:
         if t == "a":
             assert [k for k, _ in a] == ["href"] and dict(a)["href"].startswith(("/lines?token=", "/?token="))
     # A form is the workspace's own: it posts only to its override, stale-override or preview
-    # path (R17, R19, R22; the preview form is T27's).
+    # path (R17, R19, R22; the preview form is T27's), or its comparison entry, which saves
+    # nothing (R51; T41).
     for t, a in p.tags:
         if t == "form":
             assert dict(a)["method"] == "post" and dict(a)["action"].startswith(
-                ("/override?token=", "/stale?token=", "/preview?token="))
+                ("/override?token=", "/stale?token=", "/preview?token=", "/compare?token="))
     assert not any(k == "style" or k.startswith("on") for _, a in p.tags for k, _ in a)
     assert [t for t, _ in p.tags].count("script") == 1
     page_text = "".join(p.text)

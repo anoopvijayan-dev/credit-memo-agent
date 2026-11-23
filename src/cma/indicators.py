@@ -477,3 +477,37 @@ def case_judgement_queue(accounts: list[tuple[str, Statement, list[QueueEntry]]]
         rows += [(-abs(pence(by_id[e.line_id])), n, k, account, e) for k, e in enumerate(queue)]
     rows.sort(key=lambda r: r[:3])
     return [(account, e) for *_, account, e in rows]
+
+
+# The kinds of line the comparison entry lists (R51): lines whose bucket a person might read
+# differently, in the order a line's reasons are given.
+COMPARISON_REASONS = ("cash_deposit", "unexplained", "possible_own_account_transfer", "overridden")
+
+
+def comparison_lines(statement: Statement, first: date, last: date, overridden=(),
+                     possible_own_account: list[list[str]] | None = None) -> list[tuple[Transaction, list[str]]]:
+    """The lines dated from `first` to `last` whose bucket a person might read differently, for
+    the comparison entry (R51): every cash deposit, every unexplained credit (ambiguous ones
+    among them), every line of a possible own-account transfer (R9) and every overridden line,
+    each with why it is listed. Largest amount first (by size, either way), statement order
+    between equal amounts, as the judgement queue orders them. No money arithmetic: lines are
+    only ordered by their pence."""
+    overridden = set(overridden)
+    paired = {i for g in possible_own_account or [] for i in g}
+    out = []
+    for n, t in enumerate(statement.transactions):
+        if not first <= t.date <= last:
+            continue
+        reasons = []
+        if t.category == Category.CASH_DEPOSIT:
+            reasons.append("cash_deposit")
+        if pence(t) > 0 and t.category == Category.OTHER:
+            reasons.append("unexplained")
+        if t.id in paired:
+            reasons.append("possible_own_account_transfer")
+        if t.id in overridden:
+            reasons.append("overridden")
+        if reasons:
+            out.append((-abs(pence(t)), n, t, reasons))
+    out.sort(key=lambda r: r[:2])
+    return [(t, reasons) for *_, t, reasons in out]
