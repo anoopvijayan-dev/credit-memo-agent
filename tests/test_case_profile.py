@@ -391,3 +391,11 @@ def test_a_yaml_number_with_fractional_pence_is_refused_not_rounded_by_a_float(h
 def test_an_unquoted_yaml_amount_with_pence_is_read_as_typed(home, tmp_path):
     raw = store.parse_profile(b"proposed_monthly_repayment: 1500.5\n")
     assert store.validate_profile(raw)["proposed_monthly_repayment"] == "1500.50"
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("typed", ["1e999999999", "1E+13", "10000000000000"])
+def test_an_amount_at_or_past_the_limit_is_refused_never_overflows(typed):
+    # Antigravity re-review of T05: 1e999999999 raised decimal.Overflow in the arithmetic.
+    with pytest.raises(store.CaseStoreError, match="reaches £10,000,000,000,000"):
+        store.validate_profile({"proposed_monthly_repayment": typed})

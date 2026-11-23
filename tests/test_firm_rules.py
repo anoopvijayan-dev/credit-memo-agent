@@ -320,3 +320,15 @@ def test_r21_each_named_kind_keeps_its_category_under_a_firm_rule_claiming_it(ta
     claim = Category.REVENUE_TRANSFER if amount > 0 else Category.SUPPLIER
     rules = firm_rules.parse(_text(_rule("claim", desc, "in" if amount > 0 else "out", claim.value)), "r21").rules
     assert classify(t, ruleset, firm_rules=list(rules)) == bare, (table, desc)
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("wording", ["CAPITAL INJECTION", "CAPITAL CONTRIBUTION", "CAPITAL INJECTED"])
+def test_v1_protects_capital_wording_in_both_forms_from_a_profile_name(wording):
+    # Antigravity re-review of T05: under v1, CAPITAL INJECTION (v2's own wording) was not
+    # protected, so an own account named in the profile moved a capital injection out of it.
+    from cma.categorise import ProfileNames
+
+    t = _t(f"FPS CREDIT {wording} ACME HOLDINGS", 500.0)
+    got = classify(t, load_ruleset("v1"), profile=ProfileNames(own_accounts=("ACME HOLDINGS",)))
+    assert got[1] != "profile:own_account", got
