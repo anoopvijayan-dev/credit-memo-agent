@@ -1,0 +1,1236 @@
+PASSED   tests/test_case_log.py::test_case_check_exit_codes_are_0_intact_2_not_a_case_3_broken
+PASSED   tests/test_case_log.py::test_case_check_while_another_writer_appends_reports_the_recorded_log_not_a_break
+PASSED   tests/test_case_log.py::test_retrying_an_append_that_already_succeeded_writes_nothing_twice
+PASSED   tests/test_case_profile.py::test_a_both_kinds_credit_is_ambiguous_under_v1_too
+PASSED   tests/test_case_profile.py::test_a_comma_that_does_not_group_thousands_is_refused_never_read_as_pence[,500]
+PASSED   tests/test_case_profile.py::test_a_comma_that_does_not_group_thousands_is_refused_never_read_as_pence[1,5000.00]
+PASSED   tests/test_case_profile.py::test_a_comma_that_does_not_group_thousands_is_refused_never_read_as_pence[1,50]
+PASSED   tests/test_case_profile.py::test_a_comma_that_does_not_group_thousands_is_refused_never_read_as_pence[12,34.5]
+PASSED   tests/test_case_profile.py::test_a_comma_that_does_not_group_thousands_is_refused_never_read_as_pence[1500,50]
+PASSED   tests/test_case_profile.py::test_a_credit_both_kinds_name_is_ambiguous_with_both_candidates
+PASSED   tests/test_case_profile.py::test_a_director_s_name_makes_a_credit_director_funding_even_with_an_invoice_reference
+PASSED   tests/test_case_profile.py::test_a_malformed_profile_shows_no_figures_and_names_the_field
+PASSED   tests/test_case_profile.py::test_a_profile_edited_between_reads_is_shown_at_the_next_read
+PASSED   tests/test_case_profile.py::test_a_protected_verdict_outranks_a_profile_name_under_v1
+PASSED   tests/test_case_profile.py::test_a_protected_verdict_outranks_a_profile_name_under_v2
+PASSED   tests/test_case_profile.py::test_a_returned_dd_undoing_an_own_account_debit_stays_out_of_m9[v1]
+PASSED   tests/test_case_profile.py::test_a_returned_dd_undoing_an_own_account_debit_stays_out_of_m9[v2]
+PASSED   tests/test_case_profile.py::test_a_shareholder_s_name_makes_a_credit_director_funding
+PASSED   tests/test_case_profile.py::test_a_single_profile_name_decides_under_v1
+PASSED   tests/test_case_profile.py::test_a_yaml_number_with_fractional_pence_is_refused_not_rounded_by_a_float[1500.0000000000001]
+PASSED   tests/test_case_profile.py::test_a_yaml_number_with_fractional_pence_is_refused_not_rounded_by_a_float[1500.001]
+PASSED   tests/test_case_profile.py::test_a_yaml_number_with_fractional_pence_is_refused_not_rounded_by_a_float[9999999999999.991]
+PASSED   tests/test_case_profile.py::test_an_own_account_s_name_makes_lines_own_account_transfers_out_of_m2_and_m9
+PASSED   tests/test_case_profile.py::test_an_unquoted_yaml_amount_with_pence_is_read_as_typed
+PASSED   tests/test_case_profile.py::test_the_api_needs_the_session_token_to_read_the_profile
+PASSED   tests/test_case_profile.py::test_the_page_says_when_no_profile_field_is_given
+PASSED   tests/test_case_profile.py::test_the_page_shows_the_profile_escaped
+PASSED   tests/test_case_profile.py::test_the_proposed_repayment_feeds_m28
+PASSED   tests/test_case_profile.py::test_thousands_commas_and_a_pound_sign_are_read_as_typed[1,500.50-1500.50]
+PASSED   tests/test_case_profile.py::test_thousands_commas_and_a_pound_sign_are_read_as_typed[1500.5-1500.50]
+PASSED   tests/test_case_profile.py::test_thousands_commas_and_a_pound_sign_are_read_as_typed[\xa312,345,678.90-12345678.90]
+PASSED   tests/test_case_profile.py::test_without_a_profile_no_line_is_director_funding_or_an_own_account_transfer
+PASSED   tests/test_case_profile.py::test_without_a_proposed_repayment_m28_is_n_a_with_the_reason
+PASSED   tests/test_case_profile.py::test_without_the_own_account_named_the_debit_to_it_stays_in_m9
+PASSED   tests/test_case_purge.py::test_a_case_folder_that_is_a_symlink_is_refused_and_nothing_outside_is_deleted[case]
+PASSED   tests/test_case_purge.py::test_a_case_folder_that_is_a_symlink_is_refused_and_nothing_outside_is_deleted[purging]
+PASSED   tests/test_case_purge.py::test_a_case_moved_away_by_another_purge_is_never_recreated
+PASSED   tests/test_case_purge.py::test_a_purge_interrupted_after_the_rename_is_finished_by_purging_again
+PASSED   tests/test_case_purge.py::test_a_purge_racing_another_never_recreates_the_case_or_records_it_twice
+PASSED   tests/test_case_purge.py::test_a_purge_that_finished_but_kept_its_mark_writes_no_second_ledger_line
+PASSED   tests/test_case_purge.py::test_a_purge_whose_ledger_write_fails_is_recorded_by_purging_again
+PASSED   tests/test_case_purge.py::test_a_short_write_to_the_ledger_is_continued_never_left_torn
+PASSED   tests/test_case_purge.py::test_cli_case_purge_asks_then_deletes_and_records
+PASSED   tests/test_case_purge.py::test_cli_finishes_an_interrupted_purge
+PASSED   tests/test_case_purge.py::test_ledger_is_appended_and_owner_only
+PASSED   tests/test_case_purge.py::test_purge_deletes_every_file_of_the_case_and_ledger_holds_no_personal_data
+PASSED   tests/test_case_purge.py::test_purge_is_refused_while_another_writer_holds_the_case
+PASSED   tests/test_case_purge.py::test_purge_records_the_operating_system_user
+PASSED   tests/test_case_purge.py::test_purge_works_on_a_case_whose_log_is_broken
+PASSED   tests/test_case_purge.py::test_purging_an_unknown_or_malformed_case_writes_no_ledger_line
+PASSED   tests/test_case_purge.py::test_the_ledger_is_read_through_the_handle_that_holds_its_lock
+PASSED   tests/test_case_store.py::test_a_case_id_with_a_trailing_newline_is_refused
+PASSED   tests/test_case_store.py::test_a_case_root_the_file_system_refuses_is_a_refusal_not_a_traceback
+PASSED   tests/test_case_store.py::test_a_malformed_profile_is_refused_and_nothing_changes[[unclosed\n-not valid YAML]
+PASSED   tests/test_case_store.py::test_a_malformed_profile_is_refused_and_nothing_changes[demo: yes please\n-true or false]
+PASSED   tests/test_case_store.py::test_a_malformed_profile_is_refused_and_nothing_changes[director: [Jane]\n-unknown profile field]
+PASSED   tests/test_case_store.py::test_a_malformed_profile_is_refused_and_nothing_changes[directors: Jane\n-list of names]
+PASSED   tests/test_case_store.py::test_a_malformed_profile_is_refused_and_nothing_changes[directors: ['---']\n-names no one]
+PASSED   tests/test_case_store.py::test_a_malformed_profile_is_refused_and_nothing_changes[directors: [Jane, JANE]\n-twice]
+PASSED   tests/test_case_store.py::test_a_malformed_profile_is_refused_and_nothing_changes[directors: [Jane]\ndirectors: [John]\n-more than once]
+PASSED   tests/test_case_store.py::test_a_malformed_profile_is_refused_and_nothing_changes[proposed_monthly_repayment: -5\n-more than]
+PASSED   tests/test_case_store.py::test_a_malformed_profile_is_refused_and_nothing_changes[proposed_monthly_repayment: 10000000000000\n-10,000,000,000,000]
+PASSED   tests/test_case_store.py::test_a_malformed_profile_is_refused_and_nothing_changes[proposed_monthly_repayment: 12.345\n-two decimals]
+PASSED   tests/test_case_store.py::test_a_malformed_profile_is_refused_and_nothing_changes[proposed_monthly_repayment: true\n-amount]
+PASSED   tests/test_case_store.py::test_a_malformed_profile_is_refused_and_nothing_changes[vat_stagger: 1.0\n-1, 2 or 3]
+PASSED   tests/test_case_store.py::test_a_malformed_profile_is_refused_and_nothing_changes[vat_stagger: 4\n-1, 2 or 3]
+PASSED   tests/test_case_store.py::test_a_malformed_profile_is_refused_and_nothing_changes[vat_stagger: true\n-1, 2 or 3]
+PASSED   tests/test_case_store.py::test_a_refused_profile_change_puts_back_the_profile_the_log_last_recorded
+PASSED   tests/test_case_store.py::test_a_refused_statement_leaves_the_case_unchanged[id,date,description,amount,balance\nL1,2026-01-05,X,10000000000000.00,1.00\n]
+PASSED   tests/test_case_store.py::test_a_refused_statement_leaves_the_case_unchanged[id,date,description,amount,balance\nL1,2026-01-05,X,abc,1.00\n]
+PASSED   tests/test_case_store.py::test_a_second_statement_for_one_account_is_refused
+PASSED   tests/test_case_store.py::test_a_statement_left_without_its_entry_is_replaced_by_the_next_import
+PASSED   tests/test_case_store.py::test_an_account_key_that_is_not_a_plain_key_is_refused[../x]
+PASSED   tests/test_case_store.py::test_an_account_key_that_is_not_a_plain_key_is_refused[Main]
+PASSED   tests/test_case_store.py::test_an_account_key_that_is_not_a_plain_key_is_refused[]
+PASSED   tests/test_case_store.py::test_an_account_key_that_is_not_a_plain_key_is_refused[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]
+PASSED   tests/test_case_store.py::test_an_account_key_with_a_trailing_newline_is_refused[ main]
+PASSED   tests/test_case_store.py::test_an_account_key_with_a_trailing_newline_is_refused[main\n]
+PASSED   tests/test_case_store.py::test_an_account_key_with_a_trailing_newline_is_refused[main\r]
+PASSED   tests/test_case_store.py::test_an_account_sharing_most_date_amount_pairs_with_an_overlapping_one_is_refused
+PASSED   tests/test_case_store.py::test_an_account_that_is_not_the_same_one_is_added[body0]
+PASSED   tests/test_case_store.py::test_an_account_that_is_not_the_same_one_is_added[body1]
+PASSED   tests/test_case_store.py::test_an_account_that_is_not_the_same_one_is_added[body2]
+PASSED   tests/test_case_store.py::test_an_existing_root_open_to_others_is_made_owner_only
+PASSED   tests/test_case_store.py::test_an_import_into_a_broken_log_is_refused
+PASSED   tests/test_case_store.py::test_an_import_the_log_refuses_puts_the_files_back
+PASSED   tests/test_case_store.py::test_an_import_whose_entry_never_reached_the_log_is_recorded_when_imported_again
+PASSED   tests/test_case_store.py::test_case_ids_are_random_and_never_the_label
+PASSED   tests/test_case_store.py::test_case_new_logs_its_creation_and_writes_the_profile
+PASSED   tests/test_case_store.py::test_case_root_folders_and_files_are_owner_only
+PASSED   tests/test_case_store.py::test_csv_import_keeps_the_original_by_hash_and_the_statement_per_account
+PASSED   tests/test_case_store.py::test_existing_root_later_unignored_is_refused_by_every_command
+PASSED   tests/test_case_store.py::test_importing_the_same_file_again_leaves_the_case_unchanged
+PASSED   tests/test_case_store.py::test_monzo_import_converts_into_the_account_statement
+PASSED   tests/test_case_store.py::test_overlapping_profile_changes_keep_both
+PASSED   tests/test_case_store.py::test_profile_change_is_validated_written_and_logged
+PASSED   tests/test_case_store.py::test_profile_file_replaces_the_whole_profile
+PASSED   tests/test_case_store.py::test_root_in_a_tree_git_cannot_be_asked_about_is_refused
+PASSED   tests/test_case_store.py::test_root_inside_a_git_tree_that_does_not_ignore_it_is_refused
+PASSED   tests/test_case_store.py::test_root_inside_a_git_tree_that_ignores_it_is_allowed[/cases-here/]
+PASSED   tests/test_case_store.py::test_root_inside_a_git_tree_that_ignores_it_is_allowed[cases-here/]
+PASSED   tests/test_case_store.py::test_root_inside_a_git_tree_that_ignores_it_is_allowed[cases-here]
+PASSED   tests/test_case_store.py::test_root_inside_a_git_tree_that_ignores_it_is_allowed[private/]
+PASSED   tests/test_case_store.py::test_root_that_is_the_git_tree_itself_is_refused
+PASSED   tests/test_case_store.py::test_store_writes_only_under_the_case_root
+PASSED   tests/test_case_store.py::test_unknown_case_id_is_refused
+PASSED   tests/test_cli.py::test_a_refused_ruleset_leaves_a_durable_review_id_reusable
+PASSED   tests/test_cli.py::test_unknown_cma_ruleset_is_refused_not_blamed_on_the_model
+PASSED   tests/test_cli.py::test_written_evidence_records_the_ruleset[None-v2]
+PASSED   tests/test_cli.py::test_written_evidence_records_the_ruleset[v1-v1]
+PASSED   tests/test_cli.py::test_written_evidence_records_the_ruleset[v2-v2]
+PASSED   tests/test_drilldown.py::test_a_case_of_two_accounts_names_the_account
+PASSED   tests/test_drilldown.py::test_a_case_that_does_not_reconcile_shows_no_lines
+PASSED   tests/test_drilldown.py::test_a_line_s_override_is_the_rule_shown_for_it
+PASSED   tests/test_drilldown.py::test_a_request_that_names_no_figure_or_cell_is_answered_400
+PASSED   tests/test_drilldown.py::test_an_unforeseen_failure_in_the_lines_is_answered_500_naming_nothing
+PASSED   tests/test_drilldown.py::test_derived_figures_show_their_inputs_and_method
+PASSED   tests/test_drilldown.py::test_every_derived_figure_shows_inputs_that_give_it
+PASSED   tests/test_drilldown.py::test_every_figure_bucket_and_cell_on_the_page_links_to_its_lines
+PASSED   tests/test_drilldown.py::test_m13_shows_the_stagger_group_and_each_quarter_judged
+PASSED   tests/test_drilldown.py::test_m4_shows_the_two_quarters_it_compares
+PASSED   tests/test_drilldown.py::test_m4_with_too_few_whole_months_says_how_many_it_has
+PASSED   tests/test_drilldown.py::test_m7_shows_its_count
+PASSED   tests/test_drilldown.py::test_m9_names_the_lines_it_counts_only_in_part
+PASSED   tests/test_drilldown.py::test_m9_shows_its_operating_total_and_the_offset_it_nets
+PASSED   tests/test_drilldown.py::test_the_drilldown_reads_the_profile_once_with_the_figures
+PASSED   tests/test_drilldown.py::test_the_lines_entry_points_refuse_a_request_without_the_token_or_the_loopback_host
+PASSED   tests/test_drilldown.py::test_the_lines_page_shows_the_lines_and_the_total
+PASSED   tests/test_firm.py::test_http_transports_still_start_when_lock_is_off[<lambda>0]
+PASSED   tests/test_firm.py::test_http_transports_still_start_when_lock_is_off[<lambda>1]
+PASSED   tests/test_firm.py::test_http_transports_still_start_when_lock_is_off[<lambda>2]
+PASSED   tests/test_firm.py::test_http_transports_still_start_when_lock_is_off[<lambda>3]
+PASSED   tests/test_firm_rule_promotion.py::test_a_case_confirming_a_preview_another_cases_promotion_overtook_is_refused_and_loses_nothing
+PASSED   tests/test_firm_rule_promotion.py::test_a_confirmation_without_the_preview_digest_is_refused
+PASSED   tests/test_firm_rule_promotion.py::test_a_firm_rules_file_in_another_layout_is_written_afresh_and_still_reads
+PASSED   tests/test_firm_rule_promotion.py::test_a_malformed_firm_rules_file_refuses_the_preview_and_is_left_as_it_was
+PASSED   tests/test_firm_rule_promotion.py::test_a_pattern_is_a_name_never_a_regular_expression[(?i)acme]
+PASSED   tests/test_firm_rule_promotion.py::test_a_pattern_is_a_name_never_a_regular_expression[ACME (TRUST]
+PASSED   tests/test_firm_rule_promotion.py::test_a_pattern_is_a_name_never_a_regular_expression[ACME.*]
+PASSED   tests/test_firm_rule_promotion.py::test_a_pattern_is_a_name_never_a_regular_expression[ACME|STRIPE]
+PASSED   tests/test_firm_rule_promotion.py::test_a_preview_with_the_same_count_but_another_outcome_saves_nothing
+PASSED   tests/test_firm_rule_promotion.py::test_a_promotion_from_a_stale_position_is_a_conflict_and_saves_nothing
+PASSED   tests/test_firm_rule_promotion.py::test_a_promotion_put_back_never_removes_another_cases_recorded_rule
+PASSED   tests/test_firm_rule_promotion.py::test_a_promotion_that_cannot_take_the_firm_rules_lock_saves_nothing
+PASSED   tests/test_firm_rule_promotion.py::test_a_promotion_the_case_log_does_not_record_puts_the_rules_file_back
+PASSED   tests/test_firm_rule_promotion.py::test_a_promotion_whose_preview_no_longer_counts_the_lines_shown_saves_nothing
+PASSED   tests/test_firm_rule_promotion.py::test_a_promotion_without_the_token_or_from_another_origin_is_refused
+PASSED   tests/test_firm_rule_promotion.py::test_a_rules_file_changed_since_the_preview_is_read_as_it_now_stands
+PASSED   tests/test_firm_rule_promotion.py::test_a_second_promotion_keeps_the_first_rule_and_takes_a_new_id
+PASSED   tests/test_firm_rule_promotion.py::test_confirming_the_page_preview_saves_the_rule_and_a_stale_page_is_refused
+PASSED   tests/test_firm_rule_promotion.py::test_promoting_keeps_the_firms_comments_and_layout
+PASSED   tests/test_firm_rule_promotion.py::test_promoting_saves_the_rule_logs_it_and_later_cases_apply_it
+PASSED   tests/test_firm_rule_promotion.py::test_resending_the_same_confirmed_promotion_saves_one_rule
+PASSED   tests/test_firm_rule_promotion.py::test_the_firm_rules_file_is_written_readable_by_its_owner_only
+PASSED   tests/test_firm_rule_promotion.py::test_the_firm_rules_lock_keeps_out_another_process_while_a_promotion_holds_it
+PASSED   tests/test_firm_rule_promotion.py::test_the_page_shows_the_promote_form_and_the_preview_escaped
+PASSED   tests/test_firm_rule_promotion.py::test_the_preview_counts_every_line_the_rule_matches_and_writes_nothing
+PASSED   tests/test_firm_rule_promotion.py::test_the_preview_page_escapes_case_text
+PASSED   tests/test_firm_rule_promotion.py::test_the_preview_page_lists_the_lines_the_rule_changes_without_matching
+PASSED   tests/test_firm_rule_promotion.py::test_the_preview_reads_the_whole_case_so_a_pairing_the_rule_unmakes_is_shown
+PASSED   tests/test_firm_rule_promotion.py::test_the_preview_takes_the_direction_given_and_refuses_a_category_it_cannot_give
+PASSED   tests/test_firm_rule_promotion.py::test_the_workspace_previews_then_saves_a_promotion
+PASSED   tests/test_firm_rule_promotion.py::test_two_cases_promoting_at_once_both_keep_their_rule[0]
+PASSED   tests/test_firm_rule_promotion.py::test_two_cases_promoting_at_once_both_keep_their_rule[1]
+PASSED   tests/test_firm_rule_promotion.py::test_two_cases_promoting_at_once_both_keep_their_rule[2]
+PASSED   tests/test_firm_rule_promotion.py::test_two_cases_promoting_at_once_both_keep_their_rule[3]
+PASSED   tests/test_firm_rule_promotion.py::test_two_cases_promoting_at_once_both_keep_their_rule[4]
+PASSED   tests/test_firm_rule_promotion.py::test_two_cases_promoting_at_once_both_keep_their_rule[5]
+PASSED   tests/test_firm_rule_promotion.py::test_two_cases_promoting_at_once_take_turns_and_keep_both_rules
+PASSED   tests/test_firm_rules.py::test_a_file_firm_yaml_names_must_exist
+PASSED   tests/test_firm_rules.py::test_a_firm_rule_matches_whole_words_whatever_separators
+PASSED   tests/test_firm_rules.py::test_a_firm_rules_error_is_a_ruleset_error_so_every_caller_refuses_it
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[- a\n-a mapping]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[rules: [\n-not valid YAML]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[rules: []\nother: 1\n-unknown key 'other']
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[rules: []\nrules: []\n-rules is given more than once]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[rules: x\n-rules must be a list]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[rules:\n  - x\n-must be a mapping]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[text10-acme_trust is given more than once]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[text11-letter or digit]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[text12-pattern must be text]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[text13-direction]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[text14-unknown category]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[text15-for money in]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[text16-for money in]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[text17-for money out]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[text18-reason]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[text6-'colour']
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[text7-missing reason]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[text8-id]
+PASSED   tests/test_firm_rules.py::test_a_malformed_file_is_refused_naming_its_line[text9-reserved]
+PASSED   tests/test_firm_rules.py::test_a_malformed_firm_rules_file_stops_the_case_figures
+PASSED   tests/test_firm_rules.py::test_a_refusal_never_quotes_the_rule_pattern_beyond_its_line
+PASSED   tests/test_firm_rules.py::test_a_valid_file_loads_each_rule_with_its_record
+PASSED   tests/test_firm_rules.py::test_an_empty_or_rule_free_file_has_no_rules
+PASSED   tests/test_firm_rules.py::test_cli_refuses_a_malformed_firm_rules_file_naming_its_line_without_a_traceback
+PASSED   tests/test_firm_rules.py::test_editing_the_firm_rules_file_recategorises_the_case
+PASSED   tests/test_firm_rules.py::test_no_file_means_no_firm_rules
+PASSED   tests/test_import_bank_csv.py::test_a_bad_mapping_is_refused_naming_the_key[change0-either amount or paid_in and paid_out]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_mapping_is_refused_naming_the_key[change1-either amount or paid_in and paid_out]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_mapping_is_refused_naming_the_key[change2-columns.date is required]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_mapping_is_refused_naming_the_key[change3-unknown key columns.colour]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_mapping_is_refused_naming_the_key[change4-uses column D for more than one]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_mapping_is_refused_naming_the_key[change5-date_format .* must name a day, a month and a year]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_mapping_is_refused_naming_the_key[change6-date_format is required]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_mapping_is_refused_naming_the_key[change7-order is oldest_first, newest_first or auto]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_mapping_is_refused_naming_the_key[change8-unknown key extra]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_row_is_refused_naming_its_line_and_no_cell[rows0-line 2: Date is not a date in the form %d/%m/%Y]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_row_is_refused_naming_its_line_and_no_cell[rows1-line 2: both the paid-in and the paid-out column]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_row_is_refused_naming_its_line_and_no_cell[rows10-line 2: In is \xa310,000,000,000,000 or more]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_row_is_refused_naming_its_line_and_no_cell[rows11-money in totals \xa310,000,000,000,000 or more]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_row_is_refused_naming_its_line_and_no_cell[rows2-line 2: neither the paid-in nor the paid-out column]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_row_is_refused_naming_its_line_and_no_cell[rows3-line 2: In is not an unsigned amount]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_row_is_refused_naming_its_line_and_no_cell[rows4-line 2: In is not an unsigned amount]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_row_is_refused_naming_its_line_and_no_cell[rows5-line 2: Balance is not a plain amount]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_row_is_refused_naming_its_line_and_no_cell[rows6-line 2: more fields than the header has columns]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_row_is_refused_naming_its_line_and_no_cell[rows7-line 3: the balance walked from the opening balance disagrees with the bank's balance column]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_row_is_refused_naming_its_line_and_no_cell[rows8-problem.*line 3]
+PASSED   tests/test_import_bank_csv.py::test_a_bad_row_is_refused_naming_its_line_and_no_cell[rows9-problem.*line 3]
+PASSED   tests/test_import_bank_csv.py::test_a_column_named_twice_is_refused
+PASSED   tests/test_import_bank_csv.py::test_a_custom_mapping_converts_its_golden_export
+PASSED   tests/test_import_bank_csv.py::test_a_declared_order_the_dates_contradict_is_refused
+PASSED   tests/test_import_bank_csv.py::test_a_description_cell_a_spreadsheet_reads_as_a_formula_is_neutralised
+PASSED   tests/test_import_bank_csv.py::test_a_headerless_file_whose_first_line_repeats_a_cell_is_refused_without_quoting_it
+PASSED   tests/test_import_bank_csv.py::test_a_mapping_file_that_gives_a_key_twice_is_refused
+PASSED   tests/test_import_bank_csv.py::test_a_mapping_file_that_is_not_a_mapping_is_refused
+PASSED   tests/test_import_bank_csv.py::test_a_misgrouped_thousands_separator_is_refused
+PASSED   tests/test_import_bank_csv.py::test_a_missing_column_is_refused_naming_the_mapping_not_the_file
+PASSED   tests/test_import_bank_csv.py::test_a_repeated_id_is_refused_naming_both_lines
+PASSED   tests/test_import_bank_csv.py::test_amounts_with_a_pound_sign_and_thousands_separators_are_read_exactly
+PASSED   tests/test_import_bank_csv.py::test_an_opening_balance_that_disagrees_with_the_balance_column_is_refused
+PASSED   tests/test_import_bank_csv.py::test_cma_case_import_bank_csv_keeps_the_golden_statement_and_logs_the_profile[barclays]
+PASSED   tests/test_import_bank_csv.py::test_cma_case_import_bank_csv_keeps_the_golden_statement_and_logs_the_profile[lloyds]
+PASSED   tests/test_import_bank_csv.py::test_cma_case_import_bank_csv_keeps_the_golden_statement_and_logs_the_profile[natwest]
+PASSED   tests/test_import_bank_csv.py::test_cma_case_import_bank_csv_keeps_the_golden_statement_and_logs_the_profile[starling]
+PASSED   tests/test_import_bank_csv.py::test_cma_case_import_bank_csv_twice_leaves_the_case_unchanged
+PASSED   tests/test_import_bank_csv.py::test_cma_case_import_refusal_names_the_line_never_a_cell
+PASSED   tests/test_import_bank_csv.py::test_cma_case_import_refuses_options_that_do_not_fit[bank-csv-extra0-pass --mapping FILE or name a profile]
+PASSED   tests/test_import_bank_csv.py::test_cma_case_import_refuses_options_that_do_not_fit[bank-csv:lloyds-extra1---mapping is for --format bank-csv without a profile]
+PASSED   tests/test_import_bank_csv.py::test_cma_case_import_refuses_options_that_do_not_fit[bank-csv:lloyds-extra4---statement-balance and --at are for]
+PASSED   tests/test_import_bank_csv.py::test_cma_case_import_refuses_options_that_do_not_fit[bank-csv:nosuch-extra2-unknown bank profile]
+PASSED   tests/test_import_bank_csv.py::test_cma_case_import_refuses_options_that_do_not_fit[monzo-extra3---mapping is for a bank CSV]
+PASSED   tests/test_import_bank_csv.py::test_cma_case_import_with_a_custom_mapping_records_its_hash
+PASSED   tests/test_import_bank_csv.py::test_each_named_profile_converts_its_golden_export[barclays]
+PASSED   tests/test_import_bank_csv.py::test_each_named_profile_converts_its_golden_export[lloyds]
+PASSED   tests/test_import_bank_csv.py::test_each_named_profile_converts_its_golden_export[natwest]
+PASSED   tests/test_import_bank_csv.py::test_each_named_profile_converts_its_golden_export[starling]
+PASSED   tests/test_import_bank_csv.py::test_every_packaged_profile_is_a_valid_mapping
+PASSED   tests/test_import_bank_csv.py::test_month_names_are_read_in_english_whatever_the_locale
+PASSED   tests/test_import_bank_csv.py::test_newest_first_is_found_from_the_dates_and_turned_oldest_first
+PASSED   tests/test_import_bank_csv.py::test_newest_first_rows_on_one_date_are_ordered_by_the_balances
+PASSED   tests/test_import_bank_csv.py::test_no_balance_column_needs_an_opening_balance
+PASSED   tests/test_import_bank_csv.py::test_the_profiles_are_packaged_and_listed
+PASSED   tests/test_import_monzo.py::test_ids_the_previous_release_took_still_import[.tx]
+PASSED   tests/test_import_monzo.py::test_ids_the_previous_release_took_still_import[:tx]
+PASSED   tests/test_import_monzo.py::test_ids_the_previous_release_took_still_import[tx_1.2:3-4]
+PASSED   tests/test_import_openbanking.py::test_a_balance_not_in_gbp_is_refused
+PASSED   tests/test_import_openbanking.py::test_a_broken_chain_is_refused_naming_the_line
+PASSED   tests/test_import_openbanking.py::test_a_file_that_is_not_an_obie_transactions_response_is_refused[\xff\xfe-not UTF-8]
+PASSED   tests/test_import_openbanking.py::test_a_file_that_is_not_an_obie_transactions_response_is_refused[not json-line 1: not JSON]
+PASSED   tests/test_import_openbanking.py::test_a_file_that_is_not_an_obie_transactions_response_is_refused[{"Data": {"Balance": []}}-not an OBIE v3.1 transactions response]
+PASSED   tests/test_import_openbanking.py::test_a_file_that_is_not_an_obie_transactions_response_is_refused[{"Data": {"Transaction": [\n  {"TransactionId": "x"\n-not JSON]
+PASSED   tests/test_import_openbanking.py::test_a_file_that_is_not_an_obie_transactions_response_is_refused[{"Data": {"Transaction": []}}-no transactions]
+PASSED   tests/test_import_openbanking.py::test_a_file_that_is_not_an_obie_transactions_response_is_refused[{"Data": {"Transaction": [{"TransactionId": "a", "TransactionId": "b"}]}}-a key given more than once]
+PASSED   tests/test_import_openbanking.py::test_a_heavy_mix_at_one_moment_is_ordered_or_refused_at_the_limit_never_as_a_break[0.2-0]
+PASSED   tests/test_import_openbanking.py::test_a_heavy_mix_at_one_moment_is_ordered_or_refused_at_the_limit_never_as_a_break[0.2-1]
+PASSED   tests/test_import_openbanking.py::test_a_heavy_mix_at_one_moment_is_ordered_or_refused_at_the_limit_never_as_a_break[0.2-2]
+PASSED   tests/test_import_openbanking.py::test_a_heavy_mix_at_one_moment_is_ordered_or_refused_at_the_limit_never_as_a_break[0.2-3]
+PASSED   tests/test_import_openbanking.py::test_a_heavy_mix_at_one_moment_is_ordered_or_refused_at_the_limit_never_as_a_break[0.2-4]
+PASSED   tests/test_import_openbanking.py::test_a_heavy_mix_at_one_moment_is_ordered_or_refused_at_the_limit_never_as_a_break[0.2-5]
+PASSED   tests/test_import_openbanking.py::test_a_heavy_mix_at_one_moment_is_ordered_or_refused_at_the_limit_never_as_a_break[0.5-0]
+PASSED   tests/test_import_openbanking.py::test_a_heavy_mix_at_one_moment_is_ordered_or_refused_at_the_limit_never_as_a_break[0.5-1]
+PASSED   tests/test_import_openbanking.py::test_a_heavy_mix_at_one_moment_is_ordered_or_refused_at_the_limit_never_as_a_break[0.5-2]
+PASSED   tests/test_import_openbanking.py::test_a_heavy_mix_at_one_moment_is_ordered_or_refused_at_the_limit_never_as_a_break[0.5-3]
+PASSED   tests/test_import_openbanking.py::test_a_heavy_mix_at_one_moment_is_ordered_or_refused_at_the_limit_never_as_a_break[0.5-4]
+PASSED   tests/test_import_openbanking.py::test_a_heavy_mix_at_one_moment_is_ordered_or_refused_at_the_limit_never_as_a_break[0.5-5]
+PASSED   tests/test_import_openbanking.py::test_a_large_group_booked_at_one_moment_is_ordered_whatever_order_the_file_wrote[1500-False]
+PASSED   tests/test_import_openbanking.py::test_a_large_group_booked_at_one_moment_is_ordered_whatever_order_the_file_wrote[1500-True]
+PASSED   tests/test_import_openbanking.py::test_a_large_group_booked_at_one_moment_is_ordered_whatever_order_the_file_wrote[500-True]
+PASSED   tests/test_import_openbanking.py::test_a_large_group_that_no_order_chains_is_refused_not_crashed
+PASSED   tests/test_import_openbanking.py::test_a_later_fully_balanced_group_pins_the_start_past_the_start_search
+PASSED   tests/test_import_openbanking.py::test_a_line_not_in_gbp_refuses_the_account[EUR]
+PASSED   tests/test_import_openbanking.py::test_a_line_not_in_gbp_refuses_the_account[USD]
+PASSED   tests/test_import_openbanking.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-BookingDateTime is not an ISO 8601 date]
+PASSED   tests/test_import_openbanking.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-CreditDebitIndicator is neither Credit nor Debit]
+PASSED   tests/test_import_openbanking.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-Status is neither Booked nor Pending]
+PASSED   tests/test_import_openbanking.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-TransactionId starts with a character]
+PASSED   tests/test_import_openbanking.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-\xa310,000,000,000,000 or more]
+PASSED   tests/test_import_openbanking.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-a booked transaction has no TransactionId]
+PASSED   tests/test_import_openbanking.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-is in the future]
+PASSED   tests/test_import_openbanking.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-the amount is not a plain amount0]
+PASSED   tests/test_import_openbanking.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-the amount is not a plain amount1]
+PASSED   tests/test_import_openbanking.py::test_a_missing_line_among_balanced_lines_at_one_moment_is_refused[0-all but a few]
+PASSED   tests/test_import_openbanking.py::test_a_missing_line_among_balanced_lines_at_one_moment_is_refused[0-every line]
+PASSED   tests/test_import_openbanking.py::test_a_missing_line_among_balanced_lines_at_one_moment_is_refused[1-all but a few]
+PASSED   tests/test_import_openbanking.py::test_a_missing_line_among_balanced_lines_at_one_moment_is_refused[1-every line]
+PASSED   tests/test_import_openbanking.py::test_a_missing_line_among_balanced_lines_at_one_moment_is_refused[2-all but a few]
+PASSED   tests/test_import_openbanking.py::test_a_missing_line_among_balanced_lines_at_one_moment_is_refused[2-every line]
+PASSED   tests/test_import_openbanking.py::test_a_mixed_first_day_then_one_balanced_line_a_day_always_imports[0]
+PASSED   tests/test_import_openbanking.py::test_a_mixed_first_day_then_one_balanced_line_a_day_always_imports[100]
+PASSED   tests/test_import_openbanking.py::test_a_mixed_first_day_then_one_balanced_line_a_day_always_imports[120]
+PASSED   tests/test_import_openbanking.py::test_a_mixed_first_day_then_one_balanced_line_a_day_always_imports[140]
+PASSED   tests/test_import_openbanking.py::test_a_mixed_first_day_then_one_balanced_line_a_day_always_imports[160]
+PASSED   tests/test_import_openbanking.py::test_a_mixed_first_day_then_one_balanced_line_a_day_always_imports[180]
+PASSED   tests/test_import_openbanking.py::test_a_mixed_first_day_then_one_balanced_line_a_day_always_imports[20]
+PASSED   tests/test_import_openbanking.py::test_a_mixed_first_day_then_one_balanced_line_a_day_always_imports[40]
+PASSED   tests/test_import_openbanking.py::test_a_mixed_first_day_then_one_balanced_line_a_day_always_imports[60]
+PASSED   tests/test_import_openbanking.py::test_a_mixed_first_day_then_one_balanced_line_a_day_always_imports[80]
+PASSED   tests/test_import_openbanking.py::test_a_mixed_first_group_followed_by_single_balanced_lines_starts_where_they_say
+PASSED   tests/test_import_openbanking.py::test_a_pending_transaction_a_page_repeats_is_counted_once
+PASSED   tests/test_import_openbanking.py::test_a_pending_transaction_booked_on_another_page_is_not_counted_as_left_out
+PASSED   tests/test_import_openbanking.py::test_a_repeated_id_with_different_content_is_refused_naming_both_lines
+PASSED   tests/test_import_openbanking.py::test_a_statement_balance_needs_its_date_and_a_date_in_the_period
+PASSED   tests/test_import_openbanking.py::test_a_statement_balance_that_disagrees_with_per_line_balances_is_refused
+PASSED   tests/test_import_openbanking.py::test_an_available_balance_is_not_read_as_the_booked_balance
+PASSED   tests/test_import_openbanking.py::test_an_overdrawn_per_line_balance_is_negative
+PASSED   tests/test_import_openbanking.py::test_balance_less_lines_ahead_of_the_balanced_line_that_must_come_first_are_ordered[12]
+PASSED   tests/test_import_openbanking.py::test_balance_less_lines_ahead_of_the_balanced_line_that_must_come_first_are_ordered[400]
+PASSED   tests/test_import_openbanking.py::test_balance_less_lines_ahead_of_the_balanced_line_that_must_come_first_are_ordered[8]
+PASSED   tests/test_import_openbanking.py::test_case_import_refusal_names_the_file_not_its_cells
+PASSED   tests/test_import_openbanking.py::test_case_import_refuses_balance_options_for_other_formats
+PASSED   tests/test_import_openbanking.py::test_cma_case_import_openbanking_keeps_the_golden_statement_and_counts_pending
+PASSED   tests/test_import_openbanking.py::test_cma_case_import_openbanking_with_a_statement_balance
+PASSED   tests/test_import_openbanking.py::test_distinct_loose_amounts_whose_subset_a_balanced_line_needs_are_ordered
+PASSED   tests/test_import_openbanking.py::test_equal_timestamps_are_ordered_so_the_chain_holds
+PASSED   tests/test_import_openbanking.py::test_equal_timestamps_that_no_order_chains_are_refused_naming_the_first_break
+PASSED   tests/test_import_openbanking.py::test_lines_without_a_balance_are_walked_between_lines_with_one
+PASSED   tests/test_import_openbanking.py::test_mixed_loose_amounts_and_balanced_lines_at_one_moment_are_ordered
+PASSED   tests/test_import_openbanking.py::test_no_balance_anywhere_is_refused_saying_which_to_supply
+PASSED   tests/test_import_openbanking.py::test_only_pending_lines_is_refused
+PASSED   tests/test_import_openbanking.py::test_pages_one_after_another_are_read_as_one_export
+PASSED   tests/test_import_openbanking.py::test_pending_lines_are_left_out_and_counted
+PASSED   tests/test_import_openbanking.py::test_per_line_balances_golden
+PASSED   tests/test_import_openbanking.py::test_provider_ids_are_the_line_ids
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[0-100-4-10-all but a few]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[0-100-4-10-each day's last line]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[0-100-4-10-every line]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[0-20-1-1000-all but a few]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[0-20-1-1000-each day's last line]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[0-20-1-1000-every line]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[0-200-1-1000-all but a few]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[0-200-1-1000-each day's last line]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[0-200-1-1000-every line]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[0-200-5-3-all but a few]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[0-200-5-3-each day's last line]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[0-200-5-3-every line]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[1-100-4-10-all but a few]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[1-100-4-10-each day's last line]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[1-100-4-10-every line]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[1-20-1-1000-all but a few]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[1-20-1-1000-each day's last line]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[1-20-1-1000-every line]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[1-200-1-1000-all but a few]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[1-200-1-1000-each day's last line]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[1-200-1-1000-every line]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[1-200-5-3-all but a few]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[1-200-5-3-each day's last line]
+PASSED   tests/test_import_openbanking.py::test_real_balance_shapes_are_always_ordered_whatever_order_the_file_wrote[1-200-5-3-every line]
+PASSED   tests/test_import_openbanking.py::test_statement_balance_golden[1000.00-2026-03-31]
+PASSED   tests/test_import_openbanking.py::test_statement_balance_golden[1379.75-2026-04-02]
+PASSED   tests/test_import_openbanking.py::test_statement_balance_golden[1389.75-2026-04-03]
+PASSED   tests/test_import_openbanking.py::test_statement_balance_golden[1500.00-2026-04-01]
+PASSED   tests/test_import_openbanking.py::test_timestamped_exports_start_from_the_balance_their_later_single_lines_need[0-20-0.2-0.8]
+PASSED   tests/test_import_openbanking.py::test_timestamped_exports_start_from_the_balance_their_later_single_lines_need[0-20-0.5-0.5]
+PASSED   tests/test_import_openbanking.py::test_timestamped_exports_start_from_the_balance_their_later_single_lines_need[0-5-0.5-1.0]
+PASSED   tests/test_import_openbanking.py::test_timestamped_exports_start_from_the_balance_their_later_single_lines_need[0-8-1.0-0.3]
+PASSED   tests/test_import_openbanking.py::test_timestamped_exports_start_from_the_balance_their_later_single_lines_need[1-20-0.2-0.8]
+PASSED   tests/test_import_openbanking.py::test_timestamped_exports_start_from_the_balance_their_later_single_lines_need[1-20-0.5-0.5]
+PASSED   tests/test_import_openbanking.py::test_timestamped_exports_start_from_the_balance_their_later_single_lines_need[1-5-0.5-1.0]
+PASSED   tests/test_import_openbanking.py::test_timestamped_exports_start_from_the_balance_their_later_single_lines_need[1-8-1.0-0.3]
+PASSED   tests/test_import_openbanking.py::test_timestamped_exports_start_from_the_balance_their_later_single_lines_need[2-20-0.2-0.8]
+PASSED   tests/test_import_openbanking.py::test_timestamped_exports_start_from_the_balance_their_later_single_lines_need[2-20-0.5-0.5]
+PASSED   tests/test_import_openbanking.py::test_timestamped_exports_start_from_the_balance_their_later_single_lines_need[2-5-0.5-1.0]
+PASSED   tests/test_import_openbanking.py::test_timestamped_exports_start_from_the_balance_their_later_single_lines_need[2-8-1.0-0.3]
+PASSED   tests/test_import_openbanking.py::test_two_accounts_in_one_file_are_refused
+PASSED   tests/test_import_truelayer.py::test_a_balance_not_in_gbp_is_refused
+PASSED   tests/test_import_truelayer.py::test_a_broken_chain_is_refused_naming_the_line
+PASSED   tests/test_import_truelayer.py::test_a_file_that_is_not_a_truelayer_response_is_refused[not json-line 1: not JSON]
+PASSED   tests/test_import_truelayer.py::test_a_file_that_is_not_a_truelayer_response_is_refused[{"Data": {"Transaction": []}}-not a TrueLayer Data API transactions response]
+PASSED   tests/test_import_truelayer.py::test_a_file_that_is_not_a_truelayer_response_is_refused[{"results": [1]}-a transaction is not a JSON object]
+PASSED   tests/test_import_truelayer.py::test_a_file_that_is_not_a_truelayer_response_is_refused[{"results": []}-no transactions]
+PASSED   tests/test_import_truelayer.py::test_a_hint_never_refuses_the_file_whatever_it_holds
+PASSED   tests/test_import_truelayer.py::test_a_hints_file_that_cannot_be_read_gives_no_hints_and_the_same_figures
+PASSED   tests/test_import_truelayer.py::test_a_leftover_hints_file_is_removed_by_the_next_import_into_its_account
+PASSED   tests/test_import_truelayer.py::test_a_line_not_in_gbp_refuses_the_account[EUR]
+PASSED   tests/test_import_truelayer.py::test_a_line_not_in_gbp_refuses_the_account[USD]
+PASSED   tests/test_import_truelayer.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-a description field is not text]
+PASSED   tests/test_import_truelayer.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-a spreadsheet reads as a formula]
+PASSED   tests/test_import_truelayer.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-has no transaction_id]
+PASSED   tests/test_import_truelayer.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-running_balance is not an object]
+PASSED   tests/test_import_truelayer.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-status is neither settled nor pending]
+PASSED   tests/test_import_truelayer.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-the amount is \xa310,000,000,000,000 or more]
+PASSED   tests/test_import_truelayer.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-the amount is missing or not a plain amount in whole pence0]
+PASSED   tests/test_import_truelayer.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-the amount is missing or not a plain amount in whole pence1]
+PASSED   tests/test_import_truelayer.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-the amount's sign disagrees with transaction_type]
+PASSED   tests/test_import_truelayer.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-timestamp is in the future]
+PASSED   tests/test_import_truelayer.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-timestamp is missing]
+PASSED   tests/test_import_truelayer.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-timestamp is not an ISO 8601 date and time]
+PASSED   tests/test_import_truelayer.py::test_a_malformed_transaction_is_refused_naming_its_line[<lambda>-transaction_type is neither CREDIT nor DEBIT]
+PASSED   tests/test_import_truelayer.py::test_a_repeated_id_with_different_content_is_refused_naming_both_lines
+PASSED   tests/test_import_truelayer.py::test_an_import_the_log_refuses_leaves_no_hints
+PASSED   tests/test_import_truelayer.py::test_case_import_refuses_the_wrong_balance_option_and_names_the_file_not_its_cells
+PASSED   tests/test_import_truelayer.py::test_cma_case_import_truelayer_keeps_the_golden_statement_and_the_hints_apart
+PASSED   tests/test_import_truelayer.py::test_cma_case_import_truelayer_with_a_statement_balance
+PASSED   tests/test_import_truelayer.py::test_equal_timestamps_are_ordered_so_the_chain_holds
+PASSED   tests/test_import_truelayer.py::test_figures_are_unchanged_when_the_hints_change[hints0]
+PASSED   tests/test_import_truelayer.py::test_figures_are_unchanged_when_the_hints_change[hints1]
+PASSED   tests/test_import_truelayer.py::test_figures_are_unchanged_when_the_hints_change[hints2]
+PASSED   tests/test_import_truelayer.py::test_figures_are_unchanged_when_the_hints_change[hints3]
+PASSED   tests/test_import_truelayer.py::test_no_balance_anywhere_is_refused_saying_which_to_supply
+PASSED   tests/test_import_truelayer.py::test_numbers_are_read_exactly_and_a_negative_balance_is_overdrawn
+PASSED   tests/test_import_truelayer.py::test_only_pending_lines_is_refused
+PASSED   tests/test_import_truelayer.py::test_pending_lines_are_left_out_and_counted_once
+PASSED   tests/test_import_truelayer.py::test_running_balance_golden
+PASSED   tests/test_import_truelayer.py::test_statement_balance_golden[1000.00-2026-03-31]
+PASSED   tests/test_import_truelayer.py::test_statement_balance_golden[1379.75-2026-04-02]
+PASSED   tests/test_import_truelayer.py::test_statement_balance_golden[1389.75-2026-04-03]
+PASSED   tests/test_import_truelayer.py::test_statement_balance_golden[1500.00-2026-04-01]
+PASSED   tests/test_import_truelayer.py::test_the_hints_file_is_readable_by_its_owner_only
+PASSED   tests/test_import_truelayer.py::test_the_provider_categories_change_no_byte_of_the_statement
+PASSED   tests/test_importer_contract.py::test_a_monzo_refusal_names_the_line_never_the_cell[amount at limit]
+PASSED   tests/test_importer_contract.py::test_a_monzo_refusal_names_the_line_never_the_cell[amount]
+PASSED   tests/test_importer_contract.py::test_a_monzo_refusal_names_the_line_never_the_cell[balance]
+PASSED   tests/test_importer_contract.py::test_a_monzo_refusal_names_the_line_never_the_cell[currency]
+PASSED   tests/test_importer_contract.py::test_a_monzo_refusal_names_the_line_never_the_cell[date]
+PASSED   tests/test_importer_contract.py::test_a_monzo_refusal_names_the_line_never_the_cell[decimals]
+PASSED   tests/test_importer_contract.py::test_a_monzo_refusal_names_the_line_never_the_cell[disagreeing balance]
+PASSED   tests/test_importer_contract.py::test_a_monzo_refusal_names_the_line_never_the_cell[duplicate id]
+PASSED   tests/test_importer_contract.py::test_a_monzo_refusal_names_the_line_never_the_cell[first balance missing]
+PASSED   tests/test_importer_contract.py::test_a_supplied_opening_balance_must_agree_with_the_provider
+PASSED   tests/test_importer_contract.py::test_an_output_the_loader_would_refuse_is_never_written
+PASSED   tests/test_importer_contract.py::test_cma_case_import_keeps_the_golden_statement[business]
+PASSED   tests/test_importer_contract.py::test_cma_case_import_keeps_the_golden_statement[personal]
+PASSED   tests/test_importer_contract.py::test_cma_case_import_of_a_statement_csv_refuses_by_line_never_the_cell
+PASSED   tests/test_importer_contract.py::test_cma_import_monzo_and_cma_case_import_refuse_by_line[amount at limit]
+PASSED   tests/test_importer_contract.py::test_cma_import_monzo_and_cma_case_import_refuse_by_line[amount]
+PASSED   tests/test_importer_contract.py::test_cma_import_monzo_and_cma_case_import_refuse_by_line[balance]
+PASSED   tests/test_importer_contract.py::test_cma_import_monzo_and_cma_case_import_refuse_by_line[currency]
+PASSED   tests/test_importer_contract.py::test_cma_import_monzo_and_cma_case_import_refuse_by_line[date]
+PASSED   tests/test_importer_contract.py::test_cma_import_monzo_and_cma_case_import_refuse_by_line[decimals]
+PASSED   tests/test_importer_contract.py::test_cma_import_monzo_and_cma_case_import_refuse_by_line[disagreeing balance]
+PASSED   tests/test_importer_contract.py::test_cma_import_monzo_and_cma_case_import_refuse_by_line[duplicate id]
+PASSED   tests/test_importer_contract.py::test_cma_import_monzo_and_cma_case_import_refuse_by_line[first balance missing]
+PASSED   tests/test_importer_contract.py::test_cma_import_monzo_writes_the_golden_statement[business]
+PASSED   tests/test_importer_contract.py::test_cma_import_monzo_writes_the_golden_statement[personal]
+PASSED   tests/test_importer_contract.py::test_monzo_golden_output_is_unchanged[business]
+PASSED   tests/test_importer_contract.py::test_monzo_golden_output_is_unchanged[personal]
+PASSED   tests/test_importer_contract.py::test_monzo_import_error_is_an_import_refusal
+PASSED   tests/test_importer_contract.py::test_the_walk_infers_the_opening_balance_and_checks_every_provider_balance
+PASSED   tests/test_importer_contract.py::test_the_walk_refuses_a_disagreeing_balance_by_line_without_its_value
+PASSED   tests/test_importer_contract.py::test_the_walk_refuses_a_running_balance_at_the_limit_by_line
+PASSED   tests/test_indicators.py::test_a_cash_deposit_after_a_similar_cash_withdrawal_within_the_window_is_flagged
+PASSED   tests/test_indicators.py::test_a_cash_heavy_share_with_more_digits_than_a_decimal_holds_is_compared_exactly
+PASSED   tests/test_indicators.py::test_a_gambling_indicator_on_the_shipped_operator_list_is_illustrative_whatever_the_amount
+PASSED   tests/test_indicators.py::test_a_malformed_file_is_refused_naming_the_line
+PASSED   tests/test_indicators.py::test_a_malformed_value_is_refused_naming_its_line[change0-whole number of pence]
+PASSED   tests/test_indicators.py::test_a_malformed_value_is_refused_naming_its_line[change1-share_above_pct]
+PASSED   tests/test_indicators.py::test_a_malformed_value_is_refused_naming_its_line[change2-share_above_pct]
+PASSED   tests/test_indicators.py::test_a_malformed_value_is_refused_naming_its_line[change3-within_days]
+PASSED   tests/test_indicators.py::test_a_malformed_value_is_refused_naming_its_line[change4-days_at_least]
+PASSED   tests/test_indicators.py::test_a_malformed_value_is_refused_naming_its_line[change5-multiple_of_typical]
+PASSED   tests/test_indicators.py::test_a_malformed_value_is_refused_naming_its_line[change6-amount_at_least]
+PASSED   tests/test_indicators.py::test_a_month_whose_cash_exceeds_the_share_of_its_trading_receipts_is_flagged
+PASSED   tests/test_indicators.py::test_a_round_trip_tolerance_with_more_digits_than_a_decimal_holds_is_compared_exactly
+PASSED   tests/test_indicators.py::test_a_run_of_consecutive_overdrawn_days_at_the_limit_is_flagged
+PASSED   tests/test_indicators.py::test_a_threshold_moved_from_its_shipped_value_is_not_illustrative
+PASSED   tests/test_indicators.py::test_an_integer_threshold_with_too_many_digits_is_refused_naming_its_line
+PASSED   tests/test_indicators.py::test_an_irregular_credit_from_a_named_acquirer_is_flagged_whatever_its_category
+PASSED   tests/test_indicators.py::test_cma_run_refuses_a_malformed_thresholds_file_naming_the_line
+PASSED   tests/test_indicators.py::test_cma_run_writes_indicators_and_their_thresholds_into_its_evidence_record
+PASSED   tests/test_indicators.py::test_each_cash_deposit_at_or_above_the_single_deposit_limit_is_flagged
+PASSED   tests/test_indicators.py::test_indicators_leave_the_statement_unchanged_and_give_the_same_answer_twice
+PASSED   tests/test_indicators.py::test_large_credit_against_typical_trading_receipts_fires_at_the_multiple_in_pence
+PASSED   tests/test_indicators.py::test_payments_to_gambling_operators_are_flagged
+PASSED   tests/test_indicators.py::test_returned_direct_debits_are_flagged
+PASSED   tests/test_indicators.py::test_the_cash_round_trip_window_is_found_by_date_and_position_at_scale
+PASSED   tests/test_indicators.py::test_the_committed_example_indicators_are_what_the_code_raises_from_its_lines
+PASSED   tests/test_indicators.py::test_the_evidence_reads_the_thresholds_the_run_kept_not_the_file_as_it_is_now
+PASSED   tests/test_indicators.py::test_the_packaged_thresholds_load_with_the_shipped_cash_limits
+PASSED   tests/test_judgement_queue.py::test_an_ambiguous_credit_is_queued_with_each_candidate_and_the_bucket_it_would_give
+PASSED   tests/test_judgement_queue.py::test_cma_run_writes_the_judgement_queue_into_its_evidence_record
+PASSED   tests/test_judgement_queue.py::test_possible_own_account_transfers_are_queued_when_present_with_the_lines_they_could_pair_with
+PASSED   tests/test_judgement_queue.py::test_profile_candidates_give_their_kinds_bucket_whatever_the_ruleset
+PASSED   tests/test_judgement_queue.py::test_the_queue_leaves_the_statement_unchanged_and_gives_the_same_answer_twice
+PASSED   tests/test_judgement_queue.py::test_the_queue_names_lines_by_id_and_never_carries_a_description
+PASSED   tests/test_m27_m28.py::test_cma_run_has_no_profile_so_its_evidence_shows_m28_na_with_the_reason_and_m27
+PASSED   tests/test_m27_m28.py::test_m27_and_m28_follow_m26_and_compute_leaves_the_statement_unchanged
+PASSED   tests/test_m27_m28.py::test_m28_refuses_a_proposed_repayment_that_is_not_a_positive_whole_number_of_pence[-1.00]
+PASSED   tests/test_m27_m28.py::test_m28_refuses_a_proposed_repayment_that_is_not_a_positive_whole_number_of_pence[0.00]
+PASSED   tests/test_m27_m28.py::test_m28_refuses_a_proposed_repayment_that_is_not_a_positive_whole_number_of_pence[0]
+PASSED   tests/test_m27_m28.py::test_m28_refuses_a_proposed_repayment_that_is_not_a_positive_whole_number_of_pence[10000000000000.00]
+PASSED   tests/test_m27_m28.py::test_m28_refuses_a_proposed_repayment_that_is_not_a_positive_whole_number_of_pence[600.001]
+PASSED   tests/test_m27_m28.py::test_m28_refuses_a_proposed_repayment_that_is_not_a_positive_whole_number_of_pence[600.005]
+PASSED   tests/test_m27_m28.py::test_m28_refuses_a_proposed_repayment_that_is_not_a_positive_whole_number_of_pence[abc]
+PASSED   tests/test_m27_m28.py::test_m28_without_a_proposed_repayment_is_na_with_the_reason_and_cites_nothing
+PASSED   tests/test_m27_m28.py::test_the_committed_example_carries_m27_and_m28_as_the_code_computes_them
+PASSED   tests/test_models.py::test_a_checkpoint_written_before_the_new_fields_resumes
+PASSED   tests/test_models.py::test_a_pending_review_saved_before_the_new_fields_resumes
+PASSED   tests/test_models.py::test_the_committed_example_evidence_carries_todays_keys_and_a_schema_version
+PASSED   tests/test_models.py::test_the_previous_release_loads_a_transaction_written_by_this_one
+PASSED   tests/test_models.py::test_todays_evidence_keys_are_a_subset_of_the_new_record
+PASSED   tests/test_money_in.py::test_a_bad_byte_after_a_byte_order_mark_still_reads_the_lines_before_it
+PASSED   tests/test_money_in.py::test_a_bad_byte_in_a_cr_only_export_still_reads_the_lines_before_it
+PASSED   tests/test_money_in.py::test_a_bad_byte_in_a_long_record_after_a_skipped_foreign_row_is_never_read_as_money
+PASSED   tests/test_money_in.py::test_a_bad_byte_in_a_multiline_header_is_on_line_one
+PASSED   tests/test_money_in.py::test_a_bad_byte_in_a_multiline_record_names_the_record_start
+PASSED   tests/test_money_in.py::test_a_bad_byte_in_the_first_data_record_is_on_its_line_with_its_amount_read[\n]
+PASSED   tests/test_money_in.py::test_a_bad_byte_in_the_first_data_record_is_on_its_line_with_its_amount_read[\r\n]
+PASSED   tests/test_money_in.py::test_a_bad_byte_in_the_first_data_record_is_on_its_line_with_its_amount_read[\r]
+PASSED   tests/test_money_in.py::test_a_bad_byte_under_a_repeated_blank_column_is_still_found
+PASSED   tests/test_money_in.py::test_a_balance_at_the_line_limit_takes_part_in_the_running_balance
+PASSED   tests/test_money_in.py::test_a_balance_of_thousands_of_digits_that_does_not_follow_is_named
+PASSED   tests/test_money_in.py::test_a_dangling_reversal_never_hides_the_credits_reconciliation
+PASSED   tests/test_money_in.py::test_a_figure_shown_to_the_penny_is_the_counted_pence
+PASSED   tests/test_money_in.py::test_a_foreign_long_record_open_to_the_end_still_refuses_the_export
+PASSED   tests/test_money_in.py::test_a_foreign_row_with_a_bad_byte_left_open_stops_the_import
+PASSED   tests/test_money_in.py::test_a_header_field_too_long_is_named_before_a_later_bad_byte_in_it
+PASSED   tests/test_money_in.py::test_a_header_with_a_quote_never_closed_is_refused_on_line_one
+PASSED   tests/test_money_in.py::test_a_later_byte_that_is_not_utf8_does_not_hide_earlier_problems
+PASSED   tests/test_money_in.py::test_a_long_field_cut_by_a_bad_byte_never_makes_an_empty_amount_readable
+PASSED   tests/test_money_in.py::test_a_money_column_named_twice_is_refused_not_overwritten[amount]
+PASSED   tests/test_money_in.py::test_a_money_column_named_twice_is_refused_not_overwritten[balance]
+PASSED   tests/test_money_in.py::test_a_multiline_record_is_named_by_its_first_line
+PASSED   tests/test_money_in.py::test_a_partial_last_record_takes_part_in_the_checks_across_records
+PASSED   tests/test_money_in.py::test_a_quoted_field_left_open_at_the_end_is_refused_not_swallowing_lines
+PASSED   tests/test_money_in.py::test_a_readable_amount_at_the_line_limit_counts_toward_money_in_and_out
+PASSED   tests/test_money_in.py::test_a_readable_amount_before_a_bad_byte_in_its_row_still_counts
+PASSED   tests/test_money_in.py::test_a_readable_balance_at_the_limit_is_named_in_a_record_with_a_long_field
+PASSED   tests/test_money_in.py::test_a_record_the_reader_accepts_is_kept_before_a_bad_byte
+PASSED   tests/test_money_in.py::test_a_record_too_long_to_read_with_a_bad_byte_names_both
+PASSED   tests/test_money_in.py::test_a_statement_ending_at_the_last_date_python_has_still_gets_its_reconciliation
+PASSED   tests/test_money_in.py::test_a_statement_in_year_one_still_gets_its_reconciliation
+PASSED   tests/test_money_in.py::test_a_statement_starting_at_the_first_date_python_has_still_gets_its_reconciliation
+PASSED   tests/test_money_in.py::test_a_statement_whose_money_in_could_not_be_reported_is_refused_at_import
+PASSED   tests/test_money_in.py::test_a_supplied_opening_balance_is_held_to_no_more_than_an_inferred_one
+PASSED   tests/test_money_in.py::test_a_whole_long_record_keeps_its_last_cell_when_a_later_record_has_a_bad_byte
+PASSED   tests/test_money_in.py::test_an_amount_longer_than_the_csv_reader_reads_is_refused_naming_its_line
+PASSED   tests/test_money_in.py::test_an_amount_no_float_carries_to_the_penny_is_refused_at_import[0.123]
+PASSED   tests/test_money_in.py::test_an_amount_no_float_carries_to_the_penny_is_refused_at_import[10000000000000.00]
+PASSED   tests/test_money_in.py::test_an_amount_no_float_carries_to_the_penny_is_refused_at_import[12345678901234.56]
+PASSED   tests/test_money_in.py::test_an_amount_with_thousands_of_digits_is_named_on_its_line
+PASSED   tests/test_money_in.py::test_an_import_refusal_says_which_flow_reached_the_limit[in]
+PASSED   tests/test_money_in.py::test_an_import_refusal_says_which_flow_reached_the_limit[out]
+PASSED   tests/test_money_in.py::test_an_uncategorised_credit_is_a_reconciliation_failure_naming_it
+PASSED   tests/test_money_in.py::test_an_uncategorised_debit_never_hides_the_credits_reconciliation
+PASSED   tests/test_money_in.py::test_cma_import_monzo_prints_a_refusal_quoting_markup_as_text
+PASSED   tests/test_money_in.py::test_cma_run_exits_non_zero_naming_the_difference_and_the_lines
+PASSED   tests/test_money_in.py::test_cma_run_refusal_shows_a_line_id_that_looks_like_markup
+PASSED   tests/test_money_in.py::test_cma_run_refuses_an_uncategorised_credit_naming_pence_and_line
+PASSED   tests/test_money_in.py::test_every_problem_found_is_named
+PASSED   tests/test_money_in.py::test_every_readable_field_of_a_record_that_cannot_be_read_whole_is_checked
+PASSED   tests/test_money_in.py::test_import_flow_totals_and_balance_chain_come_from_the_figures_layer
+PASSED   tests/test_money_in.py::test_m9_names_only_the_credit_its_cap_splits
+PASSED   tests/test_money_in.py::test_mcp_compute_metrics_carries_m17_to_m28
+PASSED   tests/test_money_in.py::test_mcp_compute_metrics_refuses_buckets_that_do_not_reconcile
+PASSED   tests/test_money_in.py::test_monzo_checks_a_partial_rows_currency_before_needing_its_amount
+PASSED   tests/test_money_in.py::test_monzo_checks_the_amount_of_a_row_with_a_later_field_too_long_to_read
+PASSED   tests/test_money_in.py::test_monzo_checks_the_header_before_reading_any_record
+PASSED   tests/test_money_in.py::test_monzo_counts_a_readable_amount_in_a_row_that_cannot_be_read_whole[bad byte]
+PASSED   tests/test_money_in.py::test_monzo_counts_a_readable_amount_in_a_row_that_cannot_be_read_whole[open quote]
+PASSED   tests/test_money_in.py::test_monzo_counts_an_amount_past_the_line_limit_toward_money_in
+PASSED   tests/test_money_in.py::test_monzo_counts_the_row_that_reaches_the_limit_even_if_its_balance_is_bad
+PASSED   tests/test_money_in.py::test_monzo_dates_offset_timestamps_in_utc_so_dates_keep_to_the_row_order
+PASSED   tests/test_money_in.py::test_monzo_names_the_line_of_a_bad_date_and_a_walked_balance
+PASSED   tests/test_money_in.py::test_monzo_never_writes_a_cell_the_statement_loader_cannot_read
+PASSED   tests/test_money_in.py::test_monzo_opening_balance_refusals_name_the_line
+PASSED   tests/test_money_in.py::test_monzo_reads_currency_and_amount_before_the_surplus_cell_check
+PASSED   tests/test_money_in.py::test_monzo_reads_nothing_past_the_first_problem
+PASSED   tests/test_money_in.py::test_monzo_refuses_a_row_missing_its_date_cell_naming_it
+PASSED   tests/test_money_in.py::test_monzo_refuses_a_row_with_more_cells_than_columns
+PASSED   tests/test_money_in.py::test_monzo_refuses_an_amount_past_the_line_limit_before_a_surplus_cell
+PASSED   tests/test_money_in.py::test_monzo_refuses_an_unreadable_description_on_its_own_row
+PASSED   tests/test_money_in.py::test_monzo_says_money_in_at_the_limit_before_an_unreadable_field
+PASSED   tests/test_money_in.py::test_monzo_says_money_in_at_the_limit_before_any_later_bad_row
+PASSED   tests/test_money_in.py::test_monzo_says_money_in_at_the_limit_before_the_opening_balance[first row blank]
+PASSED   tests/test_money_in.py::test_monzo_says_money_in_at_the_limit_before_the_opening_balance[no column]
+PASSED   tests/test_money_in.py::test_monzo_says_the_limit_when_the_crossing_row_has_a_bad_date
+PASSED   tests/test_money_in.py::test_monzo_skips_a_foreign_row_with_a_bad_byte_and_reads_on
+PASSED   tests/test_money_in.py::test_monzo_skips_a_foreign_row_with_a_field_too_long_to_read_and_reads_on[\n]
+PASSED   tests/test_money_in.py::test_monzo_skips_a_foreign_row_with_a_field_too_long_to_read_and_reads_on[\r\n]
+PASSED   tests/test_money_in.py::test_monzo_skips_a_foreign_row_with_a_field_too_long_to_read_and_reads_on[\r]
+PASSED   tests/test_money_in.py::test_monzo_skips_another_currency_before_checking_its_id
+PASSED   tests/test_money_in.py::test_monzo_walks_rows_by_the_time_their_date_cell_carries
+PASSED   tests/test_money_in.py::test_monzo_walks_timestamps_with_different_offsets_in_the_order_they_happened
+PASSED   tests/test_money_in.py::test_policy_compares_money_figures_in_the_figures_layer
+PASSED   tests/test_money_in.py::test_problems_name_the_line_a_person_sees_blank_lines_counted
+PASSED   tests/test_money_in.py::test_reading_a_long_record_never_changes_the_process_wide_csv_limit
+PASSED   tests/test_money_in.py::test_reading_on_past_many_long_records_never_recurses
+PASSED   tests/test_money_in.py::test_reading_past_many_long_records_reads_each_line_a_bounded_number_of_times
+PASSED   tests/test_money_in.py::test_records_are_related_to_one_another_once_reading_has_stopped
+PASSED   tests/test_money_in.py::test_records_before_an_unreadable_one_are_still_checked
+PASSED   tests/test_money_in.py::test_returned_payment_matching_compares_exact_pence
+PASSED   tests/test_money_in.py::test_returned_payment_matching_takes_its_pence_from_the_figures_layer
+PASSED   tests/test_money_in.py::test_the_cli_says_which_flow_and_which_lines_reached_the_limit_however_many_lines_are_wrong
+PASSED   tests/test_money_in.py::test_the_loader_checks_each_record_as_it_is_read
+PASSED   tests/test_money_in.py::test_the_money_in_figures_are_shown_to_the_penny_so_the_parts_add_up_to_the_whole
+PASSED   tests/test_money_in.py::test_the_monzo_import_reads_money_exactly_and_refuses_what_it_cannot_carry[10000000000000.00]
+PASSED   tests/test_money_in.py::test_the_monzo_import_reads_money_exactly_and_refuses_what_it_cannot_carry[12.345]
+PASSED   tests/test_money_in.py::test_the_monzo_importer_refuses_an_oversized_field_naming_its_line
+PASSED   tests/test_money_in.py::test_the_monzo_opening_balance_is_read_exactly_from_the_command_line
+PASSED   tests/test_money_in.py::test_uncategorised_credits_go_through_the_full_reconciliation
+PASSED   tests/test_monthly.py::test_cma_run_writes_the_monthly_summary_into_its_evidence_record
+PASSED   tests/test_monthly_hardening.py::test_a_fraction_of_a_penny_is_refused_not_reported_in_the_monthly_summary
+PASSED   tests/test_monthly_hardening.py::test_the_committed_example_monthly_summary_is_what_the_code_computes_from_its_lines
+PASSED   tests/test_monthly_hardening.py::test_the_monthly_summary_leaves_its_statement_unchanged_and_gives_the_same_answer_twice
+PASSED   tests/test_multi_account.py::test_a_protected_credit_is_never_paired
+PASSED   tests/test_multi_account.py::test_combined_buckets_reconcile_to_money_in
+PASSED   tests/test_multi_account.py::test_combined_figures_say_which_account_is_left_out
+PASSED   tests/test_multi_account.py::test_combined_figures_that_do_not_reconcile_show_no_account_either
+PASSED   tests/test_multi_account.py::test_combined_key_and_colon_are_never_account_keys[*]
+PASSED   tests/test_multi_account.py::test_combined_key_and_colon_are_never_account_keys[a:b]
+PASSED   tests/test_multi_account.py::test_combined_lines_need_the_token
+PASSED   tests/test_multi_account.py::test_import_refused_at_combined_limit
+PASSED   tests/test_multi_account.py::test_import_refused_naming_both_flows
+PASSED   tests/test_multi_account.py::test_import_refused_when_an_account_cannot_be_read_for_the_limit
+PASSED   tests/test_multi_account.py::test_lines_outside_the_days_or_in_one_account_do_not_pair
+PASSED   tests/test_multi_account.py::test_month_with_no_shared_day_is_na_others_read
+PASSED   tests/test_multi_account.py::test_one_account_has_no_combined_figures
+PASSED   tests/test_multi_account.py::test_one_account_workspace_has_no_combined
+PASSED   tests/test_multi_account.py::test_override_marks_combined_figures
+PASSED   tests/test_multi_account.py::test_override_moving_a_line_out_marks_combined_figures
+PASSED   tests/test_multi_account.py::test_override_on_a_paired_line_wins_and_unpairs_it
+PASSED   tests/test_multi_account.py::test_override_on_combined_key_is_refused
+PASSED   tests/test_multi_account.py::test_own_account_transfer_across_accounts_stays_out_of_trading
+PASSED   tests/test_multi_account.py::test_pairing_does_not_depend_on_the_order_accounts_were_imported
+PASSED   tests/test_multi_account.py::test_refused_combined_import_leaves_no_input_file
+PASSED   tests/test_multi_account.py::test_reimport_in_two_account_case_changes_nothing
+PASSED   tests/test_multi_account.py::test_two_accounts_not_overlapping_balance_figures_na
+PASSED   tests/test_multi_account.py::test_two_accounts_overlapping_combined_figures
+PASSED   tests/test_multi_account.py::test_workspace_not_overlapping_says_why
+PASSED   tests/test_multi_account.py::test_workspace_shows_all_accounts
+PASSED   tests/test_overrides.py::test_a_hand_edited_override_log_is_refused
+PASSED   tests/test_overrides.py::test_a_record_the_case_log_never_recorded_is_a_leftover_and_ignored
+PASSED   tests/test_overrides.py::test_a_refused_case_log_append_leaves_no_override_record
+PASSED   tests/test_overrides.py::test_a_stale_expected_log_position_is_a_conflict
+PASSED   tests/test_overrides.py::test_an_applied_override_is_not_stale_and_cannot_be_dropped_as_one
+PASSED   tests/test_overrides.py::test_an_identical_override_changes_nothing
+PASSED   tests/test_overrides.py::test_an_override_on_a_changed_statement_is_stale_until_confirmed
+PASSED   tests/test_overrides.py::test_an_override_on_a_missing_line_is_stale_and_can_only_be_dropped
+PASSED   tests/test_overrides.py::test_an_override_records_line_old_new_reason_name_user_and_utc_time
+PASSED   tests/test_overrides.py::test_case_figures_that_do_not_reconcile_are_refused_without_a_traceback
+PASSED   tests/test_overrides.py::test_category_must_be_valid_for_the_lines_direction
+PASSED   tests/test_overrides.py::test_cli_override_list_figures_and_resolve
+PASSED   tests/test_overrides.py::test_figures_that_rest_on_an_overridden_line_are_marked
+PASSED   tests/test_own_account_pairing.py::test_a_malformed_pairing_days_setting_is_refused['3']
+PASSED   tests/test_own_account_pairing.py::test_a_malformed_pairing_days_setting_is_refused[-1]
+PASSED   tests/test_own_account_pairing.py::test_a_malformed_pairing_days_setting_is_refused[1.5]
+PASSED   tests/test_own_account_pairing.py::test_a_malformed_pairing_days_setting_is_refused[32]
+PASSED   tests/test_own_account_pairing.py::test_a_malformed_pairing_days_setting_is_refused[[3]]
+PASSED   tests/test_own_account_pairing.py::test_a_malformed_pairing_days_setting_is_refused[true]
+PASSED   tests/test_own_account_pairing.py::test_a_malformed_pairing_days_setting_refuses_the_workspace_figures
+PASSED   tests/test_own_account_pairing.py::test_a_paired_line_can_be_overridden_back_to_what_the_table_gave_it
+PASSED   tests/test_own_account_pairing.py::test_overriding_a_paired_line_to_an_own_account_transfer_changes_nothing
+PASSED   tests/test_own_account_pairing.py::test_pairing_days_default_to_three
+PASSED   tests/test_own_account_pairing.py::test_pairing_follows_the_days_configured_in_firm_yaml
+PASSED   tests/test_own_account_pairing.py::test_removing_the_pairing_days_setting_restores_the_default
+PASSED   tests/test_own_account_pairing.py::test_the_configured_days_change_the_workspace_queue
+PASSED   tests/test_own_account_pairing.py::test_the_preview_snapshot_binds_the_pairing_days
+PASSED   tests/test_own_account_pairing.py::test_two_debits_with_the_same_single_candidate_are_both_unpaired_and_listed
+PASSED   tests/test_own_account_pairing.py::test_zero_pairing_days_pairs_only_same_day_moves_in_either_order
+PASSED   tests/test_p7_history.py::test_a_review_left_pending_by_the_pre_change_version_resumes_here
+PASSED   tests/test_p7_history.py::test_cma_run_refuses_when_the_rules_package_is_missing
+PASSED   tests/test_p7_history.py::test_rollback_a_review_left_pending_here_resumes_under_the_pre_change_version
+PASSED   tests/test_p7_history.py::test_the_built_wheel_carries_v1_byte_for_byte
+PASSED   tests/test_pack_evidence.py::test_cma_run_evidence_keeps_todays_keys
+PASSED   tests/test_pack_evidence.py::test_monthly_csv_is_the_monthly_summary_to_the_penny
+PASSED   tests/test_pack_evidence.py::test_p8_monthly_csv_text_cells_never_begin_with_a_formula_character[ids0]
+PASSED   tests/test_pack_evidence.py::test_p8_monthly_csv_text_cells_never_begin_with_a_formula_character[ids1]
+PASSED   tests/test_pack_evidence.py::test_p8_monthly_csv_text_cells_never_begin_with_a_formula_character[ids2]
+PASSED   tests/test_pack_evidence.py::test_pack_evidence_carries_todays_keys_per_account_in_the_same_shapes
+PASSED   tests/test_pack_evidence.py::test_pack_evidence_records_the_policy_check_hidden
+PASSED   tests/test_pack_evidence.py::test_pack_evidence_v1_names_every_input_the_sign_off_and_offline_egress
+PASSED   tests/test_policy.py::test_a_fraction_of_a_penny_past_decimal_precision_is_not_whole_pence
+PASSED   tests/test_policy.py::test_a_money_limit_is_checked_as_written_in_the_policy_file
+PASSED   tests/test_policy.py::test_a_money_limit_that_is_not_whole_pence_is_refused[refer_above-0.0001]
+PASSED   tests/test_policy.py::test_a_money_limit_that_is_not_whole_pence_is_refused[refer_below-1200.001]
+PASSED   tests/test_policy.py::test_a_money_limit_that_is_not_whole_pence_is_refused[threshold-1000.005]
+PASSED   tests/test_policy.py::test_money_figures_are_compared_with_their_limits_in_whole_pence
+PASSED   tests/test_preview.py::test_cli_case_preview
+PASSED   tests/test_preview.py::test_cli_case_preview_ungrounded_and_refused
+PASSED   tests/test_preview.py::test_field_map_template_cannot_reach_attributes_indexes_or_positions[{0}]
+PASSED   tests/test_preview.py::test_field_map_template_cannot_reach_attributes_indexes_or_positions[{M2!r}]
+PASSED   tests/test_preview.py::test_field_map_template_cannot_reach_attributes_indexes_or_positions[{M2.__class__}]
+PASSED   tests/test_preview.py::test_field_map_template_cannot_reach_attributes_indexes_or_positions[{M2[0]}]
+PASSED   tests/test_preview.py::test_field_map_template_cannot_reach_attributes_indexes_or_positions[{}]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields: [\n-not valid YAML]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields: []\n-no fields]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields:\n  - id: a\n    title: A\n    colour: red\n-unknown key]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields:\n  - id: a\n    title: A\n    figures: [M2, M3]\n    template: '{M2}'\n-M3 is listed]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields:\n  - id: a\n    title: A\n    figures: [M2]\n    template: '{M2:.2f}'\n-takes no format]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields:\n  - id: a\n    title: A\n    figures: [M2]\n    template: '{M3}'\n-placeholder {M3}]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields:\n  - id: a\n    title: A\n    figures: [M2]\n-need a template]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields:\n  - id: a\n    title: A\n    figures: [M99]\n    template: '{M99}'\n-not a figure id]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields:\n  - id: a\n    title: A\n    template: 'x'\n-needs the figures]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields:\n  - id: a\n    title: A\n    title: B\n-more than once]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields:\n  - id: a\n    title: A\n  - id: a\n    title: B\n-more than once]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields:\n  - id: advice\n    title: Recommendation\n    figures: [M2]\n    template: '{M2}'\n-judgement field]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields:\n  - id: credit_history\n    title: C\n    figures: [M2]\n    template: '{M2}'\n-judgement field]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields:\n  - id: key_risks\n    title: K\n    figures: [M2]\n    template: '{M2}'\n-judgement field]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields:\n  - id: recommendation\n    title: R\n    figures: [M2]\n    template: '{M2}'\n-judgement field]
+PASSED   tests/test_preview.py::test_malformed_field_map_is_refused_naming_the_problem[fields:\n  - id: risks\n    title: '  key   RISKS '\n    figures: [M2]\n    template: '{M2}'\n-judgement field]
+PASSED   tests/test_preview.py::test_packaged_field_map_is_the_replys_13_fields_with_m18_next_to_m2
+PASSED   tests/test_previous_release.py::test_a_checkpoint_written_by_the_previous_release_resumes
+PASSED   tests/test_previous_release.py::test_a_second_run_with_the_same_out_is_refused_and_leaves_the_record
+PASSED   tests/test_previous_release.py::test_all_extras_are_installed
+PASSED   tests/test_previous_release.py::test_the_previous_release_is_really_the_old_code
+PASSED   tests/test_previous_release.py::test_the_previous_release_loads_a_transaction_this_one_writes
+PASSED   tests/test_record.py::test_p8_line_ids_and_the_signers_name_reach_the_record_only_escaped
+PASSED   tests/test_record.py::test_r22_r24_the_record_shows_the_sign_off_and_never_approves_the_loan
+PASSED   tests/test_record.py::test_r26_r16_every_figure_bucket_and_cell_links_to_exactly_its_lines
+PASSED   tests/test_record.py::test_r26_r42_a_record_that_fails_to_render_writes_no_pack_and_records_nothing
+PASSED   tests/test_record.py::test_r26_the_pack_writes_record_html_once_with_its_hash_in_the_case_log
+PASSED   tests/test_record.py::test_r26_the_record_refers_to_nothing_outside_itself[False]
+PASSED   tests/test_record.py::test_r26_the_record_refers_to_nothing_outside_itself[True]
+PASSED   tests/test_record.py::test_r48_a_demo_case_shows_the_banner_and_stamp_in_the_workspace_memo_and_record[False]
+PASSED   tests/test_record.py::test_r48_a_demo_case_shows_the_banner_and_stamp_in_the_workspace_memo_and_record[True]
+PASSED   tests/test_report.py::test_r50_a_case_gone_while_listed_is_refused_and_the_others_reported
+PASSED   tests/test_report.py::test_r50_a_missed_vat_payment_with_no_vat_line_is_traced
+PASSED   tests/test_report.py::test_r50_a_zero_or_na_monthly_derived_cell_must_cite_or_say_why
+PASSED   tests/test_report.py::test_r50_a_zero_valued_derived_figure_with_no_lines_is_untraced
+PASSED   tests/test_report.py::test_r50_an_unreadable_statement_does_not_hide_the_sign_off
+PASSED   tests/test_report.py::test_r50_report_exits_non_zero_on_an_unreconciled_case
+PASSED   tests/test_report.py::test_r50_report_exits_non_zero_on_an_untraced_case
+PASSED   tests/test_report.py::test_r50_report_one_failing_case_does_not_hide_the_others
+PASSED   tests/test_report.py::test_r50_report_output_holds_no_sentinel_and_no_duration
+PASSED   tests/test_report.py::test_r50_report_refuses_a_case_root_git_does_not_ignore
+PASSED   tests/test_report.py::test_r50_report_summarises_each_case
+PASSED   tests/test_report.py::test_r50_report_with_no_cases
+PASSED   tests/test_report.py::test_r50_report_writes_nothing_and_changes_no_mode
+PASSED   tests/test_review_server.py::test_a_bad_host_is_refused_even_with_the_token[0.0.0.0:{port}]
+PASSED   tests/test_review_server.py::test_a_bad_host_is_refused_even_with_the_token[127.0.0.1:{other}]
+PASSED   tests/test_review_server.py::test_a_bad_host_is_refused_even_with_the_token[127.0.0.1:{port}, evil.example]
+PASSED   tests/test_review_server.py::test_a_bad_host_is_refused_even_with_the_token[127.0.0.1:{port}.evil.example]
+PASSED   tests/test_review_server.py::test_a_bad_host_is_refused_even_with_the_token[127.0.0.1]
+PASSED   tests/test_review_server.py::test_a_bad_host_is_refused_even_with_the_token[127.0.0.2:{port}]
+PASSED   tests/test_review_server.py::test_a_bad_host_is_refused_even_with_the_token[[::1]:{port}]
+PASSED   tests/test_review_server.py::test_a_bad_host_is_refused_even_with_the_token[]
+PASSED   tests/test_review_server.py::test_a_bad_host_is_refused_even_with_the_token[evil.example:{port}]
+PASSED   tests/test_review_server.py::test_a_bad_host_is_refused_even_with_the_token[evil.example]
+PASSED   tests/test_review_server.py::test_a_bad_host_is_refused_even_with_the_token[localhost:{port}]
+PASSED   tests/test_review_server.py::test_a_cross_origin_request_is_refused
+PASSED   tests/test_review_server.py::test_a_missing_or_repeated_host_is_refused
+PASSED   tests/test_review_server.py::test_an_http_1_0_request_with_no_host_is_refused
+PASSED   tests/test_review_server.py::test_an_idle_connection_is_closed
+PASSED   tests/test_review_server.py::test_an_unread_body_is_never_parsed_as_a_second_request
+PASSED   tests/test_review_server.py::test_cma_review_prints_the_url_with_its_token_and_serves_it
+PASSED   tests/test_review_server.py::test_cma_review_refuses_an_unknown_case
+PASSED   tests/test_review_server.py::test_each_launch_issues_a_new_random_token
+PASSED   tests/test_review_server.py::test_every_response_carries_a_strict_csp
+PASSED   tests/test_review_server.py::test_listens_on_the_loopback_interface_only
+PASSED   tests/test_review_server.py::test_methods_other_than_get_are_not_served
+PASSED   tests/test_review_server.py::test_no_cors_headers_are_ever_sent
+PASSED   tests/test_review_server.py::test_nothing_but_the_bundled_assets_is_served[/../../etc/passwd]
+PASSED   tests/test_review_server.py::test_nothing_but_the_bundled_assets_is_served[/etc/passwd]
+PASSED   tests/test_review_server.py::test_nothing_but_the_bundled_assets_is_served[/favicon.ico]
+PASSED   tests/test_review_server.py::test_nothing_but_the_bundled_assets_is_served[/server.py]
+PASSED   tests/test_review_server.py::test_nothing_but_the_bundled_assets_is_served[/static/%2e%2e/server.py]
+PASSED   tests/test_review_server.py::test_nothing_but_the_bundled_assets_is_served[/static/..%2fserver.py]
+PASSED   tests/test_review_server.py::test_nothing_but_the_bundled_assets_is_served[/static/../server.py]
+PASSED   tests/test_review_server.py::test_nothing_but_the_bundled_assets_is_served[/static//app.js]
+PASSED   tests/test_review_server.py::test_nothing_but_the_bundled_assets_is_served[/static/APP.JS]
+PASSED   tests/test_review_server.py::test_nothing_but_the_bundled_assets_is_served[/static/]
+PASSED   tests/test_review_server.py::test_nothing_but_the_bundled_assets_is_served[/static/app.js%00]
+PASSED   tests/test_review_server.py::test_nothing_but_the_bundled_assets_is_served[/static/app.js/]
+PASSED   tests/test_review_server.py::test_nothing_but_the_bundled_assets_is_served[/static/index.html]
+PASSED   tests/test_review_server.py::test_nothing_but_the_bundled_assets_is_served[/static]
+PASSED   tests/test_review_server.py::test_nothing_but_the_bundled_assets_is_served[http://evil.example/static/app.js]
+PASSED   tests/test_review_server.py::test_refuses_to_bind_anything_but_loopback
+PASSED   tests/test_review_server.py::test_requests_with_a_wrong_token_are_refused
+PASSED   tests/test_review_server.py::test_requests_without_the_token_are_refused
+PASSED   tests/test_review_server.py::test_says_so_when_no_port_is_free
+PASSED   tests/test_review_server.py::test_serves_the_bundled_assets_byte_for_byte
+PASSED   tests/test_review_server.py::test_takes_the_next_free_port
+PASSED   tests/test_review_server.py::test_the_bundled_assets_reference_nothing_outside_the_package
+PASSED   tests/test_review_server.py::test_the_page_has_no_inline_script_or_style
+PASSED   tests/test_review_server.py::test_the_port_is_claimed_alone_where_the_platform_allows_it
+PASSED   tests/test_review_server.py::test_the_request_log_never_holds_the_token
+PASSED   tests/test_review_server.py::test_the_token_in_the_query_or_the_header_is_accepted
+PASSED   tests/test_rules.py::test_a_legacy_resume_with_a_damaged_table_is_refused_before_anything_is_recorded
+PASSED   tests/test_rules.py::test_a_review_drafted_before_the_ruleset_was_recorded_still_names_v1
+PASSED   tests/test_rules.py::test_a_ruleset_id_cannot_name_a_path
+PASSED   tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[category: revenue_card_settlement-category: other]
+PASSED   tests/test_rules.py::test_a_schema_valid_change_to_frozen_v1_is_refused[direction: any\n-direction: in\n]
+PASSED   tests/test_rules.py::test_a_t02_checkpoint_with_a_recorded_v1_ruleset_but_no_line_rule_ids_replays_v1
+PASSED   tests/test_rules.py::test_an_unknown_ruleset_is_refused_naming_the_known_ones
+PASSED   tests/test_rules.py::test_cma_run_refuses_a_changed_v1_and_writes_no_evidence
+PASSED   tests/test_rules.py::test_cma_run_refuses_a_missing_table_rather_than_blaming_the_model
+PASSED   tests/test_rules.py::test_evidence_records_the_ruleset
+PASSED   tests/test_rules.py::test_rule_tables_keep_lf_line_endings_on_every_checkout
+PASSED   tests/test_rules.py::test_switching_v1_frozen_off_is_refused
+PASSED   tests/test_rules.py::test_v1_hash_is_pinned_in_code
+PASSED   tests/test_rules.py::test_v1_is_packaged_with_an_id_and_the_hash_of_its_file
+PASSED   tests/test_rules_v2.py::test_a_bank_code_only_in_one_alternative_is_missing_from_the_other_version
+PASSED   tests/test_rules_v2.py::test_a_bank_code_rule_is_named_if_any_combination_of_its_values_is_not_the_code
+PASSED   tests/test_rules_v2.py::test_a_category_order_given_as_null_is_refused
+PASSED   tests/test_rules_v2.py::test_a_changed_v1_is_refused_as_a_changed_frozen_table_whatever_else_it_breaks[<lambda>0]
+PASSED   tests/test_rules_v2.py::test_a_changed_v1_is_refused_as_a_changed_frozen_table_whatever_else_it_breaks[<lambda>1]
+PASSED   tests/test_rules_v2.py::test_a_changed_v1_is_refused_as_a_changed_frozen_table_whatever_else_it_breaks[<lambda>2]
+PASSED   tests/test_rules_v2.py::test_a_changed_v1_names_a_contradictory_direction_and_category
+PASSED   tests/test_rules_v2.py::test_a_changed_v1_names_the_exceptions_r4_forbids
+PASSED   tests/test_rules_v2.py::test_a_changed_v1_reusing_the_bank_code_text_on_another_rule_names_the_anchor
+PASSED   tests/test_rules_v2.py::test_a_changed_v1_with_a_malformed_bank_code_rule_is_still_named_changed
+PASSED   tests/test_rules_v2.py::test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults[!!binary [1]]
+PASSED   tests/test_rules_v2.py::test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults[!!bool {a: 1}]
+PASSED   tests/test_rules_v2.py::test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults[!!float [1.0]]
+PASSED   tests/test_rules_v2.py::test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults[!!int [1, 2]]
+PASSED   tests/test_rules_v2.py::test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults[!!map 1]
+PASSED   tests/test_rules_v2.py::test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults[!!null [1]]
+PASSED   tests/test_rules_v2.py::test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults[!!omap [1]]
+PASSED   tests/test_rules_v2.py::test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults[!!pairs x]
+PASSED   tests/test_rules_v2.py::test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults[!!seq x]
+PASSED   tests/test_rules_v2.py::test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults[!!set [1]]
+PASSED   tests/test_rules_v2.py::test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults[!!str [1]]
+PASSED   tests/test_rules_v2.py::test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults[!!timestamp [x]]
+PASSED   tests/test_rules_v2.py::test_a_collection_tagged_as_a_scalar_is_named_with_the_other_faults[{<<: 1}]
+PASSED   tests/test_rules_v2.py::test_a_debit_only_copy_of_the_bank_code_has_its_anchor_named
+PASSED   tests/test_rules_v2.py::test_a_fault_in_another_field_never_hides_an_unusable_pattern[other0]
+PASSED   tests/test_rules_v2.py::test_a_fault_in_another_field_never_hides_an_unusable_pattern[other1]
+PASSED   tests/test_rules_v2.py::test_a_frozen_table_has_no_category_order
+PASSED   tests/test_rules_v2.py::test_a_frozen_table_keeps_its_patterns_exactly
+PASSED   tests/test_rules_v2.py::test_a_greedy_repeat_before_an_optional_phrase_still_counts_its_longest_match
+PASSED   tests/test_rules_v2.py::test_a_key_given_twice_inside_a_field_is_named_with_the_other_faults
+PASSED   tests/test_rules_v2.py::test_a_listed_name_joined_to_other_letters_by_any_mark_is_not_that_name[\U000e0100]
+PASSED   tests/test_rules_v2.py::test_a_listed_name_joined_to_other_letters_by_any_mark_is_not_that_name[\u0301]
+PASSED   tests/test_rules_v2.py::test_a_listed_name_joined_to_other_letters_by_any_mark_is_not_that_name[\u0483]
+PASSED   tests/test_rules_v2.py::test_a_listed_name_joined_to_other_letters_by_any_mark_is_not_that_name[\u05b7]
+PASSED   tests/test_rules_v2.py::test_a_listed_name_joined_to_other_letters_by_any_mark_is_not_that_name[\u0901]
+PASSED   tests/test_rules_v2.py::test_a_listed_name_joined_to_other_letters_by_any_mark_is_not_that_name[\u0e31]
+PASSED   tests/test_rules_v2.py::test_a_loaded_rule_keeps_its_end_forced_matchers
+PASSED   tests/test_rules_v2.py::test_a_longer_phrase_starting_inside_another_match_still_hides_the_words_inside_it
+PASSED   tests/test_rules_v2.py::test_a_lookaround_in_a_pattern_that_does_not_compile_is_still_named
+PASSED   tests/test_rules_v2.py::test_a_malformed_exception_does_not_hide_the_same_rules_matcher_fault
+PASSED   tests/test_rules_v2.py::test_a_malformed_pattern_is_named_never_raised_as_a_type_error[3]
+PASSED   tests/test_rules_v2.py::test_a_malformed_pattern_is_named_never_raised_as_a_type_error[value0]
+PASSED   tests/test_rules_v2.py::test_a_malformed_pattern_is_named_never_raised_as_a_type_error[value1]
+PASSED   tests/test_rules_v2.py::test_a_malformed_pattern_on_a_bank_code_rule_is_named_never_a_type_error[value0]
+PASSED   tests/test_rules_v2.py::test_a_malformed_pattern_on_a_bank_code_rule_is_named_never_a_type_error[value1]
+PASSED   tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules0-missing pattern]
+PASSED   tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules1-names must be]
+PASSED   tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules10-protected rule must come before]
+PASSED   tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules11-pattern and names do not compile together]
+PASSED   tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules2-names must be]
+PASSED   tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules3-names must be]
+PASSED   tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules4-listed twice]
+PASSED   tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules5-unless does not compile]
+PASSED   tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules6-unless 3 is not]
+PASSED   tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules7-requires does not compile]
+PASSED   tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules8-requires \\['REFUND'\\] is not]
+PASSED   tests/test_rules_v2.py::test_a_malformed_v2_rule_is_refused_naming_the_problem[rules9-protected must be]
+PASSED   tests/test_rules_v2.py::test_a_merge_key_in_the_table_is_refused_and_named
+PASSED   tests/test_rules_v2.py::test_a_mixed_rule_finds_its_longest_match_at_each_start_across_pattern_and_names
+PASSED   tests/test_rules_v2.py::test_a_named_lender_refund_is_a_protected_refund_for_every_lender_and_refund_word
+PASSED   tests/test_rules_v2.py::test_a_non_v1_table_marked_frozen_builds_its_matchers_as_a_maintained_list
+PASSED   tests/test_rules_v2.py::test_a_non_v1_table_marked_frozen_is_checked_as_a_maintained_list
+PASSED   tests/test_rules_v2.py::test_a_pattern_given_twice_has_each_value_checked
+PASSED   tests/test_rules_v2.py::test_a_pattern_that_cannot_be_matched_at_every_position_is_refused_at_load
+PASSED   tests/test_rules_v2.py::test_a_pattern_that_compiles_alone_but_cannot_be_used_is_named_with_other_faults
+PASSED   tests/test_rules_v2.py::test_a_phrase_set_aside_inside_a_longer_one_hides_nothing
+PASSED   tests/test_rules_v2.py::test_a_profile_value_of_only_separators_names_no_one[ . ]
+PASSED   tests/test_rules_v2.py::test_a_profile_value_of_only_separators_names_no_one[ ]
+PASSED   tests/test_rules_v2.py::test_a_profile_value_of_only_separators_names_no_one[-]
+PASSED   tests/test_rules_v2.py::test_a_profile_value_of_only_separators_names_no_one[/ /]
+PASSED   tests/test_rules_v2.py::test_a_profile_value_of_only_separators_names_no_one[\u200b]
+PASSED   tests/test_rules_v2.py::test_a_profile_value_of_only_separators_names_no_one[\u2013]
+PASSED   tests/test_rules_v2.py::test_a_rail_inside_a_longer_cash_phrase_is_not_hidden
+PASSED   tests/test_rules_v2.py::test_a_repeated_bank_code_flag_of_true_counts_as_true
+PASSED   tests/test_rules_v2.py::test_a_repeated_bank_code_pattern_with_the_codes_text_counts_as_present
+PASSED   tests/test_rules_v2.py::test_a_repeated_category_still_counts_toward_the_category_order
+PASSED   tests/test_rules_v2.py::test_a_repeated_direction_and_category_must_agree_in_every_combination
+PASSED   tests/test_rules_v2.py::test_a_repeated_line_type_stage_does_not_ask_a_cue_for_a_category
+PASSED   tests/test_rules_v2.py::test_a_repeated_pattern_that_does_not_compile_is_named
+PASSED   tests/test_rules_v2.py::test_a_repeated_protected_value_that_is_false_is_still_checked
+PASSED   tests/test_rules_v2.py::test_a_repeated_rules_list_still_has_each_rule_checked
+PASSED   tests/test_rules_v2.py::test_a_rule_for_any_direction_cannot_give_a_money_in_only_category
+PASSED   tests/test_rules_v2.py::test_a_rules_direction_and_category_must_agree[any-supplier]
+PASSED   tests/test_rules_v2.py::test_a_rules_direction_and_category_must_agree[in-rent]
+PASSED   tests/test_rules_v2.py::test_a_rules_direction_and_category_must_agree[out-revenue_transfer]
+PASSED   tests/test_rules_v2.py::test_a_scalar_the_loader_cannot_build_is_named_by_rule_with_the_other_faults[!!float x]
+PASSED   tests/test_rules_v2.py::test_a_scalar_the_loader_cannot_build_is_named_by_rule_with_the_other_faults[!!int abc]
+PASSED   tests/test_rules_v2.py::test_a_scalar_the_loader_cannot_build_is_named_by_rule_with_the_other_faults[2026-02-30]
+PASSED   tests/test_rules_v2.py::test_a_table_cannot_skip_the_v2_checks_by_calling_itself_frozen
+PASSED   tests/test_rules_v2.py::test_a_table_pattern_word_edge_is_mark_aware_too[\U000e0100]
+PASSED   tests/test_rules_v2.py::test_a_table_pattern_word_edge_is_mark_aware_too[\u0301]
+PASSED   tests/test_rules_v2.py::test_a_table_pattern_word_edge_is_mark_aware_too[\u0483]
+PASSED   tests/test_rules_v2.py::test_a_table_pattern_word_edge_is_mark_aware_too[\u05b7]
+PASSED   tests/test_rules_v2.py::test_a_table_pattern_word_edge_is_mark_aware_too[\u0901]
+PASSED   tests/test_rules_v2.py::test_a_table_pattern_word_edge_is_mark_aware_too[\u0e31]
+PASSED   tests/test_rules_v2.py::test_a_typographic_dash_or_invisible_character_hides_no_listed_name[\u200b]
+PASSED   tests/test_rules_v2.py::test_a_typographic_dash_or_invisible_character_hides_no_listed_name[\u2011]
+PASSED   tests/test_rules_v2.py::test_a_typographic_dash_or_invisible_character_hides_no_listed_name[\u2013]
+PASSED   tests/test_rules_v2.py::test_a_typographic_dash_or_invisible_character_hides_no_listed_name[\u2014]
+PASSED   tests/test_rules_v2.py::test_a_typographic_dash_or_invisible_character_hides_no_listed_name[\u2212]
+PASSED   tests/test_rules_v2.py::test_a_typographic_dash_or_invisible_character_hides_no_listed_name[\ufeff]
+PASSED   tests/test_rules_v2.py::test_a_typographic_dash_or_invisible_character_hides_no_listed_name[\xad]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_may_not_carry_an_anchor_except_the_bank_code[(?:^|COUNTER )CASH DEPOSIT]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_may_not_carry_an_anchor_except_the_bank_code[CASH DEPOSIT$]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_may_not_carry_an_anchor_except_the_bank_code[CASH DEPOSIT\\Z]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_may_not_carry_an_anchor_except_the_bank_code[\\ACASH DEPOSIT]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_may_not_carry_an_anchor_except_the_bank_code[^CASH DEPOSIT]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_may_not_hide_an_exception_in_a_lookaround[(?<!FPS )CASH DEPOSIT]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_may_not_hide_an_exception_in_a_lookaround[(?<=COUNTER )CASH]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_may_not_hide_an_exception_in_a_lookaround[CASH DEPOSIT(?!.*FPS)]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_may_not_hide_an_exception_in_a_lookaround[CASH(?= DEPOSIT)]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_repeating_one_kind_of_character_is_allowed[\\bINV(?:OICE)?\\s*[-#:]?\\s*\\d+]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_repeating_one_kind_of_character_is_allowed[\\bREF\\d+]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_repeating_one_kind_of_character_is_allowed[\\b[A-Z]+LTD\\b]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_that_can_match_no_text_is_refused[(?:ACME)?]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_that_can_match_no_text_is_refused[(?=ACME)]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_that_can_match_no_text_is_refused[\\b]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_that_can_run_across_words_is_refused_at_load[(?:\\d+\\s)+]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_that_can_run_across_words_is_refused_at_load[(?s)\\bACME.+?LTD]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_that_can_run_across_words_is_refused_at_load[SQUARE.*]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_that_can_run_across_words_is_refused_at_load[\\bSQUARE[A-Z ]+]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_that_cannot_backtrack_is_refused_at_load[(?>ACME|ACME FASTER PAYMENT LTD)]
+PASSED   tests/test_rules_v2.py::test_a_v2_pattern_that_cannot_backtrack_is_refused_at_load[\\bACME\\w*+]
+PASSED   tests/test_rules_v2.py::test_a_v2_rule_cannot_take_an_id_the_categoriser_uses_for_its_own_provenance[conflict]
+PASSED   tests/test_rules_v2.py::test_a_v2_rule_cannot_take_an_id_the_categoriser_uses_for_its_own_provenance[default]
+PASSED   tests/test_rules_v2.py::test_a_v2_rule_cannot_take_an_id_the_categoriser_uses_for_its_own_provenance[round_trip]
+PASSED   tests/test_rules_v2.py::test_a_v2_rule_id_cannot_hold_a_separator_used_in_recorded_candidates[card gateway]
+PASSED   tests/test_rules_v2.py::test_a_v2_rule_id_cannot_hold_a_separator_used_in_recorded_candidates[card+gateway]
+PASSED   tests/test_rules_v2.py::test_a_v2_rule_id_cannot_hold_a_separator_used_in_recorded_candidates[card:x]
+PASSED   tests/test_rules_v2.py::test_a_v2_rule_may_not_carry_an_exception_that_could_hide_cash_wording[requires]
+PASSED   tests/test_rules_v2.py::test_a_v2_rule_may_not_carry_an_exception_that_could_hide_cash_wording[unless]
+PASSED   tests/test_rules_v2.py::test_a_v2_table_must_keep_its_stages[<lambda>-a line_type rule must be protected]
+PASSED   tests/test_rules_v2.py::test_a_v2_table_must_keep_its_stages[<lambda>-a line_type rule must come before every names rule]
+PASSED   tests/test_rules_v2.py::test_a_v2_table_must_keep_its_stages[<lambda>-is not one of]
+PASSED   tests/test_rules_v2.py::test_a_v2_table_must_keep_its_stages[<lambda>-missing stage]
+PASSED   tests/test_rules_v2.py::test_a_v2_table_must_order_every_bucket_with_two_categories[<lambda>-'nonsense' is not a category]
+PASSED   tests/test_rules_v2.py::test_a_v2_table_must_order_every_bucket_with_two_categories[<lambda>-bucket refunds_returned_payments_in]
+PASSED   tests/test_rules_v2.py::test_a_v2_table_must_order_every_bucket_with_two_categories[<lambda>-bucket trading_receipts has categories]
+PASSED   tests/test_rules_v2.py::test_a_v2_table_must_order_every_bucket_with_two_categories[<lambda>-listed twice]
+PASSED   tests/test_rules_v2.py::test_a_v2_table_must_order_every_bucket_with_two_categories[<lambda>-must be a list]
+PASSED   tests/test_rules_v2.py::test_a_value_yaml_cannot_build_never_loads_as_text[category-2026-02-30]
+PASSED   tests/test_rules_v2.py::test_a_value_yaml_cannot_build_never_loads_as_text[names-[!!float x]]
+PASSED   tests/test_rules_v2.py::test_a_value_yaml_cannot_build_never_loads_as_text[pattern-!!int abc]
+PASSED   tests/test_rules_v2.py::test_a_value_yaml_cannot_build_never_loads_as_text[protected-!!bool maybe]
+PASSED   tests/test_rules_v2.py::test_alternative_categories_on_one_rule_are_never_counted_together
+PASSED   tests/test_rules_v2.py::test_an_anchored_cue_without_the_flag_gets_no_bank_code_exception
+PASSED   tests/test_rules_v2.py::test_an_earlier_rule_with_a_repeated_stage_counts_each_stage_for_ordering
+PASSED   tests/test_rules_v2.py::test_an_explicit_pot_move_beats_protected_wording_in_the_pot_name
+PASSED   tests/test_rules_v2.py::test_an_invalid_bank_code_flag_does_not_excuse_an_anchor
+PASSED   tests/test_rules_v2.py::test_an_occurrence_set_aside_hides_nothing_even_when_its_rule_counts_elsewhere
+PASSED   tests/test_rules_v2.py::test_an_unknown_tag_or_a_self_referencing_value_is_named_with_the_other_faults[!foo [1]]
+PASSED   tests/test_rules_v2.py::test_an_unknown_tag_or_a_self_referencing_value_is_named_with_the_other_faults[!foo x]
+PASSED   tests/test_rules_v2.py::test_an_unknown_tag_or_a_self_referencing_value_is_named_with_the_other_faults[&x [*x]]
+PASSED   tests/test_rules_v2.py::test_cash_wording_inside_a_longer_rail_phrase_is_not_hidden
+PASSED   tests/test_rules_v2.py::test_cash_wording_listed_as_a_cue_is_still_ambiguous_with_a_rail
+PASSED   tests/test_rules_v2.py::test_categorise_is_idempotent_under_v2_with_every_source
+PASSED   tests/test_rules_v2.py::test_cma_ruleset_v2_chooses_the_v2_table
+PASSED   tests/test_rules_v2.py::test_cma_run_under_v1_records_v1_rule_ids_and_keeps_old_evidence_keys
+PASSED   tests/test_rules_v2.py::test_cma_run_under_v2_categorises_with_v2_and_records_each_lines_rule
+PASSED   tests/test_rules_v2.py::test_cma_run_under_v2_keeps_a_post_office_transfer_out_of_trading_receipts
+PASSED   tests/test_rules_v2.py::test_cma_run_under_v2_lists_the_verify27_repros_as_unexplained_with_their_candidates
+PASSED   tests/test_rules_v2.py::test_cma_run_under_v2_records_the_second_review_repros_as_their_buckets
+PASSED   tests/test_rules_v2.py::test_cma_run_under_v2_records_the_third_review_repros_as_their_buckets
+PASSED   tests/test_rules_v2.py::test_cma_run_under_v2_records_the_verify32_repros_with_every_candidate
+PASSED   tests/test_rules_v2.py::test_each_repeated_rules_list_is_checked_as_its_own_table
+PASSED   tests/test_rules_v2.py::test_each_value_of_a_repeated_category_order_is_checked
+PASSED   tests/test_rules_v2.py::test_each_value_of_a_repeated_frozen_flag_runs_its_own_checks
+PASSED   tests/test_rules_v2.py::test_each_value_of_a_repeated_pattern_is_built_as_a_matcher
+PASSED   tests/test_rules_v2.py::test_each_value_of_a_repeated_rule_id_is_checked_for_uniqueness
+PASSED   tests/test_rules_v2.py::test_each_value_of_a_repeated_rules_key_is_named_when_it_is_no_list_of_rules
+PASSED   tests/test_rules_v2.py::test_each_value_of_a_repeated_table_id_is_checked
+PASSED   tests/test_rules_v2.py::test_every_listed_name_matches_its_rule_whatever_the_spacing
+PASSED   tests/test_rules_v2.py::test_every_value_of_a_repeated_field_gets_the_fields_own_checks
+PASSED   tests/test_rules_v2.py::test_every_value_of_a_repeated_field_is_checked_however_many
+PASSED   tests/test_rules_v2.py::test_every_value_of_a_repeated_pattern_is_compiled_and_built[values0-pattern does not compile]
+PASSED   tests/test_rules_v2.py::test_every_value_of_a_repeated_pattern_is_compiled_and_built[values1-its pattern cannot be used]
+PASSED   tests/test_rules_v2.py::test_evidence_lines_carry_ids_only_never_descriptions
+PASSED   tests/test_rules_v2.py::test_line_type_cue_beats_every_name_list_in_a_full_matrix
+PASSED   tests/test_rules_v2.py::test_no_digest_is_no_verification_for_v1_data
+PASSED   tests/test_rules_v2.py::test_only_a_line_type_cue_of_a_v2_table_may_have_no_category
+PASSED   tests/test_rules_v2.py::test_only_the_banks_returned_payment_code_settles_a_credit_alone
+PASSED   tests/test_rules_v2.py::test_overlaps_from_the_review_hold_for_every_listed_word
+PASSED   tests/test_rules_v2.py::test_returned_dd_cue_beats_every_name_on_every_list_either_direction
+PASSED   tests/test_rules_v2.py::test_spelling_and_advance_wording_never_reach_trading_by_accident[ADVANCE PAYMENT INV 123-revenue_transfer-v2:invoice_transfer]
+PASSED   tests/test_rules_v2.py::test_spelling_and_advance_wording_never_reach_trading_by_accident[FASTER-PAYMENT CASH DEPOSIT-other-v2:conflict:payment_rail+cash_paid_in]
+PASSED   tests/test_rules_v2.py::test_spelling_and_advance_wording_never_reach_trading_by_accident[SQUARE CASH ADVANCE-loan_drawdown-v2:loan_drawdown]
+PASSED   tests/test_rules_v2.py::test_spelling_and_advance_wording_never_reach_trading_by_accident[SUM UP CASH ADVANCE-loan_drawdown-v2:lender_drawdown]
+PASSED   tests/test_rules_v2.py::test_spelling_and_advance_wording_never_reach_trading_by_accident[ZETTLE MERCHANT ADVANCE-other-v2:conflict:loan_drawdown+card_acquirers]
+PASSED   tests/test_rules_v2.py::test_the_bank_code_cannot_be_unflagged_or_left_out_of_a_v2_table
+PASSED   tests/test_rules_v2.py::test_the_bank_code_flag_is_refused_on_any_other_rule
+PASSED   tests/test_rules_v2.py::test_the_bank_code_rule_must_apply_to_credits
+PASSED   tests/test_rules_v2.py::test_the_bank_code_rule_takes_no_exceptions
+PASSED   tests/test_rules_v2.py::test_the_bank_code_settles_the_line_before_a_longer_listed_phrase
+PASSED   tests/test_rules_v2.py::test_the_bank_code_shape_is_tried_with_each_value_of_its_repeated_fields
+PASSED   tests/test_rules_v2.py::test_the_form_a_longest_match_search_uses_is_compiled_at_load
+PASSED   tests/test_rules_v2.py::test_the_longest_alternative_of_one_pattern_counts_as_the_longer_phrase
+PASSED   tests/test_rules_v2.py::test_the_round_trip_pass_never_undoes_an_override_whatever_its_reference_reads
+PASSED   tests/test_rules_v2.py::test_the_shipped_v2_table_loads_with_its_bank_code_anchor
+PASSED   tests/test_rules_v2.py::test_v2_declares_its_category_order_in_the_table
+PASSED   tests/test_rules_v2.py::test_v2_is_packaged_with_an_id_and_the_hash_of_its_file
+PASSED   tests/test_rules_v2.py::test_values_on_different_rules_with_alternatives_still_coexist_for_the_order
+PASSED   tests/test_signoff.py::test_case_repair_changes_nothing_unless_a_named_person_confirms[  \n\n-2]
+PASSED   tests/test_signoff.py::test_case_repair_changes_nothing_unless_a_named_person_confirms[---\n-2]
+PASSED   tests/test_signoff.py::test_case_repair_changes_nothing_unless_a_named_person_confirms[Ann\nn\n-1]
+PASSED   tests/test_signoff.py::test_cli_case_sign_is_interactive_and_worded_as_signing_off_figures
+PASSED   tests/test_signoff.py::test_cli_case_sign_reports_a_save_not_recorded_and_leaves_no_pack
+PASSED   tests/test_signoff.py::test_cli_case_sign_stale_names_what_changed
+PASSED   tests/test_signoff.py::test_r22_a_sign_off_needs_a_typed_name[   ]
+PASSED   tests/test_signoff.py::test_r22_a_sign_off_needs_a_typed_name[---]
+PASSED   tests/test_signoff.py::test_r22_a_sign_off_needs_a_typed_name[None]
+PASSED   tests/test_signoff.py::test_r22_a_sign_off_needs_a_typed_name[]
+PASSED   tests/test_signoff.py::test_r22_a_sign_off_needs_a_typed_name[name4]
+PASSED   tests/test_signoff.py::test_r23_a_refused_sign_off_leaves_a_crash_leftover_in_place
+PASSED   tests/test_signoff.py::test_r23_a_snapshot_no_preview_recorded_is_refused
+PASSED   tests/test_signoff.py::test_r23_stale_snapshot_is_refused_naming_what_changed[account-a statement was imported for account other]
+PASSED   tests/test_signoff.py::test_r23_stale_snapshot_is_refused_naming_what_changed[field_map-the memo field map]
+PASSED   tests/test_signoff.py::test_r23_stale_snapshot_is_refused_naming_what_changed[override-the override log]
+PASSED   tests/test_signoff.py::test_r23_stale_snapshot_is_refused_naming_what_changed[pairing_days-the own-account pairing days]
+PASSED   tests/test_signoff.py::test_r23_stale_snapshot_is_refused_naming_what_changed[profile-the case profile]
+PASSED   tests/test_signoff.py::test_r23_stale_snapshot_is_refused_naming_what_changed[statement-the statement for account main changed]
+PASSED   tests/test_signoff.py::test_r23_stale_snapshot_is_refused_naming_what_changed[verdict-the show_policy_verdict setting]
+PASSED   tests/test_signoff.py::test_r26_a_pack_the_tool_stopped_before_recording_is_refused_as_unrecorded_never_removed
+PASSED   tests/test_signoff.py::test_r26_crash_leftover_is_removed_and_no_partial_pack_is_visible
+PASSED   tests/test_signoff.py::test_r26_second_sign_off_is_refused_and_the_pack_never_overwritten
+PASSED   tests/test_signoff.py::test_r28_guard_failure_is_refused
+PASSED   tests/test_signoff.py::test_r3_reconciliation_failure_is_refused
+PASSED   tests/test_signoff.py::test_r42_a_failed_folder_sync_after_the_rename_leaves_no_unrecorded_pack
+PASSED   tests/test_signoff.py::test_r42_a_pack_write_entry_left_torn_removes_the_pack_and_signs_off_after_repair
+PASSED   tests/test_signoff.py::test_r42_a_recorded_pack_whose_files_changed_is_refused
+PASSED   tests/test_signoff.py::test_r42_a_sign_off_entry_not_recorded_can_be_recorded_again
+PASSED   tests/test_signoff.py::test_r42_a_sign_off_the_tool_stopped_before_recording_is_recorded_on_the_next_sign_off
+PASSED   tests/test_signoff.py::test_r42_case_repair_refuses_a_broken_log_that_is_not_torn
+PASSED   tests/test_signoff.py::test_r42_entries_are_logged_after_the_rename_and_a_refused_entry_removes_the_pack
+PASSED   tests/test_signoff.py::test_r42_every_tier1_event_kind_is_in_the_case_log
+PASSED   tests/test_signoff.py::test_r42_r43_a_sign_off_entry_left_torn_is_repaired_with_confirmation_and_then_recorded
+PASSED   tests/test_signoff.py::test_r42_r43_a_sign_off_line_cut_short_by_a_full_disk_is_repaired_and_then_recorded
+PASSED   tests/test_signoff.py::test_r43_broken_log_is_refused_naming_the_first_bad_entry
+PASSED   tests/test_signoff.py::test_r43_incomplete_last_entry_is_refused
+PASSED   tests/test_signoff.py::test_sign_off_writes_memo_and_evidence_once_bound_to_the_snapshot
+PASSED   tests/test_signoff.py::test_workspace_preview_page_offers_the_sign_off_form_and_escapes_the_text
+PASSED   tests/test_signoff.py::test_workspace_preview_then_sign_off
+PASSED   tests/test_signoff.py::test_workspace_sign_and_preview_need_the_token_host_and_origin[/api/preview]
+PASSED   tests/test_signoff.py::test_workspace_sign_and_preview_need_the_token_host_and_origin[/api/sign]
+PASSED   tests/test_signoff.py::test_workspace_sign_and_preview_need_the_token_host_and_origin[/preview]
+PASSED   tests/test_signoff.py::test_workspace_sign_and_preview_need_the_token_host_and_origin[/sign]
+PASSED   tests/test_signoff.py::test_workspace_sign_off_names_a_bad_configuration_file
+PASSED   tests/test_signoff.py::test_workspace_sign_off_on_a_broken_log_names_the_first_bad_entry
+PASSED   tests/test_signoff.py::test_workspace_sign_off_refuses_a_stale_preview_naming_what_changed
+PASSED   tests/test_sync_folder.py::test_a_failure_recording_the_warning_leaves_no_case_behind
+PASSED   tests/test_sync_folder.py::test_a_malformed_dropbox_info_file_is_ignored
+PASSED   tests/test_sync_folder.py::test_a_symlink_into_a_synced_folder_is_followed
+PASSED   tests/test_sync_folder.py::test_a_sync_root_reached_through_a_symlink_is_matched_where_it_points
+PASSED   tests/test_sync_folder.py::test_an_ordinary_folder_is_not_taken_for_a_sync_folder[/Users/ann/Documents/cases]
+PASSED   tests/test_sync_folder.py::test_an_ordinary_folder_is_not_taken_for_a_sync_folder[/Users/ann/Dropboxes/cma]
+PASSED   tests/test_sync_folder.py::test_an_ordinary_folder_is_not_taken_for_a_sync_folder[/Users/ann/Library/Mobile Documents Backup/cma]
+PASSED   tests/test_sync_folder.py::test_an_ordinary_folder_is_not_taken_for_a_sync_folder[/Users/ann/my-onedrive-notes/cma]
+PASSED   tests/test_sync_folder.py::test_an_ordinary_folder_is_not_taken_for_a_sync_folder[/home/ann/private/cma]
+PASSED   tests/test_sync_folder.py::test_case_new_in_a_synced_folder_warns_first_and_logs_the_warning[Dropbox-Dropbox]
+PASSED   tests/test_sync_folder.py::test_case_new_in_a_synced_folder_warns_first_and_logs_the_warning[Google Drive-Google Drive]
+PASSED   tests/test_sync_folder.py::test_case_new_in_a_synced_folder_warns_first_and_logs_the_warning[OneDrive-OneDrive - Contoso]
+PASSED   tests/test_sync_folder.py::test_case_new_in_a_synced_folder_warns_first_and_logs_the_warning[iCloud Drive-iCloudDrive]
+PASSED   tests/test_sync_folder.py::test_case_new_outside_a_synced_folder_neither_warns_nor_logs_one
+PASSED   tests/test_sync_folder.py::test_dropbox_folder_named_by_its_info_file
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised[Dropbox-/Users/ann/Dropbox (Contoso)/cma-/Users/ann/Dropbox (Contoso)]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised[Dropbox-/Users/ann/Library/CloudStorage/Dropbox-Contoso/cma-/Users/ann/Library/CloudStorage/Dropbox-Contoso]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised[Dropbox-/Users/ann/Library/CloudStorage/Dropbox/cma-/Users/ann/Library/CloudStorage/Dropbox]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised[Dropbox-/home/ann/Dropbox/work/cma-/home/ann/Dropbox]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised[Google Drive-/Users/ann/Google Drive/cma-/Users/ann/Google Drive]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised[Google Drive-/Users/ann/Library/CloudStorage/GoogleDrive-ann@example.com/My Drive/cma-/Users/ann/Library/CloudStorage/GoogleDrive-ann@example.com]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised[Google Drive-/Volumes/GoogleDrive/My Drive/cma-/Volumes/GoogleDrive]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised[OneDrive-/Users/ann/Library/CloudStorage/OneDrive-ContosoLtd/x-/Users/ann/Library/CloudStorage/OneDrive-ContosoLtd]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised[OneDrive-/Users/ann/Library/CloudStorage/OneDrive-Personal/cma-/Users/ann/Library/CloudStorage/OneDrive-Personal]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised[OneDrive-/Users/ann/OneDrive - Contoso Ltd/Underwriting/cma-/Users/ann/OneDrive - Contoso Ltd]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised[OneDrive-/Users/ann/OneDrive/cases-/Users/ann/OneDrive]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised[iCloud Drive-/Users/ann/Library/Mobile Documents/com~apple~CloudDocs/cma-/Users/ann/Library/Mobile Documents]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised[iCloud Drive-/Users/ann/Library/Mobile Documents/iCloud~com~apple~Pages/Documents/cma-/Users/ann/Library/Mobile Documents]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised[iCloud Drive-/Users/ann/iCloudDrive/cma-/Users/ann/iCloudDrive]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised_on_windows_paths[Dropbox-C:\\Users\\ann\\Dropbox\\cma-C:\\Users\\ann\\Dropbox]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised_on_windows_paths[Google Drive-G:\\My Drive\\cma-G:\\My Drive]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised_on_windows_paths[OneDrive-C:\\Users\\ann\\OneDrive - Contoso Ltd\\cma-C:\\Users\\ann\\OneDrive - Contoso Ltd]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised_on_windows_paths[OneDrive-C:\\Users\\ann\\OneDrive\\cma-C:\\Users\\ann\\OneDrive]
+PASSED   tests/test_sync_folder.py::test_each_client_folder_is_recognised_on_windows_paths[iCloud Drive-C:\\Users\\ann\\iCloudDrive\\cma-C:\\Users\\ann\\iCloudDrive]
+PASSED   tests/test_sync_folder.py::test_library_caller_without_a_callback_still_gets_a_python_warning
+PASSED   tests/test_sync_folder.py::test_onedrive_folder_named_by_its_environment_variable[OneDriveCommercial]
+PASSED   tests/test_sync_folder.py::test_onedrive_folder_named_by_its_environment_variable[OneDriveConsumer]
+PASSED   tests/test_sync_folder.py::test_onedrive_folder_named_by_its_environment_variable[OneDrive]
+PASSED   tests/test_sync_folder.py::test_onedrive_variables_are_matched_whatever_their_case
+PASSED   tests/test_sync_folder.py::test_the_logged_warning_holds_no_case_profile
+PASSED   tests/test_sync_folder.py::test_the_warning_is_given_before_the_case_is_made
+PASSED   tests/test_synth_case.py::test_a_single_account_feature_set_has_no_case_truth
+PASSED   tests/test_synth_case.py::test_generate_cli_case_in_a_sync_folder_warns_on_stderr_first
+PASSED   tests/test_synth_case.py::test_generate_cli_case_log_refusal_is_said_without_a_traceback
+PASSED   tests/test_synth_case.py::test_generate_cli_makes_the_two_account_case
+PASSED   tests/test_synth_case.py::test_to_case_imports_both_accounts_with_the_generated_profile
+PASSED   tests/test_synth_case.py::test_to_case_removes_the_case_it_made_when_an_import_fails
+PASSED   tests/test_synth_features.py::test_evals_report_a_disagreement_with_feature_truth
+PASSED   tests/test_synth_features.py::test_generate_cli_writes_the_featured_case
+PASSED   tests/test_v2_default.py::test_committed_example_is_regenerated_under_v2
+PASSED   tests/test_v2_default.py::test_committed_truth_names_the_director_capital_line_director_funding
+PASSED   tests/test_v2_default.py::test_mcp_money_in_buckets_tool_is_registered_and_refuses_under_the_lock
+PASSED   tests/test_v2_default.py::test_mcp_money_in_buckets_tool_refuses_buckets_that_do_not_reconcile
+PASSED   tests/test_v2_default.py::test_mcp_money_in_buckets_tool_returns_the_buckets_with_evidence_ids
+PASSED   tests/test_v2_default.py::test_offline_models_m16_sentence_names_non_trading_money_in
+PASSED   tests/test_v2_default.py::test_policy_r9_is_worded_for_m16s_name
+PASSED   tests/test_v2_default.py::test_the_newly_recognised_lines_are_listed_in_the_docs
+PASSED   tests/test_v2_default.py::test_v2_is_the_default_ruleset
+PASSED   tests/test_verify.py::test_a_boolean_in_place_of_a_number_is_a_mismatch_and_a_flag_given_as_a_number_is_refused
+PASSED   tests/test_verify.py::test_a_bucket_moved_out_of_its_place_is_a_mismatch
+PASSED   tests/test_verify.py::test_a_corrupted_pack_record_is_reported_or_refused_never_raised
+PASSED   tests/test_verify.py::test_a_corrupted_run_record_is_reported_or_refused_never_raised
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[<lambda>0]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[<lambda>1]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[<lambda>2]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[<lambda>3]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[edit0]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[edit10]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[edit11]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[edit12]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[edit13]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[edit14]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[edit1]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[edit2]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[edit3]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[edit4]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[edit5]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[edit6]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[edit7]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[edit8]
+PASSED   tests/test_verify.py::test_a_malformed_pack_record_is_refused_never_raised_or_misread[edit9]
+PASSED   tests/test_verify.py::test_a_malformed_run_record_is_refused_never_raised[<lambda>0]
+PASSED   tests/test_verify.py::test_a_malformed_run_record_is_refused_never_raised[<lambda>1]
+PASSED   tests/test_verify.py::test_a_malformed_run_record_is_refused_never_raised[<lambda>2]
+PASSED   tests/test_verify.py::test_a_malformed_run_record_is_refused_never_raised[<lambda>3]
+PASSED   tests/test_verify.py::test_a_malformed_run_record_is_refused_never_raised[<lambda>4]
+PASSED   tests/test_verify.py::test_a_malformed_run_record_is_refused_never_raised[<lambda>5]
+PASSED   tests/test_verify.py::test_a_malformed_run_record_is_refused_never_raised[_no_sha]
+PASSED   tests/test_verify.py::test_an_account_key_that_leaves_the_case_folder_is_refused_and_nothing_outside_is_read[accounts]
+PASSED   tests/test_verify.py::test_an_account_key_that_leaves_the_case_folder_is_refused_and_nothing_outside_is_read[inputs]
+PASSED   tests/test_verify.py::test_cli_verify_exit_0_when_reproduced_and_1_on_a_mismatch
+PASSED   tests/test_verify.py::test_cli_verify_malformed_record_is_refused_with_exit_2[change0]
+PASSED   tests/test_verify.py::test_cli_verify_malformed_record_is_refused_with_exit_2[change1]
+PASSED   tests/test_verify.py::test_cli_verify_malformed_record_is_refused_with_exit_2[change2]
+PASSED   tests/test_verify.py::test_cli_verify_malformed_record_is_refused_with_exit_2[change3]
+PASSED   tests/test_verify.py::test_cli_verify_malformed_record_is_refused_with_exit_2[change4]
+PASSED   tests/test_verify.py::test_cli_verify_malformed_record_is_refused_with_exit_2[change5]
+PASSED   tests/test_verify.py::test_cli_verify_malformed_record_is_refused_with_exit_2[change6]
+PASSED   tests/test_verify.py::test_cli_verify_malformed_record_is_refused_with_exit_2[change7]
+PASSED   tests/test_verify.py::test_cli_verify_malformed_record_is_refused_with_exit_2[change8]
+PASSED   tests/test_verify.py::test_cli_verify_unreadable_record_exits_2
+PASSED   tests/test_verify.py::test_committed_example_verifies_with_no_mismatch
+PASSED   tests/test_verify.py::test_installed_ruleset_check_names_the_installed_hash
+PASSED   tests/test_verify.py::test_pack_against_another_case_is_refused
+PASSED   tests/test_verify.py::test_pack_whose_case_inputs_changed_is_refused_naming_the_input
+PASSED   tests/test_verify.py::test_r45_cli_refuses_with_exit_2
+PASSED   tests/test_verify.py::test_r45_record_from_another_ruleset_is_refused_naming_version_and_ruleset[ruleset0]
+PASSED   tests/test_verify.py::test_r45_record_from_another_ruleset_is_refused_naming_version_and_ruleset[ruleset1]
+PASSED   tests/test_verify.py::test_run_record_reproduces_and_reports_a_changed_cell
+PASSED   tests/test_verify.py::test_run_record_under_v1_is_verified_under_v1_whatever_cma_ruleset_says
+PASSED   tests/test_verify.py::test_run_record_whose_statement_changed_is_refused
+PASSED   tests/test_verify.py::test_v0_record_is_checked_for_m1_to_m16_only_and_says_so
+PASSED   tests/test_verify.py::test_verify_writes_nothing_in_the_case_folder
+PASSED   tests/test_workspace_indicators.py::test_a_case_s_queue_merges_its_accounts_largest_amount_first
+PASSED   tests/test_workspace_indicators.py::test_a_case_that_cannot_be_shown_has_no_queue
+PASSED   tests/test_workspace_indicators.py::test_a_cash_deposit_at_the_single_deposit_limit_is_in_the_queue_with_its_indicator
+PASSED   tests/test_workspace_indicators.py::test_a_firm_threshold_is_not_labelled_illustrative_and_decides_what_fires
+PASSED   tests/test_workspace_indicators.py::test_a_malformed_firm_thresholds_file_shows_no_figures
+PASSED   tests/test_workspace_indicators.py::test_a_thresholds_file_firm_yaml_names_but_missing_shows_no_figures
+PASSED   tests/test_workspace_indicators.py::test_an_ambiguous_credit_in_the_queue_shows_its_candidates_and_their_buckets
+PASSED   tests/test_workspace_indicators.py::test_an_override_takes_a_line_out_of_the_queue_and_its_cash_indicator
+PASSED   tests/test_workspace_indicators.py::test_indicator_sections_of_two_accounts_have_distinct_ids
+PASSED   tests/test_workspace_indicators.py::test_the_page_lists_the_queue_first_and_the_indicators_panel_with_its_thresholds
+PASSED   tests/test_workspace_indicators.py::test_the_queue_is_largest_amount_first_by_size_either_way
+PASSED   tests/test_workspace_indicators.py::test_with_no_firm_thresholds_file_the_shipped_ones_raise_the_indicators
+PASSED   tests/test_workspace_overrides.py::test_a_category_not_valid_for_the_lines_direction_is_refused[L2-supplier]
+PASSED   tests/test_workspace_overrides.py::test_a_category_not_valid_for_the_lines_direction_is_refused[L3-director_funding]
+PASSED   tests/test_workspace_overrides.py::test_a_category_not_valid_for_the_lines_direction_is_refused[L3-revenue_transfer]
+PASSED   tests/test_workspace_overrides.py::test_a_chunked_body_is_refused
+PASSED   tests/test_workspace_overrides.py::test_a_form_never_sends_the_browser_outside_the_workspace_pages[//evil.example/]
+PASSED   tests/test_workspace_overrides.py::test_a_form_never_sends_the_browser_outside_the_workspace_pages[/\\evil.example]
+PASSED   tests/test_workspace_overrides.py::test_a_form_never_sends_the_browser_outside_the_workspace_pages[/api/case]
+PASSED   tests/test_workspace_overrides.py::test_a_form_never_sends_the_browser_outside_the_workspace_pages[/lines?next=https://evil.example]
+PASSED   tests/test_workspace_overrides.py::test_a_form_never_sends_the_browser_outside_the_workspace_pages[/static/app.js]
+PASSED   tests/test_workspace_overrides.py::test_a_form_never_sends_the_browser_outside_the_workspace_pages[7]
+PASSED   tests/test_workspace_overrides.py::test_a_form_never_sends_the_browser_outside_the_workspace_pages[None]
+PASSED   tests/test_workspace_overrides.py::test_a_form_never_sends_the_browser_outside_the_workspace_pages[https://evil.example/]
+PASSED   tests/test_workspace_overrides.py::test_a_form_post_from_a_stale_page_shows_the_conflict_and_a_reload_link
+PASSED   tests/test_workspace_overrides.py::test_a_form_post_saves_and_returns_to_the_page_it_came_from
+PASSED   tests/test_workspace_overrides.py::test_a_form_save_does_not_recompute_the_case_before_sending_the_browser_back
+PASSED   tests/test_workspace_overrides.py::test_a_malformed_request_body_is_refused
+PASSED   tests/test_workspace_overrides.py::test_a_save_from_a_stale_page_is_a_conflict_that_asks_for_a_reload
+PASSED   tests/test_workspace_overrides.py::test_a_save_while_another_writer_holds_the_case_is_refused
+PASSED   tests/test_workspace_overrides.py::test_a_stale_override_is_listed_and_confirmed_from_the_workspace
+PASSED   tests/test_workspace_overrides.py::test_a_stale_override_on_a_missing_line_can_only_be_dropped
+PASSED   tests/test_workspace_overrides.py::test_an_override_is_appended_to_the_case_log_and_the_figures_come_back_recomputed
+PASSED   tests/test_workspace_overrides.py::test_an_override_without_its_reason_name_position_line_or_category_is_refused[category-category]
+PASSED   tests/test_workspace_overrides.py::test_an_override_without_its_reason_name_position_line_or_category_is_refused[expected-position]
+PASSED   tests/test_workspace_overrides.py::test_an_override_without_its_reason_name_position_line_or_category_is_refused[line-line]
+PASSED   tests/test_workspace_overrides.py::test_an_override_without_its_reason_name_position_line_or_category_is_refused[name-name]
+PASSED   tests/test_workspace_overrides.py::test_an_override_without_its_reason_name_position_line_or_category_is_refused[reason-reason]
+PASSED   tests/test_workspace_overrides.py::test_an_unknown_line_or_category_is_refused
+PASSED   tests/test_workspace_overrides.py::test_anything_but_a_category_is_refused_naming_it[add_line-L9]
+PASSED   tests/test_workspace_overrides.py::test_anything_but_a_category_is_refused_naming_it[amount-1.00]
+PASSED   tests/test_workspace_overrides.py::test_anything_but_a_category_is_refused_naming_it[balance-0.00]
+PASSED   tests/test_workspace_overrides.py::test_anything_but_a_category_is_refused_naming_it[date-2026-01-01]
+PASSED   tests/test_workspace_overrides.py::test_anything_but_a_category_is_refused_naming_it[description-X]
+PASSED   tests/test_workspace_overrides.py::test_anything_but_a_category_is_refused_naming_it[remove_line-L2]
+PASSED   tests/test_workspace_overrides.py::test_categorise_with_kept_classes_gives_what_classifying_every_line_gives
+PASSED   tests/test_workspace_overrides.py::test_marks_with_the_kept_figures_are_what_a_fresh_process_gives
+PASSED   tests/test_workspace_overrides.py::test_r52_a_form_save_on_a_10000_line_case_shows_the_recomputed_page_within_2_seconds
+PASSED   tests/test_workspace_overrides.py::test_r52_an_override_on_a_10000_line_case_comes_back_recomputed_within_2_seconds
+PASSED   tests/test_workspace_overrides.py::test_resolving_an_override_that_is_not_stale_or_from_a_stale_page_is_refused
+PASSED   tests/test_workspace_overrides.py::test_the_form_offers_only_the_categories_valid_for_each_lines_direction
+PASSED   tests/test_workspace_overrides.py::test_the_judgement_queue_carries_the_form
+PASSED   tests/test_workspace_overrides.py::test_the_kept_figures_follow_the_rule_table
+PASSED   tests/test_workspace_overrides.py::test_the_page_lists_stale_overrides_with_confirm_and_drop_forms
+PASSED   tests/test_workspace_overrides.py::test_the_same_category_records_nothing
+PASSED   tests/test_workspace_overrides.py::test_the_write_endpoints_need_the_token_and_the_same_origin
+PASSED   tests/test_workspace_policy_check.py::test_a_case_with_no_figures_shows_no_policy_check
+PASSED   tests/test_workspace_policy_check.py::test_a_policy_that_cannot_load_is_a_named_refusal_not_a_server_error
+PASSED   tests/test_workspace_policy_check.py::test_outcome_values_are_the_three_policy_outcomes
+PASSED   tests/test_workspace_policy_check.py::test_the_api_gives_each_account_s_policy_check_with_the_label
+PASSED   tests/test_workspace_policy_check.py::test_the_label_has_no_digits_and_says_the_underwriter_decides
+PASSED   tests/test_workspace_policy_check.py::test_the_policy_check_follows_the_current_figures_after_an_override
+PASSED   tests/test_workspace_policy_check.py::test_with_the_setting_off_the_policy_is_never_read
+PASSED   tests/test_workspace_summary.py::test_a_case_that_does_not_reconcile_shows_no_figures_and_names_difference_and_lines
+PASSED   tests/test_workspace_summary.py::test_a_case_whose_files_are_refused_shows_no_figures
+PASSED   tests/test_workspace_summary.py::test_a_case_with_no_statement_shows_that_and_no_figures
+PASSED   tests/test_workspace_summary.py::test_a_debit_counted_as_trading_receipts_is_reported_too
+PASSED   tests/test_workspace_summary.py::test_a_failure_no_refusal_foresees_is_answered_500_naming_nothing
+PASSED   tests/test_workspace_summary.py::test_a_monthly_cell_that_is_n_a_shows_its_reason
+PASSED   tests/test_workspace_summary.py::test_a_ruleset_that_cannot_load_is_a_refusal_with_no_figures
+PASSED   tests/test_workspace_summary.py::test_an_override_is_shown_on_the_figures_that_rest_on_it
+PASSED   tests/test_workspace_summary.py::test_an_override_that_puts_a_line_right_lets_the_case_be_shown
+PASSED   tests/test_workspace_summary.py::test_case_figures_names_the_account_of_a_case_that_does_not_reconcile
+PASSED   tests/test_workspace_summary.py::test_case_figures_reports_every_account_that_does_not_reconcile
+PASSED   tests/test_workspace_summary.py::test_every_account_that_does_not_reconcile_is_reported_with_its_difference_and_lines
+PASSED   tests/test_workspace_summary.py::test_no_summary_is_computed_for_a_request_without_the_token
+PASSED   tests/test_workspace_summary.py::test_one_account_that_does_not_reconcile_hides_every_account
+PASSED   tests/test_workspace_summary.py::test_render_takes_its_markup_from_the_module_alone
+PASSED   tests/test_workspace_summary.py::test_showing_the_summary_writes_nothing_to_the_case
+PASSED   tests/test_workspace_summary.py::test_the_api_gives_the_figures_layer_s_figures_for_each_account
+PASSED   tests/test_workspace_summary.py::test_the_api_gives_the_monthly_summary_with_each_cell
+PASSED   tests/test_workspace_summary.py::test_the_page_shows_the_breakdown_the_figures_and_the_monthly_summary
+tier contracts: 1235 tests from the full run of 648e248ce84f: 1235 passed or skipped, 0 failed

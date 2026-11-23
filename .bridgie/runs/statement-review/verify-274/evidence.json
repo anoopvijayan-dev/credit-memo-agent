@@ -1,0 +1,96 @@
+{
+  "task": "T40",
+  "criteria": [
+    {
+      "id": "R50",
+      "tier": "adversarial",
+      "check": "Verified R50 across src/cma/report.py:1-177, src/cma/cli.py:936-976, src/cma/review/summary.py:92-352, src/cma/metrics.py:437-975, src/cma/overrides.py:271-551, src/cma/case.py:525-785, src/cma/store.py:116-280, README.md:164-168, tests/test_report.py:1-338, and runner logs (contracts-4.log:717-729, invariants-5.log:797-820, specified-3.log:1933-1969). Confirmed per-case summary of judgement queue lines and reasons, distinct lines per indicator kind, applied overrides by old and new category, unexplained share (M26, combined for multi-account), traced/reconciled/signed_off flags, non-zero exit (1) on untraced/unreconciled/refused cases, exit 2 on git-unignored root without traceback, read-only execution with no file/mode mutation, and absence of applicant names, descriptions, amounts, and durations. All verify-273 major findings are resolved.",
+      "result": "pass",
+      "artifact": null
+    },
+    {
+      "id": "mechanical:1",
+      "tier": "mechanical",
+      "check": "ruff check src tests evals",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-274/mechanical-1.log"
+    },
+    {
+      "id": "mechanical:2",
+      "tier": "mechanical",
+      "check": "python -m compileall -q src",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-274/mechanical-2.log"
+    },
+    {
+      "id": "specified:3",
+      "tier": "specified",
+      "check": "python -m pytest -v -rs --tier-results",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-274/specified-3.log"
+    },
+    {
+      "id": "contracts:4",
+      "tier": "contracts",
+      "check": "python tools/tier_check.py contracts",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-274/contracts-4.log"
+    },
+    {
+      "id": "invariants:5",
+      "tier": "invariants",
+      "check": "python tools/tier_check.py invariants",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-274/invariants-5.log"
+    },
+    {
+      "id": "behavioural:6",
+      "tier": "behavioural",
+      "check": "python evals/run_evals.py",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-274/behavioural-6.log"
+    },
+    {
+      "id": "dual_run:7",
+      "tier": "dual_run",
+      "check": "python tools/tier_check.py dual_run",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-274/dual_run-7.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/report.py",
+      "line": 115,
+      "criterion": "R50",
+      "claim": "When case_report takes the early-return exception path (missing case.yaml after listing or an unforeseen exception from case_summary), it leaves out['overrides'] as [] and out['stale_overrides'] as 0 instead of None, so cma report prints 'overrides applied: none' and --json emits []/0 rather than 'not known'/null even for a case that had applied overrides.",
+      "repro": "Create a signed case with an applied override (e.g. _signed_case in tests/test_report.py), unlink folder/'case.yaml' (or monkeypatch cma.review.summary.case_summary to raise RuntimeError), and call report.case_report(folder, case_id) or `cma report`. Observe row['overrides'] == [] and row['stale_overrides'] == 0 (CLI: 'overrides applied: none') instead of None ('overrides applied: not known').",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/report.py",
+      "line": 163,
+      "criterion": "R50",
+      "claim": "case_ids() filters cases.iterdir() with `(p / store.PROFILE).is_file()`. When a single case subfolder under cases/ is unreadable (chmod 000) for a non-root user while cases/ and other case folders are readable, Python 3.13 silently omits the unreadable case (returning exit 0 if all other cases pass instead of reporting it refused with exit 1), and Python 3.11/3.12 (within requires-python >=3.11) raises PermissionError from Path.is_file(), which line 164 turns into CaseStoreError('the case root\\'s cases folder could not be read (Permission denied)'), aborting the entire report with exit 2 and hiding every healthy case.",
+      "repro": "As a non-root user, create two cases id1 and id2 under CMA_HOME, run `chmod 000 $CMA_HOME/cases/<id1>`, then run `cma report`. On Python 3.13, id1 is omitted and the command exits 0; on Python 3.11/3.12, the command aborts with exit 2 and omits id2.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_report.py",
+      "line": 1004,
+      "criterion": "R50",
+      "claim": "Claim 2 in claim.json asserts that when the override log cannot be read it shows as None ('not known') while signed_off is preserved, citing test_r50_an_unreadable_statement_does_not_hide_the_sign_off, but that test only asserts r['state'], r['traced'], and r['signed_off'] and never checks r['overrides'] is None or r['stale_overrides'] is None. Also, claim.json's disposition still lists M28 in CITES_WHENEVER_VALUED, whereas src/cma/report.py:44 intentionally omits M28.",
+      "repro": "Inspect tests/test_report.py:1004-1009 (no assertion on r['overrides'] or r['stale_overrides']) and compare claim.json disposition ('CITES_WHENEVER_VALUED (..., M28)') against src/cma/report.py:40-44.",
+      "disposition": null
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "antigravity",
+    "model": "default"
+  }
+}

@@ -1,0 +1,67 @@
+### Review Summary — Task T40 (`R50`)
+
+I reviewed the diff in `/home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review` against `R50` and the runner logs in `/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-271/`.
+
+#### Requirement Verification (`R50`)
+- **CLI & reporting entry point**: [cli.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/cli.py#L936-L976) (`cma report` / `--json`) wraps `report.report()` in `_case_errors()`, outputs per-case summaries (queue lines and reasons, distinct lines per indicator kind, applied overrides by old/new category plus stale count, `M26` unexplained share, `traced`, `reconciled`, `signed_off`), and exits `1` via `report.failing()` when any case is untraced, unreconciled, or refused.
+- **No PII / sentinels / durations**: [report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/report.py#L103-L146) and [cli.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/cli.py#L953-L975) emit only random 16-hex case ids, fixed enums/states, counts, `M26` percentages, booleans, and figure/cell identifiers—never applicant/business names, labels, descriptions, amounts, override reasons, typed names, refusal text, or timestamps/durations.
+- **Traced detection (`verify-273` fixes)**: [report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/report.py#L44-L81) checks all metrics (`M1`–`M28`) and monthly cells across every account and combined view, handling `ABSENCE_COUNTS` (`M13` missed VAT payments with no VAT lines), `CITES_WHENEVER_VALUED` (`M1`, `M4`, `M5`, `M10`, `M15`, `M16`, `M26`, `M27`), zero-valued derived monthly cells (`average_balance`, `lowest_balance`, `days_overdrawn`), and `n/a` reasons (`method` / `note`), while leaving `M9` and `M28` out of `CITES_WHENEVER_VALUED` so legitimate zero-line reserve accounts do not false-positive.
+- **Read-only & git-ignore guard (`verify-273` fixes)**: [report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/report.py#L149-L172) validates the root with `store.check_not_in_git()` without calling `ensure_root()`/`case_folder()`, leaving bytes and directory modes untouched.
+- **Runner proof**: All configured tiers passed (`mechanical:1`, `mechanical:2`, `specified:3` with 3036 passed, `contracts:4` with all 13 contract tests in [test_report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/tests/test_report.py#L780-L1010) at [contracts-4.log](file:///home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-271/contracts-4.log#L717-L729), `invariants:5` with all 24 seeds of `test_a_generated_case_is_reported_traced_whatever_its_features` at [invariants-5.log](file:///home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-271/invariants-5.log#L797-L820), `behavioural:6`, `dual_run:7`).
+
+#### Minor Findings
+1. **Early return in `case_report` leaves `overrides=[]` / `stale_overrides=0` instead of `None`** ([report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/report.py#L114-L116)): When `case.yaml` disappears after listing or `case_summary()` raises an unforeseen exception, `case_report()` returns early without updating `overrides` and `stale_overrides` to `None`, causing `cma report` to report `overrides applied: none` instead of `not known`.
+2. **Per-case unreadable folder handling in `case_ids`** ([report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/report.py#L162-L165)): Filtering `cases.iterdir()` with `(p / store.PROFILE).is_file()` causes a single `chmod 000` case directory (for a non-root user) to be silently skipped on Python 3.13 (exiting `0` instead of reporting it `refused` with exit `1`) or to raise `PermissionError` -> `CaseStoreError` on Python 3.11/3.12 (`requires-python = ">=3.11"`), aborting the whole report with exit `2` and hiding all other healthy cases.
+3. **Partial proof coverage for claim 2 and stale disposition text**: [test_report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/tests/test_report.py#L1004-L1009) (`test_r50_an_unreadable_statement_does_not_hide_the_sign_off`) asserts `signed_off is True` but does not assert `overrides is None` / `stale_overrides is None`; additionally, `claim.json`'s disposition still lists `M28` in `CITES_WHENEVER_VALUED` even though [report.py](file:///home/user/credit-memo-agent/.bridgie/worktrees/statement-review/T40-review/src/cma/report.py#L40-L44) intentionally removed `M28`.
+
+No blocker or major findings remain; verdict is `pass`.
+
+```json
+{
+  "task": "T40",
+  "criteria": [
+    {
+      "id": "R50",
+      "tier": "adversarial",
+      "check": "Verified R50 across src/cma/report.py:1-177, src/cma/cli.py:936-976, src/cma/review/summary.py:92-352, src/cma/metrics.py:437-975, src/cma/overrides.py:271-551, src/cma/case.py:525-785, src/cma/store.py:116-280, README.md:164-168, tests/test_report.py:1-338, and runner logs (contracts-4.log:717-729, invariants-5.log:797-820, specified-3.log:1933-1969). Confirmed per-case summary of judgement queue lines and reasons, distinct lines per indicator kind, applied overrides by old and new category, unexplained share (M26, combined for multi-account), traced/reconciled/signed_off flags, non-zero exit (1) on untraced/unreconciled/refused cases, exit 2 on git-unignored root without traceback, read-only execution with no file/mode mutation, and absence of applicant names, descriptions, amounts, and durations. All verify-273 major findings are resolved.",
+      "result": "pass",
+      "artifact": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/report.py",
+      "line": 115,
+      "criterion": "R50",
+      "claim": "When case_report takes the early-return exception path (missing case.yaml after listing or an unforeseen exception from case_summary), it leaves out['overrides'] as [] and out['stale_overrides'] as 0 instead of None, so cma report prints 'overrides applied: none' and --json emits []/0 rather than 'not known'/null even for a case that had applied overrides.",
+      "repro": "Create a signed case with an applied override (e.g. _signed_case in tests/test_report.py), unlink folder/'case.yaml' (or monkeypatch cma.review.summary.case_summary to raise RuntimeError), and call report.case_report(folder, case_id) or `cma report`. Observe row['overrides'] == [] and row['stale_overrides'] == 0 (CLI: 'overrides applied: none') instead of None ('overrides applied: not known').",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/report.py",
+      "line": 163,
+      "criterion": "R50",
+      "claim": "case_ids() filters cases.iterdir() with `(p / store.PROFILE).is_file()`. When a single case subfolder under cases/ is unreadable (chmod 000) for a non-root user while cases/ and other case folders are readable, Python 3.13 silently omits the unreadable case (returning exit 0 if all other cases pass instead of reporting it refused with exit 1), and Python 3.11/3.12 (within requires-python >=3.11) raises PermissionError from Path.is_file(), which line 164 turns into CaseStoreError('the case root\\'s cases folder could not be read (Permission denied)'), aborting the entire report with exit 2 and hiding every healthy case.",
+      "repro": "As a non-root user, create two cases id1 and id2 under CMA_HOME, run `chmod 000 $CMA_HOME/cases/<id1>`, then run `cma report`. On Python 3.13, id1 is omitted and the command exits 0; on Python 3.11/3.12, the command aborts with exit 2 and omits id2.",
+      "disposition": null
+    },
+    {
+      "severity": "minor",
+      "file": "tests/test_report.py",
+      "line": 1004,
+      "criterion": "R50",
+      "claim": "Claim 2 in claim.json asserts that when the override log cannot be read it shows as None ('not known') while signed_off is preserved, citing test_r50_an_unreadable_statement_does_not_hide_the_sign_off, but that test only asserts r['state'], r['traced'], and r['signed_off'] and never checks r['overrides'] is None or r['stale_overrides'] is None. Also, claim.json's disposition still lists M28 in CITES_WHENEVER_VALUED, whereas src/cma/report.py:44 intentionally omits M28.",
+      "repro": "Inspect tests/test_report.py:1004-1009 (no assertion on r['overrides'] or r['stale_overrides']) and compare claim.json disposition ('CITES_WHENEVER_VALUED (..., M28)') against src/cma/report.py:40-44.",
+      "disposition": null
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "antigravity",
+    "model": "Gemini 4 Neon (High)"
+  }
+}
+```

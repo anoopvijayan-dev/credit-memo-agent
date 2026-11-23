@@ -724,12 +724,12 @@
         "T16",
         "T43"
       ],
-      "status": "verify",
+      "status": "passed",
       "attempts": 2,
       "max_attempts": 3,
       "branch": "bridgie-task/statement-review/T40",
-      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-273/evidence.json",
-      "escalation": "attempt 1 of 3 fail: R50 fail (Checked R50 across src/cma/report.py:1-132, src/cma/cli.py:936-973, src/cma/review/summary.py:92-350, src/cma/metrics.py:758-975, src/cma/overrides.py:372-552, src/cma/store.py:260-280, tests/test_report.py:1-174, and runner logs (contracts-4.log:716-721). Found three major defects in traced detection (false-positive exit 1 on valid missed-VAT M13; false-negative exit 0 on zero-valued derived figures/cells and reasonless n/a monthly cells) and error/read-only handling (unhandled CaseStoreError/CaseRootInGit/OSError crashing cma report and hiding other cases, plus ensure_root chmod side effect), plus two minor findings (unproven read-only claim in claim.json and coupled _overrides/entries error handling losing signed_off).); major: False-positive untraced flag and exit 1 on valid cases with vat_stagger set and missed VAT payments: _untraced flags any figure with value != 0 and lines == 0, but metrics.compute produces M13 (Late or missed VAT payments) with value >= 1 and evidence == [] when no HMRC VAT payment lines exist in the statement (src/cma/metrics.py:758-770, 861-862). at src/cma/report.py:42; major: False-negative traced=True and exit 0 for zero-valued figures/cells that must cite lines and for n/a monthly cells without a reason: _nothing_to_cite treats value == 0 as needing no lines for every figure and monthly cell, missing untraced derived figures/cells that must always cite lines at zero (M5, M27, M16, M26, M9, M10, M28, M4, M1, and monthly average_balance, lowest_balance, days_overdrawn per R11/R12/P2); additionally line 47 never checks `cell['value'] is None and not cell.get('note')` for n/a monthly cells. at src/cma/report.py:31; major: Unhandled crashes on partial failure or refused case roots, and filesystem mutation on read: report.report() calls store.case_folder(case_id, root) outside case_report's exception handler, and cli.py:951 omits `with _case_errors():`. A case purged or losing case.yaml between case_ids() and store.case_folder() aborts the report with CaseStoreError and hides all remaining cases; an unignored git case root or unreadable root dumps an unhandled traceback; and store.case_folder() calls store.ensure_root() on every case, running os.chmod(0o700) on root and root/cases (violating the read-only claim and failing on read-only mounts). at src/cma/report.py:126; reviewer verdict fail"
+      "evidence": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/verify-274/evidence.json",
+      "escalation": null
     },
     {
       "id": "T41",
