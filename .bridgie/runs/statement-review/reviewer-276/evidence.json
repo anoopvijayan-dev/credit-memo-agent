@@ -1,0 +1,59 @@
+{
+  "task": "T39",
+  "criteria": [
+    {
+      "id": "R46",
+      "tier": "adversarial",
+      "check": "Production caller: cli.py pseudonymise_cmd -> ps.pseudonymise_file (cli.py:664-706). Names/account numbers: every word of the description and of every column outside id/date/amount/balance (_rows, pseudonymise.py:379-397) is replaced by a token unless a v1/v2 rule, firm rule, gambling operator, rail prefix or invoice ref reads it (_kept_spans 172-189); a word a rule reads only in part keeps that part alone (_Tokens.partly); a profile name becomes one letter token per distinct name, with a variant token for a second spelling; digit words get digit tokens. The v1/v2 YAML hold no wildcard patterns that could keep a name (only INVOICE_REF has \\d). The profile is tokenised the same way (directors, shareholders, own_accounts, business_name, label; store.PROFILE_FIELDS has no other text field). The label is in PSEUDONYMISED.txt, the profile header and the manifest, and the CLI prints it. The loader's id/date/amount/balance cells are copied verbatim. Tests test_p10_names_and_account_numbers..., test_p10_every_column_beyond_the_five..., test_a_header_with_spaces..., test_cli_writes_a_labelled_copy... ran and passed (specified-3.log; 38 test_pseudonymise PASSED lines). Minor gaps below: extra-column dates and amounts are tokenised; firm-rule counterparties are kept.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-276/specified-3.log"
+    },
+    {
+      "id": "P10",
+      "tier": "adversarial",
+      "check": "Nothing is written unless differs() (pseudonymise.py) finds the copy's line categories/rules/reversals, metrics, monthly cells and indicators equal under v1 and v2, with the same profile mapping, thresholds and firm rules a case uses: overrides._categorise uses firm_rules.for_case() and active_ruleset() (v1 or v2 only, load_ruleset refuses other ids); the CLI passes case_thresholds() and firm_rules.for_case().rules. figures() calls metrics.compute(vat_stagger, proposed_repayment) and monthly_summary as overrides._compute does. P10 invariant tests (synthetic archetypes x risks x plain/all features, firm rules, spellings, partial words) ran and passed: invariants-5.log has 29 test_pseudonymise p10 lines, and specified-3.log:1950 shows test_p10_the_firms_own_rules_categorise_the_copy_as_the_original PASSED.",
+      "result": "pass",
+      "artifact": "/home/user/credit-memo-agent/.bridgie/runs/statement-review/reviewer-276/invariants-5.log"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/cma/pseudonymise.py",
+      "line": 394,
+      "criterion": "R46",
+      "claim": "Every column outside id/date/amount/balance is tokenised word by word, including columns that hold dates or amounts. Digit runs become digit tokens, so a value_date or fee column the loader accepts is rewritten. R46 says all amounts and dates are kept, and the README and module docstring say every date and amount is kept. P10 still holds, because the figures read only the five columns.",
+      "repro": "Statement header id,date,description,amount,balance,value_date,fee and row L1,2026-01-02,FPS CREDIT JANE DOE,200.00,1200.00,2026-01-01,1.50. contract.checked accepts it (ingest.py:499-511 refuses only repeated or missing columns). In _rows, value_date and fee fall into `others`. Their words 2026/01/01 and 1/50 go through tokens.partly(word, []) -> tokens.word, which never returns a word in `taken` (the original words). So the copy's value_date and fee no longer hold the original date and amount."
+    },
+    {
+      "severity": "minor",
+      "file": "src/cma/pseudonymise.py",
+      "line": 238,
+      "criterion": "R46",
+      "claim": "Wording a firm rule names is kept verbatim (all_rules includes firm_rules in _kept_spans), and it can be a personal or business name. R46 keeps only recognised institutions (acquirers, lenders, HMRC). Keeping it is what lets P10 hold under the firm's rules, so this is a tension the owner should decide. The manifest's 'kept' field (line 524) and the label do not say that firm-rule counterparties survive.",
+      "repro": "firm_rules.yaml with pattern JOHN SMITH CONSULTING (direction in). Run `cma pseudonymise` on a statement holding 'FPS CREDIT JOHN SMITH CONSULTING' and 'FPS CREDIT JOHN SMITH'. The first line keeps JOHN SMITH CONSULTING verbatim, and the second line's JOHN and SMITH become tokens. The name survives, and the two lines can be linked."
+    },
+    {
+      "severity": "minor",
+      "file": "README.md",
+      "line": 169,
+      "criterion": "R46",
+      "claim": "The README says `cma pseudonymise` takes 'any --format `cma case import` takes'. But `cma case import` also takes `--format bank-csv --mapping FILE` (cli.py case_import's --mapping option). `cma pseudonymise` has no --mapping, and _converted (pseudonymise.py:468) refuses a bare bank-csv.",
+      "repro": "cma pseudonymise export.csv --format bank-csv --out o -> 'unknown format' refusal. There is no option to pass a mapping file, while `cma case import --format bank-csv --mapping m.yaml` accepts the same export."
+    },
+    {
+      "severity": "minor",
+      "file": null,
+      "line": null,
+      "criterion": null,
+      "claim": "The performance claim (3.3s on 285 lines, 3.1s on 1,096, 24.5s on 10,000) is proven only by scripts in the producer's scratchpad (timing.py, timing10k.py). No runner tier ran them, so the numbers are unproven.",
+      "repro": "Search the runner logs (mechanical-1..dual_run-7) for timing.py or a 10,000-line pseudonymise run: none is present."
+    }
+  ],
+  "verdict": "pass",
+  "verifier": {
+    "seat": "reviewer",
+    "adapter": "claude-code",
+    "model": "default"
+  }
+}
