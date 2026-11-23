@@ -1,0 +1,49 @@
+{
+  "task": "T39",
+  "claims": [
+    {
+      "text": "Every column of the statement other than id, date, amount and balance is pseudonymised with the same consistent tokens as the description (a payee or account-number column no longer survives); ids, dates, amounts and balances are kept, recognised institutions in such a column are kept, and the copy gives identical figures under v1 and v2 (R46, P10).",
+      "proof_cmd": "python -m pytest -q tests/test_pseudonymise.py -k \"beyond_the_five or spaces_around or firms_own\" -v",
+      "proof_output": "3 passed, 34 deselected in 5.61s"
+    },
+    {
+      "text": "A header with spaces around its column names, which the loader accepts, is read by stripped names and pseudonymised; `cma pseudonymise` exits 0 instead of raising KeyError (test_a_header_with_spaces_around_its_names_is_pseudonymised).",
+      "proof_cmd": "python -m pytest -q tests/test_pseudonymise.py -k \"beyond_the_five or spaces_around or firms_own\" -v",
+      "proof_output": "3 passed, 34 deselected in 5.61s"
+    },
+    {
+      "text": "`cma pseudonymise` passes firm_rules.for_case().rules to the pseudonymiser: a counterparty a firm rule names is kept, and the P10 self-check (differs/figures) categorises both statements with the firm's rules, as overrides.py does for a case; the copy's L1 stays firm:acme_trust and its figures equal the original's (test_p10_the_firms_own_rules_categorise_the_copy_as_the_original).",
+      "proof_cmd": "python -m pytest -q tests/test_pseudonymise.py -k \"beyond_the_five or spaces_around or firms_own\" -v",
+      "proof_output": "3 passed, 34 deselected in 5.61s"
+    },
+    {
+      "text": "Lint, compile and the full suite pass at 4c2999d.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q -rs --tier-results",
+      "proof_output": "All checks passed!\n3035 passed in 411.55s (0:06:51)"
+    },
+    {
+      "text": "The contracts, invariants and dual_run tiers pass on the full run of 4c2999d, and the evals match truth.",
+      "proof_cmd": "for t in contracts invariants dual_run; do python tools/tier_check.py $t; done; python evals/run_evals.py",
+      "proof_output": "tier contracts: 1229 tests from the full run of 4c2999d21e7c: 1229 passed or skipped, 0 failed\ntier invariants: 1159 tests from the full run of 4c2999d21e7c: 1159 passed or skipped, 0 failed\ntier dual_run: 84 tests from the full run of 4c2999d21e7c: 84 passed or skipped, 0 failed\n9/9 featured cases match truth (features: acquirers, director, cash, lenders, two_accounts)"
+    }
+  ],
+  "files_changed": ["src/cma/pseudonymise.py", "src/cma/cli.py", "tests/test_pseudonymise.py"],
+  "dispositions": [
+    {
+      "finding": "major src/cma/pseudonymise.py:332 (R46): only the description column is pseudonymised; extra columns (payee, account_number) the loader accepts are copied verbatim.",
+      "disposition": "reproduced",
+      "evidence": "_rows now reads records with csv.reader and returns every (row, column) cell outside id/date/amount/balance; each goes through the same kept-span, profile-name and word-token path as the description, with formula neutralisation. test_p10_every_column_beyond_the_five_is_pseudonymised (the reviewer's payee/account_number repro plus a reference column) asserts no JANE, DOE or 12345678 in the output, the payee token equals the profile director token, ids/dates/amounts/balances kept, STRIPE kept, and identical figures; it failed before the change and passes now."
+    },
+    {
+      "finding": "major src/cma/pseudonymise.py:397 (P10): firm rules ignored; their counterparties tokenised and the self-check categorises without them.",
+      "disposition": "reproduced",
+      "evidence": "pseudonymise_statement/pseudonymise_file take firm_rules; their spans are kept and tokens they would match are blocked; figures() and differs() categorise with them; cli.pseudonymise_cmd passes firm_rules.for_case().rules and refuses a malformed firm_rules.yaml (RulesetError) with exit 2. test_p10_the_firms_own_rules_categorise_the_copy_as_the_original runs the reviewer's ACME TRUST repro through the CLI: ACME TRUST kept, SMITH tokenised, and figures with firm rules equal for both statements under v1 and v2, with L1 firm:acme_trust. Failed before, passes now."
+    },
+    {
+      "finding": "minor src/cma/pseudonymise.py:233 (R46): a header with spaces around column names crashes with KeyError.",
+      "disposition": "reproduced",
+      "evidence": "Columns are now found by their stripped names, as ingest._head strips them, and the header is written back as given. test_a_header_with_spaces_around_its_names_is_pseudonymised (the reviewer's repro, library and CLI) failed with KeyError before and passes now."
+    }
+  ],
+  "notes": "Columns beyond the five are tokenised whole, including cells that look like dates or numbers, because an account number is a number; R46's kept amounts, dates and balances are the loader's required columns, which are kept as written. Blank lines are dropped, as before and as the loader drops them."
+}
