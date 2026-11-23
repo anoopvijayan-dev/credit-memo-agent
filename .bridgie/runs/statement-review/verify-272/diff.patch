@@ -1,0 +1,866 @@
+diff --git a/README.md b/README.md
+index 875a1ee..52616e9 100644
+--- a/README.md
++++ b/README.md
+@@ -166,6 +166,15 @@ cma case check private/cma/cases/<id>
+ # operating-system user. A purge stopped part-way is finished by running it again.
+ cma case purge <id>
+ 
++# Write a pseudonymised copy of a statement (any --format `cma case import` takes) and,
++# with --profile, of a case's profile into a new folder: personal and business names and
++# account numbers become consistent tokens (the profile's names become the tokens their
++# occurrences in the descriptions become); recognised institutions and every id, date,
++# amount and balance are kept. The copy is checked to give the same figures, buckets,
++# monthly cells and indicators under v1 and v2, or nothing is written. It is labelled as
++# pseudonymised personal data, not anonymous data; the token mapping is never written.
++cma pseudonymise private/statement.csv --format csv --out private/pseudo --profile <id>
++
+ # Choose the categorisation table (src/cma/rules/<id>.yaml; default v2). v1 is the
+ # original table, frozen; v2 adds real UK acquirers, gateways, marketplaces, delivery
+ # platforms, lenders and merchant cash advance providers, own pots and savings, cash
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index e504874..cd46e4b 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -653,6 +653,40 @@ def case_import(
+         console.print(f"{r.repeated} transaction{'s' if r.repeated != 1 else ''} repeated across pages kept once")
+ 
+ 
++@app.command("pseudonymise")
++def pseudonymise_cmd(
++    file: Path = typer.Argument(..., help="The bank file to make a pseudonymised copy of. Read, never changed."),
++    fmt: str = typer.Option(..., "--format", help="csv, monzo, openbanking, truelayer or bank-csv:PROFILE, as for "
++                                                  "`cma case import`."),
++    out: Path = typer.Option(..., "--out", help="A new folder for the copy; an existing one must be empty."),
++    profile_case: str | None = typer.Option(None, "--profile", metavar="CASE",
++                                            help="A case whose profile is tokenised the same way."),
++    opening_balance: str | None = typer.Option(None, help="Monzo or bank CSV only, as for `cma case import`."),
++    statement_balance: str | None = typer.Option(None, help="Open Banking or TrueLayer only, as for `cma case import`."),
++    at: str | None = typer.Option(None, "--at", help="Open Banking or TrueLayer only, with --statement-balance."),
++    thresholds: Path | None = typer.Option(None, help="Indicator thresholds YAML (R14); defaults to the packaged one."),
++):
++    """Write a copy of a statement, and of a case's profile, with personal and business names
++    and account numbers replaced by consistent tokens; institutions and every id, date, amount
++    and balance are kept, and the copy gives the same figures (R46, P10). The copy is
++    pseudonymised personal data, not anonymous data."""
++    from . import pseudonymise as ps
++    from . import store
++
++    with _case_errors():
++        profile = store.load_profile(store.case_folder(profile_case)) if profile_case else None
++    try:
++        th = load_thresholds(thresholds)
++        result, written = ps.pseudonymise_file(file, fmt, out, profile=profile, opening_balance=opening_balance,
++                                               statement_balance=statement_balance, at=at, thresholds=th)
++    except (ps.PseudonymiseError, ThresholdsError) as e:
++        console.print(f"[red]Refused.[/red] {escape(str(e))}")
++        raise typer.Exit(code=2) from None
++    console.print(f"wrote {', '.join(p.name for p in written)} in {out}: {result.words_replaced} word(s) and "
++                  f"{result.names_replaced} profile name(s) replaced by tokens")
++    console.print(escape(result.label))
++
++
+ @case_app.command("override")
+ def case_override(
+     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
+diff --git a/src/cma/pseudonymise.py b/src/cma/pseudonymise.py
+new file mode 100644
+index 0000000..1aaec5c
+--- /dev/null
++++ b/src/cma/pseudonymise.py
+@@ -0,0 +1,493 @@
++"""Pseudonymise a statement and its case profile (R46, C9).
++
++`cma pseudonymise` writes a copy of a statement in which personal and business names and
++account numbers are replaced by consistent tokens, while the recognised institutions
++(acquirers, gateways, lenders, HMRC: every wording the rule tables or the gambling list
++recognise) and every id, date, amount and balance are kept. The case profile is tokenised the
++same way: a director, shareholder, own account or business name becomes the token its
++occurrences in the descriptions become, so the categoriser reads the copy as it reads the
++original. The output is labelled as pseudonymised personal data, not anonymous data: the
++amounts, dates and balances can identify the business again.
++
++The copy must give the original's figures, buckets, monthly cells and indicators (P10). It is
++built to do so, word by word:
++
++- every span of a description that any rule of the v1 or v2 table, its exceptions, the
++  gambling operators, an invoice reference or the bank wording the counterparty normaliser
++  strips (FPS, BACS, DD...) match is kept as it is;
++- every case-profile name is found in the descriptions as the categoriser finds it (whole
++  words, any separators between its letters), and each region that profile names cover is
++  replaced by the tokens of exactly the names found there, so each kind of profile name
++  matches the same lines; a second spelling of one region gets a variant token, so two lines
++  name the same counterparty only when they did before;
++- every other word becomes a token of its own: one per distinct word, letters for letters and
++  digits for a word with a digit, so the counterparty normaliser (M9, M15, round trips,
++  reversal links) groups the lines as before.
++
++A profile name that holds recognised wording somewhere (a business called Greenfield Capital,
++a director named after a lender) keeps only that wording: its other words become their word
++tokens, in the profile and the descriptions alike, so the rules and the profile still read the
++copy as they read the original, and the name itself does not survive. Before anything is written, the copy is categorised and computed and compared with
++the original, line by line and figure by figure; any difference refuses the copy, naming the
++figure, and nothing is written. The token mapping itself is never written.
++"""
++
++from __future__ import annotations
++
++import csv
++import io
++import json
++import os
++import re
++import shutil
++import tempfile
++from collections.abc import Iterable, Sequence
++from dataclasses import dataclass, field
++from pathlib import Path
++from typing import Any
++
++import yaml
++
++from . import categorise as cat
++from . import indicators as ind
++from . import metrics as met
++from . import store
++from .importers import contract
++from .models import Statement
++
++LABEL = ("PSEUDONYMISED PERSONAL DATA, NOT ANONYMOUS DATA. Names and account numbers in this copy are "
++         "replaced by tokens, but its amounts, dates and balances are kept and can identify the business "
++         "and the people behind it again. Handle it as personal data.")
++LABEL_FILE = "PSEUDONYMISED.txt"
++STATEMENT_FILE = "statement.csv"
++PROFILE_FILE = store.PROFILE
++MANIFEST_FILE = "pseudonymised.json"
++
++# Bank wording the counterparty normaliser and the round-trip check read, kept as written.
++_BANK_WORDS = re.compile(r"\s+DD$")
++_EXTRA_PATTERNS = (cat.RAIL_PREFIX, cat.OUTGOING_TRANSFER, cat.INVOICE_REF, _BANK_WORDS)
++_WORD = re.compile(rf"(?:[^\W_]|[{cat._MARKS}])+")
++_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
++
++
++class PseudonymiseError(ValueError):
++    """Nothing was written: the input was refused, or the copy would not give the same figures."""
++
++
++@dataclass
++class Pseudonymised:
++    """The pseudonymised statement's bytes, the pseudonymised profile (or None) and counts."""
++
++    statement: bytes
++    profile: dict[str, Any] | None
++    words_replaced: int
++    names_replaced: int
++    names_kept: int
++    label: str = LABEL
++
++
++def _key(name: str) -> str:
++    """One profile name however it is spelt: what the categoriser matches (no separators)."""
++    return cat._SEPARATOR_RUN.sub("", cat._fold(name))
++
++
++@dataclass
++class _Tokens:
++    """Consistent, distinct tokens. A letter token is eight capitals (QZ and six more), a
++    digit token digits only (or N and digits for a word that mixes the two); none is a word
++    the original holds, and none is matched by any rule, gambling operator or profile name."""
++
++    taken: set[str]
++    blocked: Any  # callable(token) -> bool: True when some matcher reads the token
++    letters: dict[str, str] = field(default_factory=dict)
++    digits: dict[str, str] = field(default_factory=dict)
++    _n_letters: int = 0
++    _n_digits: int = 0
++
++    def letter(self) -> str:
++        while True:
++            n, self._n_letters = self._n_letters, self._n_letters + 1
++            body = ""
++            for _ in range(6):
++                n, r = divmod(n, 26)
++                body = _LETTERS[r] + body
++            tok = "QZ" + body
++            if tok not in self.taken and not self.blocked(tok):
++                self.taken.add(tok)
++                return tok
++
++    def word(self, word: str) -> str:
++        if not any(ch.isdigit() for ch in word):
++            if word not in self.letters:
++                self.letters[word] = self.letter()
++            return self.letters[word]
++        if word not in self.digits:
++            pure = word.isdigit() and word.isascii()
++            while True:
++                self._n_digits += 1
++                n = str(self._n_digits)
++                tok = n.zfill(len(word)) if pure else f"N{n.zfill(4)}"
++                if tok not in self.taken and not self.blocked(tok):
++                    break
++            self.taken.add(tok)
++            self.digits[word] = tok
++        return self.digits[word]
++
++
++def _rulesets() -> list[cat.Ruleset]:
++    return [cat.load_ruleset("v1"), cat.load_ruleset("v2")]
++
++
++def _pattern_spans(pattern: re.Pattern[str], text: str) -> Iterable[tuple[int, int]]:
++    for m in cat._at_every_position(pattern).finditer(text):
++        s, e = m.span(1)
++        if e > s:
++            yield s, e
++
++
++def _kept_spans(desc: str, rulesets: Sequence[cat.Ruleset], extra: Sequence[re.Pattern[str]]
++                ) -> list[tuple[int, int]]:
++    """Every span of the folded description some matcher reads."""
++    spans: list[tuple[int, int]] = []
++    for rs in rulesets:
++        for rule in rs.rules:
++            spans += cat._spans(rule, desc)
++            spans += _pattern_spans(rule.pattern, desc)
++            for p in (rule.unless, rule.requires):
++                if p is not None:
++                    spans += _pattern_spans(p, desc)
++    for p in extra:
++        for m in p.finditer(desc):
++            if m.end() > m.start():
++                spans.append(m.span())
++        spans += _pattern_spans(p, desc)
++    return spans
++
++
++def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
++    return a[0] < b[1] and b[0] < a[1]
++
++
++def _merge(spans: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
++    out: list[list[int]] = []
++    for s, e in sorted(spans):
++        if out and s < out[-1][1]:
++            out[-1][1] = max(out[-1][1], e)
++        else:
++            out.append([s, e])
++    return [(s, e) for s, e in out]
++
++
++def _profile_names(profile: dict[str, Any] | None) -> list[str]:
++    if not profile:
++        return []
++    names = [*profile.get("directors", []), *profile.get("shareholders", []), *profile.get("own_accounts", [])]
++    if profile.get("business_name"):
++        names.append(profile["business_name"])
++    return names
++
++
++def pseudonymise_statement(data: bytes, profile: dict[str, Any] | None = None, *,
++                           thresholds: ind.Thresholds | None = None, label: str = "statement") -> Pseudonymised:
++    """The pseudonymised copy of the five-column statement `data` and of `profile` (a
++    validated case profile, or None). Raises PseudonymiseError, and returns nothing, when
++    the statement is refused or the copy would not give the same figures (P10)."""
++    try:
++        original = contract.checked(data, label)
++    except contract.ImportRefused as e:
++        raise PseudonymiseError(str(e)) from None
++    if profile is not None:
++        try:
++            profile = store.validate_profile(profile)
++        except store.CaseStoreError as e:
++            raise PseudonymiseError(f"the case profile: {e}") from None
++    th = thresholds or ind.shipped()
++    rulesets = _rulesets()
++    extra = (*_EXTRA_PATTERNS, ind._names_regex(tuple(th.value("gambling", "operators"))))
++
++    header, rows = _rows(data)
++    descs = [cat._fold(r["description"]) for r in rows]
++    kept_by_line = [_kept_spans(d, rulesets, extra) for d in descs]
++
++    # Each distinct profile name (by its spelling-free key) and its spans in each line.
++    names: dict[str, str] = {}
++    for n in _profile_names(profile):
++        names.setdefault(_key(n), n)
++    name_spans: dict[str, list[list[tuple[int, int]]]] = {}
++    for key, n in names.items():
++        p = re.compile(cat.names_pattern([n]))
++        name_spans[key] = [list(_pattern_spans(p, d)) for d in descs]
++
++    # A name that meets recognised wording anywhere is kept as it is, and so is every name
++    # whose region meets it; repeated until nothing more is kept.
++    kept_names: set[str] = set()
++    while True:
++        grown = False
++        for i in range(len(descs)):
++            fixed = list(kept_by_line[i]) + [s for k in kept_names for s in name_spans[k][i]]
++            live = [(k, s) for k in names if k not in kept_names for s in name_spans[k][i]]
++            for region in _merge(s for _, s in live):
++                if any(_overlaps(region, f) for f in fixed):
++                    for k, s in live:
++                        if _overlaps(s, region) and k not in kept_names:
++                            kept_names.add(k)
++                            grown = True
++        if not grown:
++            break
++
++    originals = {w for d in descs for w in _WORD.findall(d)}
++    originals |= {w for n in names.values() for w in _WORD.findall(cat._fold(n))}
++    blockers = [re.compile(cat.names_pattern([n])) for k, n in names.items()]
++
++    def blocked(tok: str) -> bool:
++        if any(r.pattern.search(tok) for rs in rulesets for r in rs.rules):
++            return True
++        return any(p.search(tok) for p in extra) or any(p.search(tok) for p in blockers)
++
++    keep_words: dict[str, set[str]] = {}
++    for k in kept_names:
++        words: set[str] = set()
++        seen = False
++        for i, d in enumerate(descs):
++            for span in name_spans[k][i]:
++                seen = True
++                for m in _WORD.finditer(d, span[0], span[1]):
++                    if any(_overlaps(m.span(), f) for f in kept_by_line[i]):
++                        words.add(m.group())
++        if not seen:
++            folded = cat._fold(names[k])
++            own = _kept_spans(folded, rulesets, extra)
++            words = {m.group() for m in _WORD.finditer(folded) if any(_overlaps(m.span(), f) for f in own)}
++        keep_words[k] = words
++
++    tokens = _Tokens(taken=set(originals), blocked=blocked)
++    name_token = {k: tokens.letter() for k in names if k not in kept_names}
++    variants: dict[tuple[str, ...], dict[str, str]] = {}
++
++    out_descs: list[str] = []
++    words_replaced = 0
++    for i, d in enumerate(descs):
++        # A name that holds recognised wording is not kept whole: its words go through the word
++        # path below, so only the recognised words stay and the rest become their word tokens,
++        # as they do in the profile (R46; T39 pass: "Greenfield Capital Ltd" was kept whole).
++        fixed = _merge(kept_by_line[i])
++        live = [(k, s) for k in name_token for s in name_spans[k][i]]
++        regions = _merge(s for _, s in live)
++        edits: list[tuple[int, int, str]] = []
++        for region in regions:
++            found = sorted({(min(s[0] for kk, s in live if kk == k and _overlaps(s, region)), name_token[k])
++                            for k, s in live if _overlaps(s, region)})
++            toks = tuple(t for _, t in found)
++            text = d[region[0]:region[1]]
++            spellings = variants.setdefault(toks, {})
++            if text not in spellings:
++                spellings[text] = "" if not spellings else tokens.letter()
++            edits.append((*region, " ".join(toks + ((spellings[text],) if spellings[text] else ()))))
++        taken = fixed + regions
++        for m in _WORD.finditer(d):
++            if any(_overlaps(m.span(), f) for f in taken):
++                continue
++            edits.append((m.start(), m.end(), tokens.word(m.group())))
++            words_replaced += 1
++        new = d
++        for s, e, text in sorted(edits, reverse=True):
++            new = new[:s] + text + new[e:]
++        out_descs.append(new)
++
++    for r, d in zip(rows, out_descs, strict=True):
++        r["description"] = contract.neutralise_formula(d)
++    out = _write_rows(header, rows)
++
++    new_profile = None
++    if profile is not None:
++        def tok(n: str) -> str:
++            k = _key(n)
++            if k not in kept_names:
++                return name_token[k]
++            folded = cat._fold(n)
++            return _WORD.sub(lambda m: m.group() if m.group() in keep_words[k] else tokens.word(m.group()), folded)
++        new_profile = dict(profile)
++        for f in store.LIST_FIELDS:
++            new_profile[f] = [tok(n) for n in profile[f]]
++        if profile.get("business_name"):
++            new_profile["business_name"] = tok(profile["business_name"])
++        if profile.get("label"):
++            new_profile["label"] = "PSEUDONYMISED " + tokens.letter()
++        try:
++            new_profile = store.validate_profile(new_profile)
++        except store.CaseStoreError as e:  # two names that only the separators told apart
++            raise PseudonymiseError(f"the pseudonymised profile would not be valid: {e}; nothing was written") from None
++
++    try:
++        copy = contract.checked(out, label)
++    except contract.ImportRefused as e:
++        raise PseudonymiseError(f"the pseudonymised statement would be refused: {e}; nothing was written") from None
++    difference = differs(original, profile, copy, new_profile, th)
++    if difference:
++        raise PseudonymiseError(f"the pseudonymised copy would change {difference}; nothing was written")
++    replaced = len([k for k in names if k not in kept_names])
++    return Pseudonymised(out, new_profile, words_replaced, replaced, len(kept_names))
++
++
++def _rows(data: bytes) -> tuple[list[str], list[dict[str, str]]]:
++    text = data.decode("utf-8-sig")
++    reader = csv.DictReader(io.StringIO(text, newline=""))
++    return list(reader.fieldnames or []), [dict(r) for r in reader]
++
++
++def _write_rows(header: list[str], rows: list[dict[str, str]]) -> bytes:
++    buf = io.StringIO(newline="")
++    w = csv.DictWriter(buf, fieldnames=header)
++    w.writeheader()
++    for r in rows:
++        w.writerow(r)
++    return buf.getvalue().encode("utf-8")
++
++
++@dataclass
++class Figures:
++    """What P10 compares: each line's category, rule and reversal, the figures (the buckets
++    among them), the monthly cells and the indicators."""
++
++    lines: list[tuple[str, str | None, str | None, str | None]]
++    metrics: list[dict]
++    monthly: list[dict]
++    indicators: list[dict]
++
++
++def figures(statement: Statement, profile: dict[str, Any] | None, thresholds: ind.Thresholds | None = None,
++            ruleset: cat.Ruleset | None = None) -> Figures:
++    """The figures the case pipeline computes for one statement and its profile."""
++    s = statement.model_copy(deep=True)
++    names = store.profile_names(profile) if profile is not None else None
++    s = cat.categorise(s, ruleset or cat.active_ruleset(), profile=names)
++    vat = profile.get("vat_stagger") if profile else None
++    repay = profile.get("proposed_monthly_repayment") if profile else None
++    return Figures(
++        lines=[(t.id, t.category.value if t.category else None, t.rule_id, t.reverses) for t in s.transactions],
++        metrics=[m.model_dump(mode="json") for m in met.compute(s, vat_stagger=vat, proposed_repayment=repay)],
++        monthly=[r.model_dump(mode="json") for r in met.monthly_summary(s)],
++        indicators=[i.model_dump(mode="json") for i in ind.raise_indicators(s, thresholds)],
++    )
++
++
++def differs(a: Statement, a_profile: dict[str, Any] | None, b: Statement, b_profile: dict[str, Any] | None,
++            thresholds: ind.Thresholds | None = None) -> str | None:
++    """What differs between the two statements' figures, under both rule tables, named
++    without quoting a line; None when nothing does."""
++    for rs in _rulesets():
++        try:
++            fa, fb = figures(a, a_profile, thresholds, rs), figures(b, b_profile, thresholds, rs)
++        except (met.AmountError, met.ReconciliationError) as e:
++            return f"the figures under {rs.id} ({e.__class__.__name__})"
++        for (ida, *ca), (idb, *cb) in zip(fa.lines, fb.lines, strict=True):
++            if ida != idb or ca != cb:
++                return f"the category of line {ida} under {rs.id}"
++        for ma, mb in zip(fa.metrics, fb.metrics, strict=True):
++            if ma != mb:
++                return f"figure {ma['id']} under {rs.id}"
++        if fa.monthly != fb.monthly:
++            return f"the monthly summary under {rs.id}"
++        if fa.indicators != fb.indicators:
++            return f"the indicators under {rs.id}"
++    return None
++
++
++# --- the command ---------------------------------------------------------------------------
++
++
++def _converted(src: Path, fmt: str, *, opening_balance: str | None, statement_balance: str | None,
++               at: str | None) -> bytes:
++    """The five-column statement a source file gives, through its importer."""
++    from .importers import bankcsv, monzo, openbanking, truelayer
++
++    base, colon, bank_profile = fmt.partition(":")
++    if base not in store.FORMATS or (colon and base != store.BANK_CSV) or (base == store.BANK_CSV and not bank_profile):
++        raise PseudonymiseError(f"unknown format {fmt!r}; use one of csv, monzo, openbanking, truelayer "
++                                f"or {store.BANK_CSV}:PROFILE")
++    if base == "csv":
++        return src.read_bytes()
++    with tempfile.TemporaryDirectory() as work:
++        os.chmod(work, 0o700)
++        raw = Path(work) / ("export.json" if base in store.BALANCE_FORMATS else "export.csv")
++        dst = Path(work) / "statement.csv"
++        raw.write_bytes(src.read_bytes())
++        try:
++            if base == "monzo":
++                monzo.convert(raw, dst, opening_balance)
++            elif base == store.BANK_CSV:
++                bankcsv.convert(raw, dst, mapping=bankcsv.profile(bank_profile), opening_balance=opening_balance)
++            else:
++                importer = openbanking if base == "openbanking" else truelayer
++                importer.convert(raw, dst, statement_balance=statement_balance, at=at)
++        except contract.ImportRefused as e:
++            raise PseudonymiseError(f"import refused: {str(e).replace(str(raw), src.name)}") from None
++        return dst.read_bytes()
++
++
++def write(result: Pseudonymised, out: Path, *, source_format: str) -> list[Path]:
++    """Write the copy into a new folder `out`, readable by its owner only: the statement, the
++    profile when there is one, the label and a manifest. Nothing is overwritten.
++
++    The files are written into a staging folder beside `out` and the folder is renamed into
++    place, so a failure part-way (a full disk, an I/O error) leaves no partial copy at `out`:
++    the staging folder is removed, and the next run starts clean."""
++    out = Path(out)
++    if out.exists() and (not out.is_dir() or any(out.iterdir())):
++        raise PseudonymiseError(f"{out} already exists and is not an empty folder; nothing was written")
++    out.parent.mkdir(parents=True, exist_ok=True)
++    stage = Path(tempfile.mkdtemp(prefix=f".{out.name}.", suffix=".part", dir=out.parent))
++    try:
++        os.chmod(stage, 0o700)
++        names = _write_files(result, stage, source_format=source_format)
++        if out.exists():
++            out.rmdir()  # empty, checked above
++        os.rename(stage, out)
++    except BaseException:
++        shutil.rmtree(stage, ignore_errors=True)
++        raise
++    return [out / n for n in names]
++
++
++def _write_files(result: Pseudonymised, out: Path, *, source_format: str) -> list[str]:
++    files: dict[str, bytes] = {STATEMENT_FILE: result.statement, LABEL_FILE: (result.label + "\n").encode()}
++    if result.profile is not None:
++        body = yaml.safe_dump(result.profile, sort_keys=False, allow_unicode=True)
++        files[PROFILE_FILE] = (f"# {result.label}\n" + body).encode("utf-8")
++    files[MANIFEST_FILE] = json.dumps({
++        "pseudonymised_personal_data": True, "anonymous": False, "label": result.label,
++        "source_format": source_format, "words_replaced": result.words_replaced,
++        "profile_names_replaced": result.names_replaced, "profile_names_kept": result.names_kept,
++        "kept": "every id, date, amount and balance, and every wording the rule tables recognise",
++    }, indent=2).encode("utf-8") + b"\n"
++    written = []
++    for name, data in files.items():
++        p = out / name
++        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
++        with os.fdopen(fd, "wb") as f:
++            f.write(data)
++        written.append(name)
++    return written
++
++
++def pseudonymise_file(src: Path, fmt: str, out: Path, *, profile: dict[str, Any] | None = None,
++                      opening_balance: str | None = None, statement_balance: str | None = None,
++                      at: str | None = None, thresholds: ind.Thresholds | None = None) -> tuple[Pseudonymised, list[Path]]:
++    src = Path(src)
++    if not src.is_file():
++        raise PseudonymiseError(f"no file at {src}")
++    data = _converted(src, fmt, opening_balance=opening_balance, statement_balance=statement_balance, at=at)
++    result = pseudonymise_statement(data, profile, thresholds=thresholds, label=src.name)
++    return result, write(result, out, source_format=fmt)
++
++
++__all__ = [
++    "LABEL",
++    "PseudonymiseError",
++    "Pseudonymised",
++    "differs",
++    "figures",
++    "pseudonymise_file",
++    "pseudonymise_statement",
++    "write",
++]
+diff --git a/tests/test_pseudonymise.py b/tests/test_pseudonymise.py
+new file mode 100644
+index 0000000..e1a56f6
+--- /dev/null
++++ b/tests/test_pseudonymise.py
+@@ -0,0 +1,296 @@
++"""cma pseudonymise (R46, P10): names and account numbers become consistent tokens, the
++institutions and every id, date, amount and balance are kept, the case profile is tokenised the
++same way, the output says it is pseudonymised personal data, and the copy gives the original's
++figures, buckets, monthly cells and indicators."""
++
++from __future__ import annotations
++
++import csv
++import io
++import json
++from pathlib import Path
++
++import pytest
++from typer.testing import CliRunner
++
++from cma import pseudonymise as ps
++from cma import store, synth
++from cma.cli import app
++from cma.importers import contract
++from cma.synth import ARCHETYPES, PROFILES
++
++HEADER = "id,date,description,amount,balance\n"
++
++
++def _csv(rows: list[tuple[str, str, str, str, str]]) -> bytes:
++    buf = io.StringIO(newline="")
++    w = csv.writer(buf)
++    w.writerow(["id", "date", "description", "amount", "balance"])
++    w.writerows(rows)
++    return buf.getvalue().encode()
++
++
++def _statement(lines: list[tuple[str, str, str]], opening: int = 100_000) -> bytes:
++    """(date, description, amount in pence) lines, balances walked from `opening` pence."""
++    rows, bal = [], opening
++    for i, (d, desc, amount) in enumerate(lines, 1):
++        bal += amount
++        rows.append((f"L{i}", d, desc, f"{amount / 100:.2f}", f"{bal / 100:.2f}"))
++    return _csv(rows)
++
++
++def _rows(data: bytes) -> list[dict]:
++    return list(csv.DictReader(io.StringIO(data.decode(), newline="")))
++
++
++def _profile(**kw) -> dict:
++    return store.validate_profile(kw)
++
++
++def _figures_equal(original: bytes, profile, result: ps.Pseudonymised) -> None:
++    a, b = contract.checked(original, "a"), contract.checked(result.statement, "b")
++    for rid in ("v1", "v2"):
++        from cma.categorise import load_ruleset
++        rs = load_ruleset(rid)
++        fa, fb = ps.figures(a, profile, ruleset=rs), ps.figures(b, result.profile, ruleset=rs)
++        assert fa.lines == fb.lines
++        assert fa.metrics == fb.metrics
++        assert fa.monthly == fb.monthly
++        assert fa.indicators == fb.indicators
++
++
++def _synth_case(archetype: str, profile: str, features) -> tuple[bytes, dict]:
++    rows, truth = synth.generate(archetype, profile, seed=11, months=6, features=list(features))
++    buf = io.StringIO(newline="")
++    w = csv.DictWriter(buf, fieldnames=["id", "date", "description", "amount", "balance"])
++    w.writeheader()
++    w.writerows(rows)
++    names = truth.case_profile or {"directors": [], "own_accounts": []}
++    prof = _profile(directors=list(names.get("directors", [])), own_accounts=list(names.get("own_accounts", [])),
++                    vat_stagger=truth.vat_stagger, business_name="PARKGATE TRADING LTD", label="synthetic case",
++                    proposed_monthly_repayment="1500.00")
++    return buf.getvalue().encode(), prof
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("archetype", sorted(ARCHETYPES))
++@pytest.mark.parametrize("risk", sorted(PROFILES))
++@pytest.mark.parametrize("features", [(), tuple(synth.FEATURES)], ids=["plain", "all_features"])
++def test_p10_pseudonymised_statement_and_profile_give_identical_figures(archetype, risk, features):
++    data, prof = _synth_case(archetype, risk, features)
++    result = ps.pseudonymise_statement(data, prof)
++    _figures_equal(data, prof, result)
++    # Every id, date, amount and balance is kept exactly.
++    before, after = _rows(data), _rows(result.statement)
++    assert [(r["id"], r["date"], r["amount"], r["balance"]) for r in before] == \
++           [(r["id"], r["date"], r["amount"], r["balance"]) for r in after]
++    if features:
++        assert synth.DIRECTOR_NAME not in result.statement.decode()
++        assert synth.DIRECTOR_NAME not in json.dumps(result.profile)
++        assert result.words_replaced > 0
++
++
++@pytest.mark.invariants
++def test_p10_names_and_account_numbers_become_consistent_tokens_institutions_kept():
++    prof = _profile(directors=["JANE DOE"], own_accounts=["ACME HOLDINGS"], business_name="ACME LTD")
++    data = _statement([
++        ("2026-01-02", "STRIPE PAYMENTS UK", 50_000),
++        ("2026-01-03", "FPS CREDIT JANE DOE", 20_000),
++        ("2026-01-04", "FPS DEBIT ACME HOLDINGS 12345678 20-11-33", -10_000),
++        ("2026-01-05", "FPS CREDIT JOHN SMITH INV 4471", 7_500),
++        ("2026-01-06", "FPS CREDIT JOHN SMITH INV 4472", 7_500),
++        ("2026-01-07", "IWOCA LOAN DRAWDOWN", 300_000),
++        ("2026-01-08", "HMRC VAT REPAYMENT", 12_000),
++        ("2026-01-09", "DD BRITISH GAS 99887766", -9_000),
++        ("2026-01-10", "UNPAID DD BRITISH GAS 99887766", 9_000),
++        ("2026-01-11", "CARD PAYMENT TO BET365", -2_000),
++        ("2026-01-12", "FPS CREDIT JANE DOE ACME HOLDINGS", 4_000),
++    ])
++    result = ps.pseudonymise_statement(data, prof)
++    out = result.statement.decode()
++    for secret in ("JANE", "DOE", "ACME", "HOLDINGS", "JOHN", "SMITH", "12345678", "99887766", "BRITISH"):
++        assert secret not in out, secret
++    for kept in ("STRIPE", "IWOCA", "HMRC", "UNPAID DD", "BET365", "INV 4471", "FPS CREDIT"):
++        assert kept in out, kept
++    rows = _rows(result.statement)
++    # The same name gives the same token on every line; another name another token.
++    assert rows[3]["description"].split("INV")[0] == rows[4]["description"].split("INV")[0]
++    assert rows[7]["description"][3:].split()[0] == rows[8]["description"][10:].split()[0]
++    # The profile holds the tokens the descriptions hold.
++    jane, acme = result.profile["directors"][0], result.profile["own_accounts"][0]
++    assert jane != acme and jane in rows[1]["description"] and acme in rows[2]["description"]
++    assert jane in rows[10]["description"] and acme in rows[10]["description"]
++    assert result.profile["business_name"] not in ("ACME LTD",)
++    _figures_equal(data, prof, result)
++
++
++@pytest.mark.invariants
++def test_p10_a_director_inside_an_own_account_name_and_two_spellings():
++    prof = _profile(directors=["JANE DOE"], own_accounts=["JANE DOE LTD"])
++    data = _statement([
++        ("2026-02-02", "FPS CREDIT JANE DOE LTD", 10_000),
++        ("2026-02-03", "FPS CREDIT JANE-DOE LTD", 10_000),
++        ("2026-02-04", "FPS CREDIT JANE DOE", 5_000),
++        ("2026-02-05", "FPS DEBIT JANE DOE LTD", -3_000),
++        ("2026-02-06", "TFR JANE DOE LTD", -2_000),
++        ("2026-02-07", "FPS CREDIT CASH DEPOSIT REF JANE DOE", 6_000),
++        ("2026-02-08", "CASH PAID IN JANE DOE", 6_000),
++    ])
++    result = ps.pseudonymise_statement(data, prof)
++    assert "JANE" not in result.statement.decode()
++    rows = _rows(result.statement)
++    assert rows[0]["description"] != rows[1]["description"]  # two spellings stay two counterparties
++    _figures_equal(data, prof, result)
++
++
++@pytest.mark.invariants
++def test_p10_a_profile_name_holding_recognised_wording_is_kept():
++    prof = _profile(directors=["IWOCA"])  # a name the lender list recognises
++    data = _statement([("2026-03-02", "IWOCA LOAN", 10_000), ("2026-03-03", "FPS CREDIT IWOCA", 5_000)])
++    result = ps.pseudonymise_statement(data, prof)
++    assert result.profile["directors"] == ["IWOCA"] and result.names_kept == 1
++    _figures_equal(data, prof, result)
++
++
++@pytest.mark.invariants
++def test_p10_round_trips_and_concentration_keep_their_counterparties():
++    data = _statement([
++        ("2026-04-01", "FPS DEBIT PETER PAN", -10_000),
++        ("2026-04-02", "FPS CREDIT PETER PAN", 15_000),
++        ("2026-04-03", "FPS CREDIT WENDY DARLING INV 12", 20_000),
++        ("2026-04-04", "FPS CREDIT WENDY DARLING INV 13", 20_000),
++        ("2026-04-05", "FPS CREDIT CAPTAIN HOOK INV 14", 1_000),
++        ("2026-04-06", "Card Payment to Tesco Stores 4411", -1_500),
++    ])
++    result = ps.pseudonymise_statement(data, None)
++    assert result.profile is None
++    _figures_equal(data, None, result)
++
++
++@pytest.mark.contracts
++def test_refused_statement_writes_nothing(tmp_path):
++    bad = tmp_path / "bad.csv"
++    bad.write_bytes(HEADER.encode() + b"L1,2026-01-01,X,abc,1.00\n")
++    with pytest.raises(ps.PseudonymiseError):
++        ps.pseudonymise_file(bad, "csv", tmp_path / "out")
++    assert not (tmp_path / "out").exists()
++
++
++@pytest.mark.contracts
++def test_cli_writes_a_labelled_copy_and_a_tokenised_profile(tmp_path, monkeypatch):
++    monkeypatch.setenv("CMA_HOME", str(tmp_path / "root"))
++    case_id = store.new_case(label="Jane's café", root=tmp_path / "root")
++    folder = store.case_folder(case_id, tmp_path / "root")
++    store.set_profile(folder, _profile(directors=["JANE DOE"], label="Jane's café", vat_stagger=2))
++    src = tmp_path / "s.csv"
++    src.write_bytes(_statement([("2026-01-02", "FPS CREDIT JANE DOE", 20_000),
++                                ("2026-01-03", "SUMUP PAYMENTS", 5_000)]))
++    out = tmp_path / "pseudo"
++    r = CliRunner().invoke(app, ["pseudonymise", str(src), "--format", "csv", "--out", str(out),
++                                 "--profile", case_id])
++    assert r.exit_code == 0, r.output
++    assert "pseudonymised personal data" in r.output.lower() and "not anonymous" in r.output.lower()
++    assert sorted(p.name for p in out.iterdir()) == sorted(
++        [ps.STATEMENT_FILE, ps.PROFILE_FILE, ps.LABEL_FILE, ps.MANIFEST_FILE])
++    for name in (ps.STATEMENT_FILE, ps.PROFILE_FILE, ps.LABEL_FILE, ps.MANIFEST_FILE):
++        text = (out / name).read_text()
++        assert "JANE" not in text.upper() or name == ps.LABEL_FILE
++    assert ps.LABEL in (out / ps.LABEL_FILE).read_text()
++    assert ps.LABEL in (out / ps.PROFILE_FILE).read_text()
++    manifest = json.loads((out / ps.MANIFEST_FILE).read_text())
++    assert manifest["pseudonymised_personal_data"] is True and manifest["anonymous"] is False
++    prof = store.parse_profile((out / ps.PROFILE_FILE).read_bytes())
++    assert prof["vat_stagger"] == 2 and prof["directors"][0] in (out / ps.STATEMENT_FILE).read_text()
++    assert "SUMUP" in (out / ps.STATEMENT_FILE).read_text()
++    # The copy loads as a statement, and a second run refuses to overwrite it.
++    contract.checked((out / ps.STATEMENT_FILE).read_bytes(), "copy")
++    r2 = CliRunner().invoke(app, ["pseudonymise", str(src), "--format", "csv", "--out", str(out)])
++    assert r2.exit_code == 2
++
++
++@pytest.mark.contracts
++def test_cli_monzo_export_goes_through_its_importer(tmp_path):
++    src = tmp_path / "export.csv"
++    src.write_bytes((Path(__file__).parent / "golden" / "monzo" / "business_export.golden").read_bytes())
++    out = tmp_path / "m"
++    r = CliRunner().invoke(app, ["pseudonymise", str(src), "--format", "monzo", "--out", str(out)])
++    assert r.exit_code == 0, r.output
++    copy = (out / ps.STATEMENT_FILE).read_bytes()
++    assert "CLIENT A" not in copy.decode().upper()
++    golden = (Path(__file__).parent / "golden" / "monzo" / "business_statement.golden").read_bytes()
++    assert [(r["id"], r["date"], r["amount"], r["balance"]) for r in _rows(golden)] == \
++           [(r["id"], r["date"], r["amount"], r["balance"]) for r in _rows(copy)]
++
++
++@pytest.mark.contracts
++def test_a_failure_part_way_through_writing_leaves_no_partial_copy(tmp_path, monkeypatch):
++    result = ps.pseudonymise_statement(_statement([("2026-01-02", "FPS CREDIT JANE DOE", 1_000)]),
++                                       _profile(directors=["JANE DOE"]))
++    real_fdopen, calls = ps.os.fdopen, []
++
++    def failing_fdopen(fd, *a, **kw):
++        calls.append(fd)
++        if len(calls) == 2:
++            ps.os.close(fd)
++            raise OSError(28, "No space left on device")
++        return real_fdopen(fd, *a, **kw)
++
++    monkeypatch.setattr(ps.os, "fdopen", failing_fdopen)
++    out = tmp_path / "out"
++    with pytest.raises(OSError):
++        ps.write(result, out, source_format="csv")
++    assert not out.exists()
++    assert list(tmp_path.iterdir()) == []  # the staging folder is removed too
++    monkeypatch.setattr(ps.os, "fdopen", real_fdopen)
++    written = ps.write(result, out, source_format="csv")  # the next run starts clean
++    assert sorted(p.name for p in written) == sorted(p.name for p in out.iterdir())
++
++
++@pytest.mark.contracts
++def test_the_copy_is_deterministic_owner_only_and_holds_no_token_mapping(tmp_path):
++    prof = _profile(directors=["JANE DOE"], own_accounts=["ACME HOLDINGS"])
++    data = _statement([("2026-01-02", "FPS CREDIT JANE DOE", 1_000),
++                       ("2026-01-03", "FPS DEBIT ACME HOLDINGS 12345678", -500)])
++    a, b = ps.pseudonymise_statement(data, prof), ps.pseudonymise_statement(data, prof)
++    assert a.statement == b.statement and a.profile == b.profile
++    out = tmp_path / "out"
++    ps.write(a, out, source_format="csv")
++    assert (out.stat().st_mode & 0o777) == 0o700
++    for p in out.iterdir():
++        assert (p.stat().st_mode & 0o777) == 0o600
++        text = p.read_text()
++        for secret in ("JANE", "DOE", "ACME", "12345678"):
++            assert secret not in text, (p.name, secret)
++
++
++@pytest.mark.contracts
++def test_a_refusal_names_lines_and_figures_never_description_text(monkeypatch):
++    data = _statement([("2026-01-02", "FPS CREDIT JANE DOE SECRETWORD", 1_000)])
++    monkeypatch.setattr(ps, "differs", lambda *a, **k: "figure M2 under v2")
++    with pytest.raises(ps.PseudonymiseError) as e:
++        ps.pseudonymise_statement(data, _profile(directors=["JANE DOE"]))
++    assert "M2" in str(e.value) and "nothing was written" in str(e.value)
++    for secret in ("JANE", "SECRETWORD"):
++        assert secret not in str(e.value)
++
++
++@pytest.mark.invariants
++@pytest.mark.parametrize("business, director", [("Greenfield Capital Ltd", "Robert Finance"),
++                                                 ("Smith Loans Ltd", "Anna Funding"),
++                                                 ("Northside Cash And Carry", "Peter Iwoca")])
++def test_p10_a_name_holding_recognised_wording_keeps_only_that_wording(business, director):
++    # T39 pass: a business or director whose name held a word the rules read (CAPITAL, FINANCE,
++    # LOANS...) was kept whole, in the profile and the statement, so the name itself survived
++    # pseudonymisation (R46). Only the recognised wording stays now; the rest is tokens.
++    prof = _profile(business_name=business, directors=[director])
++    data = _statement([("2026-03-02", f"FPS CREDIT {business.upper()} INV 1234", 50_000),
++                       ("2026-03-03", f"FPS TO {director.upper()}", -10_000),
++                       ("2026-03-04", f"FPS CREDIT {director.upper()}", 20_000),
++                       ("2026-03-05", "CARD SETTLEMENT STRIPE", 30_000)])
++    result = ps.pseudonymise_statement(data, prof)
++    out = result.statement.decode() + json.dumps(result.profile)
++    recognised = {"CAPITAL", "FINANCE", "LOANS", "FUNDING", "CASH", "IWOCA", "LTD", "AND", "CARRY"}
++    for word in (business + " " + director).upper().split():
++        if word not in recognised:
++            assert word not in out.upper(), word
++    _figures_equal(data, prof, result)

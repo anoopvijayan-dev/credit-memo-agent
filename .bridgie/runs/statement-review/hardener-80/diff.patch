@@ -1,0 +1,341 @@
+diff --git a/src/cma/cli.py b/src/cma/cli.py
+index b225fb7..5a04bec 100644
+--- a/src/cma/cli.py
++++ b/src/cma/cli.py
+@@ -933,6 +933,45 @@ def case_check(folder: Path = typer.Argument(..., help="The case folder (cases/<
+     console.print(f"case log intact: {check.head.position} entries, head {check.head.hash[:12]}")
+ 
+ 
++def _yes_no(value) -> str:
++    return "not known" if value is None else ("yes" if value else "no")
++
++
++@app.command("report")
++def report_cases(
++    as_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
++):
++    """Summarise every case under the case root (R50): the judgement queue's lines, the
++    lines each indicator flagged, overrides by old and new category, the unexplained share
++    of money in, whether every figure was traced and whether the case was signed off. It
++    holds no applicant name, description or amount, and no time from the case log. Exit 1
++    when any case has a figure not traced, figures that do not reconcile, or cannot be read."""
++    from . import report
++
++    rows = report.report()
++    if as_json:
++        console.print_json(json.dumps(rows))
++    elif not rows:
++        console.print("no cases")
++    for r in [] if as_json else rows:
++        say = lambda text: console.print(text, markup=False, highlight=False, soft_wrap=True)  # noqa: E731
++        states = {"not_reconciled": "not reconciled", "refused": "could not be read", "empty": "no statement yet"}
++        say(f"case {r['case']}: {states.get(r['state'], 'figures shown')}, {r['accounts']} account(s)")
++        reasons = ", ".join(f"{k} {n}" for k, n in r["queue_by_reason"].items())
++        say(f"  judgement queue: {r['queue_lines']} lines" + (f" ({reasons})" if reasons else ""))
++        flagged = ", ".join(f"{k} {n}" for k, n in r["indicator_lines"].items()) or "none"
++        say(f"  lines flagged per indicator: {flagged}")
++        moved = ", ".join(f"{o['old']} -> {o['new']} {o['count']}" for o in r["overrides"]) or "none"
++        say(f"  overrides applied: {moved}" + (f"; {r['stale_overrides']} stale" if r["stale_overrides"] else ""))
++        say(f"  unexplained share of money in: {r['unexplained_share'] or 'n/a'}")
++        traced = _yes_no(r["traced"]) + (f" (untraced: {', '.join(r['untraced'])})" if r["untraced"] else "")
++        say(f"  every figure traced: {traced}")
++        say(f"  reconciled: {_yes_no(r['reconciled'])}")
++        say(f"  signed off: {_yes_no(r['signed_off'])}")
++    if any(report.failing(r) for r in rows):
++        raise typer.Exit(code=1)
++
++
+ @app.command("review")
+ def review_workspace(
+     case_id: str = typer.Argument(..., metavar="CASE", help="The case id `cma case new` printed."),
+diff --git a/src/cma/report.py b/src/cma/report.py
+new file mode 100644
+index 0000000..5a4b547
+--- /dev/null
++++ b/src/cma/report.py
+@@ -0,0 +1,128 @@
++"""`cma report` (R50, C11): a local summary of every case under the case root.
++
++For each case: how many lines the judgement queue lists, by why they are listed; how many
++lines each kind of indicator flagged; the overrides the case applies, counted by old and new
++category; the unexplained share of money in (M26, across every account for a case of more
++than one); whether every figure was traced (each figure and monthly cell has the lines behind
++it, is n/a with its reason, or is nothing, zero with no line to cite); whether its figures
++reconcile (R3); and whether it was signed off.
++
++Everything comes from the workspace's case summary (review.summary.case_summary), so the
++report counts what the underwriter sees, and does no arithmetic on money itself. It carries
++the case's random id, counts, category and indicator names, flags and a share; never an
++applicant's name, the case's label or business name, a description, an amount, an
++override's reason or typed name, a refusal's own words (which can quote a statement), or any
++time from the case log, so no duration can be read from it (D32).
++"""
++
++from __future__ import annotations
++
++from collections import Counter
++from pathlib import Path
++from typing import Any
++
++from . import case as caselog
++from . import firm, overrides, pack, store
++
++SHARE = "M26"  # the unexplained share of money in
++
++
++def _nothing_to_cite(item: dict[str, Any]) -> bool:
++    return item["value"] is None or item["value"] == 0
++
++
++def _untraced(summary: dict[str, Any]) -> list[str]:
++    """Each figure or monthly cell with a value but no line behind it, as account:id or
++    account:month:cell. A figure that cannot be computed says why in its method (n/a)."""
++    out = []
++    accounts = list(summary["accounts"]) + ([summary["combined"]] if summary.get("combined") else [])
++    for a in accounts:
++        name = a["account"]
++        for f in a["figures"]:
++            no_lines = f["lines"] == 0 and not _nothing_to_cite(f)
++            if no_lines or (f["value"] is None and not f["method"]):  # n/a says why in its method
++                out.append(f"{name}:{f['id']}")
++        for row in a["monthly"]:
++            for key, cell in row.items():
++                if isinstance(cell, dict) and "lines" in cell and cell["lines"] == 0 and not _nothing_to_cite(cell):
++                    out.append(f"{name}:{row['month']}:{key}")
++    return out
++
++
++def _share(summary: dict[str, Any]) -> str | None:
++    source = summary.get("combined") or (summary["accounts"][0] if summary["accounts"] else None)
++    if source is None:
++        return None
++    return next((f["display"] for f in source["figures"] if f["id"] == SHARE), None)
++
++
++def _overrides(folder: Path) -> tuple[list[dict[str, Any]], int]:
++    """The applied overrides counted by (old, new) category, and how many are stale."""
++    counts: Counter[tuple[str, str]] = Counter()
++    stale = 0
++    for o, status in overrides.listing(folder):
++        if status == "applied":
++            counts[(o.old, o.new)] += 1
++        elif status.startswith("stale"):
++            stale += 1
++    return [{"old": old, "new": new, "count": n} for (old, new), n in sorted(counts.items())], stale
++
++
++def case_report(folder: Path, case_id: str) -> dict[str, Any]:
++    from .review.summary import case_summary
++
++    out: dict[str, Any] = {"case": case_id, "state": None, "accounts": 0, "queue_lines": 0,
++                           "queue_by_reason": {}, "indicator_lines": {}, "overrides": [],
++                           "stale_overrides": 0, "unexplained_share": None, "traced": False,
++                           "untraced": [], "reconciled": False, "signed_off": False}
++    s = case_summary(folder, case_id)
++    out["state"] = s["state"]
++    if s["state"] in ("shown", "empty"):
++        out["accounts"] = len(s["accounts"])
++        out["queue_lines"] = len(s["queue"])
++        out["queue_by_reason"] = dict(sorted(Counter(r for e in s["queue"] for r in e["reasons"]).items()))
++        flagged: dict[str, set[tuple[str, str]]] = {}
++        for a in s["accounts"]:
++            for i in a["indicators"]:
++                flagged.setdefault(i["kind"], set()).update((a["account"], line["id"]) for line in i["lines"])
++        out["indicator_lines"] = {k: len(v) for k, v in sorted(flagged.items())}
++        out["unexplained_share"] = _share(s)
++        out["untraced"] = _untraced(s)
++        out["traced"] = not out["untraced"]
++        out["reconciled"] = True
++    elif s["state"] == "not_reconciled":
++        out["reconciled"] = False
++    else:  # refused: the case could not be read; nothing is known about its figures
++        out["reconciled"] = None
++        out["traced"] = None
++    try:
++        out["overrides"], out["stale_overrides"] = _overrides(folder)
++        entries = caselog.for_case(folder).entries()
++        out["signed_off"] = any(e.event == pack.SIGN_EVENT for e in entries)
++    except Exception:  # the log or the override log could not be read: the state says the case is refused
++        out["signed_off"] = None
++        if out["state"] != "not_reconciled":
++            out["state"], out["traced"], out["reconciled"] = "refused", None, None
++    return out
++
++
++def case_ids(root: Path | None = None) -> list[str]:
++    root = Path(root) if root is not None else firm.case_root()
++    cases = root / store.CASES
++    if not cases.is_dir():
++        return []
++    return sorted(p.name for p in cases.iterdir()
++                  if store.CASE_ID.fullmatch(p.name) and (p / store.PROFILE).is_file())
++
++
++def report(root: Path | None = None) -> list[dict[str, Any]]:
++    """Every case under the case root, in case id order."""
++    rows = []
++    for case_id in case_ids(root):
++        rows.append(case_report(store.case_folder(case_id, root), case_id))
++    return rows
++
++
++def failing(row: dict[str, Any]) -> bool:
++    """A case whose figures are not all traced, or not known to reconcile."""
++    return row["traced"] is not True or row["reconciled"] is not True
+diff --git a/tests/test_report.py b/tests/test_report.py
+new file mode 100644
+index 0000000..1d91bcf
+--- /dev/null
++++ b/tests/test_report.py
+@@ -0,0 +1,151 @@
++"""`cma report` (R50, C11): for each case, the judgement queue's lines, the lines each
++indicator flagged, overrides by old and new category, the unexplained share of money in,
++whether every figure was traced and whether the case was signed off; with no applicant
++names, descriptions or amounts and no duration derived from the case log's timestamps. It
++exits non-zero when a case is untraced or does not reconcile."""
++
++import json
++import re
++
++import pytest
++from typer.testing import CliRunner
++
++from cma import metrics, overrides, pack, report, store
++from cma.cli import app
++
++runner = CliRunner()
++
++# Sentinels: each would only reach the report through a name, a description, an amount,
++# a label, a reason or a typed name.
++NAME = "ZQXJANEDOEZQX"
++BUSINESS = "ZQXACMEBAKERYZQX"
++OWN = "ZQXOWNHOLDINGSZQX"
++LABEL = "ZQXLABELZQX"
++REASON = "ZQXREASONZQX"
++TYPED = "ZQXTYPEDNAMEZQX"
++DESC = "ZQXDESCZQX"
++BODY = ("id,date,description,amount,balance\n"
++        "L1,2026-01-05,CARD SETTLEMENT STRIPE,4321.87,5321.87\n"
++        f"L2,2026-01-06,FPS CREDIT {DESC} ONE,1234.56,6556.43\n"
++        "L3,2026-01-07,DD COUNCIL,-987.65,5568.78\n"
++        "L4,2026-01-08,CASH DEPOSIT AT COUNTER,2765.43,8334.21\n"
++        f"L5,2026-02-02,FPS CREDIT {NAME},1111.11,9445.32\n"
++        f"L6,2026-02-03,FPS CREDIT {DESC} TWO,555.55,10000.87\n")
++AMOUNTS = ("4321.87", "4,321.87", "1234.56", "1,234.56", "987.65", "2765.43", "2,765.43", "1111.11",
++           "1,111.11", "555.55", "5321.87", "10000.87", "10,000.87", "9445.32")
++SENTINELS = (NAME, BUSINESS, OWN, LABEL, REASON, TYPED, DESC)
++# Anything that reads as a duration: a clock time, a time unit, an ISO timestamp.
++DURATION = re.compile(r"\d+:\d{2}|\b(second|minute|hour|day|week)s?\b|\bmins?\b|\bhrs?\b|\d{4}-\d{2}-\d{2}T"
++                      r"|duration|elapsed|took", re.IGNORECASE)
++
++
++@pytest.fixture
++def home(tmp_path, monkeypatch):
++    root = tmp_path / "cma-home"
++    monkeypatch.setenv("CMA_HOME", str(root))
++    monkeypatch.delenv("CMA_RULESET", raising=False)
++    return root
++
++
++def _case(tmp_path, body: str = BODY) -> tuple[str, object]:
++    case_id = store.new_case(label=LABEL)
++    folder = store.case_folder(case_id)
++    store.update_profile(folder, lambda p: {**p, "business_name": BUSINESS, "directors": [NAME],
++                                            "own_accounts": [OWN]})
++    src = tmp_path / f"{case_id}.csv"
++    src.write_text(body)
++    store.import_file(folder, src, "csv")
++    return case_id, folder
++
++
++def _signed_case(tmp_path):
++    case_id, folder = _case(tmp_path)
++    overrides.add_override(folder, "L2", "revenue_transfer", reason=REASON, name=TYPED)
++    p = pack.build_preview(folder, case_id)
++    pack.sign_off(folder, case_id, p.snapshot, TYPED)
++    return case_id, folder
++
++
++@pytest.mark.contracts
++def test_r50_report_summarises_each_case(home, tmp_path):
++    case_id, folder = _signed_case(tmp_path)
++    other_id, _ = _case(tmp_path)
++    rows = {r["case"]: r for r in report.report()}
++    assert set(rows) == {case_id, other_id}
++    r = rows[case_id]
++    assert r["state"] == "shown" and r["reconciled"] is True and r["traced"] is True
++    assert r["signed_off"] is True and rows[other_id]["signed_off"] is False
++    assert r["overrides"] == [{"old": "other", "new": "revenue_transfer", "count": 1}]
++    assert rows[other_id]["overrides"] == []
++    # The queue and the indicators, as the workspace's summary counts them (R15, R14).
++    from cma.review.summary import case_summary
++
++    s = case_summary(folder, case_id)
++    assert r["queue_lines"] == len(s["queue"]) > 0
++    kinds = {}
++    for a in s["accounts"]:
++        for i in a["indicators"]:
++            kinds.setdefault(i["kind"], set()).update(line["id"] for line in i["lines"])
++    assert r["indicator_lines"] == {k: len(v) for k, v in sorted(kinds.items())}
++    m26 = next(f for f in s["accounts"][0]["figures"] if f["id"] == "M26")
++    assert r["unexplained_share"] == m26["display"] and r["unexplained_share"].endswith("%")
++
++
++@pytest.mark.contracts
++def test_r50_report_output_holds_no_sentinel_and_no_duration(home, tmp_path):
++    _signed_case(tmp_path)
++    _case(tmp_path)
++    for args in (["report"], ["report", "--json"]):
++        res = runner.invoke(app, args)
++        assert res.exit_code == 0, res.output
++        out = res.output
++        for s in SENTINELS + AMOUNTS:
++            assert s not in out, (s, out)
++        assert "£" not in out
++        assert not DURATION.search(out), (DURATION.search(out), out)
++    rows = json.loads(runner.invoke(app, ["report", "--json"]).output)
++    assert len(rows) == 2 and all(r["traced"] and r["reconciled"] for r in rows)
++
++
++@pytest.mark.contracts
++def test_r50_report_exits_non_zero_on_an_unreconciled_case(home, tmp_path, monkeypatch):
++    case_id, _ = _case(tmp_path)
++
++    def refuse(folder, **kw):
++        raise metrics.ReconciliationError(1, ["L2"])
++
++    monkeypatch.setattr(overrides, "case_figures", refuse)
++    res = runner.invoke(app, ["report"])
++    assert res.exit_code == 1
++    assert case_id in res.output and "not reconciled" in res.output
++    for s in SENTINELS + AMOUNTS:
++        assert s not in res.output
++    r = report.report()[0]
++    assert r["reconciled"] is False and r["traced"] is False
++
++
++@pytest.mark.contracts
++def test_r50_report_exits_non_zero_on_an_untraced_case(home, tmp_path, monkeypatch):
++    _case(tmp_path)
++    real = metrics.compute
++
++    def untraced(*a, **kw):
++        out = real(*a, **kw)
++        m2 = next(m for m in out if m.id == "M2")
++        m2.evidence = []  # a non-zero figure with no lines behind it
++        return out
++
++    monkeypatch.setattr(metrics, "compute", untraced)
++    monkeypatch.setattr(overrides, "_BARE", overrides._Memo(8))
++    res = runner.invoke(app, ["report"])
++    assert res.exit_code == 1, res.output
++    assert "untraced" in res.output
++    r = report.report()[0]
++    assert r["traced"] is False and r["reconciled"] is True and r["untraced"] == ["main:M2"]
++
++
++@pytest.mark.contracts
++def test_r50_report_with_no_cases(home):
++    res = runner.invoke(app, ["report"])
++    assert res.exit_code == 0 and "no cases" in res.output
++    assert json.loads(runner.invoke(app, ["report", "--json"]).output) == []
