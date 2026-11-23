@@ -323,15 +323,17 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
         return out
     out["thresholds"] = {"source": thresholds.source, "sha256": thresholds.sha256,
                          "shipped": thresholds.sha256 == ind.shipped().sha256}
-    out["accounts"] = accounts
     try:  # R41: a case of more than one account, across all its accounts
         both = overrides.combined_figures(figures)
     except Exception as e:
+        # Refused with no account's figures either: the accounts are set only once the case's
+        # figures as a whole are known (R3; Antigravity re-review of T19).
         refused = refusal(e)
         if refused is None:
             raise
         out.update(refused)
         return out
+    out["accounts"] = accounts
     out["combined"] = None if both is None else {
         **_account(both, []), "missing": list(both.missing),
         "basis": COMBINED_BASIS + "".join(
