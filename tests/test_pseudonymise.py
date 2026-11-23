@@ -418,3 +418,22 @@ def test_p10_the_firms_own_rules_categorise_the_copy_as_the_original(tmp_path, m
         fb = ps.figures(b, None, ruleset=rs, firm_rules=rules)
         assert fa == fb
         assert fa.lines[0][2] == "firm:acme_trust"
+
+
+@pytest.mark.contracts
+def test_cli_a_malformed_firm_rules_file_is_refused_and_nothing_is_written(tmp_path, monkeypatch):
+    # Hardening T39: the CLI reads the firm's rules for every copy (R20, P10); a malformed file
+    # is refused with exit 2, naming the file, and no folder is created at --out.
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("CMA_HOME", str(home))
+    (home / "firm_rules.yaml").write_text("rules:\n  - id: [broken\n")
+    src = tmp_path / "s.csv"
+    src.write_bytes(_statement([("2026-01-02", "FPS CREDIT JANE DOE", 1_000)]))
+    out = tmp_path / "o"
+    r = CliRunner().invoke(app, ["pseudonymise", str(src), "--format", "csv", "--out", str(out)])
+    assert r.exit_code == 2, r.output
+    flat = r.output.replace("\n", "")
+    assert "Refused" in flat and "firm_rules.yaml" in flat
+    assert "JANE" not in flat
+    assert not out.exists()
