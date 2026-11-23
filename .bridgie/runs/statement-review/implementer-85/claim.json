@@ -1,0 +1,54 @@
+{
+  "task": "T39",
+  "claims": [
+    {
+      "text": "Recognised wording inside a longer word keeps only that part. GREENFINANCE, SMITHFINANCE and BRIGHTPAYROLL become a token followed by FINANCE or PAYROLL, in both the statement and the profile. The same word gets the same token on every line, and the copy gives identical figures under v1 and v2 (R46, P10).",
+      "proof_cmd": "python -m pytest -q tests/test_pseudonymise.py -k longer_word",
+      "proof_output": "1 passed"
+    },
+    {
+      "text": "A profile name written with a run of spaces (ROSE  BAKERY) gets the same token as the single-spaced spelling. M15 no longer splits, and the copy is written.",
+      "proof_cmd": "python -m pytest -q tests/test_pseudonymise.py -k run_of_spaces",
+      "proof_output": "1 passed"
+    },
+    {
+      "text": "When --thresholds is not given, `cma pseudonymise` checks and keeps wording against the firm's thresholds (case_thresholds, which reads the case root's indicators.yaml), not the packaged ones. A gambling operator that only the firm lists is therefore kept.",
+      "proof_cmd": "python -m pytest -q tests/test_pseudonymise.py -k firm_thresholds",
+      "proof_output": "1 passed"
+    },
+    {
+      "text": "All the pseudonymiser tests pass (invariants and contracts).",
+      "proof_cmd": "python -m pytest -q tests/test_pseudonymise.py",
+      "proof_output": "34 passed in 14.14s"
+    },
+    {
+      "text": "The full suite, ruff and compileall pass.",
+      "proof_cmd": "ruff check src tests evals && python -m compileall -q src && python -m pytest -q -x",
+      "proof_output": "All checks passed! ... 3032 passed in 384.26s (0:06:24)"
+    }
+  ],
+  "files_changed": ["src/cma/pseudonymise.py", "src/cma/cli.py", "tests/test_pseudonymise.py"],
+  "dispositions": [
+    {
+      "finding": "major: a name containing recognised wording only as part of a longer word (GREENFINANCE, BRIGHTPAYROLL, SMITHFINANCE) is kept whole in the statement and the profile (pseudonymise.py:288, keep_words).",
+      "disposition": "reproduced",
+      "evidence": "The new test failed before the fix. I added _Tokens.partly(word, kept), which keeps only the characters inside kept spans and tokenises the rest. The token is keyed by the whole word and its kept parts, so it is consistent across lines and injective. The description word loop now uses partly() instead of skipping any word that overlaps a kept span, and kept profile names use the same per-word rewrite (name_words replaces keep_words). differs() still guards P10. Test: test_p10_recognised_wording_inside_a_longer_word_keeps_only_that_part."
+    },
+    {
+      "finding": "minor: a profile-name region is compared as raw text, so a run of spaces gets a variant token, M15 splits and the copy is refused (pseudonymise.py:284).",
+      "disposition": "reproduced",
+      "evidence": "The new test failed before the fix. Spelling variants are now keyed on the region's text with whitespace collapsed, as counterparty() joins it. Test: test_p10_a_profile_name_spelt_with_a_run_of_spaces_is_one_payer."
+    },
+    {
+      "finding": "minor: without --thresholds the command checks against the packaged thresholds, not the firm's indicators.yaml, so a firm-only gambling operator is tokenised (cli.py:687).",
+      "disposition": "reproduced",
+      "evidence": "The new CLI test failed before the fix, with LOCALBOOKIE tokenised. The default is now review.summary.case_thresholds(), the same thresholds a case raises indicators from, and FirmConfigError is refused with exit 2. Test: test_cli_defaults_to_the_firm_thresholds."
+    },
+    {
+      "finding": "minor: the 'deterministic' and '~5 ms per line' claims came from a scratchpad perf.py that the runner did not run.",
+      "disposition": "reproduced",
+      "evidence": "Those claims are dropped. Determinism is covered by the existing test test_the_copy_is_deterministic_owner_only_and_holds_no_token_mapping, and this claim makes no performance claim."
+    }
+  ],
+  "notes": "Only description text and profile name fields change, so ids, dates, amounts and balances stay untouched. If a context-dependent rule read a word differently on different lines, partly() would key that word's tokens differently on each, and differs() would refuse the copy rather than write a wrong one."
+}
