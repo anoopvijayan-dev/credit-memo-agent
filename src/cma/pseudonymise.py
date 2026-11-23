@@ -526,7 +526,7 @@ def _write_files(result: Pseudonymised, out: Path, *, source_format: str) -> lis
     written = []
     for name, data in files.items():
         p = out / name
-        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)  # no \r\n on Windows
         with os.fdopen(fd, "wb") as f:
             f.write(data)
         written.append(name)

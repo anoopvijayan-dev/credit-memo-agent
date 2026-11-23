@@ -719,7 +719,9 @@ def _write_pack(packs: Path, snapshot: str, files: dict[str, bytes]) -> Path:
     try:
         os.chmod(part, store.DIR_MODE)
         for name, data in files.items():
-            fd = os.open(part / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, store.FILE_MODE)
+            # O_BINARY: in text mode Windows would write each \n as \r\n, and the pack would not
+            # hold the bytes its evidence hashes.
+            fd = os.open(part / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), store.FILE_MODE)
             with os.fdopen(fd, "wb") as fh:
                 fh.write(data)
                 fh.flush()
