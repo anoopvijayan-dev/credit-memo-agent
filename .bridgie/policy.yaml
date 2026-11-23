@@ -24,13 +24,6 @@ verify:
 # Owner's choice, 2026-11-22: the reviewer is Antigravity (Google), not Codex, which is at its
 # usage limit until 2026-11-25. Cross-family review is on again; the tasks that passed while it
 # was off (T04 to T37, reviewed by claude-code alone) are re-reviewed with Antigravity.
-# TEMPORARY (owner's choice, 2026-11-23 06:0x): Antigravity is at its usage quota until about
-# 06:30 UTC, so T41 and T39 are reviewed by claude-code now and re-reviewed with Antigravity
-# afterwards, with the other tasks claude-code reviewed alone. Restore the Antigravity reviewer
-# (delete this block and the cross_family line) once both have passed.
-lanes:
-  engineering:
-    cross_family: false
 routing:
   seats:
-    reviewer: { adapter: claude-code, model: default, effort: high }
+    reviewer: { adapter: antigravity, model: default, effort: high }
