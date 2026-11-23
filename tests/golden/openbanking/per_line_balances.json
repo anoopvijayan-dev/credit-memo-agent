@@ -1,0 +1,92 @@
+[
+  {
+    "Data": {
+      "Transaction": [
+        {
+          "AccountId": "22289",
+          "TransactionId": "T5",
+          "TransactionReference": "COUNCIL TAX",
+          "Amount": {"Amount": "25.50", "Currency": "GBP"},
+          "CreditDebitIndicator": "Debit",
+          "Status": "Booked",
+          "BookingDateTime": "2026-03-03T09:00:00+00:00",
+          "TransactionInformation": "DD COUNCIL TAX",
+          "Balance": {"Amount": {"Amount": "1174.50", "Currency": "GBP"}, "CreditDebitIndicator": "Credit", "Type": "InterimBooked"}
+        },
+        {
+          "AccountId": "22289",
+          "TransactionId": "P1",
+          "Amount": {"Amount": "10.00", "Currency": "GBP"},
+          "CreditDebitIndicator": "Debit",
+          "Status": "Pending",
+          "BookingDateTime": "2026-03-03T12:00:00+00:00",
+          "TransactionInformation": "CARD PAYMENT PENDING"
+        },
+        {
+          "AccountId": "22289",
+          "TransactionId": "T3",
+          "Amount": {"Amount": "50.00", "Currency": "GBP"},
+          "CreditDebitIndicator": "Debit",
+          "Status": "Booked",
+          "BookingDateTime": "2026-03-02T00:00:00+00:00",
+          "TransactionInformation": "CARD PAYMENT",
+          "MerchantDetails": {"MerchantName": "Tesco Stores"},
+          "Balance": {"Amount": {"Amount": "1100.00", "Currency": "GBP"}, "CreditDebitIndicator": "Credit", "Type": "InterimBooked"}
+        },
+        {
+          "AccountId": "22289",
+          "TransactionId": "T4",
+          "TransactionReference": "INV 42",
+          "Amount": {"Amount": "100.00", "Currency": "GBP"},
+          "CreditDebitIndicator": "Credit",
+          "Status": "Booked",
+          "BookingDateTime": "2026-03-02T00:00:00+00:00",
+          "TransactionInformation": "FPS CREDIT",
+          "DebtorAccount": {"SchemeName": "UK.OBIE.SortCodeAccountNumber", "Identification": "11223344556677", "Name": "Acme Ltd"},
+          "Balance": {"Amount": {"Amount": "1200.00", "Currency": "GBP"}, "CreditDebitIndicator": "Credit", "Type": "InterimBooked"}
+        }
+      ]
+    },
+    "Links": {"Self": "https://api.bank.example/open-banking/v3.1/aisp/accounts/22289/transactions?page=1", "Next": "https://api.bank.example/open-banking/v3.1/aisp/accounts/22289/transactions?page=2"},
+    "Meta": {"TotalPages": 2}
+  },
+  {
+    "Data": {
+      "Transaction": [
+        {
+          "AccountId": "22289",
+          "TransactionId": "T3",
+          "Amount": {"Amount": "50.00", "Currency": "GBP"},
+          "CreditDebitIndicator": "Debit",
+          "Status": "Booked",
+          "BookingDateTime": "2026-03-02T00:00:00+00:00",
+          "TransactionInformation": "CARD PAYMENT",
+          "MerchantDetails": {"MerchantName": "Tesco Stores"},
+          "Balance": {"Amount": {"Amount": "1100.00", "Currency": "GBP"}, "CreditDebitIndicator": "Credit", "Type": "InterimBooked"}
+        },
+        {
+          "AccountId": "22289",
+          "TransactionId": "T2",
+          "Amount": {"Amount": "250.00", "Currency": "GBP"},
+          "CreditDebitIndicator": "Credit",
+          "Status": "Booked",
+          "BookingDateTime": "2026-03-01T10:00:00+00:00",
+          "TransactionInformation": "STRIPE PAYMENTS UK",
+          "Balance": {"Amount": {"Amount": "1150.00", "Currency": "GBP"}, "CreditDebitIndicator": "Credit", "Type": "InterimBooked"}
+        },
+        {
+          "AccountId": "22289",
+          "TransactionId": "T1",
+          "Amount": {"Amount": "100.00", "Currency": "GBP"},
+          "CreditDebitIndicator": "Debit",
+          "Status": "Booked",
+          "BookingDateTime": "2026-03-01T08:00:00+00:00",
+          "TransactionInformation": "TRANSFER TO SAVINGS",
+          "Balance": {"Amount": {"Amount": "900.00", "Currency": "GBP"}, "CreditDebitIndicator": "Credit", "Type": "InterimBooked"}
+        }
+      ]
+    },
+    "Links": {"Self": "https://api.bank.example/open-banking/v3.1/aisp/accounts/22289/transactions?page=2"},
+    "Meta": {"TotalPages": 2}
+  }
+]

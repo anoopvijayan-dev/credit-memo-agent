@@ -140,6 +140,8 @@ def test_a_review_left_pending_by_the_pre_change_version_resumes_here(pre_change
     assert r.exit_code == 0, r.output
     record = json.loads((tmp_path / "memo.evidence.json").read_text())
     assert record["ruleset"] == {"id": "v1", "sha256": load_ruleset("v1").sha256, "inferred": "pre-ruleset checkpoint"}
+    # The pre-change version recorded no rule ids; each line's is inferred from v1.
+    assert record["lines"] and all((line["rule_id"] or "").startswith("v1:") for line in record["lines"])
     assert "APPROVED by C" in out.read_text()
 
 
@@ -153,10 +155,13 @@ def test_rollback_a_review_left_pending_here_resumes_under_the_pre_change_versio
     rows, truth = synth.generate("cafe", "stretched", end=date(2026, 9, 30))
     csv_path, _ = synth.write(rows, truth, tmp_path)
     db, out = tmp_path / "reviews.db", tmp_path / "memo.md"
+    # The rollback is CMA_RULESET=v1 and then the previous wheel: a review drafted under v2
+    # (the default since T11) can hold a category the previous release has no value for
+    # (director_funding here), which it cannot read back.
     new = subprocess.run(
         [sys.executable, "-m", "cma.cli", "run", str(csv_path), "--checkpoint-db", str(db), "--thread", "new-1"],
         cwd=tmp_path, stdin=subprocess.DEVNULL, capture_output=True, text=True,
-        env=_env(PYTHONPATH=str(ROOT / "src")))
+        env=_env(PYTHONPATH=str(ROOT / "src"), CMA_RULESET="v1"))
     assert "review id: new-1" in new.stdout, new.stdout + new.stderr
     old = subprocess.run(
         [sys.executable, "-m", "cma.cli", "resume", "new-1", "--checkpoint-db", str(db), "--reviewer", "C",
