@@ -401,6 +401,8 @@ def _repayment(value: Any) -> str:
         raise CaseStoreError(f"{where} must be an amount in pounds, such as 1500.00") from None
     if not amount.is_finite() or amount.as_tuple().exponent < -2:
         raise CaseStoreError(f"{where} must be pounds with at most two decimals")
+    if amount.adjusted() >= 13:  # £10,000,000,000,000 or more, refused before any arithmetic can overflow
+        raise CaseStoreError(f"{where} reaches £10,000,000,000,000; no figure could be reported to the penny")
     if amount <= 0:
         raise CaseStoreError(f"{where} must be more than £0.00")
     if amount * 100 >= LIMIT_PENCE:
