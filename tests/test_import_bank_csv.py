@@ -346,3 +346,26 @@ def test_cma_case_import_refusal_names_the_line_never_a_cell(home, tmp_path):
     assert "import refused: line 3: Balance" in out, res.output
     assert SENTINEL not in res.output
     assert not (folder / "statements" / "main.csv").exists()
+
+
+# --- Codex re-review of T31 ----------------------------------------------------------------
+
+
+@pytest.mark.contracts
+def test_a_blank_cell_in_a_mapped_balance_column_is_refused_not_filled_in(tmp_path):
+    # The five-column loader needs a balance on every line (R38); a blank one was filled in
+    # from the line before and accepted.
+    with pytest.raises(contract.ImportRefused) as e:
+        _convert(tmp_path, ["01/03/2026,A,10.00,,110.00", "02/03/2026,B,,5.00,"])
+    assert "line 3: Balance, the balance column, is empty" in _flat(str(e.value))
+    assert not (tmp_path / "out.csv").exists()
+
+
+@pytest.mark.contracts
+def test_a_month_name_format_does_not_read_a_numeric_month(tmp_path):
+    # With "%d-%b-%Y" first, 03-04-2026 was read as 3 April through the month-name format,
+    # though the format that matches it says month-day-year: 4 March.
+    mapping = {**MAP, "date_format": ["%d-%b-%Y", "%m-%d-%Y"]}
+    rows = ["03-04-2026,A,10.00,,10.00", "05-Mar-2026,B,1.00,,11.00"]
+    _, out = _convert(tmp_path, rows, mapping=mapping)
+    assert [t.date.isoformat() for t in ingest.load_csv(out).transactions] == ["2026-03-04", "2026-03-05"]

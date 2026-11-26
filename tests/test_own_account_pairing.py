@@ -291,16 +291,46 @@ def test_zero_pairing_days_pairs_only_same_day_moves_in_either_order(home, tmp_p
 
 
 @pytest.mark.contracts
-def test_a_paired_line_can_be_overridden_back_to_what_the_table_gave_it(home, tmp_path):
-    # A Stripe payout that the pairing took for the other half of a transfer: moving it back to
-    # card receipts was read as no change, since the line's category was looked up unpaired.
+def test_a_payout_is_never_paired_with_a_debit_of_the_same_amount(home, tmp_path):
+    # Codex re-review of T34 and T35: a £100 Stripe payout dated beside an unrelated £100 payment
+    # out was taken for the other half of a transfer, which removed £100 of card takings from
+    # trading receipts. A card, gateway, marketplace or delivery platform payout is trading income.
     main = _csv([("M1", D0, "CARD SETTLEMENT STRIPE", 500_00), ("M2", D0 + timedelta(days=1), "FPS TO 12345678", -100_00)])
     sav = _csv([("S1", D0, "CARD SETTLEMENT STRIPE", 30_00), ("S2", D0 + timedelta(days=2), "CARD SETTLEMENT STRIPE", 100_00)])
     _, folder = _case(tmp_path, {"main": main, "savings": sav})
+    rules = _rules(folder)
+    assert not (rules["savings:S2"] or "").startswith(PAIRING)
+    assert not (rules["main:M2"] or "").startswith(PAIRING)
+    both = overrides.combined_figures(overrides.case_figures(folder))
+    m = {f.id: f for f in both.metrics}
+    assert m["M2"].value == 630.00          # every payout counts as trading receipts
+    assert m["M19"].value == 0.0            # and none as an own-account transfer in
+    lines = {t.id: t for t in both.statement.transactions}
+    assert lines["savings:S2"].category is metrics.Category.REVENUE_CARD
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("wording", ["CARD SETTLEMENT STRIPE", "SUMUP PAYMENTS", "SQUARE PAYMENTS", "AMAZON PAYMENTS UK", "DELIVEROO PAYOUT"])
+def test_no_kind_of_payout_is_paired(home, tmp_path, wording):
+    main = _csv([("M1", D0, "FPS TO 12345678", -100_00)])
+    sav = _csv([("S1", D0 + timedelta(days=1), wording, 100_00)])
+    _, folder = _case(tmp_path, {"main": main, "savings": sav})
+    lines = {t.id: t for t in overrides.combined_figures(overrides.case_figures(folder)).statement.transactions}
+    assert lines["savings:S1"].category is metrics.Category.REVENUE_CARD, f"{wording!r} is not read as a payout"
+    assert lines["main:M1"].category is not metrics.Category.OWN_ACCOUNT_TRANSFER
+
+
+@pytest.mark.contracts
+def test_a_paired_line_can_be_overridden_back_to_what_the_table_gave_it(home, tmp_path):
+    # A credit the pairing took for the other half of a transfer: moving it back to what the
+    # table gave it was read as no change, since the line's category was looked up unpaired.
+    main = _csv([("M1", D0, "CARD SETTLEMENT STRIPE", 500_00), ("M2", D0 + timedelta(days=1), "FPS TO 12345678", -100_00)])
+    sav = _csv([("S1", D0, "CARD SETTLEMENT STRIPE", 30_00), ("S2", D0 + timedelta(days=2), "FPS FROM 87654321 INV 4411", 100_00)])
+    _, folder = _case(tmp_path, {"main": main, "savings": sav})
     assert _rules(folder)["savings:S2"] == "pairing:main:M2"
-    added = overrides.add_override(folder, "S2", "revenue_card_settlement", reason="a real payout", name="Pat",
+    added = overrides.add_override(folder, "S2", "revenue_transfer", reason="a customer paid an invoice", name="Pat",
                                    account="savings")
-    assert added.recorded and added.old == "own_account_transfer" and added.new == "revenue_card_settlement"
+    assert added.recorded and added.old == "own_account_transfer" and added.new == "revenue_transfer"
     rules = _rules(folder)
     assert rules["savings:S2"] == "override:1" and not (rules["main:M2"] or "").startswith(PAIRING)
 

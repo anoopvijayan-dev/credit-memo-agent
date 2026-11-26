@@ -394,6 +394,14 @@ def _rows(data: bytes) -> tuple[list[str], list[list[str]], list[tuple[int, int]
     others = [c for c in range(width) if c != desc and (c >= len(names) or names[c] not in _KEPT_COLUMNS)]
     cells = [(i, desc) for i, r in enumerate(rows) if desc < len(r)]
     cells += [(i, c) for c in others for i, r in enumerate(rows) if c < len(r) and r[c].strip()]
+    # The id is kept as written (R46), so an id a spreadsheet would read as a formula cannot be
+    # made safe without changing it: the copy is refused instead (Codex re-review of T25, T26).
+    if "id" in names:
+        col = names.index("id")
+        for i, r in enumerate(rows):
+            if col < len(r) and r[col].startswith(contract.FORMULA_START):
+                raise PseudonymiseError(f"row {i + 1}'s id starts with a character a spreadsheet reads as a formula "
+                                        "(= + - @); the copy keeps ids as written, so nothing was written")
     return header, rows, cells
 
 

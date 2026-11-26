@@ -238,6 +238,8 @@ def _date(raw: str | None, column: str, formats: list[str], line: int) -> date:
     for fmt in formats:
         cell, f = text, fmt
         if "%b" in fmt or "%B" in fmt:  # English month names, whatever the locale
+            if not _MONTH_NAME.search(text):
+                continue  # a numeric month is not a month name: the format does not read it (Codex, T31)
             cell = _MONTH_NAME.sub(lambda m: f"{_MONTH_NUMBER[m.group(1).lower()]:02d}", text)
             f = fmt.replace("%B", "%m").replace("%b", "%m")
         try:
@@ -343,6 +345,12 @@ def convert(src: Path, dst: Path, *, mapping: dict[str, Any], opening_balance: s
             amount = _money_out(r[cols["paid_out"]], cols["paid_out"], i) if paid_out else (paid_in or 0)
         d = _date(r[cols["date"]], cols["date"], formats, i)
         bal = _pence(r[cols["balance"]], cols["balance"], i, signed=True) if "balance" in cols else None
+        if "balance" in cols and bal is None:
+            # The five-column loader needs a balance on every line (R38): a blank one is not
+            # filled in from the line before. Without the column, the balance is walked from
+            # --opening-balance instead.
+            raise BankCsvImportError(f"line {i}: {cols['balance']}, the balance column, is empty; map no balance "
+                                     "column and pass --opening-balance if the bank leaves it blank on some rows")
         desc = " ".join(" ".join((r[c] or "") for c in cols["description"]).split()).upper()
         if not desc:
             raise BankCsvImportError(f"line {i}: the description is empty")

@@ -209,7 +209,8 @@ mkdir -p "${CMA_HOME:-private/cma}" && ${EDITOR:-nano} "${CMA_HOME:-private/cma}
 # In a case of more than one account, a debit pairs with the single credit of the same
 # amount in another account dated within own_account_pairing_days (default 3, 0 to 31) of
 # it; a debit with more than one such credit is left unpaired and listed in the judgement
-# queue with every candidate. The value is part of the preview's snapshot, so changing it
+# queue with every candidate. A card, gateway, marketplace or delivery platform payout is
+# trading income and is never paired, whatever debit its amount and date match. The value is part of the preview's snapshot, so changing it
 # after a preview makes sign-off refuse that preview. Delete the key before installing
 # an older release: an older release refuses a firm.yaml with a key it does not know.
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
