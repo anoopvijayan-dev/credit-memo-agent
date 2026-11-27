@@ -1,11 +1,12 @@
-"""The Windows download's entry point (CreditMemo.exe), and the same for anyone who runs
-`python -m cma.app.launcher`. It starts the case app and opens it in the browser.
+"""The Windows download's entry point ("Credit Memo.bat" runs `python -m cma.app.launcher`
+with the Python in the zip). It starts the case app and opens it in the browser.
 
 Cases are kept under CMA_HOME when it is set; otherwise, for the packaged app, in the
 user's own local application data folder (on Windows %LOCALAPPDATA%\\Credit Memo), which is
-private to the user and not a folder cloud-sync clients upload. `--self-test` starts the app
-on a free port with a throwaway case folder, makes the demo case through the page as a
-browser would, checks its pages, and exits: the release build runs it on the built .exe."""
+private to the user and not a folder cloud-sync clients upload ("Credit Memo.bat" sets it).
+`--self-test` starts the app on a free port with a throwaway case folder, makes the demo case
+through the page as a browser would, checks its pages, and exits: the release build runs it
+with the zip's own Python."""
 
 from __future__ import annotations
 

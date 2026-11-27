@@ -1,4 +1,4 @@
-# Builds the two ways to install: the Windows download (CreditMemo.exe) and the Python
+# Builds the two ways to install: the Windows download (CreditMemo-windows.zip) and the Python
 # package. Each build runs its own self-test. A pull request only builds and tests; a tag
 # such as v0.2.0 also attaches both to a GitHub Release and publishes the package to PyPI
 # (PyPI's trusted publishing: the repository is added as a trusted publisher on pypi.org,
@@ -16,27 +16,43 @@ permissions:
   contents: read
 
 jobs:
-  windows-exe:
+  windows-zip:
+    # The Windows download: the official embeddable Python from python.org (signed by the
+    # Python Software Foundation), the package and its dependencies, and "Credit Memo.bat".
+    # No self-extracting executable, which antivirus heuristics flag as a false positive.
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install . "pyinstaller==6.22.3"
-      - name: Build CreditMemo.exe
-        run: >
-          pyinstaller --noconfirm --onefile --console --name CreditMemo
-          --collect-data cma --collect-submodules cma
-          --exclude-module langgraph --exclude-module langchain_core --exclude-module langsmith
-          --exclude-module anthropic --exclude-module openai
-          packaging/CreditMemo.py
-      - name: Self-test the built program
-        run: dist\CreditMemo.exe --self-test
+      - name: Build CreditMemo-windows.zip
+        shell: pwsh
+        run: |
+          $ver = python -c "import platform; print(platform.python_version())"
+          Invoke-WebRequest "https://www.python.org/ftp/python/$ver/python-$ver-embed-amd64.zip" -OutFile embed.zip
+          New-Item -ItemType Directory -Force "CreditMemo/python" | Out-Null
+          Expand-Archive embed.zip -DestinationPath "CreditMemo/python"
+          $pth = Get-ChildItem "CreditMemo/python" -Filter "python*._pth" | Select-Object -First 1
+          $lines = (Get-Content $pth.FullName) -replace '^#\s*import site', 'import site'
+          $lines = @($lines | Where-Object { $_ -ne 'import site' }) + 'Lib\site-packages' + 'import site'
+          Set-Content -Path $pth.FullName -Value $lines -Encoding ascii
+          python -m pip install --no-compile --target "CreditMemo/python/Lib/site-packages" .
+          Copy-Item "packaging/windows/Credit Memo.bat" "CreditMemo/"
+          Copy-Item "packaging/windows/README.txt" "CreditMemo/"
+          Copy-Item "LICENSE" "CreditMemo/LICENSE.txt"
+      - name: Self-test the zip's own Python
+        shell: pwsh
+        run: |
+          & "CreditMemo/python/python.exe" -m cma.app.launcher --self-test
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path "CreditMemo" -DestinationPath "CreditMemo-windows.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: CreditMemo-windows
-          path: dist/CreditMemo.exe
+          path: CreditMemo-windows.zip
           if-no-files-found: error
 
   python-package:
@@ -63,7 +79,7 @@ jobs:
 
   github-release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows-exe, python-package]
+    needs: [windows-zip, python-package]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -74,7 +90,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            out/CreditMemo-windows/CreditMemo.exe
+            out/CreditMemo-windows/CreditMemo-windows.zip
             out/python-package/*
           generate_release_notes: true
 
