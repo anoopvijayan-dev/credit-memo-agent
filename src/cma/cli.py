@@ -629,7 +629,7 @@ def case_import(
     fmt: str = typer.Option(..., "--format", help="csv (the five-column statement), monzo (a Monzo export), "
                             "openbanking (an OBIE v3.1 transactions file), truelayer (a TrueLayer Data API "
                             "transactions export), or bank-csv:PROFILE (a bank's CSV download through a named "
-                            "profile: barclays, lloyds, natwest or starling), or bank-csv with --mapping."),
+                            "profile: barclays, hsbc, lloyds, natwest or starling), or bank-csv with --mapping."),
     account: str = typer.Option("main", "--account", help="A short key for the account, such as main or savings."),
     opening_balance: str | None = typer.Option(
         None, help="Monzo or bank CSV only: the balance just before the first transaction, when the export has no "

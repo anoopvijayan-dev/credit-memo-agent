@@ -10,6 +10,9 @@
 #                 names whatever the machine's locale.
 #   order:        oldest_first, newest_first or auto (from the dates, then the balances).
 #
+# headers:      for a download with no header line (HSBC's), the names of its columns in
+#               order; the columns above then name these.
+#
 # The layouts are the header rows these banks' online banking writes for a CSV download as
 # commonly seen; a bank can change its export, and the importer then refuses the file naming
 # the columns it cannot find. A custom mapping (--mapping FILE) takes the same keys.
@@ -48,4 +51,15 @@ starling:
     amount: Amount (GBP)
     balance: Balance (GBP)
   date_format: "%d/%m/%Y"
+  order: auto
+
+# HSBC UK's online-banking CSV download has no header line: date, description and one signed
+# amount per row, newest first, with no balance (pass --opening-balance).
+hsbc:
+  headers: [Date, Description, Amount]
+  columns:
+    date: Date
+    description: Description
+    amount: Amount
+  date_format: ["%d/%m/%Y", "%d %b %Y", "%d-%b-%Y"]
   order: auto

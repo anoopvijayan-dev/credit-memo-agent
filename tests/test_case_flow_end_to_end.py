@@ -13,16 +13,12 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
-# Laid out as HSBC's download is, once a header line is added: newest first, signed amounts,
-# a thousands separator inside quotes.
-CSV = ("Date,Description,Amount\n"
-       "15/03/2026,CARD PAYMENT TO TESCO STORES,-23.40\n"
+# Laid out as HSBC's download is: no header line, newest first, signed amounts, a thousands
+# separator inside quotes.
+CSV = ("15/03/2026,CARD PAYMENT TO TESCO STORES,-23.40\n"
        '03/03/2026,SQUARE PAYMENTS SETTLEMENT,"1,250.00"\n'
        "28/02/2026,DD HMRC VAT,-310.55\n"
        "02/02/2026,SQUARE PAYMENTS SETTLEMENT,980.10\n")
-MAPPING = ('columns:\n  date: Date\n  description: Description\n  amount: Amount\n'
-           'date_format: ["%d/%m/%Y", "%d %b %Y"]\norder: auto\n')
-
 
 def _cma(tmp: Path, *args: str, stdin: str = "") -> subprocess.CompletedProcess:
     env = {**os.environ, "PYTHONPATH": str(SRC), "CMA_HOME": str(tmp / "cma"), "PYTHONIOENCODING": "utf-8",
@@ -33,7 +29,6 @@ def _cma(tmp: Path, *args: str, stdin: str = "") -> subprocess.CompletedProcess:
 
 def test_a_case_from_new_to_a_verified_pack(tmp_path):
     (tmp_path / "hsbc.csv").write_bytes(CSV.encode())
-    (tmp_path / "map.yaml").write_bytes(MAPPING.encode())
 
     made = _cma(tmp_path, "case", "new", "--demo", "--label", "end to end")
     assert made.returncode == 0, made.stdout + made.stderr
@@ -41,7 +36,7 @@ def test_a_case_from_new_to_a_verified_pack(tmp_path):
     case = tmp_path / "cma" / "cases" / case_id
     assert case.is_dir(), made.stdout
 
-    imported = _cma(tmp_path, "case", "import", case_id, "hsbc.csv", "--format", "bank-csv", "--mapping", "map.yaml",
+    imported = _cma(tmp_path, "case", "import", case_id, "hsbc.csv", "--format", "bank-csv:hsbc",
                     "--account", "current", "--opening-balance", "500.00")
     assert imported.returncode == 0, imported.stdout + imported.stderr
     assert "4 transactions, 2026-02-02 to 2026-03-15" in " ".join(imported.stdout.split())

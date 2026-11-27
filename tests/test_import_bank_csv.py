@@ -25,7 +25,7 @@ GOLDEN = Path(__file__).parent / "golden" / "bank_csv"
 SENTINEL = "ZQXJ"  # a string no message the tool writes holds
 
 # profile -> the opening balance to pass (None: the export has a balance column)
-PROFILES = {"barclays": "500.00", "lloyds": None, "natwest": None, "starling": None}
+PROFILES = {"barclays": "500.00", "hsbc": "500.00", "lloyds": None, "natwest": None, "starling": None}
 
 
 @pytest.fixture
@@ -369,3 +369,47 @@ def test_a_month_name_format_does_not_read_a_numeric_month(tmp_path):
     rows = ["03-04-2026,A,10.00,,10.00", "05-Mar-2026,B,1.00,,11.00"]
     _, out = _convert(tmp_path, rows, mapping=mapping)
     assert [t.date.isoformat() for t in ingest.load_csv(out).transactions] == ["2026-03-04", "2026-03-05"]
+
+
+# --- a download with no header line (HSBC's) ---------------------------------------------
+
+
+@pytest.mark.contracts
+def test_a_headerless_download_is_read_with_the_profiles_column_names_and_its_own_line_numbers(tmp_path):
+    src = tmp_path / "hsbc.csv"
+    src.write_bytes(b"15/03/2026,CARD PAYMENT TESCO,-23.40\n03/03/2026,SQUARE PAYMENTS,\"1,250.00\"\n")
+    out = tmp_path / "out.csv"
+    bankcsv.convert(src, out, mapping=bankcsv.profile("hsbc"), opening_balance="100.00")
+    rows = [(t.id, t.date.isoformat(), t.amount, t.balance) for t in ingest.load_csv(out).transactions]
+    assert rows == [("L2", "2026-03-03", 1250.00, 1350.00), ("L1", "2026-03-15", -23.40, 1326.60)]
+
+
+@pytest.mark.contracts
+def test_a_headerless_download_refusal_names_the_files_own_line(tmp_path):
+    src = tmp_path / "hsbc.csv"
+    src.write_bytes(b"15/03/2026,CARD PAYMENT TESCO,-23.40\n32/03/2026,ZQXJ,1.00\n")
+    with pytest.raises(contract.ImportRefused) as e:
+        bankcsv.convert(src, tmp_path / "out.csv", mapping=bankcsv.profile("hsbc"), opening_balance="100.00")
+    assert "line 2: Date is not a date" in _flat(str(e.value))
+    assert SENTINEL not in str(e.value)
+
+
+@pytest.mark.contracts
+def test_a_download_that_does_start_with_the_column_names_is_read_as_it_is(tmp_path):
+    src = tmp_path / "hsbc.csv"
+    src.write_bytes(b"\xef\xbb\xbfdate,description,AMOUNT\r\n15/03/2026,CARD PAYMENT TESCO,-23.40\r\n")
+    out = tmp_path / "out.csv"
+    bankcsv.convert(src, out, mapping=bankcsv.profile("hsbc"), opening_balance="100.00")
+    assert [(t.id, t.amount) for t in ingest.load_csv(out).transactions] == [("L2", -23.40)]
+
+
+@pytest.mark.contracts
+@pytest.mark.parametrize("headers, match", [
+    ("Date", "headers must list"), (["Date", "Date", "Amount"], "names a column twice"),
+    (["Date", "Details", "Amount"], "columns names Description, which headers does not list"),
+])
+def test_a_bad_headers_list_is_refused(headers, match):
+    bad = {"headers": headers, "columns": {"date": "Date", "description": "Description", "amount": "Amount"},
+           "date_format": "%d/%m/%Y"}
+    with pytest.raises(contract.ImportRefused, match=match):
+        bankcsv.check_mapping(bad)
