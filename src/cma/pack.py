@@ -67,6 +67,13 @@ FOR_UNDERWRITER = "For the underwriter: no figure is mapped to this field; it is
 DEMO_STAMP = ("Demonstration case: this demonstrates the mechanism and is not an applicant file. "
               "It holds synthetic data or the owner's own statements.")
 POLICY_TITLE = "Policy check (illustrative)"
+# A case of more than one account: the business as a whole, from the combined figures (R41).
+BUSINESS = "*"
+SUMMARY_FIELD = "at_a_glance"  # with several accounts, shown for the business as a whole only
+BUSINESS_LABEL = "All accounts"
+BUSINESS_POLICY_NOTE = ("The check is run on the business as a whole: every account's figures together, "
+                        "with transfers between its own accounts left out of trading receipts. A reserve or "
+                        "savings account on its own is not judged as if it were the trading account.")
 OPS = {">=": "at least", "<=": "at most", ">": "more than", "<": "less than", "==": "exactly the limit of"}
 
 
@@ -268,15 +275,21 @@ class Preview:
     position: int | None = None  # the case log position of the preview's entry
     fields: list[dict[str, Any]] = field(default_factory=list)
     thresholds: Any = None  # the indicator thresholds the preview read (indicators.Thresholds)
+    business: AccountPreview | None = None  # a case of more than one account: all its accounts together
+
+    @property
+    def views(self) -> list[AccountPreview]:
+        """What the text is written from: the business as a whole first, then each account."""
+        return ([self.business] if self.business is not None else []) + list(self.accounts)
 
     @property
     def grounded(self) -> bool:
-        return all(_grounded(a.guard) for a in self.accounts)
+        return all(_grounded(a.guard) for a in self.views)
 
     def findings(self) -> list[tuple[str, str, str]]:
         """(account, the number as written or the citation, why) for every guard finding."""
         out = []
-        for a in self.accounts:
+        for a in self.views:
             g = a.guard
             if g is None:
                 continue
@@ -294,6 +307,8 @@ def _label(key: str, for_guard: bool) -> str:
     the tool writes (store.ACCOUNT_KEY allows digits, '-' and words such as 'one'), never a
     figure, so the copy the guard reads has the key blanked, as the guard blanks a date or a
     tag: every other character of the text is read (P14, R28)."""
+    if key == BUSINESS:
+        return BUSINESS_LABEL
     return f"Account {' ' * len(key) if for_guard else key}"
 
 
@@ -301,7 +316,7 @@ def _text(p: Preview, only: str | None = None, for_guard: bool = False) -> str:
     """The pack's memo-ready text: every account's sentences, or `only` that account's (what
     the guard reads against that account's figures, with `for_guard` blanking the account
     labels the tool writes)."""
-    accounts = [a for a in p.accounts if only is None or a.account == only]
+    accounts = [a for a in p.views if only is None or a.account == only]
     several = len(p.accounts) > 1
     out = ["# Credit memo sections", ""]
     if p.demo:
@@ -312,11 +327,17 @@ def _text(p: Preview, only: str | None = None, for_guard: bool = False) -> str:
             out += [f"_{FOR_UNDERWRITER}_", ""]
             continue
         for a in accounts:
+            if f.id == SUMMARY_FIELD and p.business is not None and a is not p.business:
+                continue  # the summary is the business's; each account's detail follows below
             prefix = f"{_label(a.account, for_guard)}: " if several else ""
             out += [prefix + a.sentences[f.id], ""]
-    if p.policy_shown:
+    if p.policy_shown and any(a.policy_lines for a in accounts):
         out += [f"## {POLICY_TITLE}", "", policy.ILLUSTRATIVE_LABEL, ""]
+        if p.business is not None:
+            out += [BUSINESS_POLICY_NOTE, ""]
         for a in accounts:
+            if not a.policy_lines:
+                continue  # an account of a case judged as a whole has no check of its own
             if several:
                 out += [f"### {_label(a.account, for_guard)}", ""]
             out += [*a.policy_lines, ""]
@@ -330,7 +351,7 @@ def guard_text(p: Preview, account: str) -> str:
 
 def _fields(p: Preview) -> list[dict[str, Any]]:
     return [{"id": f.id, "title": f.title, "figures": list(f.figures), "for_underwriter": f.for_underwriter,
-             "text": {a.account: a.sentences[f.id] for a in p.accounts} if f.figures else {}}
+             "text": {a.account: a.sentences[f.id] for a in p.views} if f.figures else {}}
             for f in p.field_map.fields]
 
 
@@ -389,10 +410,28 @@ def _build(folder: Path, case_id: str, entries) -> Preview:
     thresholds = case_thresholds(config)
     rules = policy.load_policy()  # the packaged policy: the workspace and the pack evaluate only it
     shown = bool(config.show_policy_verdict)
+    # Several accounts: the policy check is the business's, from the combined figures; an account
+    # on its own is not judged (a reserve account has no trading of its own to judge).
+    try:
+        both = overrides.combined_figures(figures) if len(figures) > 1 else None
+    except Exception:  # combined figures refused: each account is judged on its own, as before
+        both = None
+    business = None
+    if both is not None and both.statement.transactions:
+        start, end = both.statement.start.isoformat(), both.statement.end.isoformat()
+        result = policy.evaluate(both.metrics, rules) if shown else None
+        by_id = {m.id: m for m in both.metrics}
+        business = AccountPreview(
+            BUSINESS, "", start, end, both.metrics, result,
+            {mf.id: field_sentence(mf, both.metrics, start, end) for mf in field_map.fields if mf.figures},
+            [rule_sentence(r, by_id) for r in result.rules] if result else [], figures=both,
+            indicators=ind.raise_indicators(both.statement, thresholds))
+        if result:
+            business.policy_lines.insert(0, f"Overall outcome: {result.overall.value}.")
     accounts = []
     for a, f in figures.items():
         start, end = f.statement.start.isoformat(), f.statement.end.isoformat()
-        result = policy.evaluate(f.metrics, rules) if shown else None
+        result = policy.evaluate(f.metrics, rules) if shown and business is None else None
         by_id = {m.id: m for m in f.metrics}
         accounts.append(AccountPreview(
             a, f.statement_sha256, start, end, f.metrics, result,
@@ -404,8 +443,8 @@ def _build(folder: Path, case_id: str, entries) -> Preview:
     inputs = snapshot_inputs(folder, entries, every, profile, config, field_map, thresholds.sha256,
                              rules["_sha256"])
     p = Preview(case_id, bool(profile.get("demo")), field_map, accounts, shown, inputs, snapshot_hash(inputs),
-                thresholds=thresholds)
-    for a in accounts:  # R28, P14: each account's text against its own figures and policy result
+                thresholds=thresholds, business=business)
+    for a in p.views:  # R28, P14: each account's text against its own figures and policy result
         a.guard = guard.check(guard_text(p, a.account), a.metrics, a.policy)
     p.text = _text(p)
     p.fields = _fields(p)
@@ -645,6 +684,14 @@ def _evidence(p: Preview, signoff: dict[str, Any], config: firm.FirmConfig, entr
         "memo_field_map": {"name": p.field_map.name, "sha256": p.field_map.sha256},
         "memo_fields": p.fields,
         "accounts": accounts,
+        # A case of more than one account: the business as a whole, the policy check's basis.
+        "business": ({"label": BUSINESS_LABEL, "start": p.business.start, "end": p.business.end,
+                      "metrics": [m.model_dump(mode="json") for m in p.business.metrics],
+                      "money_in": _money_in(p.business.metrics),
+                      "policy": p.business.policy.evidence_dump(mode="json") if p.business.policy else None,
+                      "guard": ({**p.business.guard.model_dump(mode="json"), "grounded": _grounded(p.business.guard)}
+                                if p.business.guard else None)}
+                     if p.business is not None else None),
         "policy_check": ({"shown": True, "label": policy.ILLUSTRATIVE_LABEL, "policy": rules.get("name"),
                           "policy_sha256": inputs["policy_sha256"]} if p.policy_shown
                          else {"shown": False, "hidden": True, "policy": rules.get("name"),
@@ -719,7 +766,9 @@ def _write_pack(packs: Path, snapshot: str, files: dict[str, bytes]) -> Path:
     try:
         os.chmod(part, store.DIR_MODE)
         for name, data in files.items():
-            fd = os.open(part / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, store.FILE_MODE)
+            # O_BINARY: in text mode Windows would write each \n as \r\n, and the pack would not
+            # hold the bytes its evidence hashes.
+            fd = os.open(part / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), store.FILE_MODE)
             with os.fdopen(fd, "wb") as fh:
                 fh.write(data)
                 fh.flush()

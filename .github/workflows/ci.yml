@@ -40,3 +40,16 @@ jobs:
           # The installed table must be the source table, byte for byte.
           want=$(sha256sum "$GITHUB_WORKSPACE/src/cma/rules/v1.yaml" | cut -d' ' -f1)
           cd /tmp && /tmp/wheelcheck/bin/python -c "import sys; from cma import categorise as c; sys.exit(c.load_ruleset('v1').sha256 != sys.argv[1])" "$want"
+
+  # The tool runs on analysts' Windows machines. The case log, packs and pseudonymised copies
+  # are hashed byte for byte, and Windows translates line endings on text-mode writes, which
+  # once made every save refuse there. This job runs the whole case flow on Windows.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q tests/test_binary_writes.py tests/test_case_flow_end_to_end.py

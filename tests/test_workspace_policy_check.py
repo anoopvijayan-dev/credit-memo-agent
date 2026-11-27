@@ -132,8 +132,13 @@ def _elements(page: str) -> list[dict]:
 
 
 def _expected(folder):
-    """The policy check the workspace must show: policy.evaluate on each account's current figures."""
-    return {a: policy.evaluate(f.metrics) for a, f in overrides.case_figures(folder).items()}
+    """The policy check the workspace must show: policy.evaluate on the case's current figures,
+    for the business as a whole when the case has several accounts, else for its one account."""
+    figures = overrides.case_figures(folder)
+    both = overrides.combined_figures(figures)
+    if both is not None:
+        return {"all accounts": policy.evaluate(both.metrics)}
+    return {a: policy.evaluate(f.metrics) for a, f in figures.items()}
 
 
 def _check_shown(page: str, folder) -> None:

@@ -1207,7 +1207,9 @@ class CaseLog:
             # entry is always damage, never a crash to repair (T12 review 9).
             self._create_empty_head()
         created = not self.path.exists()
-        fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        # O_BINARY: on Windows a descriptor opened without it is in text mode, and every \n
+        # written becomes \r\n, so the read-back no longer holds the bytes that were hashed.
+        fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
         try:
             if os.fstat(fd).st_size != check.intact_bytes or self._log_digest() != check.log_digest:
                 # Something was added to the log since this save checked it: writing now would

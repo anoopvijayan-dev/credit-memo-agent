@@ -1342,7 +1342,7 @@ _V1_PROTECTED_IN = re.compile(
     r"\bDIRECTOR\b|\bOWNER\b|\bSHAREHOLDER\b"
     # Both forms of the capital wording, as v2's director_funding names them (CAPITAL INJECTION,
     # CAPITAL CONTRIBUTION) as well as the past tense (Antigravity re-review of T05).
-    r"|\bCAPITAL (?:INTRODUCED|INJECTED|INJECTION|CONTRIBUTED|CONTRIBUTION)\b|\bHMRC\b"
+    r"|\bCAPITAL[\s\-_/.]+(?:INTRODUCED|INJECTED|INJECTION|CONTRIBUTED|CONTRIBUTION)\b|\bHMRC\b"
     r"|\bREFUND\b|\bREVERSAL\b|\bPOT TRANSFER\b|\b(?:TO|FROM) SAVINGS\b"
 )
 
@@ -1479,6 +1479,11 @@ def _pairable(t: Transaction, rules: Mapping[str, Rule], ruleset: Ruleset, overr
     override and a protected verdict, and above everything else (C1's precedence (3))."""
     if t.id in overridden or t.amount == 0 or t.category in (Category.RETURNED_DD, None) or t.reverses:
         return False
+    # A payout from a card acquirer, payment gateway, marketplace or delivery platform is trading
+    # income, never the other half of a transfer between the business's own accounts, however its
+    # amount and date line up with a debit (owner decision, Codex re-review of T34 and T35).
+    if t.amount > 0 and t.category is Category.REVENUE_CARD:
+        return False
     head, _, rest = (t.rule_id or "").partition(":")
     rule = rules.get(rest) if head == ruleset.id else None
     if rule is None:
@@ -1499,7 +1504,8 @@ def pair_own_accounts(statements: Mapping[str, Statement], ruleset: Ruleset | No
     A debit with more than one candidate credit, or a credit more than one debit could pair
     with, is not paired: each such debit and every candidate are returned as one group of
     (account, line id), debit first, for the judgement queue (R9). A line an override or a
-    protected verdict settled is never paired. Needs more than one account; the statements
+    protected verdict settled is never paired, nor is a card, gateway, marketplace or delivery
+    platform payout. Needs more than one account; the statements
     are categorised already and are changed in place. Nothing is ordered by statement order,
     so which lines pair does not depend on the order the accounts are given in."""
     from .metrics import size_pence  # the figures layer does the arithmetic (R2)

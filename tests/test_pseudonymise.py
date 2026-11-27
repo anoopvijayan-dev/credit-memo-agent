@@ -437,3 +437,16 @@ def test_cli_a_malformed_firm_rules_file_is_refused_and_nothing_is_written(tmp_p
     assert "Refused" in flat and "firm_rules.yaml" in flat
     assert "JANE" not in flat
     assert not out.exists()
+
+
+@pytest.mark.contracts
+def test_an_id_a_spreadsheet_reads_as_a_formula_is_refused_not_copied(tmp_path):
+    # Codex re-review of T25 and T26: ids are kept as written, so a copy of an id such as =1
+    # would open as a formula; it cannot be made safe without changing the id.
+    data = b"id,date,description,amount,balance\n=1,2026-01-05,CARD SETTLEMENT STRIPE,10.00,10.00\n"
+    try:
+        contract.checked(data, "statement")
+    except contract.ImportRefused:
+        pytest.skip("the loader already refuses such an id")
+    with pytest.raises(ps.PseudonymiseError, match="id starts with a character a spreadsheet reads as a formula"):
+        ps.pseudonymise_statement(data)

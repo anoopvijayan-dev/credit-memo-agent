@@ -333,9 +333,12 @@ def case_summary(folder: Path, case_id: str) -> dict[str, Any]:
             raise
         out.update(refused)
         return out
+    if both is not None and rules is not None:  # the business is judged as a whole, not each account
+        for a in accounts:
+            a.pop("policy_check", None)
     out["accounts"] = accounts
     out["combined"] = None if both is None else {
-        **_account(both, []), "missing": list(both.missing),
+        **_account(both, [], rules), "missing": list(both.missing),
         "basis": COMBINED_BASIS + "".join(
             f" Account {a} has no statement file in the case folder, so it is left out of these figures."
             for a in both.missing)}
@@ -490,8 +493,10 @@ def _policy_checks_html(summary: dict[str, Any]) -> str:
     if not summary.get("policy_check", {}).get("shown"):
         return ('<section id="policy-checks"><h2>Policy check</h2><p class="note">Not shown: the firm '
                 'configuration has show_policy_verdict off.</p></section>')
+    judged = [*([{**summary["combined"], "account": "all accounts"}] if (summary.get("combined") or {}).get("policy_check") else []),
+              *(a for a in summary["accounts"] if a.get("policy_check"))]
     return ('<section id="policy-checks"><h2>Policy check</h2>'
-            + "".join(_policy_html(a) for a in summary["accounts"] if a.get("policy_check")) + "</section>")
+            + "".join(_policy_html(a) for a in judged) + "</section>")
 
 
 RECOMMENDATION_HTML = ('<section id="recommendation"><h2>Recommendation</h2>'

@@ -394,6 +394,14 @@ def _rows(data: bytes) -> tuple[list[str], list[list[str]], list[tuple[int, int]
     others = [c for c in range(width) if c != desc and (c >= len(names) or names[c] not in _KEPT_COLUMNS)]
     cells = [(i, desc) for i, r in enumerate(rows) if desc < len(r)]
     cells += [(i, c) for c in others for i, r in enumerate(rows) if c < len(r) and r[c].strip()]
+    # The id is kept as written (R46), so an id a spreadsheet would read as a formula cannot be
+    # made safe without changing it: the copy is refused instead (Codex re-review of T25, T26).
+    if "id" in names:
+        col = names.index("id")
+        for i, r in enumerate(rows):
+            if col < len(r) and r[col].startswith(contract.FORMULA_START):
+                raise PseudonymiseError(f"row {i + 1}'s id starts with a character a spreadsheet reads as a formula "
+                                        "(= + - @); the copy keeps ids as written, so nothing was written")
     return header, rows, cells
 
 
@@ -526,7 +534,7 @@ def _write_files(result: Pseudonymised, out: Path, *, source_format: str) -> lis
     written = []
     for name, data in files.items():
         p = out / name
-        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)  # no \r\n on Windows
         with os.fdopen(fd, "wb") as f:
             f.write(data)
         written.append(name)

@@ -118,9 +118,11 @@ def render(p, signoff: dict[str, Any]) -> str:
                                  f'<section class="account" id="account-{_e(a.account)}">', 1))
         details += _details(a)
     if p.policy_shown:
+        judged = [a for a in getattr(p, "views", p.accounts) if a.policy is not None]
         body.append('<section id="policy-checks"><h2>Policy check</h2>'
-                    + "".join(summary._policy_html({"account": a.account, "policy_check": _policy_check(a)})
-                              for a in p.accounts if a.policy is not None) + "</section>")
+                    + "".join(summary._policy_html({"account": "all accounts" if a.account == "*" else a.account,
+                                                    "policy_check": _policy_check(a)}) for a in judged)
+                    + "</section>")
     body.append(summary.RECOMMENDATION_HTML)
     body.append('<section id="lines"><h2>The lines behind each figure and cell</h2>' + "".join(details)
                 + "</section>")

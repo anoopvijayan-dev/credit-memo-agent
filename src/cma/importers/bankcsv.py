@@ -119,8 +119,9 @@ def check_mapping(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise BankCsvImportError("mapping: not a mapping of columns, date_format and order")
     for key in raw:
-        if key not in ("columns", "date_format", "order"):
-            raise BankCsvImportError(f"mapping: unknown key {key}; a mapping has columns, date_format and order")
+        if key not in ("columns", "date_format", "order", "headers"):
+            raise BankCsvImportError(f"mapping: unknown key {key}; a mapping has columns, date_format, order and "
+                                     "optionally headers")
     cols = raw.get("columns")
     if not isinstance(cols, dict):
         raise BankCsvImportError("mapping: columns is required, a mapping of the statement's columns to the file's")
@@ -160,7 +161,22 @@ def check_mapping(raw: Any) -> dict[str, Any]:
     order = raw.get("order", "auto")
     if order not in ORDERS:
         raise BankCsvImportError("mapping: order is oldest_first, newest_first or auto")
-    return {"columns": out, "date_format": list(fmts), "order": order}
+    checked: dict[str, Any] = {"columns": out, "date_format": list(fmts), "order": order}
+    # headers: the names of the columns, in order, of a download that has no header line (HSBC's
+    # has none). The file is read as if its first line held them; a file that does start with
+    # them, in any letter case, is read as it is.
+    if "headers" in raw:
+        names = raw["headers"]
+        if not isinstance(names, list) or not names or not all(isinstance(n, str) and n.strip() for n in names):
+            raise BankCsvImportError("mapping: headers must list the file's column names, in order")
+        names = [n.strip() for n in names]
+        if len(set(names)) != len(names):
+            raise BankCsvImportError("mapping: headers names a column twice")
+        for name in used:
+            if name not in names:
+                raise BankCsvImportError(f"mapping: columns names {name}, which headers does not list")
+        checked["headers"] = names
+    return checked
 
 
 def _load(text: str) -> Any:
@@ -238,6 +254,8 @@ def _date(raw: str | None, column: str, formats: list[str], line: int) -> date:
     for fmt in formats:
         cell, f = text, fmt
         if "%b" in fmt or "%B" in fmt:  # English month names, whatever the locale
+            if not _MONTH_NAME.search(text):
+                continue  # a numeric month is not a month name: the format does not read it (Codex, T31)
             cell = _MONTH_NAME.sub(lambda m: f"{_MONTH_NUMBER[m.group(1).lower()]:02d}", text)
             f = fmt.replace("%B", "%m").replace("%b", "%m")
         try:
@@ -300,6 +318,21 @@ def convert(src: Path, dst: Path, *, mapping: dict[str, Any], opening_balance: s
         supplied = text_pence(text.replace("£", "").replace(",", ""))  # not a line: not held to the line limit
 
     data = Path(src).read_bytes()  # read once
+    shift = 0  # lines added in front of the file: subtracted again from every line number
+    if mapping.get("headers"):
+        try:
+            first = read_header(data)
+        except CsvRecordError as e:
+            raise BankCsvImportError(f"{src}: {e}") from None
+        if [c.lower() for c in first] != [n.lower() for n in mapping["headers"]]:
+            # No header line: read the file with the profile's names in front, so line 1 is a
+            # statement line, its id is L1 and every refusal names the file's own line.
+            bom = data.startswith(b"\xef\xbb\xbf")
+            body = data[3:] if bom else data
+            data = (",".join(mapping["headers"]) + "\n").encode("utf-8") + body
+            shift = 1
+        else:
+            data = (",".join(mapping["headers"]) + "\n").encode("utf-8") + data.split(b"\n", 1)[1] if b"\n" in data else data
     try:
         header = read_header(data)
     except CsvRecordError as e:
@@ -323,8 +356,10 @@ def convert(src: Path, dst: Path, *, mapping: dict[str, Any], opening_balance: s
     lines: list[contract.Line] = []
     seen: dict[str, int] = {}
     for i, r, problem in records:
+        i -= shift
         if problem is not None:  # a field too long to read, a bad byte, a quoted field left open
-            raise BankCsvImportError(f"{src}: {problem}")
+            text = re.sub(r"\bline (\d+)", lambda m: f"line {int(m.group(1)) - shift}", str(problem)) if shift else problem
+            raise BankCsvImportError(f"{src}: {text}")
         if None in r:
             raise BankCsvImportError(f"line {i}: more fields than the header has columns; an amount with a "
                                      "comma in it must be quoted")
@@ -343,6 +378,12 @@ def convert(src: Path, dst: Path, *, mapping: dict[str, Any], opening_balance: s
             amount = _money_out(r[cols["paid_out"]], cols["paid_out"], i) if paid_out else (paid_in or 0)
         d = _date(r[cols["date"]], cols["date"], formats, i)
         bal = _pence(r[cols["balance"]], cols["balance"], i, signed=True) if "balance" in cols else None
+        if "balance" in cols and bal is None:
+            # The five-column loader needs a balance on every line (R38): a blank one is not
+            # filled in from the line before. Without the column, the balance is walked from
+            # --opening-balance instead.
+            raise BankCsvImportError(f"line {i}: {cols['balance']}, the balance column, is empty; map no balance "
+                                     "column and pass --opening-balance if the bank leaves it blank on some rows")
         desc = " ".join(" ".join((r[c] or "") for c in cols["description"]).split()).upper()
         if not desc:
             raise BankCsvImportError(f"line {i}: the description is empty")
