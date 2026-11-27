@@ -1,0 +1,86 @@
+/* The case app (cma app). Everything it needs is in the package; no script, no web fonts. */
+:root {
+  --bg: #f6f7f5; --surface: #ffffff; --fg: #1d2421; --muted: #5b6762; --rule: #d8deda;
+  --accent: #1f6b52; --accent-fg: #ffffff; --accent-soft: #e2efe8;
+  --ok: #1f6b52; --ok-soft: #e2efe8; --warn: #8a5300; --warn-soft: #fbefd9; --bad: #a3261f; --bad-soft: #fbe5e3;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121715; --surface: #1a211e; --fg: #e3eae6; --muted: #9aa8a1; --rule: #2d3833;
+    --accent: #6cc4a1; --accent-fg: #0d1512; --accent-soft: #1c3229;
+    --ok: #6cc4a1; --ok-soft: #1c3229; --warn: #e8b05c; --warn-soft: #33281a; --bad: #f08a80; --bad-soft: #3a1d1a;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+a { color: var(--accent); }
+header.top { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; align-items: baseline; padding: 0.75rem max(16px, 4vw);
+  background: var(--surface); border-bottom: 1px solid var(--rule); }
+.brand { font-weight: 700; font-size: 1.1rem; text-decoration: none; color: var(--fg); }
+.local { font-size: 0.85rem; color: var(--muted); }
+main { max-width: 64rem; margin: 0 auto; padding: 1.5rem max(16px, 4vw) 3rem; display: flex; flex-direction: column; gap: 1.25rem; }
+h1 { font-size: 1.6rem; margin: 0; }
+h2 { font-size: 1.2rem; margin: 0 0 0.75rem; }
+h3 { font-size: 1rem; margin: 1.25rem 0 0.5rem; }
+p { margin: 0; }
+.head { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; justify-content: space-between; }
+.crumb { font-size: 0.9rem; color: var(--muted); }
+.card { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 1.25rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.card.muted { color: var(--muted); }
+.empty { background: var(--surface); border: 1px dashed var(--rule); border-radius: 8px; padding: 2rem; text-align: center; }
+.empty p { max-width: 36rem; margin: 0 auto; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+th, td { text-align: left; padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; }
+table.cases { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; }
+table.cases td:first-child a { font-weight: 600; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.when { white-space: nowrap; color: var(--muted); font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+.sub { font-size: 0.85rem; color: var(--muted); }
+.tag { font-size: 0.75rem; border: 1px solid var(--rule); border-radius: 4px; padding: 0 0.35rem; color: var(--muted); }
+.pill { display: inline-block; font-size: 0.8rem; font-weight: 600; padding: 0.15rem 0.6rem; border-radius: 999px; white-space: nowrap; }
+.pill.needs_statements { background: var(--warn-soft); color: var(--warn); }
+.pill.ready { background: var(--accent-soft); color: var(--accent); }
+.pill.signed { background: var(--ok); color: var(--accent-fg); }
+.pill.changed, .pill.busy { background: var(--warn-soft); color: var(--warn); }
+.pill.attention { background: var(--bad-soft); color: var(--bad); }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 0.5rem; }
+.steps a { display: flex; gap: 0.5rem; align-items: center; padding: 0.6rem 0.75rem; border: 1px solid var(--rule); border-radius: 8px;
+  background: var(--surface); color: var(--muted); text-decoration: none; font-weight: 600; font-size: 0.95rem; }
+.steps .n { display: inline-grid; place-items: center; width: 1.6rem; height: 1.6rem; border-radius: 50%; border: 1px solid var(--rule); font-size: 0.85rem; }
+.steps .done a { color: var(--fg); }
+.steps .done .n { background: var(--ok); color: var(--accent-fg); border-color: var(--ok); }
+.steps .now a { color: var(--fg); border-color: var(--accent); }
+.steps .now .n { border-color: var(--accent); color: var(--accent); }
+form { display: flex; flex-direction: column; gap: 0.5rem; }
+.form { max-width: 36rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 1rem 1.5rem; }
+.grid > div { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+label { font-weight: 600; font-size: 0.95rem; }
+label.check { font-weight: 400; display: flex; gap: 0.5rem; align-items: flex-start; }
+input, select, textarea { font: inherit; padding: 0.5rem 0.6rem; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg); width: 100%; }
+input[type="checkbox"] { width: auto; margin-top: 0.3rem; }
+input[type="file"] { padding: 0.4rem; }
+input:focus, select:focus, textarea:focus, .button:focus, a:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hint { font-size: 0.85rem; color: var(--muted); }
+.actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 0.5rem; }
+.button { display: inline-block; font: inherit; font-weight: 600; padding: 0.55rem 1.1rem; border-radius: 6px; border: 1px solid var(--rule);
+  background: var(--surface); color: var(--fg); text-decoration: none; cursor: pointer; }
+.button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.flash { padding: 0.7rem 1rem; border-radius: 6px; border: 1px solid; }
+.flash.ok { background: var(--ok-soft); color: var(--ok); border-color: var(--ok); }
+.flash.warn { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+.flash.error { background: var(--bad-soft); color: var(--bad); border-color: var(--bad); }
+details.more summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
+details.more .grid { margin-top: 0.75rem; }
+ul.packs { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.35rem; }
+.memo { display: flex; flex-direction: column; gap: 0.6rem; max-width: 46rem; }
+.memo h3 { margin: 0.9rem 0 0; font-size: 1.05rem; }
+.memo h3:first-child { margin-top: 0; }
+.memo ul { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.memo-note { padding: 0.5rem 0.8rem; border-left: 3px solid var(--warn); background: var(--warn-soft); color: var(--warn); font-size: 0.9rem; }
+.memo-empty { color: var(--muted); font-style: italic; font-size: 0.9rem; }
+.foot { font-size: 0.8rem; color: var(--muted); }

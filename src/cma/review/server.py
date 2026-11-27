@@ -300,11 +300,13 @@ def _claim_port_alone(sock) -> None:
 class ReviewServer:
     """One case's workspace server. Build it with start(); it is bound but not yet serving."""
 
-    def __init__(self, folder: Path, case_id: str, *, host: str = LOOPBACK, port: int = DEFAULT_PORT):
+    def __init__(self, folder: Path, case_id: str, *, host: str = LOOPBACK, port: int = DEFAULT_PORT,
+                 home_url: str | None = None):
         if host != LOOPBACK:
             raise ValueError(f"the review workspace listens on {LOOPBACK} only")
         self.folder = Path(folder)
         self.case_id = case_id
+        self.home_url = home_url  # the case app's page for this case, when the app opened the workspace
         self.address = LOOPBACK
         self.token = secrets.token_urlsafe(TOKEN_BYTES)
         template, assets = _bundled()
@@ -331,6 +333,11 @@ class ReviewServer:
         from . import summary
 
         html = summary.demo_banner(summary.is_demo(self.folder)) + html
+        if self.home_url:
+            from html import escape
+
+            html = (f'<nav class="app-nav"><a href="{escape(self.home_url)}">Back to the case</a></nav>'
+                    + html)
         return self._page.replace(SUMMARY_MARK.encode(), html.encode("utf-8"))
 
     def _case_json(self) -> bytes:
@@ -409,21 +416,23 @@ def _in_use(e: OSError) -> bool:
     return e.errno in (errno.EADDRINUSE, errno.EACCES) or getattr(e, "winerror", None) in (10048, 10013)
 
 
-def _bind(port: int) -> _HTTPServer:
+def _bind(port: int, handler: type[BaseHTTPRequestHandler] | None = None) -> _HTTPServer:
     """A server bound on the loopback interface at `port` or the next free port after it;
-    port 0 lets the operating system choose."""
+    port 0 lets the operating system choose. `handler`: the workspace's own unless given (the
+    case app binds its own the same way)."""
     tries = 1 if port == 0 else PORT_TRIES
     for candidate in range(port, port + tries):
         if candidate > 65535:
             break
         try:
-            return _HTTPServer((LOOPBACK, candidate), _Handler)
+            return _HTTPServer((LOOPBACK, candidate), handler or _Handler)
         except OSError as e:
             if not _in_use(e):
                 raise
     raise NoFreePort(errno.EADDRINUSE, f"no free loopback port from {port} to {port + tries - 1}")
 
 
-def start(folder: Path, case_id: str, *, port: int = DEFAULT_PORT) -> ReviewServer:
-    """Bind the workspace for a case, with a new token; call serve_forever() to serve."""
-    return ReviewServer(folder, case_id, port=port)
+def start(folder: Path, case_id: str, *, port: int = DEFAULT_PORT, home_url: str | None = None) -> ReviewServer:
+    """Bind the workspace for a case, with a new token; call serve_forever() to serve.
+    `home_url`: the case app's page for the case, linked from the top of every page."""
+    return ReviewServer(folder, case_id, port=port, home_url=home_url)

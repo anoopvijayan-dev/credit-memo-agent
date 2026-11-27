@@ -20,6 +20,31 @@ Lenders don't need a model that guesses at cash flow. They need one that says
 settlements that number came from. See
 [ADR 001](docs/decisions/001-the-model-never-does-the-arithmetic.md).
 
+## The case app (for analysts)
+
+Everything an analyst does, in the browser, with no commands:
+
+```bash
+cma app
+```
+
+On Windows, double-click **Start Credit Memo.bat** in the project folder instead. It opens a
+page on this computer only (127.0.0.1, with a new random token each start) that lists every
+case with its status, and takes a case through four steps:
+
+1. **Details**: business name, directors, the business's other accounts, VAT stagger group,
+   proposed monthly repayment.
+2. **Statements**: choose the bank's download as it came (HSBC, Barclays, Lloyds, NatWest,
+   Starling, Monzo, Open Banking, TrueLayer or the standard CSV), name the account, and give the
+   opening balance when the bank's file has none (HSBC, Monzo).
+3. **Review and sign**: opens the review workspace for the case, where every figure links to its
+   lines, a line's category can be corrected with a reason, and the memo is built and signed.
+4. **Signed memo**: the memo as signed, checked again against the case's statements ("Verified"),
+   and the full record for the credit file.
+
+Cases are kept under `private/cma` in the folder the app starts from (or `CMA_HOME`). Keep the
+window the app runs in open while working; closing it stops the app.
+
 ## Quick start
 
 ```bash
