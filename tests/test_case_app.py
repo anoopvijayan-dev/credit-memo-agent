@@ -138,7 +138,7 @@ def test_writes_are_post_and_pages_are_get(app):
 
 def test_an_empty_list_says_how_to_start(app):
     body = _get(app, "/")[2].decode()
-    assert "No cases yet" in body and "New case" in body
+    assert "Start your first case" in body and "New case" in body
 
 
 def test_a_new_case_is_made_and_said_once(app):
@@ -183,7 +183,7 @@ def test_details_are_saved_through_the_profile(app):
         "id": case_id, "label": "Renamed", "business_name": "HARBOURSIDE COFFEE LTD",
         "directors": "AMARA OKAFOR\r\n\r\nJO BLOGGS\r\n", "shareholders": "", "own_accounts": "HARBOURSIDE RESERVE",
         "vat_stagger": "3", "proposed_monthly_repayment": "£2,500.00"})
-    assert status == 303 and headers["location"].endswith("#details")
+    assert status == 303 and "step=details" in headers["location"]
     p = store.load_profile(store.case_folder(case_id))
     assert p["label"] == "Renamed" and p["directors"] == ["AMARA OKAFOR", "JO BLOGGS"]
     assert p["own_accounts"] == ["HARBOURSIDE RESERVE"] and p["vat_stagger"] == 3
@@ -203,7 +203,7 @@ def test_details_that_are_refused_change_nothing_and_say_why(app, field, value, 
     status, headers, _ = _post(app, "/details", {"id": case_id, field: value})
     assert status == 303
     page = _follow(app, headers)
-    assert said in page and 'class="flash error"' in page
+    assert said in page and 'class="banner bad"' in page
     assert store.load_profile(store.case_folder(case_id)) == before
 
 
@@ -362,3 +362,60 @@ def test_cma_app_command_is_listed():
     assert "case app" in out and "--port" in out
     assert re.search(r"127\.0\.0\.1", out)
     assert rs.LOOPBACK == "127.0.0.1"
+
+
+# --- the redesign: filters, search, steps, key figures ------------------------------------------
+
+
+def test_the_list_filters_by_status_and_searches_by_name(app):
+    _new(app, label="Alpha Bakery")
+    signed = _imported_case(app)
+    _sign(signed)
+    page = _get(app, "/")[2].decode()
+    assert "Alpha Bakery" in page and "Case one" in page
+    assert 'class="stat-n">1</span><span class="stat-label">Need statements' in page
+    only_signed = _get(app, "/?status=signed")[2].decode()
+    assert "Case one" in only_signed and "Alpha Bakery" not in only_signed
+    found = _get(app, "/?q=bakery")[2].decode()
+    assert "Alpha Bakery" in found and "Case one" not in found
+    assert "No case matches" in _get(app, "/?q=nothing-like-this")[2].decode()
+    assert "Alpha Bakery" in _get(app, "/?status=nonsense")[2].decode()  # an unknown filter shows all
+
+
+def test_a_case_opens_on_the_step_to_do_next(app):
+    case_id, _ = _new(app)
+    assert 'aria-current="step"' in (page := _get(app, f"/case?id={case_id}")[2].decode())
+    assert 'id="d-label"' in page  # details first, before any statement
+    _upload(app, {"id": case_id, "bank": "hsbc", "account": "current", "opening_balance": "1000"}, "s.csv", HSBC)
+    assert "Open the review" in _get(app, f"/case?id={case_id}")[2].decode()  # details are optional
+    _sign(case_id)
+    assert "Memo signed by" in _get(app, f"/case?id={case_id}")[2].decode()
+    for step, marker in (("details", 'id="d-label"'), ("statements", 'name="bank"'), ("review", "Open the review"),
+                         ("memo", "Memo signed by")):
+        assert marker in _get(app, f"/case?id={case_id}&step={step}")[2].decode(), step
+    assert 'id="d-label"' not in _get(app, f"/case?id={case_id}&step=../etc")[2].decode()
+
+
+def test_a_case_with_figures_shows_its_key_figures_and_monthly_chart(app):
+    case_id, _ = _new(app)
+    two_months = b"02/04/2026,CARD ACQUIRER SETTLEMENT,900.00\r\n" + HSBC  # March and April
+    _upload(app, {"id": case_id, "bank": "hsbc", "account": "current", "opening_balance": "1000"}, "s.csv", two_months)
+    page = _get(app, f"/case?id={case_id}")[2].decode()
+    assert 'id="headline"' in page and "Average monthly revenue" in page and '<span class="id">M3</span>' in page
+    assert '<svg class="chart"' in page and "Trading receipts" in page
+    # The policy outcome is said only inside its labelled panel (P20), here on the review step.
+    tiles = page.split('id="headline"', 1)[1].split("</section>", 1)[0]
+    assert not re.search(r"\b(pass|refer|fail)\b", tiles, re.I)
+    assert "illustrative" in _get(app, f"/case?id={case_id}&step=review")[2].decode().lower()
+    empty_id, _ = _new(app)
+    assert 'id="headline"' not in _get(app, f"/case?id={empty_id}")[2].decode()
+
+
+def test_every_page_loads_the_shared_design_system(app):
+    status, headers, body = _get(app, "/static/theme.css")
+    assert status == 200 and headers["content-type"].startswith("text/css")
+    from importlib import resources
+
+    assert body == (resources.files("cma.review") / "static" / "theme.css").read_bytes()
+    assert "/static/theme.css?token=" in _get(app, "/")[2].decode()
+    assert "/static/theme.css?token=" in (resources.files("cma.review") / "static" / "index.html").read_text()

@@ -1,25 +1,147 @@
-/* The review workspace page (C5). Everything it needs is in the package. */
-:root { color-scheme: light dark; }
-body { margin: 0 auto; max-width: 72rem; padding: 1rem; font-family: system-ui, sans-serif; line-height: 1.4; }
-h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
-#case { margin: 0 0 1rem; }
-h2 { font-size: 1.15rem; margin: 1.5rem 0 0.25rem; }
-h3 { font-size: 1rem; margin: 1rem 0 0.25rem; }
-table { border-collapse: collapse; width: 100%; margin: 0 0 0.75rem; font-size: 0.9rem; }
-th, td { border-bottom: 1px solid #8884; padding: 0.2rem 0.5rem; text-align: left; vertical-align: top; }
-.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-tr.within td:nth-child(2) { padding-left: 1.5rem; font-style: italic; }
-tr.total td { font-weight: 600; border-top: 2px solid #8888; }
-.overridden, .part { font-size: 0.8rem; opacity: 0.75; }
-.refusal { border: 2px solid #c33; padding: 0.5rem 1rem; }
-.indicator { margin: 0 0 0.75rem; }
-.illustrative, .firm, .note, .none { font-size: 0.8rem; opacity: 0.8; }
+/* The review workspace page (C5), on the shared design system (theme.css). Everything it
+   needs is in the package. Layout: a top bar, an "On this page" column, and the case as a
+   stack of cards. */
+body.ws { display: grid; grid-template-columns: 230px minmax(0, 1fr); grid-template-areas: "top top" "toc main"; min-height: 100vh; }
+body.ws.no-toc { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "main"; }
+
+/* Top bar */
+.ws-top { grid-area: top; position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 10px clamp(16px, 3vw, 32px); background: var(--side); color: var(--side-ink); }
+.ws-top .brand { color: #fff; padding: 0; }
+.brand-mark { color: #fff; font: 800 0.72rem/1 var(--font-display); letter-spacing: 0.02em; }
+.ws-divider { width: 1px; height: 26px; background: #2c4a40; }
+.ws-title { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.ws-title h1 { color: #fff; font-size: 1rem; font-weight: 650; }
+#case { font-size: 0.82rem; color: var(--side-muted); overflow-wrap: anywhere; }
+.ws-lock { font-size: 0.78rem; color: var(--side-muted); border: 1px solid #2c4a40; border-radius: 999px; padding: 3px 10px; white-space: nowrap; }
+
+/* On this page */
+.ws-toc { grid-area: toc; position: sticky; top: 56px; align-self: start; max-height: calc(100vh - 56px); overflow-y: auto;
+  padding: 26px 10px 26px 20px; display: flex; flex-direction: column; gap: 8px; }
+.toc-label { font-size: 0.7rem; font-weight: 650; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); padding-left: 10px; }
+.ws-toc nav { display: flex; flex-direction: column; gap: 1px; border-left: 2px solid var(--line); }
+.ws-toc a { padding: 5px 10px; margin-left: -2px; border-left: 2px solid transparent; color: var(--ink-2); text-decoration: none; font-size: 0.88rem; line-height: 1.35; }
+.ws-toc a:hover { color: var(--brand); }
+.ws-toc a.here { border-left-color: var(--brand); color: var(--brand); font-weight: 600; }
+@media (max-width: 900px) {
+  body.ws { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "main"; }
+  .ws-toc { display: none; }
+}
+
+/* The case */
+#workspace { grid-area: main; min-width: 0; max-width: 1140px; padding: 24px clamp(16px, 3vw, 36px) 64px; display: flex; flex-direction: column; gap: 18px; }
+#workspace > section, .account, #policy-checks, #judgement-queue, #recommendation, #preview-pack, #compare, #profile,
+#pack-preview, #signed-off, #comparison, #promote-overrides, #promote-preview, #promoted, #stale-overrides, .lines-behind {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; min-width: 0; scroll-margin-top: 72px; }
+#workspace > section#headline, #workspace > section#summary-head, #workspace > section#demo-banner {
+  background: none; border: 0; box-shadow: none; padding: 0; }
+#summary-head .case-name { font-family: var(--font-display); font-size: 1.5rem; font-weight: 650; }
+#workspace h2 { font-size: 1.12rem; }
+#workspace h3 { font-size: 0.95rem; margin-top: 6px; color: var(--ink-2); }
+.headline h2 { display: flex; align-items: baseline; gap: 10px; font-size: 1rem; }
+.headline h2 .muted { font-weight: 500; font-size: 0.85rem; font-family: var(--font); }
+.tile .value a { color: inherit; text-decoration: none; }
+.tile .value a:hover { color: var(--brand); text-decoration: underline; }
+.period { color: var(--muted); font-size: 0.9rem; }
+.note, .illustrative, .firm, .none, .policy-source, .thresholds-source { font-size: 0.84rem; color: var(--muted); }
+.app-nav a { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 0.9rem; text-decoration: none;
+  padding: 7px 14px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line-strong); color: var(--ink); }
+.app-nav a::before { content: "\2190"; }
+.app-nav a:hover { border-color: var(--brand); color: var(--brand); }
+
+/* Tables in the case: each card scrolls sideways when a table is wider than it */
+#workspace > section, .account, #policy-checks, .policy-check, #judgement-queue, .lines-behind { overflow-x: auto; }
+#workspace table { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); border-collapse: separate; border-spacing: 0; }
+#workspace table th:first-child { border-top-left-radius: var(--radius-s); }
+#workspace table th:last-child { border-top-right-radius: var(--radius-s); }
+#workspace td a { color: var(--brand); font-weight: 600; text-decoration: none; }
+#workspace td a:hover { text-decoration: underline; }
+#workspace td:first-child a { font-family: var(--mono); font-size: 0.82rem; }
+tr.within td:nth-child(2) { padding-left: 1.6rem; color: var(--ink-2); font-style: italic; }
+tr.total td { font-weight: 700; border-top: 2px solid var(--line-strong); background: var(--surface-2); }
+.overridden, .part { display: inline-block; font-size: 0.72rem; font-weight: 650; color: var(--warn); background: var(--warn-soft); border-radius: 999px; padding: 0 7px; margin-left: 4px; }
 .threshold { white-space: nowrap; }
-.policy-check { border: 1px solid #8888; padding: 0.5rem 1rem; margin: 0 0 0.75rem; }
-.illustrative-label { font-weight: 600; }
-.field { min-height: 3rem; border: 1px dashed #8888; }
-form.override, form.stale { display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0; }
-form.override input, form.override select, form.stale input { font-size: 0.8rem; max-width: 12rem; }
-.demo-banner { border: 2px solid #c80; background: #c802; padding: 0.25rem 1rem; margin: 0 0 1rem; font-weight: 600; }
-.app-nav { margin: 0 0 1rem; }
-.app-nav a { font-weight: 600; }
+
+/* Judgement queue and its forms */
+#judgement-queue { border-top: 4px solid var(--info); }
+#stale-overrides, .refusal { border-top: 4px solid var(--bad); }
+.refusal h2 { color: var(--bad); }
+form.override { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; min-width: 260px; }
+form.override select { grid-column: 1 / -1; }
+form.override button { grid-column: 1 / -1; justify-self: start; }
+form.stale { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+form.override select, form.override input, form.stale input { font-size: 0.84rem; padding: 6px 8px; width: 100%; min-width: 0; }
+table.lines td:nth-child(2) { white-space: nowrap; }
+
+/* The judgement queue as a list of cards: each line's description and amount, its facts as
+   tags, why it is listed, then the decision form in one row. Columns, in order: account,
+   line, date, description, amount, category, why listed, indicators, candidates, form. */
+#workspace table.queue { display: block; border: 0; background: none; }
+table.queue thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+table.queue tbody { display: flex; flex-direction: column; gap: 10px; }
+table.queue tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px; padding: 14px 16px; border: 1px solid var(--line);
+  border-left: 4px solid var(--info); border-radius: 8px; background: var(--surface); }
+table.queue tr:hover td { background: none; }
+table.queue td { display: block; border: 0; padding: 0; font-size: 0.86rem; }
+table.queue td:nth-child(4) { order: 1; flex: 1 1 60%; font-weight: 650; font-size: 0.98rem; }
+table.queue td:nth-child(5) { order: 2; flex: 0 0 auto; margin-left: auto; font-weight: 700; font-size: 1rem; font-variant-numeric: tabular-nums; }
+table.queue td:nth-child(2), table.queue td:nth-child(3), table.queue td:nth-child(1),
+table.queue td:nth-child(6), table.queue td:nth-child(7) { order: 3; flex: 0 0 auto; padding: 1px 8px; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-2); font-size: 0.78rem; }
+table.queue td:nth-child(2) { order: 3; font-family: var(--mono); }
+table.queue td:nth-child(3) { order: 4; }
+table.queue td:nth-child(1) { order: 5; }
+table.queue td:nth-child(6) { order: 6; background: var(--info-soft); color: var(--info); border-color: transparent; font-weight: 650; }
+table.queue td:nth-child(7) { order: 7; background: var(--warn-soft); color: var(--warn); border-color: transparent; font-weight: 650; }
+table.queue td:nth-child(8) { order: 8; flex: 1 1 100%; color: var(--ink-2); }
+table.queue td:nth-child(9) { order: 9; flex: 1 1 100%; color: var(--muted); }
+table.queue td:empty { display: none; }
+table.queue td:nth-child(10) { order: 10; flex: 1 1 100%; padding-top: 8px; margin-top: 4px; border-top: 1px dashed var(--line); }
+table.queue form.override { grid-template-columns: minmax(150px, 1.1fr) minmax(150px, 1.5fr) minmax(120px, 1fr) auto; min-width: 0; }
+table.queue form.override select, table.queue form.override button { grid-column: auto; }
+@media (max-width: 760px) {
+  table.queue form.override { grid-template-columns: 1fr 1fr; }
+  table.queue form.override select, table.queue form.override button { grid-column: 1 / -1; }
+}
+#workspace button { font: 600 0.88rem/1 var(--font); padding: 9px 14px; border-radius: 8px; border: 1px solid var(--brand); background: var(--brand); color: var(--brand-ink); cursor: pointer; }
+#workspace button:hover { background: var(--brand-hover); border-color: var(--brand-hover); }
+form.override button, form.stale button { padding: 7px 12px; font-size: 0.82rem; background: var(--surface); color: var(--brand); }
+form.override button:hover, form.stale button:hover { background: var(--brand-soft); color: var(--brand); }
+
+/* Indicators */
+.indicators { display: flex; flex-direction: column; gap: 10px; }
+.indicator { border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; background: var(--surface-2); }
+
+/* Policy check */
+#policy-checks { border-top: 4px solid var(--warn); }
+.policy-check { border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.illustrative-label { font-weight: 700; color: var(--warn); }
+.outcome { font-weight: 700; font-size: 1rem; }
+.outcome.pass, .rule-outcome.pass { color: var(--ok); }
+.outcome.refer, .rule-outcome.refer { color: var(--warn); }
+.outcome.fail, .rule-outcome.fail { color: var(--bad); }
+.rule-outcome { font-weight: 700; }
+ul.rules { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 5px; font-size: 0.9rem; }
+
+/* Recommendation and the memo fields left for the underwriter */
+.field { min-height: 3rem; border: 1px dashed var(--line-strong); border-radius: 8px; background: var(--surface-2); }
+.for-underwriter { color: var(--ink-2); }
+
+/* Preview and sign off */
+#preview-pack { border: 1px solid color-mix(in srgb, var(--brand) 40%, var(--line)); background: linear-gradient(180deg, var(--brand-soft), var(--surface) 70%); }
+#preview-pack h2::before { content: ""; }
+form.preview, form.sign { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+form.sign input { max-width: 320px; }
+#pack-preview pre, .memo, .wording { white-space: pre-wrap; overflow-wrap: anywhere; font: 0.9rem/1.6 var(--font); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; margin: 0; }
+#signed-off { border-top: 4px solid var(--ok); }
+.changed { color: var(--warn); }
+
+/* Compare and promote */
+form.compare, form.promote, form.promote-confirm { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+form.compare select { max-width: 420px; }
+form.compare input { max-width: 200px; }
+.demo-banner { display: flex; gap: 10px; padding: 12px 16px; border-radius: var(--radius-s); background: var(--warn-soft); color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); font-weight: 600; }
+#demo-banner p { margin: 0; }
