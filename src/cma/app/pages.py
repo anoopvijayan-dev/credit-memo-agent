@@ -192,7 +192,7 @@ def cases_page(token: str, views: list[CaseView], nav: Nav, *, query: str = "", 
             f'<h1>{_e(heading)}</h1></div><div class="actions">{search}'
             f'<a class="btn primary" href="{_e(url(token, "/new"))}">{icon("plus")}New case</a></div></header>')
     stats = []
-    for key, label, level in ((NEEDS_STATEMENTS, "Need statements", "warn"), (READY, "Ready for review", "info"),
+    for key, label, level in ((NEEDS_STATEMENTS, "Needs statements", "warn"), (READY, "Ready for review", "info"),
                               (CHANGED, "Changed since signing", "warn"), (SIGNED, "Signed", "ok")):
         n = nav.counts.get(key, 0)
         active = " active" if status == key else ""

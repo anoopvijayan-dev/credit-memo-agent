@@ -373,7 +373,7 @@ def test_the_list_filters_by_status_and_searches_by_name(app):
     _sign(signed)
     page = _get(app, "/")[2].decode()
     assert "Alpha Bakery" in page and "Case one" in page
-    assert 'class="stat-n">1</span><span class="stat-label">Need statements' in page
+    assert 'class="stat-n">1</span><span class="stat-label">Needs statements' in page
     only_signed = _get(app, "/?status=signed")[2].decode()
     assert "Case one" in only_signed and "Alpha Bakery" not in only_signed
     found = _get(app, "/?q=bakery")[2].decode()
