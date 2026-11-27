@@ -419,3 +419,27 @@ def test_every_page_loads_the_shared_design_system(app):
     assert body == (resources.files("cma.review") / "static" / "theme.css").read_bytes()
     assert "/static/theme.css?token=" in _get(app, "/")[2].decode()
     assert "/static/theme.css?token=" in (resources.files("cma.review") / "static" / "index.html").read_text()
+
+
+def test_try_with_demo_data_makes_a_ready_synthetic_case(app):
+    assert "Try with demo data" in _get(app, "/")[2].decode()
+    status, headers, _ = _post(app, "/demo", {})
+    assert status == 303
+    case_id = parse_qs(urlsplit(headers["location"]).query)["id"][0]
+    view = cases.load(case_id)
+    assert view.demo and view.status == cases.READY
+    assert [s["account"] for s in view.statements] == ["main", "reserve"]
+    assert view.business == actions.DEMO_BUSINESS and view.profile["vat_stagger"] == 3
+    assert view.profile["proposed_monthly_repayment"] == "2500.00" and view.profile["directors"]
+    page = _follow(app, headers)
+    assert "Demo case made" in page and "Demonstration case" in page and 'id="headline"' in page
+    assert "All accounts" in page  # two accounts: the key figures are the business's
+    assert "Try with demo data" in _get(app, "/")[2].decode()  # still offered once cases exist
+
+
+def test_the_launcher_self_test_passes_and_the_packaged_app_keeps_cases_in_local_app_data(monkeypatch, tmp_path):
+    from cma.app import launcher
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData" / "Local"))
+    assert launcher.default_home() == tmp_path / "AppData" / "Local" / "Credit Memo"
+    assert launcher.main(["--self-test"]) == 0

@@ -1,11 +1,23 @@
 [project]
 name = "credit-memo-agent"
-version = "0.1.0"
-description = "A UK SME cash-flow credit-memo agent: deterministic metrics, cited figures, policy checks, and a human sign-off before anything leaves the building."
+version = "0.2.0"
+description = "Turns a UK small business's bank statements into a credit memo draft where every number traces to its transactions, reviewed and signed by a person, on your own computer."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Anoop Vijayan" }]
+keywords = ["credit memo", "underwriting", "SME lending", "bank statements", "open banking", "credit risk"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Financial and Insurance Industry",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Office/Business :: Financial",
+]
 dependencies = [
   "langgraph>=1.0",
   "pydantic>=2.6",
@@ -19,6 +31,12 @@ llm = ["anthropic>=0.40", "openai>=1.40"]
 mcp = ["mcp>=2.0"]
 durable = ["langgraph-checkpoint-sqlite>=3.0"]
 dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.urls]
+Homepage = "https://github.com/anoopvijayan-dev/credit-memo-agent"
+Source = "https://github.com/anoopvijayan-dev/credit-memo-agent"
+Issues = "https://github.com/anoopvijayan-dev/credit-memo-agent/issues"
+Download = "https://github.com/anoopvijayan-dev/credit-memo-agent/releases"
 
 [project.scripts]
 cma = "cma.cli:app"
@@ -46,3 +64,9 @@ markers = [
     "invariants: correctness properties P1-Pn from the design (Bridgie verify tier 'invariants')",
     "dual_run: old and new behaviour compared side by side, such as CMA_RULESET=v1 against v2 (Bridgie verify tier 'dual_run')",
 ]
+
+[tool.hatch.build.targets.sdist]
+# The source archive: the package, its tests and evals, the docs and synthetic examples.
+# Never the build tool's working folders (.bridgie) or anything under private/.
+include = ["src/cma", "tests", "evals", "examples", "docs", "packaging", "README.md", "LICENSE", "pyproject.toml"]
+exclude = [".bridgie", "private"]

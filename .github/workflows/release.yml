@@ -1,0 +1,93 @@
+# Builds the two ways to install: the Windows download (CreditMemo.exe) and the Python
+# package. Each build runs its own self-test. A pull request only builds and tests; a tag
+# such as v0.2.0 also attaches both to a GitHub Release and publishes the package to PyPI
+# (PyPI's trusted publishing: the repository is added as a trusted publisher on pypi.org,
+# with the environment "pypi"; no token is stored here).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: ["src/**", "packaging/**", "pyproject.toml", ".github/workflows/release.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install . "pyinstaller==6.22.3"
+      - name: Build CreditMemo.exe
+        run: >
+          pyinstaller --noconfirm --onefile --console --name CreditMemo
+          --collect-data cma --collect-submodules cma
+          --exclude-module langgraph --exclude-module langchain_core --exclude-module langsmith
+          --exclude-module anthropic --exclude-module openai
+          packaging/CreditMemo.py
+      - name: Self-test the built program
+        run: dist\CreditMemo.exe --self-test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CreditMemo-windows
+          path: dist/CreditMemo.exe
+          if-no-files-found: error
+
+  python-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check --strict dist/*
+      - name: Install the wheel alone and self-test it
+        run: |
+          python -m venv /tmp/try
+          /tmp/try/bin/pip install dist/*.whl
+          cd /tmp && /tmp/try/bin/cma app --help
+          /tmp/try/bin/python -m cma.app.launcher --self-test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-package
+          path: dist/
+          if-no-files-found: error
+
+  github-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows-exe, python-package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/CreditMemo-windows/CreditMemo.exe
+            out/python-package/*
+          generate_release_notes: true
+
+  pypi:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: python-package
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-package
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1

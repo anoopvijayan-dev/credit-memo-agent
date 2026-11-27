@@ -9,6 +9,7 @@ from html import escape
 from typing import Any
 from urllib.parse import urlencode
 
+from ..review.memo_view import memo_html
 from .actions import BANKS
 from .cases import ATTENTION, BUSY, CHANGED, NEEDS_STATEMENTS, READY, SIGNED, STATUS_TEXT, CaseView
 
@@ -31,6 +32,7 @@ ICONS = {
     "search": '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
     "info": '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
     "alert": '<path d="M12 3l9.5 17h-19z"/><path d="M12 10v4.5M12 17.5v.5"/>',
+    "play": '<path d="M7 5l12 7-12 7z"/>',
     "shield": '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>',
 }
 
@@ -127,6 +129,13 @@ def shell(token: str, title: str, body: str, *, nav: Nav | None = None, notice: 
     return page.encode("utf-8")
 
 
+def demo_button(token: str, *, big: bool = False) -> str:
+    """Make a synthetic demo case and open it: a way to see the whole flow without statements."""
+    size = " big" if big else ""
+    return _form(token, "/demo", f'<button class="btn{size}" type="submit">{icon("play")}Try with demo data</button>',
+                 cls="inline")
+
+
 def _chip(view: CaseView) -> str:
     return f'<span class="chip {view.status}">{_e(view.status_text)}</span>'
 
@@ -189,7 +198,7 @@ def cases_page(token: str, views: list[CaseView], nav: Nav, *, query: str = "", 
               + f'<label class="search-box">{icon("search")}<input type="search" name="q" value="{_e(query)}" '
               'placeholder="Search by case or business" aria-label="Search cases"></label></form>')
     head = (f'<header class="page-head"><div class="titles"><span class="eyebrow">Cases</span>'
-            f'<h1>{_e(heading)}</h1></div><div class="actions">{search}'
+            f'<h1>{_e(heading)}</h1></div><div class="actions">{search}{demo_button(token)}'
             f'<a class="btn primary" href="{_e(url(token, "/new"))}">{icon("plus")}New case</a></div></header>')
     stats = []
     for key, label, level in ((NEEDS_STATEMENTS, "Needs statements", "warn"), (READY, "Ready for review", "info"),
@@ -208,7 +217,10 @@ def cases_page(token: str, views: list[CaseView], nav: Nav, *, query: str = "", 
                 '<li><span><strong>Statements</strong> as downloaded from the bank</span></li>'
                 '<li><span><strong>Review</strong> every figure and the lines behind it</span></li>'
                 '<li><span><strong>Sign</strong> the memo for the credit file</span></li></ol>'
-                f'<a class="btn primary big" href="{_e(url(token, "/new"))}">{icon("plus")}New case</a></section>')
+                f'<div class="actions center"><a class="btn primary big" href="{_e(url(token, "/new"))}">{icon("plus")}'
+                f'New case</a>{demo_button(token, big=True)}</div>'
+                '<p class="hint">No statements to hand? The demo case is a synthetic café with a year of statements '
+                'on two accounts, marked as a demonstration everywhere.</p></section>')
         return shell(token, TITLE, body, nav=nav, notice=notice, error=error)
     if not views:
         listing = ('<section class="card empty-inline"><p>No case matches. '
@@ -517,48 +529,6 @@ def case_page(token: str, v: CaseView, nav: Nav, step: str, summary: dict[str, A
 
 
 # --- a signed pack ----------------------------------------------------------------------------
-
-
-def memo_html(text: str) -> str:
-    """The pack's memo.md as a page: headings, quoted notes, lists and paragraphs. Only the
-    few forms pack.py writes are read; everything else is shown as plain text, escaped."""
-    out: list[str] = []
-    para: list[str] = []
-    items: list[str] = []
-
-    def flush() -> None:
-        if para:
-            out.append(f"<p>{_e(' '.join(para))}</p>")
-            para.clear()
-        if items:
-            out.append("<ul>" + "".join(f"<li>{_e(i)}</li>" for i in items) + "</ul>")
-            items.clear()
-
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            flush()
-        elif stripped.startswith("## "):
-            flush()
-            out.append(f"<h3>{_e(stripped[3:])}</h3>")
-        elif stripped.startswith("# "):
-            flush()  # the memo's own title; the page has one
-        elif stripped.startswith("> "):
-            flush()
-            out.append(f'<p class="memo-note">{_e(stripped[2:])}</p>')
-        elif stripped.startswith("- "):
-            if para:
-                flush()
-            items.append(stripped[2:])
-        elif stripped.startswith("_") and stripped.endswith("_") and len(stripped) > 2:
-            flush()
-            out.append(f'<p class="memo-empty">{_e(stripped[1:-1])}</p>')
-        else:
-            if items:
-                flush()
-            para.append(stripped)
-    flush()
-    return '<div class="memo">' + "".join(out) + "</div>"
 
 
 def pack_page(token: str, v: CaseView, nav: Nav, pack: dict, memo: str, verified: tuple[bool, str],

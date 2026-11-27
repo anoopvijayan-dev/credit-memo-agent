@@ -44,7 +44,7 @@ MAX_FORM = 64 * 1024
 MAX_MULTIPART = actions.MAX_UPLOAD + 256 * 1024
 REFUSED = b"Refused: this page answers only the address the app opened when it started.\n"
 SNAPSHOT = re.compile(r"[0-9a-f]{64}")
-WRITES = frozenset({"/new", "/details", "/import", "/review"})  # POST
+WRITES = frozenset({"/new", "/details", "/import", "/review", "/demo"})  # POST
 POST_ONLY = WRITES - {"/new"}  # /new is also the new-case form, by GET
 
 
@@ -250,6 +250,9 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/new":
                 done, warning = actions.new_case(fields)
                 self._redirect(app.case_url(done.case_id, notice=done.message, error=warning or "", step="details"))
+            elif path == "/demo":
+                done, warning = actions.demo_case()
+                self._redirect(app.case_url(done.case_id, notice=done.message, error=warning or ""))
             elif path == "/details":
                 done = actions.save_details(case_id, fields)
                 self._redirect(app.case_url(case_id, notice=done.message, step="details"))
@@ -262,7 +265,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._redirect(app.open_review(case_id))
         except Exception as e:
             text = actions.explain(e)
-            if path == "/new":
+            if path in ("/new", "/demo"):
                 self._send(400, pages.new_page(app.token, _nav(), error=text, fields=fields))
             elif isinstance(e, store.CaseStoreError) and not cases.case_exists(case_id):
                 self._send(404, pages.message_page(app.token, "No such case",
