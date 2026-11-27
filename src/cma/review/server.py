@@ -53,7 +53,9 @@ CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self';
 SECURITY_HEADERS = {
     "Content-Security-Policy": CSP,
     "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer",  # the token is in the URL; no page is told it
+    # The token is in the URL, so no other site is ever told it. Not "no-referrer": under it a
+    # browser sends "Origin: null" with a form's POST, and the origin check refuses every save.
+    "Referrer-Policy": "same-origin",
     "X-Frame-Options": "DENY",
     "Cache-Control": "no-store",
     "Cross-Origin-Opener-Policy": "same-origin",
