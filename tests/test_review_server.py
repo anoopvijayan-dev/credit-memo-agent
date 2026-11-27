@@ -186,7 +186,9 @@ def test_every_response_carries_a_strict_csp(ws):
         assert "unsafe-inline" not in csp and "unsafe-eval" not in csp
         assert "frame-ancestors 'none'" in csp
         assert h["x-content-type-options"] == "nosniff"
-        assert h["referrer-policy"] == "no-referrer"
+        # same-origin, not no-referrer: under no-referrer a browser sends "Origin: null" with a
+        # form's POST, and every save from the page would be refused (seen in Chrome).
+        assert h["referrer-policy"] == "same-origin"
         assert h["cache-control"] == "no-store"
 
 
