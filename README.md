@@ -19,14 +19,16 @@ Statements never leave the computer: the app listens on 127.0.0.1 only.
 
 | Who | How | Needs |
 |---|---|---|
-| Underwriters and analysts | Download **CreditMemo.exe** from the [latest release](https://github.com/anoopvijayan-dev/credit-memo-agent/releases/latest) and double-click it. The app opens in your browser. | Windows. Nothing to install. |
+| Underwriters and analysts | Download **CreditMemo-windows.zip** from the [latest release](https://github.com/anoopvijayan-dev/credit-memo-agent/releases/latest), unzip it, and double-click **Credit Memo.bat**. The app opens in your browser. | Windows. Nothing to install. |
 | Technical users | `pipx install credit-memo-agent`, then `cma app` | Python 3.11 or later |
 | Developers | Clone this repository: `pip install -e ".[dev]"`, then `cma app` | Python 3.11 or later |
 
-The Windows download keeps cases in `%LOCALAPPDATA%\Credit Memo`. `cma app` keeps them in
-`private/cma` under the folder it starts from, or wherever `CMA_HOME` points. Keep the window
-the app runs in open while you work; closing it stops the app. Windows may warn about a new,
-unsigned download the first time: choose "More info", then "Run anyway".
+The Windows download is the official Python for Windows from python.org, signed by the Python
+Software Foundation, with this package beside it: no installer and no self-extracting program.
+Before unzipping, right-click the zip, choose **Properties** and tick **Unblock** if it is
+there, so Windows does not ask about each file. Cases are kept in `%LOCALAPPDATA%\Credit Memo`.
+`cma app` keeps them in `private/cma` under the folder it starts from, or wherever `CMA_HOME`
+points. Keep the window the app runs in open while you work; closing it stops the app.
 
 ## Try it in 2 minutes
 
@@ -65,8 +67,8 @@ in this repository is synthetic: no real statements, no customer data.
 
 ## Releasing
 
-A tag such as `v0.2.0` builds CreditMemo.exe on Windows and the Python package, self-tests
-both, attaches them to a GitHub Release and publishes the package to PyPI through trusted
+A tag such as `v0.2.1` builds CreditMemo-windows.zip on Windows and the Python package,
+self-tests both, attaches them to a GitHub Release and publishes the package to PyPI through trusted
 publishing (`.github/workflows/release.yml`). Pull requests build and self-test both without
 publishing.
 
