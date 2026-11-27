@@ -48,8 +48,41 @@ WRITES = frozenset({"/new", "/details", "/import", "/review"})  # POST
 POST_ONLY = WRITES - {"/new"}  # /new is also the new-case form, by GET
 
 
-def _css() -> bytes:
-    return (resources.files("cma.app") / "static" / "app.css").read_bytes()
+def _css() -> dict[str, bytes]:
+    """The stylesheets, by the path they are served at: the design system shared with the
+    review workspace, and the app's own."""
+    return {"/static/theme.css": (resources.files("cma.review") / "static" / "theme.css").read_bytes(),
+            "/static/app.css": (resources.files("cma.app") / "static" / "app.css").read_bytes()}
+
+
+def _nav(views: list[cases.CaseView] | None = None, **kw) -> pages.Nav:
+    """The sidebar's counts, from the cases given or read afresh; empty if they cannot be read."""
+    try:
+        views = cases.load_all() if views is None else views
+    except Exception:
+        return pages.Nav(**kw)
+    counts: dict[str, int] = {}
+    for v in views:
+        counts[v.status] = counts.get(v.status, 0) + 1
+    return pages.Nav(counts=counts, total=len(views), **kw)
+
+
+def _case_summary(view: cases.CaseView) -> dict | None:
+    """The case's figures for its page, as the review workspace computes them; None before a
+    statement is imported or when they cannot be computed (the page then shows no figures)."""
+    if not view.statements or view.status in (cases.ATTENTION, cases.BUSY):
+        return None
+    from ..review import summary
+
+    try:
+        return summary.case_summary(view.folder, view.id)
+    except Exception:
+        return None
+
+
+def _matches(view: cases.CaseView, q: str) -> bool:
+    q = q.strip().lower()
+    return not q or any(q in (x or "").lower() for x in (view.title, view.business, view.label, view.id))
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -126,17 +159,24 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if write:
                 self._write(path)
-            elif path == "/static/app.css":
-                self._send(200, app.css, "text/css; charset=utf-8")
+            elif path in app.css:
+                self._send(200, app.css[path], "text/css; charset=utf-8")
             elif path == "/":
                 notice, error = app.flash(query.get("flash"))
-                self._send(200, pages.cases_page(app.token, cases.load_all(), notice=notice, error=error))
+                views = cases.load_all()
+                status = query.get("status") if query.get("status") in cases.STATUS_TEXT else None
+                q = query.get("q", "")[:200]
+                shown = [v for v in views if (status is None or v.status == status) and _matches(v, q)]
+                self._send(200, pages.cases_page(app.token, shown, _nav(views, status=status), query=q,
+                                                 notice=notice, error=error))
             elif path == "/new":
-                self._send(200, pages.new_page(app.token))
+                self._send(200, pages.new_page(app.token, _nav()))
             elif path == "/case":
                 view = cases.load(query.get("id", ""))
                 notice, error = app.flash(query.get("flash"))
-                self._send(200, pages.case_page(app.token, view, notice=notice, error=error))
+                step = query.get("step") if query.get("step") in pages.STEP_KEYS else pages.default_step(view)
+                self._send(200, pages.case_page(app.token, view, _nav(case=view, step=step), step,
+                                                _case_summary(view), notice=notice, error=error))
             elif path in ("/pack", "/pack/record"):
                 self._pack(path, query)
             else:
@@ -209,27 +249,27 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if path == "/new":
                 done, warning = actions.new_case(fields)
-                self._redirect(app.case_url(done.case_id, notice=done.message, error=warning or ""))
+                self._redirect(app.case_url(done.case_id, notice=done.message, error=warning or "", step="details"))
             elif path == "/details":
                 done = actions.save_details(case_id, fields)
-                self._redirect(app.case_url(case_id, notice=done.message, anchor="details"))
+                self._redirect(app.case_url(case_id, notice=done.message, step="details"))
             elif path == "/import":
                 name, data = upload if upload else ("", b"")
                 done = actions.import_statement(case_id, fields, name, data)
-                self._redirect(app.case_url(case_id, notice=done.message, anchor="statements"))
+                self._redirect(app.case_url(case_id, notice=done.message, step="statements"))
             elif path == "/review":
                 cases.load(case_id)  # refuses an unknown case before anything starts
                 self._redirect(app.open_review(case_id))
         except Exception as e:
             text = actions.explain(e)
             if path == "/new":
-                self._send(400, pages.new_page(app.token, error=text, fields=fields))
+                self._send(400, pages.new_page(app.token, _nav(), error=text, fields=fields))
             elif isinstance(e, store.CaseStoreError) and not cases.case_exists(case_id):
                 self._send(404, pages.message_page(app.token, "No such case",
                                                    "That case is not under this computer's case folder."))
             else:
-                anchor = {"/details": "details", "/import": "statements"}.get(path, "review")
-                self._redirect(app.case_url(case_id, error=text, anchor=anchor))
+                step = {"/details": "details", "/import": "statements"}.get(path, "review")
+                self._redirect(app.case_url(case_id, error=text, step=step))
 
     # --- signed packs ------------------------------------------------------------------------
 
@@ -250,7 +290,8 @@ class _Handler(BaseHTTPRequestHandler):
             return
         pack = next(p for p in view.packs if p["snapshot"] == snapshot)
         memo = (folder / "memo.md").read_text(encoding="utf-8")
-        self._send(200, pages.pack_page(app.token, view, pack, memo, _verified(folder, view.folder), str(folder)))
+        self._send(200, pages.pack_page(app.token, view, _nav(case=view, step="memo"), pack, memo,
+                                        _verified(folder, view.folder), str(folder)))
 
 
 def _verified(pack: Path, case_folder: Path) -> tuple[bool, str]:
@@ -289,14 +330,14 @@ class CaseApp:
     def url(self) -> str:
         return f"http://{review_server.LOOPBACK}:{self.port}/?token={self.token}"
 
-    def case_url(self, case_id: str, *, notice: str = "", error: str = "", anchor: str = "") -> str:
-        params = {"id": case_id}
+    def case_url(self, case_id: str, *, notice: str = "", error: str = "", step: str = "") -> str:
+        params = {"id": case_id, **({"step": step} if step else {})}
         if notice or error:
             key = secrets.token_hex(8)
             with self._lock:
                 self._flashes[key] = (notice, error)
             params["flash"] = key
-        return pages.url(self.token, "/case", **params) + (f"#{anchor}" if anchor else "")
+        return pages.url(self.token, "/case", **params)
 
     def flash(self, key: str | None) -> tuple[str, str]:
         """What a write said, shown once."""
@@ -308,7 +349,7 @@ class CaseApp:
         with self._lock:
             ws = self._workspaces.get(case_id)
             if ws is None:
-                home = f"http://{review_server.LOOPBACK}:{self.port}{pages.url(self.token, '/case', id=case_id)}"
+                home = f"http://{review_server.LOOPBACK}:{self.port}{pages.url(self.token, '/case', id=case_id, step='review')}"
                 ws = review_server.start(store.case_folder(case_id), case_id, port=WORKSPACE_PORT, home_url=home)
                 ws.serve_in_thread()
                 self._workspaces[case_id] = ws

@@ -590,12 +590,54 @@ def is_demo(folder: Path) -> bool:
         return False
 
 
+# The figures an underwriter reads first, as tiles at the top of the case (the case app and
+# the workspace): (figure id, label, what to show under it).
+HEADLINE = (("M3", "Average monthly revenue", "M4"), ("M5", "Lowest balance", None), ("M6", "Days overdrawn", None),
+            ("M28", "Debt service cover with the facility", "M10"), ("M26", "Unexplained money in", None))
+HEADLINE_FOOT = {"M4": "trend", "M10": "before the facility"}
+
+
+def headline_view(summary: dict[str, Any]) -> dict[str, Any] | None:
+    """The view the headline describes: all accounts together when there are several, else the one."""
+    if summary.get("state") != "shown" or not summary.get("accounts"):
+        return None
+    return summary.get("combined") or summary["accounts"][0]
+
+
+def headline_html(summary: dict[str, Any], token: str | None = None) -> str:
+    """Key figure tiles, each figure with its id; linked to its lines when given the page's token.
+    Empty when the case shows no figures. No policy outcome: that is said only inside a policy
+    check panel, with its illustrative label (P20)."""
+    view = headline_view(summary)
+    if view is None:
+        return ""
+    figures = {f["id"]: f for f in view.get("figures", [])}
+    tiles = []
+    for fid, label, foot_id in HEADLINE:
+        f = figures.get(fid)
+        if f is None:
+            continue
+        value = _e(f["display"])
+        if token:
+            value = _linked(f["display"], _href(token, view["account"], figure=fid))
+        negative = " neg" if str(f["display"]).startswith("-") else ""
+        foot = f'<span class="id">{_e(fid)}</span>'
+        if foot_id and foot_id in figures:
+            foot += f' {_e(HEADLINE_FOOT[foot_id])} {_e(figures[foot_id]["display"])}'
+        tiles.append(f'<span class="tile{negative}"><span class="label">{_e(label)}</span>'
+                     f'<span class="value">{value}</span><span class="foot">{foot}</span></span>')
+    scope = "All accounts" if summary.get("combined") else f'Account {view["account"]}'
+    return (f'<section id="headline" class="headline"><h2>Key figures <span class="muted">{_e(scope)}</span></h2>'
+            f'<span class="tiles">{"".join(tiles)}</span></section>')
+
+
 def render(summary: dict[str, Any], token: str | None = None) -> str:
     """The case summary as HTML for the page's main element; every case text escaped. Given
     the page's token, each figure, bucket and monthly cell links to the lines behind it (R16)."""
     names = [x for x in (summary["business_name"], summary["label"]) if x]
-    head = (f'<section id="summary-head"><p class="case-name">{_e(" — ".join(names))}</p></section>'
-            if names else "")
+    title = (f'<section id="summary-head"><p class="case-name">{_e(" — ".join(names))}</p></section>'
+             if names else "")
+    head = ""
     from .edit import stale_html
 
     head += stale_html(summary.get("stale") or [], token, summary.get("position"))  # R19
@@ -606,6 +648,7 @@ def render(summary: dict[str, Any], token: str | None = None) -> str:
 
         head += promotable_html(summary.get("promotable") or [], token, summary.get("position"))  # R20
     head += _profile_html(summary.get("profile"))
+    head = title + headline_html(summary, token) + head  # the name, the key figures, then what needs deciding
     state = summary["state"]
     if state == "not_reconciled":
         return head + _reconciliation_html(summary["reconciliation"])
