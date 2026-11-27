@@ -1342,7 +1342,7 @@ _V1_PROTECTED_IN = re.compile(
     r"\bDIRECTOR\b|\bOWNER\b|\bSHAREHOLDER\b"
     # Both forms of the capital wording, as v2's director_funding names them (CAPITAL INJECTION,
     # CAPITAL CONTRIBUTION) as well as the past tense (Antigravity re-review of T05).
-    r"|\bCAPITAL (?:INTRODUCED|INJECTED|INJECTION|CONTRIBUTED|CONTRIBUTION)\b|\bHMRC\b"
+    r"|\bCAPITAL[\s\-_/.]+(?:INTRODUCED|INJECTED|INJECTION|CONTRIBUTED|CONTRIBUTION)\b|\bHMRC\b"
     r"|\bREFUND\b|\bREVERSAL\b|\bPOT TRANSFER\b|\b(?:TO|FROM) SAVINGS\b"
 )
 

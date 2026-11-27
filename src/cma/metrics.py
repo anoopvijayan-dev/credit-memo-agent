@@ -34,6 +34,7 @@ from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from .categorise import OUTGOING_TRANSFER, counterparty
 from .models import (
     CREDIT_BUCKET,
+    DISPLAY_DECIMALS,
     REVENUE_CATEGORIES,
     Bucket,
     Category,
@@ -1282,9 +1283,13 @@ def comparison(value: float | None, unit: str, given_text: str) -> dict:
                 "difference_display": "n/a" if diff is None else money_text(diff)}
     ours_d = None if value is None else Decimal(repr(value))
     diff_d = None if ours_d is None else given - ours_d
+    # Shown as the memo shows the figure (1.75x, not 1.7543859649122806x), the difference at the
+    # same precision; "ours" and "difference" keep the exact values (owner decision, T41).
+    places = Decimal(1).scaleb(-DISPLAY_DECIMALS.get(unit, 0))
+    shown = (lambda d: _unit_text(d.quantize(places, rounding=ROUND_HALF_EVEN), unit))
     return {"given": str(given), "given_display": _unit_text(given, unit),
             "ours": None if ours_d is None else str(ours_d),
-            "ours_display": "n/a" if ours_d is None else _unit_text(ours_d, unit),
+            "ours_display": "n/a" if ours_d is None else shown(ours_d),
             "difference_pence": None,
             "difference": None if diff_d is None else str(diff_d),
-            "difference_display": "n/a" if diff_d is None else _unit_text(diff_d, unit)}
+            "difference_display": "n/a" if diff_d is None else shown(diff_d)}

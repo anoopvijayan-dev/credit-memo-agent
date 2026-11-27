@@ -619,6 +619,9 @@ def build(llm: LLM | None = None, checkpointer=None, firm_config: firm.FirmConfi
         stamp = (
             f"\n\n---\n{'APPROVED' if r.approved else 'NOT APPROVED'} by {r.reviewer}{how}"
             f" at {r.decided_at.strftime('%Y-%m-%d %H:%M UTC')}."
+            # The stamp approves this memo's figures and wording for release, nothing more
+            # (owner decision on the Antigravity re-review's open item).
+            + " This approves the memo's figures and wording, not the lending decision."
             + (f" Notes: {r.notes}" if r.notes else "")
             + f"\nGrounding check: {grounding} ({g.numbers_checked} numbers checked,"
             f" {len(g.unmatched)} unmatched, {len(g.missing_citations)} missing citations)."

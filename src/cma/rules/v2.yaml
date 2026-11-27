@@ -126,7 +126,8 @@ rules:
   # settle the line alone; with refund wording, the category order makes it a returned
   # payment.
   - id: returned_payment
-    names: [RETURNED DD, RETURNED DIRECT DEBIT, DD RETURNED, DIRECT DEBIT RETURNED, UNPAID DIRECT DEBIT]
+    names: [RETURNED DD, RETURNED DIRECT DEBIT, DD RETURNED, DIRECT DEBIT RETURNED, UNPAID DIRECT DEBIT,
+            UNPAID CHEQUE, CHEQUE RETURNED UNPAID, BOUNCED DD, BOUNCED DIRECT DEBIT]
     direction: in
     category: returned_dd
     protected: true
@@ -226,7 +227,7 @@ rules:
   - id: director_funding
     names: [DIRECTOR, DIRECTORS, OWNER, SHAREHOLDER, SHAREHOLDERS, CAPITAL INTRODUCED, CAPITAL INJECTION,
             CAPITAL CONTRIBUTION, DIRECTOR LOAN, DIRECTORS LOAN, DIRECTOR LOAN ACCOUNT, DIRECTORS LOAN ACCOUNT,
-            SHAREHOLDER LOAN, OWNER LOAN]
+            SHAREHOLDER LOAN, OWNER LOAN, SHARE CAPITAL, CAPITAL INJECTED, CAPITAL CONTRIBUTED]
     direction: in
     category: director_funding
     protected: true
