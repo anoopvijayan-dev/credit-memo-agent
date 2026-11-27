@@ -1057,6 +1057,42 @@ def review_workspace(
     console.print("Review workspace stopped.")
 
 
+@app.command("app")
+def case_app_cmd(
+    port: int = typer.Option(8750, "--port", min=1, max=65535,
+                             help="The loopback port to try first; the next free one is taken."),
+    browser: bool = typer.Option(True, "--browser/--no-browser", help="Open the app in a browser."),
+):
+    """Start the case app: every step of a case in the browser (cases, details, statements,
+    review, signed memo), on this machine only (127.0.0.1), with a new random token in its
+    URL, which is printed. Cases are kept under CMA_HOME, or private/cma here. Stop it with Ctrl-C."""
+    from . import store
+    from .app import server as app_server
+    from .review import server as review_server
+
+    with _case_errors():
+        store.check_not_in_git(firm.case_root())  # refused before anything is served
+        try:
+            srv = app_server.start(port=port)
+        except review_server.NoFreePort as e:
+            raise store.CaseStoreError(str(e.strerror)) from None
+    console.print("Credit memo case app, on this machine only:")
+    console.print(srv.url, soft_wrap=True, markup=False, highlight=False)
+    console.print("Keep this window open while you work; close it (or press Ctrl-C) to stop the app.")
+    if browser:
+        import webbrowser
+
+        with suppress(Exception):  # no browser is fine; the URL is printed
+            webbrowser.open(srv.url)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.close()
+    console.print("Case app stopped.")
+
+
 @app.command("verify")
 def verify_evidence(
     evidence: Path = typer.Argument(..., metavar="EVIDENCE", help="An evidence JSON: a pack's evidence.json or "
