@@ -186,3 +186,30 @@ def import_statement(case_id: str, fields: dict[str, str], filename: str, data: 
     if r.repeated:
         extra += f" {r.repeated} repeated transaction{'s' if r.repeated != 1 else ''} kept once."
     return Done(f"Imported account {r.account}: {r.lines} transactions from {r.start} to {r.end}.{extra}", case_id)
+
+
+DEMO_LABEL = "Demo: Harbourside Coffee"
+DEMO_BUSINESS = "HARBOURSIDE COFFEE LTD"
+DEMO_REPAYMENT = "2500.00"
+
+
+def demo_case() -> tuple[Done, str | None]:
+    """A ready-made synthetic case, so someone can see the whole flow without statements of
+    their own: a stretched café with a current and a reserve account, every synthetic feature
+    on, its directors and other accounts, VAT stagger and a proposed repayment filled in. Made
+    the way `cma generate --case` makes one (synth.to_case), so it is marked as a demo
+    everywhere."""
+    import tempfile
+
+    from .. import synth
+
+    rows, truth = synth.generate("cafe", "stretched", seed=7, months=12, features=list(synth.FEATURES))
+    warned: list[str] = []
+    # Synthetic statements, so a temporary folder will do; nothing is made under the case root
+    # before new_case has given any cloud-sync warning (R32).
+    with tempfile.TemporaryDirectory(prefix="cma-demo-") as work:
+        case_id, folder = synth.to_case(rows, truth, Path(work), label=DEMO_LABEL, warn=warned.append)
+    store.update_profile(folder, lambda p: {**p, "business_name": DEMO_BUSINESS,
+                                            "proposed_monthly_repayment": DEMO_REPAYMENT})
+    return (Done("Demo case made from synthetic statements: a café with a current and a reserve account. "
+                 "Open the review to try it.", case_id), warned[0] if warned else None)

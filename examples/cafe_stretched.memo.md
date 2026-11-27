@@ -15,7 +15,7 @@ Policy outcome: refer. The case needs an analyst decision before any offer: R3 (
 
 
 ---
-APPROVED by A. Analyst (automated, no interactive review) at 2026-11-27 12:28 UTC. This approves the memo's figures and wording, not the lending decision. Notes: Approved by script (--yes); the draft was not reviewed interactively.
+APPROVED by A. Analyst (automated, no interactive review) at 2026-11-27 14:39 UTC. This approves the memo's figures and wording, not the lending decision. Notes: Approved by script (--yes); the draft was not reviewed interactively.
 Grounding check: passed (17 numbers checked, 0 unmatched, 0 missing citations).
 
 ## Appendix: the figures behind this memo

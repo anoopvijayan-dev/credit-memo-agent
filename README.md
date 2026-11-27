@@ -1,11 +1,51 @@
-# credit-memo-agent
+# Credit Memo Agent
 
-A UK SME cash-flow credit memo that a risk committee can audit.
+**From a small business's bank statements to a credit memo you can trace: on your own computer,
+with a person checking every figure and the underwriter making the decision.**
 
-Give it twelve months of business current-account statements and it produces a credit
-memo in which **every figure is computed deterministically, cited to the statement
-lines behind it, checked by a grounding guard, and held for a human to approve**. The
-language model writes the prose. It never does the arithmetic.
+![A case in the app: key figures and the month-by-month picture](docs/images/case.png)
+
+Import the bank's download as it comes. The app works out the figures an underwriter reads
+first (revenue, lowest balance, overdrawn days, returned direct debits, late VAT, debt service
+cover with the new facility), and every one links to the exact transactions behind it. Unusual
+lines wait for the analyst to decide, with a reason and a name. The memo is drafted from the
+figures only, and a check refuses any number it cannot trace. Signing confirms the figures
+were checked; it does not approve the loan. A signed memo can be re-checked against the
+statements at any time.
+
+Statements never leave the computer: the app listens on 127.0.0.1 only.
+
+## Get it
+
+| Who | How | Needs |
+|---|---|---|
+| Underwriters and analysts | Download **CreditMemo.exe** from the [latest release](https://github.com/anoopvijayan-dev/credit-memo-agent/releases/latest) and double-click it. The app opens in your browser. | Windows. Nothing to install. |
+| Technical users | `pipx install credit-memo-agent`, then `cma app` | Python 3.11 or later |
+| Developers | Clone this repository: `pip install -e ".[dev]"`, then `cma app` | Python 3.11 or later |
+
+The Windows download keeps cases in `%LOCALAPPDATA%\Credit Memo`. `cma app` keeps them in
+`private/cma` under the folder it starts from, or wherever `CMA_HOME` points. Keep the window
+the app runs in open while you work; closing it stops the app. Windows may warn about a new,
+unsigned download the first time: choose "More info", then "Run anyway".
+
+## Try it in 2 minutes
+
+1. Start the app (above).
+2. Click **Try with demo data**. You get a synthetic café with a year of statements on two
+   accounts, marked as a demonstration everywhere.
+3. Look at the key figures and the monthly chart, then open **Review and sign**.
+4. Click any figure to see the lines behind it. Decide a flagged line. Build the memo and sign.
+5. Open **Signed memo**: it is re-checked against the statements and shown as **Verified**.
+
+Then try your own: **New case**, add the business's details, and import its statements under
+**Statements** (HSBC, Barclays, Lloyds, NatWest, Starling, Monzo, Open Banking, TrueLayer, or a
+standard CSV of date, description, amount and balance).
+
+| The case list | The review |
+|---|---|
+| ![Cases by status](docs/images/cases.png) | ![The review: key figures and the lines to decide](docs/images/review.png) |
+
+## How it works
 
 ```
 load → categorise → metrics → policy → draft → guard → review (human) → finalise
@@ -13,39 +53,24 @@ load → categorise → metrics → policy → draft → guard → review (human
                                          └──── redraft ────┘   if ungrounded, max 2
 ```
 
-## Why
-
-Lenders don't need a model that guesses at cash flow. They need one that says
-"revenue averaged £22,114 a month [M3]" and lets an analyst click through to the 261
-settlements that number came from. See
+Every figure is computed deterministically, cited to the statement lines behind it, checked
+by a grounding guard, and held for a person to sign off. A language model, when used, writes
+prose; it never does the arithmetic. Lenders don't need a model that guesses at cash flow.
+They need one that says "revenue averaged £22,114 a month [M3]" and lets an analyst click
+through to the 261 settlements that number came from. See
 [ADR 001](docs/decisions/001-the-model-never-does-the-arithmetic.md).
 
-## The case app (for analysts)
+The policy thresholds shipped with it are illustrative, not any lender's policy. Everything
+in this repository is synthetic: no real statements, no customer data.
 
-Everything an analyst does, in the browser, with no commands:
+## Releasing
 
-```bash
-cma app
-```
+A tag such as `v0.2.0` builds CreditMemo.exe on Windows and the Python package, self-tests
+both, attaches them to a GitHub Release and publishes the package to PyPI through trusted
+publishing (`.github/workflows/release.yml`). Pull requests build and self-test both without
+publishing.
 
-On Windows, double-click **Start Credit Memo.bat** in the project folder instead. It opens a
-page on this computer only (127.0.0.1, with a new random token each start) that lists every
-case with its status, and takes a case through four steps:
-
-1. **Details**: business name, directors, the business's other accounts, VAT stagger group,
-   proposed monthly repayment.
-2. **Statements**: choose the bank's download as it came (HSBC, Barclays, Lloyds, NatWest,
-   Starling, Monzo, Open Banking, TrueLayer or the standard CSV), name the account, and give the
-   opening balance when the bank's file has none (HSBC, Monzo).
-3. **Review and sign**: opens the review workspace for the case, where every figure links to its
-   lines, a line's category can be corrected with a reason, and the memo is built and signed.
-4. **Signed memo**: the memo as signed, checked again against the case's statements ("Verified"),
-   and the full record for the credit file.
-
-Cases are kept under `private/cma` in the folder the app starts from (or `CMA_HOME`). Keep the
-window the app runs in open while working; closing it stops the app.
-
-## Quick start
+## Command line (for developers)
 
 ```bash
 pip install -e ".[dev]"

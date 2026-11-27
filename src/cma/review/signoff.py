@@ -29,6 +29,7 @@ from ..indicators import ThresholdsError
 from ..ingest import StatementError
 from ..metrics import AmountError, ReconciliationError
 from ..policy import PolicyError
+from .memo_view import memo_html
 
 PREVIEW_KEYS = frozenset({"back"})
 SIGN_KEYS = frozenset({"snapshot", "name", "back"})
@@ -147,4 +148,4 @@ def html(kind: str, status: int, reply: dict[str, Any], token: str) -> str:
         form = ""
     return ('<section id="pack-preview"><h2>Preview of the pack</h2>'
             f'<p>Snapshot <code>{_e(reply["snapshot"])}</code>, recorded as case log entry {_e(reply["position"])}.</p>'
-            f'<pre class="memo">{_e(reply["text"])}</pre>{verdict}{form}{_reload(token)}</section>')
+            f'{memo_html(reply["text"])}{verdict}{form}{_reload(token)}</section>')
