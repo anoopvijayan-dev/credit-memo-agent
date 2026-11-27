@@ -357,7 +357,8 @@ def test_cma_app_command_is_listed():
 
     from cma.cli import app as cli
 
-    out = CliRunner().invoke(cli, ["app", "--help"]).output
+    raw = CliRunner().invoke(cli, ["app", "--help"], env={"COLUMNS": "200", "NO_COLOR": "1", "TERM": "dumb"}).output
+    out = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", raw).split())  # Windows consoles get colour codes
     assert "case app" in out and "--port" in out
     assert re.search(r"127\.0\.0\.1", out)
     assert rs.LOOPBACK == "127.0.0.1"
