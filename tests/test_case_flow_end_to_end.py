@@ -61,3 +61,26 @@ def test_a_case_from_new_to_a_verified_pack(tmp_path):
     assert checked.returncode == 0, checked.stdout + checked.stderr
     assert "case log intact: 5 entries" in checked.stdout
     assert b"\r\n" not in (case / "log.jsonl").read_bytes()
+
+
+def test_a_business_with_a_reserve_account_is_judged_as_a_whole(tmp_path):
+    """A café with a trading account and a reserve account: the reserve has no trading of its
+    own, so judged alone it 'failed' and showed late VAT payments it never had to make. The
+    memo now judges the business as a whole, and the pack still verifies."""
+    made = _cma(tmp_path, "generate", "--archetype", "cafe", "--profile", "stretched", "--out", str(tmp_path / "gen"),
+                "--feature", "all", "--case")
+    assert made.returncode == 0, made.stdout + made.stderr
+    [case] = (tmp_path / "cma" / "cases").iterdir()
+    preview = _cma(tmp_path, "case", "preview", case.name)
+    assert preview.returncode == 0, preview.stdout + preview.stderr
+    signed = _cma(tmp_path, "case", "sign", case.name, stdin="Tester\ny\n")
+    assert signed.returncode == 0, signed.stdout + signed.stderr
+    [pack_dir] = (case / "packs").iterdir()
+    memo = (pack_dir / "memo.md").read_text(encoding="utf-8")
+    policy_part = memo.split("## Policy check (illustrative)", 1)[1]
+    assert "### All accounts" in policy_part
+    assert "### Account reserve" not in policy_part and "### Account main" not in policy_part
+    assert policy_part.count("Overall outcome:") == 1
+    assert "All accounts: " in memo.split("## Policy check", 1)[0]  # each section opens with the whole business
+    verified = _cma(tmp_path, "verify", str(pack_dir / "evidence.json"))
+    assert verified.returncode == 0 and "no mismatch" in verified.stdout, verified.stdout + verified.stderr

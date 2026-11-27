@@ -258,11 +258,13 @@ def test_p20_record_with_show_policy_verdict_on(home, tmp_path, shown, accounts)
     els = _elements(html)
     panels = [e for e in els if "policy-check" in e["class"]]
     memo = [e for e in els if e["tag"] == "pre" and "memo" in e["class"]]
-    assert len(panels) == len(p.accounts) and len(memo) == 1
+    judged = [p.business] if p.business is not None else p.accounts
+    assert len(panels) == len(judged) and len(memo) == 1
     for panel in panels:
         assert policy.ILLUSTRATIVE_LABEL in panel["text"]
-    for a in p.accounts:
-        panel = next(x for x in panels if x["attrs"].get("data-account") == a.account)
+    for a in judged:
+        key = "all accounts" if a.account == pack.BUSINESS else a.account
+        panel = next(x for x in panels if x["attrs"].get("data-account") == key)
         assert f"Overall outcome: {a.policy.overall.value.upper()}" in panel["text"]
         for r in a.policy.rules:
             assert r.rule_id in panel["text"] and r.detail in panel["text"]

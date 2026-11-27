@@ -230,8 +230,9 @@ def test_p14_preview_text_passes_the_guard_with_account_keys_holding_digits_or_n
         p = pack.build_preview(folder, case_id)
         _assert_grounded(p)
         assert f"Account {key}: " in p.text
-        if shown:
-            assert f"### Account {key}" in p.text
+        assert "All accounts: " in p.text  # the business as a whole, beside each account
+        if shown:  # one policy check, for the business as a whole: no account is judged alone
+            assert "### All accounts" in p.text and f"### Account {key}" not in p.text
 
 
 @pytest.mark.invariants
@@ -263,7 +264,11 @@ def test_p20_preview_text_with_show_policy_verdict_on(home, tmp_path, accounts):
         if OUTCOME_WORD.search(body):  # every section that shows an outcome holds the label
             assert policy.ILLUSTRATIVE_LABEL in body, heading
     assert sections["Recommendation"].strip() == f"_{pack.FOR_UNDERWRITER}_"  # blank (R24)
-    for a in p.accounts:
+    judged = [p.business] if p.business is not None else p.accounts
+    if p.business is not None:  # several accounts: the business is judged as a whole, no account alone
+        assert all(a.policy is None for a in p.accounts)
+        assert pack.BUSINESS_POLICY_NOTE in sections[title]
+    for a in judged:
         assert f"Overall outcome: {a.policy.overall.value}." in sections[title]
         for r in a.policy.rules:
             assert f"- {r.rule_id} ({r.metric_id} " in sections[title]
@@ -444,4 +449,5 @@ def test_p14_holds_for_random_numeric_account_keys_several_at_once(home, tmp_pat
         p = pack.build_preview(folder, case_id)
         _assert_grounded(p)
         for k in group:
-            assert f"Account {k}: " in p.text and f"### Account {k}\n" in p.text
+            assert f"Account {k}: " in p.text and f"### Account {k}\n" not in p.text
+        assert "### All accounts\n" in p.text
