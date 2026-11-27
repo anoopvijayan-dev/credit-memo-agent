@@ -411,7 +411,7 @@ def _build(folder: Path, case_id: str, entries) -> Preview:
     # on its own is not judged (a reserve account has no trading of its own to judge).
     try:
         both = overrides.combined_figures(figures) if len(figures) > 1 else None
-    except Exception:  # noqa: BLE001 - combined figures refused: each account is judged on its own, as before
+    except Exception:  # combined figures refused: each account is judged on its own, as before
         both = None
     business = None
     if both is not None and both.statement.transactions:
