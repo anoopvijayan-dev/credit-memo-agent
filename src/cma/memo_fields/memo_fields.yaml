@@ -1,5 +1,6 @@
 # The memo field map (R26, R27): the fields of the credit memo the pack's sections follow,
-# in this order. By default, the 13 fields the underwriter listed in the reply of 2026-11-16.
+# in this order. By default, an at-a-glance summary and the 13 fields the underwriter listed in
+# the reply of 2026-11-16.
 # A firm can replace this file with its own memo_fields.yaml at the case root (or the path
 # firm.yaml names).
 #
@@ -18,6 +19,17 @@
 
 name: reply_2026_11_16
 fields:
+  # Not one of the reply's 13 fields: the key figures together, first, so the underwriter sees
+  # the shape of the case before the detail (owner decision, 2026-11-27).
+  - id: at_a_glance
+    title: At a glance
+    figures: [M1, M3, M4, M5, M6, M7, M13, M26, M28]
+    template: >-
+      {M1} months of statements. Revenue averaged {M3} a month and moved {M4}. The lowest
+      balance was {M5}, and the balance closed overdrawn on {M6} days. Returned direct debits:
+      {M7}; late or missed VAT payments: {M13}. Unexplained money in is {M26} of money in.
+      Including the proposed facility, debt service cover is {M28}.
+
   - id: business_details
     title: Business details
 
@@ -42,7 +54,7 @@ fields:
     title: Average and minimum balances
     figures: [M27, M5, M6]
     template: >-
-      The average end-of-day balance was {M27} and the lowest balance {M5}. The account
+      The average end-of-day balance was {M27} and the lowest balance {M5}. The balance
       closed overdrawn on {M6} days.
 
   - id: existing_commitments

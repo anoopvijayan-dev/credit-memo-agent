@@ -69,7 +69,11 @@ def _sections(text: str) -> dict[str, str]:
 @pytest.mark.contracts
 def test_packaged_field_map_is_the_replys_13_fields_with_m18_next_to_m2():
     fm = pack.parse_field_map(pack.default_field_map_text(), pack.DEFAULT_FIELD_MAP_SOURCE)
-    assert [f.id for f in fm.fields] == REPLY_FIELDS
+    # an at-a-glance summary first (owner decision, 2026-11-27), then the reply's 13 fields
+    assert [f.id for f in fm.fields] == ["at_a_glance", *REPLY_FIELDS]
+    glance = fm.fields[0]
+    assert glance.title == "At a glance" and not glance.for_underwriter
+    assert set(glance.figures) == {"M1", "M3", "M4", "M5", "M6", "M7", "M13", "M26", "M28"}
     turnover = next(f for f in fm.fields if f.id == "monthly_turnover")
     assert turnover.figures[:2] == ("M2", "M18")
     assert re.search(r"\{M2\}[^{]*\{M18\}", turnover.template)  # M18 follows M2, nothing between

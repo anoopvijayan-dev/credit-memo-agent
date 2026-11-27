@@ -84,3 +84,17 @@ def test_a_business_with_a_reserve_account_is_judged_as_a_whole(tmp_path):
     assert "All accounts: " in memo.split("## Policy check", 1)[0]  # each section opens with the whole business
     verified = _cma(tmp_path, "verify", str(pack_dir / "evidence.json"))
     assert verified.returncode == 0 and "no mismatch" in verified.stdout, verified.stdout + verified.stderr
+
+
+def test_the_memo_opens_with_one_summary_of_the_business(tmp_path):
+    made = _cma(tmp_path, "generate", "--archetype", "cafe", "--profile", "stretched", "--out", str(tmp_path / "gen"),
+                "--feature", "all", "--case")
+    assert made.returncode == 0, made.stdout + made.stderr
+    [case] = (tmp_path / "cma" / "cases").iterdir()
+    preview = _cma(tmp_path, "case", "preview", case.name)
+    assert preview.returncode == 0, preview.stdout + preview.stderr
+    text = preview.stdout
+    first = text.split("## ", 2)[1]  # the first section after the title
+    assert first.startswith("At a glance")
+    assert first.count("All accounts: ") == 1 and "Account main" not in first and "Account reserve" not in first
+    assert "Grounding guard: every number is a figure or a policy threshold, with its id." in " ".join(text.split())

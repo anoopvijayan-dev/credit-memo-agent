@@ -69,6 +69,7 @@ DEMO_STAMP = ("Demonstration case: this demonstrates the mechanism and is not an
 POLICY_TITLE = "Policy check (illustrative)"
 # A case of more than one account: the business as a whole, from the combined figures (R41).
 BUSINESS = "*"
+SUMMARY_FIELD = "at_a_glance"  # with several accounts, shown for the business as a whole only
 BUSINESS_LABEL = "All accounts"
 BUSINESS_POLICY_NOTE = ("The check is run on the business as a whole: every account's figures together, "
                         "with transfers between its own accounts left out of trading receipts. A reserve or "
@@ -326,6 +327,8 @@ def _text(p: Preview, only: str | None = None, for_guard: bool = False) -> str:
             out += [f"_{FOR_UNDERWRITER}_", ""]
             continue
         for a in accounts:
+            if f.id == SUMMARY_FIELD and p.business is not None and a is not p.business:
+                continue  # the summary is the business's; each account's detail follows below
             prefix = f"{_label(a.account, for_guard)}: " if several else ""
             out += [prefix + a.sentences[f.id], ""]
     if p.policy_shown and any(a.policy_lines for a in accounts):

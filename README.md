@@ -271,9 +271,13 @@ one blocker), and a third ([`panel-03.md`](.bridgie/runs/v01-pilot-ready/panel-0
 found 27 (E1–E27, one blocker) in those fixes and the new code; all are fixed, with
 tests named after each finding.
 
-## Known limits (v0.1)
+## Known limits
 
-- CSV only. CAMT.053 / MT940 / Open Banking JSON adapters are next.
+- Inputs: the five-column CSV, OBIE v3.1 and TrueLayer JSON, and a bank's own CSV
+  download (built-in profiles: barclays, hsbc, lloyds, natwest, starling; any other bank
+  through a column mapping). CAMT.053 and MT940 are not read yet.
+- No real statement has been run end to end yet. Every figure is checked against
+  synthetic statements with a ground-truth file; the first real case is the next test.
 - Revenue trend compares the first and last three months, so a seasonal business
   (the `trades` archetype peaks in winter) can be referred for decline. The fix is 24
   months of data and a year-on-year comparison, not a cleverer prompt.
@@ -281,18 +285,27 @@ tests named after each finding.
   no number in it. The reviewer reads the metrics table in the appendix for that.
 - Revenue by bank transfer needs an invoice reference to count. Statements without
   references show it as non-trading money in (M16), which refers the case.
+- Card-acquirer payouts (money in) are trading revenue and are never paired as a
+  transfer between the business's own accounts.
+- With several accounts, the policy check and the memo's "At a glance" summary judge
+  the business as a whole; each account's own figures follow below it.
 - Pending reviews live in memory unless you pass `--checkpoint-db`.
 - The reviewer's name is asserted, not authenticated: anyone at the terminal can type
   any name. A pilot inside a lender would put the CLI behind their own sign-in.
-- Debt service cover (M10) is historical and covers existing debt only; it does not
-  include the facility being applied for. Money in that isn't explained as trading
-  is left out of it, and shows as non-trading money in (M16).
-- The categoriser knows the synthetic acquirer names. Card revenue from a real
-  acquirer it doesn't recognise lands in M16 and refers the case until a rule is added.
+- Signing approves the memo's figures and wording, not the lending decision, which
+  stays with the underwriter.
+- Debt service cover (M10) is historical and covers existing debt only. M28 adds the
+  facility being applied for. Money in that isn't explained as trading is left out of
+  both, and shows as non-trading money in (M16).
+- The categoriser knows common UK acquirer names. Card revenue from an acquirer it
+  doesn't recognise lands in M16 and refers the case until a rule is added.
+- Corporation tax and self-assessment payments to HMRC are not a category of their
+  own yet; they stay outside the VAT figures.
 - Policy thresholds are illustrative. They are not any lender's real policy.
 - The cloud-sync warning knows each client's own folder names, the OneDrive
   variables Windows sets and Dropbox's info file. A folder synced under any other
   name, or a network share, is not detected.
+- Owner decisions behind these choices: `docs/statement-review/owner-decisions.md`.
 
 ## Data
 
